@@ -524,6 +524,24 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun mcpMutations_preserveSelectedProfile() = runTest {
+        repeat(5) {
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("{}"))
+        }
+        val client = DashboardApiClient(server.url("/").toString())
+
+        client.setMcpServerEnabled("hosted", true, "work profile").getOrThrow()
+        client.testMcpServer("hosted", "work profile").getOrThrow()
+        client.removeMcpServer("hosted", "work profile").getOrThrow()
+        client.installMcpCatalogEntry("hosted", profile = "work profile").getOrThrow()
+
+        assertEquals("/api/mcp/servers/hosted/enabled?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/servers/hosted/test?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/servers/hosted?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/catalog/install?profile=work%20profile", server.takeRequest().path)
+    }
+
+    @Test
     fun customEndpointCrud_usesPublicDashboardRoutesAndRedactedResponse() = runTest {
         val listBody = """
             {"endpoints":[{"id":"local","name":"Local","base_url":"https://llm.example/v1","model":"qwen","models":["qwen"],"has_api_key":true,"api_key_preview":"sk-…1234","is_current":true}],"current":{"provider":"local","model":"qwen"}}
@@ -544,22 +562,22 @@ class DashboardApiClientTest {
             apiKey = "never-persist-this",
         )
 
-        val listed = client.getCustomEndpoints("work").getOrThrow()
-        client.saveCustomEndpoint(draft, "work").getOrThrow()
-        val validation = client.validateCustomEndpoint(draft, "work").getOrThrow()
-        client.activateCustomEndpoint("local", "work").getOrThrow()
-        client.deleteCustomEndpoint("local", "work").getOrThrow()
+        val listed = client.getCustomEndpoints().getOrThrow()
+        client.saveCustomEndpoint(draft).getOrThrow()
+        val validation = client.validateCustomEndpoint(draft).getOrThrow()
+        client.activateCustomEndpoint("local").getOrThrow()
+        client.deleteCustomEndpoint("local").getOrThrow()
 
         assertEquals("local", listed.currentProvider)
         assertTrue(listed.endpoints.single().hasApiKey)
         assertEquals(listOf("qwen"), validation.models)
-        assertEquals("/api/providers/custom-endpoints?profile=work", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints", server.takeRequest().path)
         val save = server.takeRequest()
-        assertEquals("/api/providers/custom-endpoints?profile=work", save.path)
+        assertEquals("/api/providers/custom-endpoints", save.path)
         assertTrue(save.body.readUtf8().contains("never-persist-this"))
-        assertEquals("/api/providers/custom-endpoints/validate?profile=work", server.takeRequest().path)
-        assertEquals("/api/providers/custom-endpoints/local/activate?profile=work", server.takeRequest().path)
-        assertEquals("/api/providers/custom-endpoints/local?profile=work", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints/validate", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints/local/activate", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints/local", server.takeRequest().path)
     }
 
     @Test

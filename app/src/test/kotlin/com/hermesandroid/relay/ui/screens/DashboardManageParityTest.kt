@@ -34,4 +34,29 @@ class DashboardManageParityTest {
         assertTrue(row.actions.first { it.kind == DashboardActionKind.ActivateCustomEndpoint }.destructive)
         assertTrue(row.actions.first { it.kind == DashboardActionKind.DeleteCustomEndpoint }.destructive)
     }
+
+    @Test
+    fun mcpManagePlumbing_usesEffectiveProfileForListAndRowActions() {
+        assertEquals(
+            "/api/mcp/servers?profile=work%20profile",
+            dashboardSectionRequestPath("/api/mcp/servers", "work profile"),
+        )
+        assertEquals(
+            "/api/providers/custom-endpoints",
+            dashboardSectionRequestPath("/api/providers/custom-endpoints", "work profile"),
+        )
+        val scoped = scopeDashboardManageItems(
+            "/api/mcp/servers",
+            "work profile",
+            listOf(DashboardSummaryItem(id = "hosted", title = "Hosted")),
+        )
+        assertEquals("work profile", scoped.single().profile)
+    }
+
+    @Test
+    fun oauthUnsupportedGate_isOnlySetByExplicitMissingRoute() {
+        assertTrue(isUnsupportedMcpOAuthError(IllegalStateException("auth failed - HTTP 404: missing")))
+        assertFalse(isUnsupportedMcpOAuthError(IllegalStateException("auth failed - HTTP 409: running")))
+        assertFalse(isUnsupportedMcpOAuthError(IllegalStateException("auth failed - HTTP 429: capped")))
+    }
 }

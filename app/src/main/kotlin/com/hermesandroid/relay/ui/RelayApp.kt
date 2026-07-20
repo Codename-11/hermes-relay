@@ -1448,7 +1448,8 @@ fun RelayApp() {
         // the previous run). The pre-warm fills cold keys and refreshes
         // stale (disk-hydrated) ones, then mirrors results back to disk.
         val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
-        LaunchedEffect(activeConnection?.id, effectiveDashboardUrl) {
+        val effectiveManageProfile by connectionViewModel.effectiveSessionProfileName.collectAsState()
+        LaunchedEffect(activeConnection?.id, effectiveDashboardUrl, effectiveManageProfile) {
             val connection = activeConnection ?: return@LaunchedEffect
             if (effectiveDashboardUrl.isBlank()) return@LaunchedEffect
             val snapshot = connection.dashboardLastStatus ?: return@LaunchedEffect
@@ -1465,6 +1466,7 @@ fun RelayApp() {
                 cookieStore = cookieStore,
                 connectionId = connection.id,
                 dashboardUrl = effectiveDashboardUrl,
+                effectiveProfileName = effectiveManageProfile,
                 cacheDir = hydrateContext.cacheDir,
                 context = hydrateContext,
             )

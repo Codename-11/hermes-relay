@@ -98,6 +98,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
@@ -118,7 +119,10 @@ import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import com.hermesandroid.relay.ui.theme.relayPanel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.DashboardManageOAuthViewModel
+import com.hermesandroid.relay.viewmodel.PendingMcpOAuth
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -175,6 +179,26 @@ private enum class DashboardManagementSection(val path: String) {
 }
 
 private val managementSections: List<DashboardManagementSection> = DashboardManagementSection.entries
+
+internal fun dashboardSectionRequestPath(path: String, profile: String?): String {
+    if (profile.isNullOrBlank() || path !in setOf("/api/mcp/servers", "/api/mcp/catalog")) return path
+    val encoded = java.net.URLEncoder.encode(profile, Charsets.UTF_8.name()).replace("+", "%20")
+    return "$path?profile=$encoded"
+}
+
+internal fun isUnsupportedMcpOAuthError(error: Throwable): Boolean =
+    error.message.orEmpty().contains("HTTP 404")
+
+internal fun scopeDashboardManageItems(
+    sectionPath: String,
+    profile: String?,
+    items: List<DashboardSummaryItem>,
+): List<DashboardSummaryItem> =
+    if (sectionPath == "/api/mcp/servers" || sectionPath == "/api/mcp/catalog") {
+        items.map { it.copy(profile = profile) }
+    } else {
+        items
+    }
 
 private sealed interface DashboardPayloadState {
     data object Idle : DashboardPayloadState
@@ -330,6 +354,7 @@ fun DashboardManagementScreen(
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    oauthViewModel: DashboardManageOAuthViewModel = viewModel(),
 ) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
@@ -339,6 +364,9 @@ fun DashboardManagementScreen(
     // dashboard off the connection's persisted URL — drives the target line
     // and the per-host sign-in explanation below.
     val dashboardRouteHint by connectionViewModel.dashboardRouteMovedHint.collectAsState()
+    val effectiveProfileName by connectionViewModel.effectiveSessionProfileName.collectAsState()
+    val pendingMcpOAuth by oauthViewModel.pending.collectAsState()
+    val unsupportedOAuthRoutes by oauthViewModel.unsupportedRoutes.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
     var showingDetail by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableStateOf(0) }
@@ -358,13 +386,20 @@ fun DashboardManagementScreen(
     var showSkillsHub by remember { mutableStateOf(false) }
     var soulEditor by remember { mutableStateOf<SoulEditorState?>(null) }
     var oauthMcpItem by remember { mutableStateOf<DashboardSummaryItem?>(null) }
+    var oauthDialogHidden by remember(pendingMcpOAuth?.flowId) { mutableStateOf(false) }
     var customEndpointEditor by remember { mutableStateOf<DashboardSummaryItem?>(null) }
     var showCustomEndpointEditor by remember { mutableStateOf(false) }
 
     val section = managementSections[selectedTab]
+    val oauthRouteKey = "$dashboardUrl|${effectiveProfileName.orEmpty()}"
+    val mcpOAuthSupported = oauthRouteKey !in unsupportedOAuthRoutes
     val connectionId = activeConnection?.id ?: "default"
     fun payloadKeyFor(targetSection: DashboardManagementSection): String =
-        dashboardPayloadKey(connectionId, dashboardUrl, targetSection.path)
+        dashboardPayloadKey(
+            connectionId,
+            dashboardUrl,
+            dashboardSectionRequestPath(targetSection.path, effectiveProfileName),
+        )
 
     val payloadKey = payloadKeyFor(section)
     val payloadState = payloadStates[payloadKey] ?: DashboardPayloadState.Idle
@@ -447,6 +482,7 @@ fun DashboardManagementScreen(
             val nextState = fetchDashboardSectionState(
                 clientFactory = clientFactory,
                 targetSection = targetSection,
+                effectiveProfileName = effectiveProfileName,
                 preamble = preamble,
                 context = context,
                 recordStatus = { status: DashboardStatus?, session: DashboardAuthSession?, gatewayTicketAvailable: Boolean? ->
@@ -722,7 +758,7 @@ fun DashboardManagementScreen(
         }
     }
 
-    LaunchedEffect(dashboardUrl, selectedTab, reloadNonce, activeConnection?.id) {
+    LaunchedEffect(dashboardUrl, selectedTab, reloadNonce, activeConnection?.id, effectiveProfileName) {
         val forceCurrent = forceReloadKey == payloadKey
         loadDashboardSection(
             targetSection = section,
@@ -735,7 +771,7 @@ fun DashboardManagementScreen(
         }
     }
 
-    LaunchedEffect(dashboardUrl, activeConnection?.id, payloadState) {
+    LaunchedEffect(dashboardUrl, activeConnection?.id, payloadState, effectiveProfileName) {
         val loadedState = payloadState as? DashboardPayloadState.Loaded ?: return@LaunchedEffect
         if (dashboardUrl.isBlank()) return@LaunchedEffect
         if (loadedState.status?.authRequired == true && loadedState.session?.authenticated != true) {
@@ -970,17 +1006,44 @@ fun DashboardManagementScreen(
         )
     }
 
-    oauthMcpItem?.let { item ->
+    val oauthDialogItem = oauthMcpItem ?: pendingMcpOAuth?.let { pending ->
+        DashboardSummaryItem(
+            id = pending.serverName,
+            title = pending.serverName,
+            profile = pending.profile,
+        )
+    }
+    if (oauthDialogItem != null && !oauthDialogHidden) {
         McpOAuthDialog(
-            item = item,
+            item = oauthDialogItem,
+            effectiveProfileName = effectiveProfileName,
+            pending = pendingMcpOAuth,
             clientFactory = clientFactory,
+            onPending = { flow ->
+                oauthViewModel.remember(flow.flowId, flow.serverName, flow.profile)
+            },
+            onUnsupported = {
+                oauthViewModel.markUnsupported(oauthRouteKey)
+                oauthMcpItem = null
+                oauthDialogHidden = true
+            },
             onApproved = {
+                oauthViewModel.clear()
                 oauthMcpItem = null
                 forceReloadKey = payloadKey
                 reloadNonce += 1
                 actionMessage = context.getString(R.string.dashboard_mcp_oauth_approved)
             },
-            onDismiss = { oauthMcpItem = null },
+            onFlowFailed = { failure ->
+                oauthViewModel.clear()
+                oauthMcpItem = null
+                oauthDialogHidden = true
+                actionMessage = failure
+            },
+            onDismiss = {
+                oauthMcpItem = null
+                oauthDialogHidden = true
+            },
         )
     }
 
@@ -1183,7 +1246,10 @@ fun DashboardManagementScreen(
                                             DashboardActionKind.EditProfileSoul ->
                                                 openSoulEditor(item)
                                             DashboardActionKind.AuthenticateMcp ->
-                                                oauthMcpItem = item
+                                                if (mcpOAuthSupported) {
+                                                    oauthDialogHidden = false
+                                                    oauthMcpItem = item.copy(profile = effectiveProfileName)
+                                                }
                                             DashboardActionKind.EditCustomEndpoint,
                                             DashboardActionKind.ValidateCustomEndpoint -> {
                                                 customEndpointEditor = item
@@ -1220,6 +1286,7 @@ fun DashboardManagementScreen(
                                             }
                                         }
                                     },
+                                    mcpOAuthSupported = mcpOAuthSupported,
                                 )
                             }
                             }
@@ -1724,6 +1791,7 @@ private suspend fun fetchDashboardPreamble(client: DashboardApiClient): Dashboar
 private suspend fun fetchDashboardSectionState(
     clientFactory: () -> DashboardApiClient,
     targetSection: DashboardManagementSection,
+    effectiveProfileName: String? = null,
     preamble: DashboardPreamble? = null,
     recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
     context: android.content.Context,
@@ -1731,6 +1799,7 @@ private suspend fun fetchDashboardSectionState(
     fetchDashboardSectionStateWith(
         client = client,
         targetSection = targetSection,
+        effectiveProfileName = effectiveProfileName,
         preamble = preamble,
         recordStatus = recordStatus,
         context = context,
@@ -1741,6 +1810,7 @@ private suspend fun fetchDashboardSectionState(
 private suspend fun fetchDashboardSectionStateWith(
     client: DashboardApiClient,
     targetSection: DashboardManagementSection,
+    effectiveProfileName: String? = null,
     preamble: DashboardPreamble? = null,
     recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
     context: android.content.Context,
@@ -1753,13 +1823,19 @@ private suspend fun fetchDashboardSectionStateWith(
             status = resolved.status,
         )
     } else {
-        val result = client.getJsonElement(targetSection.path)
+        val result = client.getJsonElement(
+            dashboardSectionRequestPath(targetSection.path, effectiveProfileName),
+        )
         result.fold(
             onSuccess = { root ->
                 DashboardPayloadState.Loaded(
                     status = resolved.status,
                     session = resolved.session,
-                    items = summarize(targetSection, root),
+                    items = scopeDashboardManageItems(
+                        targetSection.path,
+                        effectiveProfileName,
+                        summarize(targetSection, root),
+                    ),
                     rawSummary = summarizeRoot(root),
                     fetchedAtMillis = System.currentTimeMillis(),
                 )
@@ -1796,13 +1872,18 @@ internal suspend fun prewarmDashboardManage(
     cookieStore: DashboardCookieStore,
     connectionId: String,
     dashboardUrl: String,
+    effectiveProfileName: String? = null,
     /** When non-null, the sweep's results are mirrored to the disk cache. */
     cacheDir: java.io.File? = null,
     context: android.content.Context,
 ) {
     if (dashboardUrl.isBlank()) return
     fun needsWarm(targetSection: DashboardManagementSection): Boolean {
-        val key = dashboardPayloadKey(connectionId, dashboardUrl, targetSection.path)
+        val key = dashboardPayloadKey(
+            connectionId,
+            dashboardUrl,
+            dashboardSectionRequestPath(targetSection.path, effectiveProfileName),
+        )
         return when (val existing = DashboardPayloadCache.states[key]) {
             is DashboardPayloadState.Loading -> false
             is DashboardPayloadState.Loaded ->
@@ -1838,13 +1919,14 @@ internal suspend fun prewarmDashboardManage(
                     val key = dashboardPayloadKey(
                         connectionId,
                         dashboardUrl,
-                        targetSection.path,
+                        dashboardSectionRequestPath(targetSection.path, effectiveProfileName),
                     )
                     if (!needsWarm(targetSection)) return@launch
                     val state = try {
                         fetchDashboardSectionStateWith(
                             client = client,
                             targetSection = targetSection,
+                            effectiveProfileName = effectiveProfileName,
                             preamble = preamble,
                             context = context,
                         )
@@ -2044,6 +2126,7 @@ private fun LoadedBody(
     actionMessage: String?,
     onAction: (DashboardSummaryItem, DashboardItemAction) -> Unit,
     onSectionAction: (DashboardSectionAction) -> Unit = {},
+    mcpOAuthSupported: Boolean = true,
 ) {
     // Pre-resolve action labels outside LazyColumn's non-Composable lambda
     val actionLabelChangeMainModel = stringResource(R.string.dashboard_section_action_change_main_model)
@@ -2121,10 +2204,13 @@ private fun LoadedBody(
             }
         } else {
             items(state.items) { item ->
+                val renderedItem = if (!mcpOAuthSupported) {
+                    item.copy(actions = item.actions.filterNot { it.kind == DashboardActionKind.AuthenticateMcp })
+                } else item
                 DashboardSummaryCard(
-                    item = item,
+                    item = renderedItem,
                     actionInFlight = actionInFlight,
-                    onAction = { action -> onAction(item, action) },
+                    onAction = { action -> onAction(renderedItem, action) },
                 )
             }
         }
@@ -3186,14 +3272,40 @@ private fun SkillsHubDialog(
 @Composable
 private fun McpOAuthDialog(
     item: DashboardSummaryItem,
+    effectiveProfileName: String?,
+    pending: PendingMcpOAuth?,
     clientFactory: () -> DashboardApiClient,
+    onPending: (PendingMcpOAuth) -> Unit,
+    onUnsupported: () -> Unit,
     onApproved: () -> Unit,
+    onFlowFailed: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var running by remember(item) { mutableStateOf(false) }
+    var running by remember(item, pending?.flowId) { mutableStateOf(pending != null) }
     var message by remember(item) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(pending?.flowId) {
+        val flow = pending ?: return@LaunchedEffect
+        running = true
+        val result = try {
+            withDashboardClient(clientFactory) { client ->
+                McpOAuthFlowCoordinator(client).resume(flow.flowId)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+        result.fold(
+            onSuccess = { onApproved() },
+            onFailure = { error ->
+                running = false
+                onFlowFailed(error.message ?: context.getString(R.string.dashboard_mcp_oauth_failed))
+            },
+        )
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.dashboard_mcp_oauth_title, item.title)) },
@@ -3213,25 +3325,49 @@ private fun McpOAuthDialog(
                     scope.launch {
                         val result = try {
                             withDashboardClient(clientFactory) { client ->
-                                McpOAuthFlowCoordinator(client).complete(
+                                McpOAuthFlowCoordinator(client).start(
                                     serverName = item.id.ifBlank { item.title },
-                                    profile = item.profile,
-                                ) { url ->
-                                    runCatching {
-                                        context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                        )
-                                    }.isSuccess
-                                }
+                                    profile = effectiveProfileName,
+                                )
                             }
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             Result.failure(e)
                         }
                         result.fold(
-                            onSuccess = { onApproved() },
+                            onSuccess = { started ->
+                                if (started.status == "approved") {
+                                    onApproved()
+                                    return@fold
+                                }
+                                val authorizationUrl = McpOAuthFlowCoordinator.validatedAuthorizationUrl(started)
+                                authorizationUrl.fold(
+                                    onSuccess = { url ->
+                                        val serverName = started.serverName.ifBlank { item.id.ifBlank { item.title } }
+                                        onPending(PendingMcpOAuth(started.flowId, serverName, effectiveProfileName))
+                                        val opened = runCatching {
+                                            context.startActivity(
+                                                Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                            )
+                                        }.isSuccess
+                                        if (!opened) {
+                                            onFlowFailed(context.getString(R.string.dashboard_mcp_oauth_no_browser))
+                                        }
+                                    },
+                                    onFailure = { error ->
+                                        running = false
+                                        message = error.message ?: context.getString(R.string.dashboard_mcp_oauth_failed)
+                                    },
+                                )
+                            },
                             onFailure = { error ->
                                 running = false
-                                message = error.message ?: context.getString(R.string.dashboard_mcp_oauth_failed)
+                                if (isUnsupportedMcpOAuthError(error)) {
+                                    onUnsupported()
+                                } else {
+                                    message = error.message ?: context.getString(R.string.dashboard_mcp_oauth_failed)
+                                }
                             },
                         )
                     }
@@ -3825,19 +3961,19 @@ private suspend fun DashboardApiClient.runDashboardAction(
         DashboardActionKind.ResumeCron -> resumeCronJob(id, profile = item.profile)
         DashboardActionKind.TriggerCron -> triggerCronJob(id, profile = item.profile)
         DashboardActionKind.DeleteCron -> deleteCronJob(id, profile = item.profile)
-        DashboardActionKind.EnableMcp -> setMcpServerEnabled(id, enabled = true)
-        DashboardActionKind.DisableMcp -> setMcpServerEnabled(id, enabled = false)
-        DashboardActionKind.TestMcp -> testMcpServer(id)
+        DashboardActionKind.EnableMcp -> setMcpServerEnabled(id, enabled = true, profile = item.profile)
+        DashboardActionKind.DisableMcp -> setMcpServerEnabled(id, enabled = false, profile = item.profile)
+        DashboardActionKind.TestMcp -> testMcpServer(id, profile = item.profile)
         DashboardActionKind.AuthenticateMcp ->
             Result.failure(IllegalStateException("Authenticate requires hosted OAuth flow"))
-        DashboardActionKind.RemoveMcp -> removeMcpServer(id)
-        DashboardActionKind.InstallMcpCatalog -> installMcpCatalogEntry(id)
+        DashboardActionKind.RemoveMcp -> removeMcpServer(id, profile = item.profile)
+        DashboardActionKind.InstallMcpCatalog -> installMcpCatalogEntry(id, profile = item.profile)
         DashboardActionKind.ViewProfileSoul -> getProfileSoul(id)
         DashboardActionKind.ActivateProfile -> setActiveProfile(id)
         DashboardActionKind.DeleteProfile -> deleteProfile(id)
-        DashboardActionKind.ActivateCustomEndpoint -> activateCustomEndpoint(id, item.profile)
+        DashboardActionKind.ActivateCustomEndpoint -> activateCustomEndpoint(id)
         DashboardActionKind.DeleteCustomEndpoint ->
-            deleteCustomEndpoint(id, item.profile).map { JsonObject(emptyMap()) }
+            deleteCustomEndpoint(id).map { JsonObject(emptyMap()) }
         DashboardActionKind.RevealEnvKey -> revealEnvVar(id)
         DashboardActionKind.ClearEnvKey -> deleteEnvVar(id)
         // Input-backed kinds are intercepted at the onAction layer and routed

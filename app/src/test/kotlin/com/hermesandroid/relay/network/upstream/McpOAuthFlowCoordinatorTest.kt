@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network.upstream
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.CancellationException
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -91,6 +92,40 @@ class McpOAuthFlowCoordinatorTest {
             assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("HTTP $code"))
             assertFalse(opened)
         }
+    }
+
+    @Test
+    fun resume_afterRecreationPollsExistingOpaqueFlowWithoutAuthorizationUrl() = runTest {
+        enqueueFlow("approved")
+        val recreated = McpOAuthFlowCoordinator(
+            DashboardApiClient(server.url("/").toString()),
+            pollDelayMillis = 0,
+            sleep = {},
+        )
+
+        val result = recreated.resume("opaque").getOrThrow()
+
+        assertEquals("approved", result.status)
+        assertEquals("/api/mcp/oauth/flows/opaque", server.takeRequest().path)
+    }
+
+    @Test
+    fun resume_preservesCoroutineCancellation() = runTest {
+        enqueueFlow("starting")
+        val coordinator = McpOAuthFlowCoordinator(
+            DashboardApiClient(server.url("/").toString()),
+            pollDelayMillis = 1,
+            maxPolls = 2,
+            sleep = { throw CancellationException("screen left") },
+        )
+
+        var cancelled = false
+        try {
+            coordinator.resume("opaque")
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+        assertTrue(cancelled)
     }
 
     private fun enqueueFlow(status: String, authorizationUrl: String? = null) {

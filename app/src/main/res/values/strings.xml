@@ -1871,6 +1871,7 @@
     <string name="dashboard_mcp_oauth_body">Hermes will open the provider in your browser. Return here after approving access; credentials stay on the Hermes server.</string>
     <string name="dashboard_mcp_oauth_approved">MCP authentication approved</string>
     <string name="dashboard_mcp_oauth_failed">MCP authentication failed</string>
+    <string name="dashboard_mcp_oauth_no_browser">No browser is available to complete MCP authentication.</string>
     <string name="dashboard_custom_endpoint_add">Add endpoint</string>
     <string name="dashboard_custom_endpoint_edit">Edit endpoint</string>
     <string name="dashboard_custom_endpoint_name">Name</string>

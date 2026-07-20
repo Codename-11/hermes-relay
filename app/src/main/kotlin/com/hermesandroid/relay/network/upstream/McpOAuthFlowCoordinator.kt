@@ -17,29 +17,20 @@ class McpOAuthFlowCoordinator(
     private val maxConsecutiveFailures: Int = 3,
     private val sleep: suspend (Long) -> Unit = { delay(it) },
 ) {
-    suspend fun complete(
+    suspend fun start(
         serverName: String,
         profile: String? = null,
-        openAuthorization: (String) -> Boolean,
-    ): Result<DashboardMcpOAuthFlow> = runCatching {
-        val started = client.startMcpOAuth(serverName, profile).getOrThrow()
+    ): Result<DashboardMcpOAuthFlow> = client.startMcpOAuth(serverName, profile).mapCatching { started ->
         if (started.status == "error") {
             throw IOException(started.error ?: "MCP OAuth failed to start")
         }
-        if (started.status == "approved") return@runCatching started
-        val authorizationUrl = started.authorizationUrl
-            ?: throw IOException("MCP OAuth server did not provide an authorization URL")
-        val parsedUrl = authorizationUrl.toHttpUrlOrNull()
-        if (parsedUrl?.scheme != "https") {
-            throw IOException("MCP OAuth authorization URL must use HTTPS")
-        }
-        if (!openAuthorization(authorizationUrl)) {
-            throw IOException("No browser is available to complete MCP OAuth")
-        }
+        started
+    }
 
+    suspend fun resume(flowId: String): Result<DashboardMcpOAuthFlow> = runCatching {
         var failures = 0
         repeat(maxPolls.coerceAtLeast(1)) {
-            val current = client.getMcpOAuthFlow(started.flowId)
+            val current = client.getMcpOAuthFlow(flowId)
             if (current.isFailure) {
                 failures += 1
                 if (failures >= maxConsecutiveFailures.coerceAtLeast(1)) {
@@ -58,5 +49,32 @@ class McpOAuthFlowCoordinator(
         throw IOException("MCP OAuth authorization timed out")
     }.onFailure { error ->
         if (error is CancellationException) throw error
+    }
+
+    suspend fun complete(
+        serverName: String,
+        profile: String? = null,
+        openAuthorization: (String) -> Boolean,
+    ): Result<DashboardMcpOAuthFlow> = runCatching {
+        val started = start(serverName, profile).getOrThrow()
+        if (started.status == "approved") return@runCatching started
+        val authorizationUrl = validatedAuthorizationUrl(started).getOrThrow()
+        if (!openAuthorization(authorizationUrl)) {
+            throw IOException("No browser is available to complete MCP OAuth")
+        }
+        resume(started.flowId).getOrThrow()
+    }.onFailure { error ->
+        if (error is CancellationException) throw error
+    }
+
+    companion object {
+        fun validatedAuthorizationUrl(flow: DashboardMcpOAuthFlow): Result<String> = runCatching {
+            val url = flow.authorizationUrl
+                ?: throw IOException("MCP OAuth server did not provide an authorization URL")
+            if (url.toHttpUrlOrNull()?.scheme != "https") {
+                throw IOException("MCP OAuth authorization URL must use HTTPS")
+            }
+            url
+        }
     }
 }
