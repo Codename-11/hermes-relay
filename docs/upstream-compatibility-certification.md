@@ -18,12 +18,34 @@ model/image-routing and turn-isolation changes:
 git merge-base --is-ancestor 73057ed16 HEAD
 git merge-base --is-ancestor ef9e0c98f HEAD
 git merge-base --is-ancestor 7d27a31ce HEAD
+git merge-base --is-ancestor 54d0948d3 HEAD
 ```
 
 An older baseline is not a Relay failure. Advance the test gateway first rather
 than introducing client branching for behavior upstream has already corrected.
 
 ## Static upstream gate
+
+The repository includes a non-mutating preflight runner. It requires a clean
+upstream checkout, proves the required commits are ancestors of the exact
+checkout, checks that every fixture still exists, and optionally executes the
+fixture groups with that checkout's virtual environment:
+
+```bash
+python scripts/check-upstream-compatibility.py \
+  --upstream /path/to/hermes-agent \
+  --run-tests \
+  --evidence-json /tmp/upstream-compatibility.json
+```
+
+The JSON is sanitized: it contains the upstream SHA, baseline/test outcomes,
+and explicit `not_run` live gates, but no hostname, checkout path, profile,
+token, or session content. A preflight-only invocation omits `--run-tests`.
+Pass `--python` when the upstream environment is not at `.venv/bin/python` (or
+`.venv/Scripts/python.exe` on Windows).
+
+The equivalent manual commands are retained below for upstream maintainers who
+do not have a Hermes-Relay checkout.
 
 From the upstream `hermes-agent` checkout:
 
@@ -114,3 +136,16 @@ For each row, retain:
 
 Never attach tokens, session contents, private hostnames, or raw environment
 configuration to the public evidence.
+
+### Claim boundaries
+
+| Evidence | Proves | Does not prove |
+|---|---|---|
+| Baseline ancestry | Required fixes are in the tested source tree | Deployed processes run that tree |
+| Static fixture groups | Deterministic routing, isolation, queue, compression, and delegation contracts | Provider behavior, restart recovery, or event delivery over a real socket |
+| Live gateway matrix | Session/provider behavior for the recorded runtime and profile | Android lifecycle/reconnect behavior |
+| Android reconnect smoke | Client mapping and recovery on the exercised device | Other providers, profiles, gateway modes, or OS versions |
+
+Do not close HRUI-032, HRUI-039, or HRUI-043 from the static JSON alone. Each
+item remains gated on the corresponding live row above, with the restart and
+provider-cost steps requiring explicit operator authorization.
