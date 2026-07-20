@@ -131,6 +131,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.text.DateFormat
 import java.util.Date
 
@@ -199,6 +200,24 @@ internal fun resolveMcpOAuthDialogItem(
 
 internal fun canStartMcpOAuth(capabilitySupported: Boolean, pending: PendingMcpOAuth?): Boolean =
     capabilitySupported && pending == null
+
+/** Stable, non-secret owner identity for a dashboard-hosted OAuth flow. */
+internal fun mcpOAuthRouteIdentity(connectionId: String, dashboardUrl: String): String? {
+    if (connectionId.isBlank()) return null
+    val url = dashboardUrl.trim().toHttpUrlOrNull() ?: return null
+    val normalized = url.newBuilder()
+        .username("")
+        .password("")
+        .query(null)
+        .fragment(null)
+        .build()
+        .toString()
+        .trimEnd('/')
+    return "$connectionId|$normalized"
+}
+
+internal fun canResumeMcpOAuth(pending: PendingMcpOAuth?, currentRouteIdentity: String?): Boolean =
+    pending != null && currentRouteIdentity != null && pending.routeIdentity == currentRouteIdentity
 
 internal fun scopeDashboardManageItems(
     sectionPath: String,
@@ -403,10 +422,11 @@ fun DashboardManagementScreen(
     var showCustomEndpointEditor by remember { mutableStateOf(false) }
 
     val section = managementSections[selectedTab]
-    val oauthRouteKey = "$dashboardUrl|${effectiveProfileName.orEmpty()}"
+    val connectionId = activeConnection?.id ?: "default"
+    val currentMcpOAuthRouteIdentity = mcpOAuthRouteIdentity(connectionId, dashboardUrl)
+    val oauthRouteKey = "${currentMcpOAuthRouteIdentity.orEmpty()}|${effectiveProfileName.orEmpty()}"
     val mcpOAuthSupported = oauthRouteKey in supportedOAuthRoutes
     val mcpOAuthStartAllowed = canStartMcpOAuth(mcpOAuthSupported, pendingMcpOAuth)
-    val connectionId = activeConnection?.id ?: "default"
     fun payloadKeyFor(targetSection: DashboardManagementSection): String =
         dashboardPayloadKey(
             connectionId,
@@ -1041,14 +1061,18 @@ fun DashboardManagementScreen(
     }
 
     val oauthDialogItem = resolveMcpOAuthDialogItem(oauthMcpItem, pendingMcpOAuth)
-    if (oauthDialogItem != null && !oauthDialogHidden) {
+    if (oauthDialogItem != null &&
+        !oauthDialogHidden &&
+        (pendingMcpOAuth == null || canResumeMcpOAuth(pendingMcpOAuth, currentMcpOAuthRouteIdentity))
+    ) {
         McpOAuthDialog(
             item = oauthDialogItem,
             effectiveProfileName = effectiveProfileName,
             pending = pendingMcpOAuth,
+            currentRouteIdentity = currentMcpOAuthRouteIdentity,
             clientFactory = clientFactory,
             onPending = { flow ->
-                oauthViewModel.remember(flow.flowId, flow.serverName, flow.profile)
+                oauthViewModel.remember(flow.flowId, flow.serverName, flow.profile, flow.routeIdentity)
             },
             onApproved = {
                 oauthViewModel.clear()
@@ -3297,6 +3321,7 @@ private fun McpOAuthDialog(
     item: DashboardSummaryItem,
     effectiveProfileName: String?,
     pending: PendingMcpOAuth?,
+    currentRouteIdentity: String?,
     clientFactory: () -> DashboardApiClient,
     onPending: (PendingMcpOAuth) -> Unit,
     onApproved: () -> Unit,
@@ -3308,8 +3333,9 @@ private fun McpOAuthDialog(
     var running by remember(item, pending?.flowId) { mutableStateOf(pending != null) }
     var message by remember(item) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(pending?.flowId) {
+    LaunchedEffect(pending?.flowId, currentRouteIdentity) {
         val flow = pending ?: return@LaunchedEffect
+        if (!canResumeMcpOAuth(flow, currentRouteIdentity)) return@LaunchedEffect
         running = true
         val result = try {
             withDashboardClient(clientFactory) { client ->
@@ -3365,9 +3391,22 @@ private fun McpOAuthDialog(
                                 }
                                 val authorizationUrl = McpOAuthFlowCoordinator.validatedAuthorizationUrl(started)
                                 authorizationUrl.fold(
-                                    onSuccess = { url ->
+                                    onSuccess = authorization@{ url ->
                                         val serverName = started.serverName.ifBlank { item.id.ifBlank { item.title } }
-                                        onPending(PendingMcpOAuth(started.flowId, serverName, effectiveProfileName))
+                                        val routeIdentity = currentRouteIdentity
+                                        if (routeIdentity == null) {
+                                            running = false
+                                            message = context.getString(R.string.dashboard_mcp_oauth_failed)
+                                            return@authorization
+                                        }
+                                        onPending(
+                                            PendingMcpOAuth(
+                                                started.flowId,
+                                                serverName,
+                                                effectiveProfileName,
+                                                routeIdentity,
+                                            ),
+                                        )
                                         val opened = runCatching {
                                             context.startActivity(
                                                 Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),

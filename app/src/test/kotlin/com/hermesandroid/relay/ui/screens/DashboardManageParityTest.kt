@@ -61,14 +61,14 @@ class DashboardManageParityTest {
         assertFalse(
             canStartMcpOAuth(
                 capabilitySupported = true,
-                pending = PendingMcpOAuth("flow-a", "server-a", "work"),
+                pending = PendingMcpOAuth("flow-a", "server-a", "work", "connection-a|https://a.example"),
             ),
         )
     }
 
     @Test
     fun dismissedPendingA_thenRequestedB_keepsDialogBoundToAAndBlocksB() {
-        val pendingA = PendingMcpOAuth("flow-a", "server-a", "work")
+        val pendingA = PendingMcpOAuth("flow-a", "server-a", "work", "connection-a|https://a.example")
         val requestedB = DashboardSummaryItem(id = "server-b", title = "Server B", profile = "work")
 
         val resolved = resolveMcpOAuthDialogItem(requestedB, pendingA)
@@ -76,5 +76,19 @@ class DashboardManageParityTest {
         assertEquals("server-a", resolved?.id)
         assertEquals("server-a", resolved?.title)
         assertFalse(canStartMcpOAuth(capabilitySupported = true, pending = pendingA))
+    }
+
+    @Test
+    fun connectionSwitch_holdsPendingFlowWithoutAllowingCrossHostResume() {
+        val routeA = mcpOAuthRouteIdentity(
+            "connection-a",
+            "HTTPS://user:password@Dashboard.Example:443/manage/?ticket=opaque#fragment",
+        )
+        val routeB = mcpOAuthRouteIdentity("connection-b", "https://other.example/")
+        val pendingA = PendingMcpOAuth("opaque-flow-a", "server-a", "work", routeA!!)
+
+        assertEquals("connection-a|https://dashboard.example/manage", routeA)
+        assertFalse(canResumeMcpOAuth(pendingA, routeB))
+        assertTrue(canResumeMcpOAuth(pendingA, routeA))
     }
 }

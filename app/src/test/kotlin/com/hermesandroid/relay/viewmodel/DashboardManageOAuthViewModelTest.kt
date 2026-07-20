@@ -15,13 +15,16 @@ class DashboardManageOAuthViewModelTest {
     fun pendingFlow_survivesRecreationWithOnlyOpaqueNonSecretFields() = runTest {
         val handle = SavedStateHandle()
         val first = DashboardManageOAuthViewModel(handle)
-        first.remember("opaque-flow", "hosted", "work")
+        first.remember("opaque-flow", "hosted", "work", "connection-a|https://dashboard.example")
         advanceUntilIdle()
 
         val recreated = DashboardManageOAuthViewModel(handle)
         advanceUntilIdle()
 
-        assertEquals(PendingMcpOAuth("opaque-flow", "hosted", "work"), recreated.pending.value)
+        assertEquals(
+            PendingMcpOAuth("opaque-flow", "hosted", "work", "connection-a|https://dashboard.example"),
+            recreated.pending.value,
+        )
         val persistedText = handle.keys().associateWith { key -> handle.get<Any?>(key) }.toString()
         assertFalse(persistedText.contains("authorization_url"))
         assertFalse(persistedText.contains("code="))
@@ -33,7 +36,7 @@ class DashboardManageOAuthViewModelTest {
     fun clearAndCapabilityRoutes_areStableAcrossRecreation() = runTest {
         val handle = SavedStateHandle()
         val first = DashboardManageOAuthViewModel(handle)
-        first.remember("opaque-flow", "hosted", null)
+        first.remember("opaque-flow", "hosted", null, "connection-a|https://dashboard.example")
         first.markUnsupported("https://dashboard.example|work")
         first.markSupported("https://dashboard.example|personal")
         first.clear()
