@@ -501,6 +501,7 @@ class GatewayChatClientTest {
 
         // Verify the create carried the title and the stored id was reported.
         val create = harness.awaitRpc("session.create")
+        assertEquals("webui", (create["source"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("hello", (create["title"] as? JsonPrimitive)?.contentOrNull)
 
         serverWs.send(harness.eventFrame("message.start", null, "live-1"))
@@ -905,6 +906,7 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         val resume = harness.awaitRpc("session.resume")
+        assertEquals("webui", (resume["source"] as? JsonPrimitive)?.contentOrNull)
         assertEquals(
             "20260101_010101_aaaaaa",
             (resume["session_id"] as? JsonPrimitive)?.contentOrNull,
