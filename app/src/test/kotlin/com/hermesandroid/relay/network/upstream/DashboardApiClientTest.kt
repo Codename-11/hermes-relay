@@ -501,6 +501,122 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun mcpOAuth_preservesProfileAndParsesOpaqueFlow() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"flow_id":"opaque-flow","server_name":"hosted","status":"authorization_required","authorization_url":"https://auth.example/authorize?state=secret"}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"flow_id":"opaque-flow","server_name":"hosted","status":"approved","authorization_url":null}""",
+            ),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        val started = client.startMcpOAuth("hosted tools", profile = "work profile").getOrThrow()
+        val approved = client.getMcpOAuthFlow(started.flowId).getOrThrow()
+
+        assertEquals("opaque-flow", started.flowId)
+        assertEquals("approved", approved.status)
+        assertEquals("/api/mcp/servers/hosted%20tools/auth?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/oauth/flows/opaque-flow", server.takeRequest().path)
+    }
+
+    @Test
+    fun mcpOAuthCapability_canonicalMissingFlowUsesReadOnlyGetAndIsSupported() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"detail":"OAuth flow not found or expired"}"""),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        assertTrue(client.supportsHostedMcpOAuth().getOrThrow())
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__", request.path)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun mcpOAuthCapability_genericFastApi404UsesReadOnlyGetAndIsUnsupported() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"detail":"Not Found"}"""),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        assertFalse(client.supportsHostedMcpOAuth().getOrThrow())
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__", request.path)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun mcpMutations_preserveSelectedProfile() = runTest {
+        repeat(5) {
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("{}"))
+        }
+        val client = DashboardApiClient(server.url("/").toString())
+
+        client.setMcpServerEnabled("hosted", true, "work profile").getOrThrow()
+        client.testMcpServer("hosted", "work profile").getOrThrow()
+        client.removeMcpServer("hosted", "work profile").getOrThrow()
+        client.installMcpCatalogEntry("hosted", profile = "work profile").getOrThrow()
+
+        assertEquals("/api/mcp/servers/hosted/enabled?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/servers/hosted/test?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/servers/hosted?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/catalog/install?profile=work%20profile", server.takeRequest().path)
+    }
+
+    @Test
+    fun customEndpointCrud_usesPublicDashboardRoutesAndRedactedResponse() = runTest {
+        val listBody = """
+            {"endpoints":[{"id":"local","name":"Local","base_url":"https://llm.example/v1","model":"qwen","models":["qwen"],"has_api_key":true,"api_key_preview":"sk-…1234","is_current":true}],"current":{"provider":"local","model":"qwen"}}
+        """.trimIndent()
+        repeat(5) {
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+                if (it == 2) """{"ok":true,"reachable":true,"message":"","models":["qwen"]}"""
+                else if (it == 3) """{"ok":true,"provider":"local","model":"qwen"}"""
+                else listBody,
+            ))
+        }
+        val client = DashboardApiClient(server.url("/").toString())
+        val draft = DashboardCustomEndpointDraft(
+            id = "local",
+            name = "Local",
+            baseUrl = "https://llm.example/v1",
+            model = "qwen",
+            apiKey = "never-persist-this",
+        )
+
+        val listed = client.getCustomEndpoints().getOrThrow()
+        client.saveCustomEndpoint(draft).getOrThrow()
+        val validation = client.validateCustomEndpoint(draft).getOrThrow()
+        client.activateCustomEndpoint("local").getOrThrow()
+        client.deleteCustomEndpoint("local").getOrThrow()
+
+        assertEquals("local", listed.currentProvider)
+        assertTrue(listed.endpoints.single().hasApiKey)
+        assertEquals(listOf("qwen"), validation.models)
+        assertEquals("/api/providers/custom-endpoints", server.takeRequest().path)
+        val save = server.takeRequest()
+        assertEquals("/api/providers/custom-endpoints", save.path)
+        assertTrue(save.body.readUtf8().contains("never-persist-this"))
+        assertEquals("/api/providers/custom-endpoints/validate", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints/local/activate", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints/local", server.takeRequest().path)
+    }
+
+    @Test
     fun profileActions_useActiveAndDeleteRoutes() = runTest {
         server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok": true}"""))
         server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"content": "soul", "exists": true}"""))
