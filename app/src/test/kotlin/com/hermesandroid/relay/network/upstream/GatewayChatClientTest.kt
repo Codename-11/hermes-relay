@@ -234,12 +234,20 @@ class GatewayClientHarness(
                     else -> JsonObject(emptyMap())
                 }
                 "config.set" -> when ((params["key"] as? JsonPrimitive)?.contentOrNull) {
+                    "model" -> buildJsonObject {
+                        put("key", "model")
+                        put("value", (params["value"] as? JsonPrimitive)?.contentOrNull ?: "")
+                    }
                     "reasoning" -> {
                         reasoningEffort = (params["value"] as? JsonPrimitive)?.contentOrNull ?: reasoningEffort
                         buildJsonObject {
                             put("key", "reasoning")
                             put("value", reasoningEffort)
                         }
+                    }
+                    "fast" -> buildJsonObject {
+                        put("key", "fast")
+                        put("value", (params["value"] as? JsonPrimitive)?.contentOrNull ?: "normal")
                     }
                     else -> JsonObject(emptyMap())
                 }
@@ -1195,6 +1203,20 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `session create binds explicit normal fast tier`() {
+        val r = Recorder()
+        client.sessionModelProvider = {
+            GatewaySessionModel(model = null, provider = null, reasoningEffort = null, fast = false)
+        }
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals(false, (create["fast"] as? JsonPrimitive)?.booleanOrNull)
+    }
+
+    @Test
     fun `session create omits reasoning_effort and fast when unset`() {
         val r = Recorder()
         // Model pick only → no per-session effort/fast override, so the new
@@ -1501,6 +1523,43 @@ class GatewayChatClientTest {
         assertEquals("reasoning", (rpc["key"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("low", (rpc["value"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("live-resumed", (rpc["session_id"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `model update targets live session without global scope`() {
+        val r = Recorder()
+        client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        val result = runBlocking { client.setModel("grok-4.3 --provider xai") }
+
+        assertTrue(result.isSuccess)
+        val rpc = harness.awaitRpc("config.set")
+        assertEquals("model", (rpc["key"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("grok-4.3 --provider xai", (rpc["value"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("live-resumed", (rpc["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse(rpc.containsKey("scope"))
+    }
+
+    @Test
+    fun `fast update targets live session without global scope`() {
+        val r = Recorder()
+        client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        val result = runBlocking { client.setFast(false) }
+
+        assertTrue(result.isSuccess)
+        assertFalse(result.getOrThrow())
+        val rpc = harness.awaitRpc("config.set")
+        assertEquals("fast", (rpc["key"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("normal", (rpc["value"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("live-resumed", (rpc["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse(rpc.containsKey("scope"))
     }
 
     // --- Edit & regenerate ---

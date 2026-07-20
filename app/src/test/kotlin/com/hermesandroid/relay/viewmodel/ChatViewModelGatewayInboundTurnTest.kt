@@ -140,6 +140,25 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun gatewaySessionCreateProviderPreservesExplicitFastFalse() {
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "session.info",
+                buildJsonObject { put("fast", false) },
+                "live-resumed",
+            ),
+        )
+        val deadline = System.currentTimeMillis() + 5_000
+        while (viewModel.fastEnabled.value != false) {
+            shadowOf(Looper.getMainLooper()).idle()
+            if (System.currentTimeMillis() >= deadline) error("fast=false did not reconcile")
+            Thread.sleep(20)
+        }
+
+        assertEquals(false, gatewayClient.sessionModelProvider()?.fast)
+    }
+
+    @Test
     fun dashboardOnlyConnectionCanSendWithoutApiClient() {
         viewModel.updateGatewayClient(null)
         gatewayClient.clearSession()

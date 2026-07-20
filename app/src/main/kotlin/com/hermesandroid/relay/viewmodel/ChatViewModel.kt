@@ -1092,10 +1092,11 @@ class ChatViewModel : ViewModel() {
             val model = _selectedModelOverride.value?.takeIf { it.isNotBlank() }
             val provider = _selectedProviderOverride.value?.takeIf { it.isNotBlank() }
             val effort = _selectedReasoningEffort.value?.takeIf { it.isNotBlank() }
-            // Only pin fast when explicitly ON (upstream treats fast=false the
-            // same as omitting → profile default tier), so a null/false leaves
-            // the profile's own service tier intact.
-            val fast = _fastEnabled.value?.takeIf { it }
+            // Contract v4 distinguishes all three states: null omits the field
+            // and inherits the profile tier, true pins priority, and false pins
+            // normal. Do not filter false here or a user's explicit Fast-off
+            // pick would silently inherit a priority-by-default profile.
+            val fast = _fastEnabled.value
             if (model != null || effort != null || fast != null) {
                 GatewaySessionModel(
                     model = model,
