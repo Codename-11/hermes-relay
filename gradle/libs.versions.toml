@@ -27,7 +27,7 @@ camera = "1.6.1"
 play-publisher = "4.0.0"
 media3 = "1.10.1"
 androidVad = "2.0.10"
-spatialsdk = "0.13.1"
+spatialsdk = "0.13.2"
 play-app-update = "2.1.0"
 
 [libraries]
