@@ -34,11 +34,16 @@ TEST_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "isolation_queue_and_delegation",
+        "isolation_queue_and_lineage",
         (
             "tests/test_tui_gateway_server.py",
             "-k",
             "turn_isolation or compression_lineage or queued_prompt",
+        ),
+    ),
+    (
+        "delegation_ownership",
+        (
             "tests/cli/test_cli_async_delegation_delivery.py",
         ),
     ),

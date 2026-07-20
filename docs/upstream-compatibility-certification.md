@@ -59,7 +59,9 @@ uv run pytest -q \
 
 uv run pytest -q \
   tests/test_tui_gateway_server.py \
-  -k "turn_isolation or compression_lineage or queued_prompt" \
+  -k "turn_isolation or compression_lineage or queued_prompt"
+
+uv run pytest -q \
   tests/cli/test_cli_async_delegation_delivery.py
 ```
 
