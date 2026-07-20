@@ -175,6 +175,7 @@ import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
+import com.hermesandroid.relay.ui.components.ImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
@@ -197,6 +198,7 @@ import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.SubagentLane
 import com.hermesandroid.relay.ui.components.ToolProgressCard
+import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
@@ -2339,12 +2341,16 @@ fun ChatScreen(
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
                                 laneGroups[null]?.forEach { toolCall ->
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    when (toolDisplay) {
-                                        "compact" -> CompactToolCall(toolCall = toolCall)
-                                        else -> ToolProgressCard(
-                                            toolCall = toolCall,
-                                            messageTimestamp = message.timestamp,
-                                        )
+                                    if (toolCall.showsImageGenerationPlaceholder()) {
+                                        ImageGenerationPlaceholder()
+                                    } else {
+                                        when (toolDisplay) {
+                                            "compact" -> CompactToolCall(toolCall = toolCall)
+                                            else -> ToolProgressCard(
+                                                toolCall = toolCall,
+                                                messageTimestamp = message.timestamp,
+                                            )
+                                        }
                                     }
                                 }
                                 laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->

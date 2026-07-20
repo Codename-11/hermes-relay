@@ -2466,6 +2466,7 @@
     <string name="tool_progress_status_completed">完成した</string>
     <string name="tool_progress_status_failed">失敗した</string>
     <string name="tool_progress_status_running">走っている</string>
+    <string name="image_generation_rendering">画像を生成中</string>
     <string name="tool_progress_cd_collapse">崩壊</string>
     <string name="tool_progress_cd_expand">拡大する</string>
 

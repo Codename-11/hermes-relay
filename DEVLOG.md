@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-20 — Image generation placeholder during turns
+
+Android chat now specializes the generic tool lifecycle for active
+`image_generate` calls. While the tool is pending, the message shows a
+theme-aware procedural diffusion canvas with a polite live-region announcement
+instead of a generic tool card. The completed tool result still replaces the
+placeholder through the existing tool completion path. Coverage includes pure
+JVM selection/denoise tests and a Compose accessibility snapshot test.
+
 ## 2026-07-19 — Android 1.4.9 release preparation
 
 Android advanced to 1.4.9 with versionCode 32 after the dashboard-primary

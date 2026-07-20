@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android shows a diffusion animation while Hermes generates an image.** Active `image_generate` tool calls render a theme-aware placeholder in chat until the result arrives; no special server protocol is required.
+
 ### Fixed
 
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.

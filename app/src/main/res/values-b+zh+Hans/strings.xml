@@ -2452,6 +2452,7 @@
     <string name="tool_progress_status_completed">已完成</string>
     <string name="tool_progress_status_failed">失败</string>
     <string name="tool_progress_status_running">运行中</string>
+    <string name="image_generation_rendering">正在生成图像</string>
     <string name="tool_progress_cd_collapse">折叠</string>
     <string name="tool_progress_cd_expand">展开</string>
 
