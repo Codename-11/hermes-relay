@@ -53,6 +53,12 @@ intentionally remain outside that code batch:
   `docs/upstream-contributions.md`. Until then, document the narrow race where a
   disconnect or Stop after `/model --once` succeeds but before prompt submission
   can leave the override armed for a later prompt.
+- Keep HRUI-052 (`/new` session-control reset parity) blocked until upstream
+  exposes a reset on the active gateway session or an authoritative reset event.
+  `slash.exec` runs the command in a separate worker today, and the mirrored
+  slash side effects do not reset the active TUI session's agent. Relay must not
+  clear local model, reasoning, or Fast pins from a successful command response
+  that did not mutate the agent those controls describe.
 - Upstream the first-class commentary event and profile-scoped cron execution
   attempts API before adding Relay client parsers for those surfaces.
 - Keep Standard voice labeled host-global until upstream exposes a stable
