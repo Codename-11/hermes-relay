@@ -53,6 +53,36 @@ class AgentDisplayTest {
     }
 
     @Test
+    fun effectiveDisplayProfile_resolvesPinnedServerDefaultToNamedProfile() {
+        val pinned = Profile(
+            name = "pinned",
+            model = "gpt-pinned",
+            description = "Pinned profile",
+        )
+
+        val effective = AgentDisplay.effectiveDisplayProfile(
+            selectedProfile = null,
+            profiles = listOf(defaultProfile, pinned, mizu),
+            serverDefaultProfileName = "pinned",
+        )
+
+        assertEquals(pinned, effective)
+    }
+
+    @Test
+    fun effectiveDisplayProfile_keepsExplicitSelectionAheadOfPinnedDefault() {
+        val pinned = Profile(name = "pinned", model = "gpt-pinned")
+
+        val effective = AgentDisplay.effectiveDisplayProfile(
+            selectedProfile = mizu,
+            profiles = listOf(defaultProfile, pinned, mizu),
+            serverDefaultProfileName = "pinned",
+        )
+
+        assertEquals(mizu, effective)
+    }
+
+    @Test
     fun agentName_usesProfileNameNotVerboseDescription() {
         // The name slot shows the NAME, even when a (verbose) description exists.
         assertEquals(

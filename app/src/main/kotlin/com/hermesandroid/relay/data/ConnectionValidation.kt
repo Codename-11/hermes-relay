@@ -52,6 +52,45 @@ object ConnectionValidation {
         kind = "relay URL",
     )
 
+    /** Dashboard/Gateway URL must be HTTP(S) when configured. */
+    fun validateDashboardUrl(raw: String): String? = validateOptionalUrl(
+        raw = raw,
+        allowedSchemes = setOf("http", "https"),
+        kind = "Dashboard URL",
+    )
+
+    /** A blank API server means the optional SSE fallback is not configured. */
+    fun validateOptionalApiServerUrl(raw: String): String? = validateOptionalUrl(
+        raw = raw,
+        allowedSchemes = setOf("http", "https"),
+        kind = "API server URL",
+    )
+
+    /** A blank Relay URL means Relay-only power features are not configured. */
+    fun validateOptionalRelayUrl(raw: String): String? = validateOptionalUrl(
+        raw = raw,
+        allowedSchemes = setOf("ws", "wss"),
+        kind = "relay URL",
+    )
+
+    /**
+     * Validate the independently optional connection surfaces. A connection
+     * needs at least one endpoint, but Dashboard-only, API-only, and
+     * Relay-only records are all structurally valid.
+     */
+    fun validateConnectionEndpoints(
+        dashboardUrl: String?,
+        apiServerUrl: String,
+        relayUrl: String,
+    ): String? {
+        if (dashboardUrl.isNullOrBlank() && apiServerUrl.isBlank() && relayUrl.isBlank()) {
+            return "Configure at least one Hermes endpoint"
+        }
+        return validateDashboardUrl(dashboardUrl.orEmpty())
+            ?: validateOptionalApiServerUrl(apiServerUrl)
+            ?: validateOptionalRelayUrl(relayUrl)
+    }
+
     /**
      * Catches the "added the same server twice" mistake. Matches when the
      * candidate's api + relay URLs exactly match an existing connection
@@ -67,11 +106,32 @@ object ConnectionValidation {
         apiServerUrl: String,
         relayUrl: String,
         excludeId: String? = null,
+        dashboardUrl: String? = null,
     ): Connection? = connections.firstOrNull { c ->
-        c.id != excludeId &&
-            c.apiServerUrl.equals(apiServerUrl, ignoreCase = true) &&
-            c.relayUrl.equals(relayUrl, ignoreCase = true)
+        if (c.id == excludeId) {
+            false
+        } else {
+            val legacyExactMatch =
+                (apiServerUrl.isNotBlank() || relayUrl.isNotBlank()) &&
+                    urlsEqual(c.apiServerUrl, apiServerUrl) &&
+                    urlsEqual(c.relayUrl, relayUrl)
+            val candidateDashboard = dashboardUrl
+                ?.takeIf { it.isNotBlank() }
+                ?: Connection.deriveDefaultDashboardUrl(apiServerUrl)
+            val dashboardMatch = !candidateDashboard.isNullOrBlank() &&
+                urlsEqual(c.resolvedDashboardUrl, candidateDashboard)
+            legacyExactMatch || dashboardMatch
+        }
     }
+
+    private fun validateOptionalUrl(
+        raw: String,
+        allowedSchemes: Set<String>,
+        kind: String,
+    ): String? = if (raw.isBlank()) null else validateUrl(raw, allowedSchemes, kind)
+
+    private fun urlsEqual(first: String, second: String): Boolean =
+        first.trim().trimEnd('/').equals(second.trim().trimEnd('/'), ignoreCase = true)
 
     private fun validateUrl(raw: String, allowedSchemes: Set<String>, kind: String): String? {
         val trimmed = raw.trim()

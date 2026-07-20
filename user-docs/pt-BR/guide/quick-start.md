@@ -25,8 +25,8 @@ instale o APK assinado de **Sideload**. As duas versões podem ficar instaladas 
 
 ## 2. Inicie o Hermes
 
-O servidor de API do Hermes precisa estar ativo e acessível pelo celular. Se
-necessário, inicie o host com `hermes gateway`. Consulte
+O Dashboard/Gateway do Hermes precisa estar ativo e acessível pelo celular. Se
+necessário, inicie-o com `hermes dashboard`. Consulte
 [Instalação e configuração](/pt-BR/guide/getting-started) para preparar o servidor.
 
 ## 3. Conecte
@@ -34,16 +34,19 @@ necessário, inicie o host com `hermes gateway`. Consulte
 Abra o aplicativo e vá até **Connect**. Você pode:
 
 1. Usar **Scan for Hermes on LAN** para localizar o servidor na rede local.
-2. Informar um endereço como `http://<host>:8642` e a chave de API configurada.
-3. Escanear um QR de configuração que contenha a URL e a chave.
+2. Informar o endereço do Dashboard/Gateway, como `http://<host>:9119`.
+3. Usar **Scan setup QR**; QRs API-first antigos continuam aceitos para compatibilidade avançada.
+4. Entrar com o provedor configurado do dashboard quando solicitado.
 
-Se o host estiver intencionalmente sem `API_SERVER_KEY`, deixe a chave vazia.
+O servidor de API é um fallback automático opcional ou uma opção avançada de
+compatibilidade headless; o Relay continua opcional para extensões.
 
 ## 4. Confira o status
 
 - **Chat · Ready** significa que você já pode enviar mensagens.
 - **Manage** pode pedir login no dashboard.
 - **Voice** é liberado pela mesma sessão do dashboard.
+- **API fallback** pode ficar indisponível sem bloquear o Chat.
 - **Relay** pode continuar sem pareamento e não bloqueia o caminho padrão.
 
 ## 5. Envie a primeira mensagem

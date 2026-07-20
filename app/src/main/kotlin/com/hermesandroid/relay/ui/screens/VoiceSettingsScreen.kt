@@ -139,6 +139,7 @@ fun VoiceSettingsScreen(
     voiceViewModel: VoiceViewModel,
     voiceClient: RelayVoiceClient?,
     selectedProfile: Profile? = null,
+    displayProfile: Profile? = selectedProfile,
     standardVoiceAvailability: StandardVoiceAvailability = StandardVoiceAvailability.Unknown,
     /**
      * Non-null endpoint display label (e.g. "Tailscale") when the sign-in
@@ -349,7 +350,7 @@ fun VoiceSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             VoiceProfileSummaryCard(
-                selectedProfile = selectedProfile,
+                displayProfile = displayProfile,
                 currentEngine = currentEngine,
                 output = configState.voiceOutputConfig,
                 realtime = configState.realtimeConfig,
@@ -362,7 +363,7 @@ fun VoiceSettingsScreen(
                 relayVoiceReady = relayVoiceReady,
                 currentEngine = currentEngine,
                 configState = configState,
-                selectedProfile = selectedProfile,
+                displayProfile = displayProfile,
             )
 
             VoiceModePresetCard(
@@ -443,7 +444,7 @@ fun VoiceSettingsScreen(
                 currentEngine = currentEngine,
                 relayVoiceReady = relayVoiceReady,
                 configState = configState,
-                selectedProfile = selectedProfile,
+                displayProfile = displayProfile,
                 voiceViewModel = voiceViewModel,
             )
         }
@@ -460,7 +461,7 @@ private fun VoiceScopeBanner(
     relayVoiceReady: Boolean,
     currentEngine: VoiceEngineMode,
     configState: VoiceConfigUiState,
-    selectedProfile: Profile?,
+    displayProfile: Profile?,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -519,7 +520,7 @@ private fun VoiceScopeBanner(
                 } else {
                     ProviderRow(
                         label = stringResource(R.string.voice_settings_label_profile),
-                        value = voiceProfileLabel(profileRaw, selectedProfile),
+                        value = voiceProfileLabel(profileRaw, displayProfile),
                     )
                     ProviderRow(
                         label = stringResource(R.string.voice_settings_label_scope),
@@ -2421,7 +2422,7 @@ private fun TestCurrentEngineCard(
     currentEngine: VoiceEngineMode,
     relayVoiceReady: Boolean,
     configState: VoiceConfigUiState,
-    selectedProfile: Profile?,
+    displayProfile: Profile?,
     voiceViewModel: VoiceViewModel,
 ) {
     val context = LocalContext.current
@@ -2461,8 +2462,8 @@ private fun TestCurrentEngineCard(
                 ProviderRow(
                     label = stringResource(R.string.voice_settings_label_profile),
                     value = configState.voiceOutputConfig?.let { config ->
-                        voiceProfileLabel(config.profile, selectedProfile)
-                    } ?: voiceProfileLabel(null, selectedProfile),
+                        voiceProfileLabel(config.profile, displayProfile)
+                    } ?: voiceProfileLabel(null, displayProfile),
                 )
                 ProviderRow(
                     label = stringResource(R.string.voice_settings_label_voice),
@@ -3222,7 +3223,7 @@ private fun voiceOutputSummary(
 
 @Composable
 private fun VoiceProfileSummaryCard(
-    selectedProfile: Profile?,
+    displayProfile: Profile?,
     currentEngine: VoiceEngineMode,
     output: VoiceOutputConfig?,
     realtime: RealtimeVoiceConfig?,
@@ -3230,7 +3231,7 @@ private fun VoiceProfileSummaryCard(
     realtimeVoice: String,
 ) {
     val (title, subtitle) = voiceOutputSummary(
-        profile = selectedProfile,
+        profile = displayProfile,
         currentEngine = currentEngine,
         output = output,
         realtime = realtime,

@@ -91,15 +91,19 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.gradientBorder
+import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
+import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 
 /**
  * Root Settings destination. After the 2026-04-11 split, Settings is a
@@ -176,6 +180,7 @@ fun SettingsScreen(
     // ring-accent, and subtitle.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
@@ -183,27 +188,45 @@ fun SettingsScreen(
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
     val apiServerReachable by connectionViewModel.apiServerReachable.collectAsState()
     val apiServerHealth by connectionViewModel.apiServerHealth.collectAsState()
+    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
     val relayPaired = authState is AuthState.Paired
-    val dashboardStatus = activeConnection?.dashboardLastStatus
-    val dashboardSignInRequired =
-        dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
+    val chatRuntimeStatus = resolveChatRuntimeStatus(
+        gateway = when (gatewayAvailability) {
+            GatewayAvailability.Ready -> ChatTransportReadiness.Ready
+            GatewayAvailability.Unknown -> ChatTransportReadiness.Connecting
+            GatewayAvailability.SignInRequired,
+            GatewayAvailability.Unreachable,
+            GatewayAvailability.Unsupported -> ChatTransportReadiness.Unavailable
+        },
+        apiSse = when {
+            activeConnection?.apiServerUrl.isNullOrBlank() -> ChatTransportReadiness.NotConfigured
+            apiServerReachable -> ChatTransportReadiness.Ready
+            apiServerHealth == ConnectionViewModel.HealthStatus.Probing -> ChatTransportReadiness.Connecting
+            apiServerHealth == ConnectionViewModel.HealthStatus.Unreachable -> ChatTransportReadiness.Unavailable
+            else -> ChatTransportReadiness.Connecting
+        },
+    )
     // Status pills are exception-only: a pill appears only when the surface
     // needs attention (missing / checking / offline / sign-in). When it's
     // healthy the pill is null so the card + agent summary stay clean.
-    val apiPill: SettingsStatusPillModel? = when {
-        activeConnection?.apiServerUrl.isNullOrBlank() -> SettingsStatusPillModel(
-            label = stringResource(R.string.settings_api_missing),
-            tone = SettingsStatusTone.Warning,
-        )
-        apiServerHealth == ConnectionViewModel.HealthStatus.Probing -> SettingsStatusPillModel(
-            label = stringResource(R.string.settings_api_checking),
+    // Chat is transport-level: Gateway is primary and API is only fallback.
+    // A healthy transport suppresses warnings from the other optional surface.
+    val chatPill: SettingsStatusPillModel? = when {
+        chatRuntimeStatus is ChatRuntimeStatus.Connected -> null
+        chatRuntimeStatus == ChatRuntimeStatus.Connecting -> null
+        gatewayAvailability == GatewayAvailability.SignInRequired -> SettingsStatusPillModel(
+            label = stringResource(R.string.settings_dashboard_sign_in),
             tone = SettingsStatusTone.Info,
         )
-        apiServerReachable -> null
-        apiServerHealth == ConnectionViewModel.HealthStatus.Unreachable -> SettingsStatusPillModel(
-            label = stringResource(R.string.settings_api_offline),
+        activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> SettingsStatusPillModel(
+            label = stringResource(R.string.settings_dashboard_missing),
+            tone = SettingsStatusTone.Warning,
+        )
+        gatewayAvailability == GatewayAvailability.Unreachable ||
+            gatewayAvailability == GatewayAvailability.Unsupported -> SettingsStatusPillModel(
+            label = stringResource(R.string.settings_dashboard_offline),
             tone = SettingsStatusTone.Warning,
         )
         else -> null
@@ -213,37 +236,17 @@ fun SettingsScreen(
             label = stringResource(R.string.settings_dashboard_missing),
             tone = SettingsStatusTone.Warning,
         )
-        dashboardStatus == null -> null
-        !dashboardStatus.reachable -> SettingsStatusPillModel(
-            label = stringResource(R.string.settings_dashboard_offline),
-            tone = SettingsStatusTone.Warning,
-        )
-        dashboardSignInRequired -> SettingsStatusPillModel(
+        gatewayAvailability == GatewayAvailability.Ready -> null
+        gatewayAvailability == GatewayAvailability.SignInRequired -> SettingsStatusPillModel(
             label = stringResource(R.string.settings_dashboard_sign_in),
             tone = SettingsStatusTone.Info,
         )
-        dashboardStatus.authenticated == true -> null
+        gatewayAvailability == GatewayAvailability.Unreachable ||
+            gatewayAvailability == GatewayAvailability.Unsupported -> SettingsStatusPillModel(
+            label = stringResource(R.string.settings_dashboard_offline),
+            tone = SettingsStatusTone.Warning,
+        )
         else -> null
-    }
-    val relayPill: SettingsStatusPillModel? = when (relayUiState) {
-        RelayUiState.Connected -> null
-        RelayUiState.Connecting -> SettingsStatusPillModel(
-            label = stringResource(R.string.settings_relay_reconnecting),
-            tone = SettingsStatusTone.Info,
-        )
-        RelayUiState.Stale -> SettingsStatusPillModel(
-            label = stringResource(R.string.settings_relay_stale),
-            tone = SettingsStatusTone.Warning,
-        )
-        RelayUiState.Expired -> SettingsStatusPillModel(
-            label = stringResource(R.string.settings_pairing_expired),
-            tone = SettingsStatusTone.Warning,
-        )
-        RelayUiState.Disconnected -> SettingsStatusPillModel(
-            label = if (relayPaired) stringResource(R.string.settings_relay_offline) else stringResource(R.string.settings_requires_pairing),
-            tone = SettingsStatusTone.Warning,
-        )
-        RelayUiState.NotConfigured -> null
     }
     // The Power tools below all ride the relay plugin. Rather than stamp an
     // identical badge on every card (noise, not signal), the dependency is
@@ -323,10 +326,6 @@ fun SettingsScreen(
             // + one-line `connection · model · personality` subtitle).
             // Tapping opens AgentInfoSheet inline so users can change
             // Connection / Profile / Personality without leaving Settings.
-            val effectiveProfile = AgentDisplay.effectiveDisplayProfile(
-                selectedProfile = selectedProfile,
-                profiles = agentProfiles,
-            )
             ActiveAgentCard(
                 agentName = AgentDisplay.agentName(
                     profile = effectiveProfile,
@@ -342,7 +341,7 @@ fun SettingsScreen(
                     defaultPersonality = defaultPersonality,
                 ),
                 isCustomized = selectedProfile != null || selectedPersonality != "default",
-                statusPills = listOfNotNull(apiPill, dashboardPill, relayPill),
+                statusPills = listOfNotNull(chatPill),
                 onClick = { showAgentSheet = true },
                 isDarkTheme = isDarkTheme,
             )
@@ -354,8 +353,7 @@ fun SettingsScreen(
             // `default` profile — the relay always advertises one, and
             // it IS the effective agent. Still falls back to disabled
             // when no profiles have loaded yet (unpaired / pre-auth).
-            val inspectorTarget = selectedProfile
-                ?: agentProfiles.firstOrNull { it.name == "default" }
+            val inspectorTarget = effectiveProfile
                 ?: agentProfiles.firstOrNull()
             ProfileInspectorCard(
                 activeProfile = inspectorTarget,
@@ -438,7 +436,7 @@ fun SettingsScreen(
                 icon = Icons.AutoMirrored.Filled.Chat,
                 title = stringResource(R.string.settings_chat),
                 subtitle = stringResource(R.string.settings_chat_desc),
-                badge = apiPill,
+                badge = chatPill,
                 onClick = onNavigateToChatSettings,
                 isDarkTheme = isDarkTheme,
             )

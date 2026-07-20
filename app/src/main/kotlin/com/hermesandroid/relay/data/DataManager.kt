@@ -72,10 +72,11 @@ class DataManager(
      *  - v5 (2026-06-08): full connection backups. Adds active connection id
      *    and `connectionSecrets`, including API keys, relay tokens, device id,
      *    paired metadata, and dashboard cookies.
+     *  - v6 (2026-07-19): preserves the optional pinned startup connection.
      */
     @Serializable
     data class AppBackup(
-        val version: Int = 5,
+        val version: Int = 6,
         val serverUrl: String? = null, // legacy (v1 compat)
         val apiServerUrl: String? = null,
         val relayUrl: String? = null,
@@ -83,6 +84,7 @@ class DataManager(
         val onboardingCompleted: Boolean = false,
         val connections: List<Connection> = emptyList(),
         val activeConnectionId: String? = null,
+        val startupConnectionId: String? = null,
         val containsSensitiveData: Boolean = true,
         val connectionSecrets: List<ConnectionSecretBackup> = emptyList(),
         val exportedAt: Long = System.currentTimeMillis(),
@@ -160,6 +162,7 @@ class DataManager(
             onboardingCompleted = onboardingCompleted,
             connections = connectionsSnapshot,
             activeConnectionId = connectionStore?.activeConnectionId?.value,
+            startupConnectionId = connectionStore?.startupConnectionId?.value,
             containsSensitiveData = true,
             connectionSecrets = connectionSecrets,
             exportedAt = System.currentTimeMillis(),
@@ -173,6 +176,7 @@ class DataManager(
         store.replaceConnections(
             connections = backup.connections,
             activeConnectionId = backup.activeConnectionId,
+            startupConnectionId = backup.startupConnectionId,
         )
 
         val connectionsById = backup.connections.associateBy { it.id }

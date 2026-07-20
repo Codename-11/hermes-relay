@@ -208,7 +208,10 @@ import androidx.compose.ui.text.style.TextAlign
 import kotlin.math.roundToInt
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ChatConnectState
+import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.voice.VoiceOverlayHost
 import com.hermesandroid.relay.voice.VoiceOverlaySession
@@ -539,6 +542,7 @@ fun ChatScreen(
     // and is consumed by the AgentInfoSheet for the Profile section. The list
     // of available profiles itself now lives entirely inside the sheet.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     // Server-advertised profile catalog — used to locate the "default" profile
     // so the header can render its description/model when no explicit pick
     // has been made (the /api/config fallback is more useful than the bare
@@ -809,8 +813,7 @@ fun ChatScreen(
                     provider = activeVoiceProvider,
                     model = activeVoiceModel,
                     voice = activeVoiceName,
-                    profileName = selectedProfile?.description?.takeIf { it.isNotBlank() }
-                        ?: selectedProfile?.name,
+                    profileName = AgentDisplay.profileDisplayName(effectiveProfile),
                     configScope = activeVoiceScope,
                     outputEnabled = activeVoiceEnabled,
                     fallbackEnabled = voiceOutputConfig?.fallback_enabled,
@@ -1379,23 +1382,6 @@ fun ChatScreen(
         }
     }
 
-    // Display profile - the one the header should reflect. Priority:
-    //   1. explicit user pick (selectedProfile)
-    //   2. server-advertised profile named "default"
-    //   3. null (fall back to personality-derived name)
-    //
-    // Computed as a derived state so the header cross-fades when the user
-    // picks a new profile OR when the server's profile catalog finishes
-    // loading and a "default" entry shows up.
-    val effectiveProfile by remember(selectedProfile, agentProfiles) {
-        derivedStateOf {
-            AgentDisplay.effectiveDisplayProfile(
-                selectedProfile = selectedProfile,
-                profiles = agentProfiles,
-            )
-        }
-    }
-
     // Agent display name — used in header and info dialog.
     //
     // Precedence mirrors the messaging-app pattern: show the profile's
@@ -1439,7 +1425,7 @@ fun ChatScreen(
         // drawer itself, so the overlay's pointer scrim alone can't block it.
         gesturesEnabled = !voiceUiState.voiceMode,
         drawerContent = {
-            val drawerTitle = if (selectedProfile != null) {
+            val drawerTitle = if (effectiveProfile != null) {
                 stringResource(R.string.chat_profile_sessions, agentDisplayName)
             } else {
                 stringResource(R.string.chat_server_default_sessions)
@@ -1517,17 +1503,36 @@ fun ChatScreen(
                     }
                 },
                 title = {
-                    val headerApiReachable = apiReachable || isStreaming
-                    val isConnecting = isChatConnecting ||
-                        (!headerApiReachable && chatMode != ChatMode.DISCONNECTED)
+                    // Resolve the same Gateway-first, API-fallback runtime
+                    // model used elsewhere; Relay is intentionally unrelated
+                    // to Chat health.
+                    val chatRuntimeStatus = resolveChatRuntimeStatus(
+                        gateway = when (chatGatewayAvailability) {
+                            GatewayAvailability.Ready -> ChatTransportReadiness.Ready
+                            GatewayAvailability.Unknown -> if (
+                                activeConnection?.resolvedDashboardUrl.isNullOrBlank()
+                            ) ChatTransportReadiness.NotConfigured else ChatTransportReadiness.Connecting
+                            GatewayAvailability.SignInRequired,
+                            GatewayAvailability.Unreachable,
+                            GatewayAvailability.Unsupported -> ChatTransportReadiness.Unavailable
+                        },
+                        apiSse = when {
+                            apiReachable -> ChatTransportReadiness.Ready
+                            activeConnection?.apiServerUrl.isNullOrBlank() -> ChatTransportReadiness.NotConfigured
+                            chatMode != ChatMode.DISCONNECTED -> ChatTransportReadiness.Connecting
+                            else -> ChatTransportReadiness.Unavailable
+                        },
+                    )
+                    val headerChatReady = chatRuntimeStatus is ChatRuntimeStatus.Connected || isStreaming
+                    val isConnecting = isChatConnecting || chatRuntimeStatus is ChatRuntimeStatus.Connecting
                     // Once we've been connected this session, a later drop reads as
                     // "Reconnecting…" (we had it, we're getting it back) rather than
                     // a first-time "Connecting…". Honest wording for the WhatsApp-
                     // style subtitle status.
                     var everConnected by remember { mutableStateOf(false) }
-                    if (headerApiReachable) everConnected = true
+                    if (headerChatReady) everConnected = true
                     val statusText = when {
-                        headerApiReachable -> if (isStreaming) {
+                        headerChatReady -> if (isStreaming) {
                             stringResource(R.string.chat_streaming)
                         } else {
                             stringResource(R.string.chat_connected_label)
@@ -1540,7 +1545,7 @@ fun ChatScreen(
                         else -> stringResource(R.string.chat_disconnected_label)
                     }
                     val statusColor = when {
-                        headerApiReachable -> Color(0xFF4CAF50)
+                        headerChatReady -> Color(0xFF4CAF50)
                         isConnecting -> Color(0xFFFFA726)
                         else -> MaterialTheme.colorScheme.error
                     }
@@ -1579,13 +1584,13 @@ fun ChatScreen(
                     // connection status \u2014 never the literal "None"/"Default"
                     // personality label.
                     val subtitleText = when {
-                        !headerApiReachable -> statusText
+                        !headerChatReady -> statusText
                         else -> listOfNotNull(
                             nonDefaultPersonality,
                             modelName?.takeIf { it.isNotBlank() },
                         ).joinToString(" \u00B7 ").ifBlank { statusText }
                     }
-                    val subtitleColor = if (headerApiReachable) {
+                    val subtitleColor = if (headerChatReady) {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
                         statusColor
@@ -1643,7 +1648,7 @@ fun ChatScreen(
                                 }
                             }
                             ConnectionStatusBadge(
-                                isConnected = headerApiReachable,
+                                isConnected = headerChatReady,
                                 isConnecting = isConnecting,
                                 modifier = Modifier
                                     .size(10.dp)
@@ -1972,7 +1977,7 @@ fun ChatScreen(
                                     // thread itself (not just the header) -
                                     // the desktop's intro.
                                     ChatConnectState.Ready ->
-                                        if (selectedProfile != null) {
+                                        if (effectiveProfile != null) {
                                             stringResource(R.string.chat_prompt_chat_with, agentDisplayName)
                                         } else {
                                             stringResource(R.string.chat_start_conversation)
@@ -3081,8 +3086,7 @@ fun ChatScreen(
                 voiceOutputProvider = activeVoiceProvider,
                 voiceOutputModel = activeVoiceModel,
                 voiceOutputVoice = activeVoiceName,
-                voiceProfileName = selectedProfile?.description?.takeIf { it.isNotBlank() }
-                    ?: selectedProfile?.name,
+                voiceProfileName = AgentDisplay.profileDisplayName(effectiveProfile),
                 voiceConfigScope = activeVoiceScope,
                 voiceOutputEnabled = activeVoiceEnabled,
                 voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,

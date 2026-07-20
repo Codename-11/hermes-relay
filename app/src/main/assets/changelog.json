@@ -1,6 +1,27 @@
 {
  "versions": [
   {
+   "version": "1.4.9",
+   "title": "Clearer Hermes connections",
+   "date": "2026-07-19",
+   "sections": [
+    {
+     "header": "Dashboard-first setup",
+     "bullets": [
+      "Connect through the Hermes dashboard with one sign-in for Chat, sessions, Manage, and voice; API fallback and optional Relay remain available.",
+      "Onboarding and connection management now explain nearby, remote, Tailscale, custom-port, startup, route, and security choices."
+     ]
+    },
+    {
+     "header": "Consistent identity",
+     "bullets": [
+      "Server default now displays Hermes' pinned active profile consistently across the app.",
+      "Successful local discovery adds useful hostname identity without replacing a custom connection label."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.8",
    "title": "Privacy policy restored",
    "date": "2026-07-18",

@@ -427,10 +427,14 @@ script automates a quick end-to-end check of the lab routes.
 
 **"Relay returned 413" on synthesize** — you're trying to synthesize more than 5000 characters at once. This is a safety cap on the relay side to avoid runaway TTS costs. Client-side sentence chunking should normally keep individual requests well under this, so a 413 usually means the agent returned one enormous uninterrupted sentence.
 
-**"That pairing code was already used"** — Relay pairing codes are one-shot. Generate a fresh QR from the dashboard Relay tab or `hermes pair` and scan again. If you only need chat plus voice, skip the Relay pairing path and save the Hermes API URL/key instead; the app will derive the conventional Relay voice URL and probe `/voice/config`.
+**"That pairing code was already used"** — Relay pairing codes are one-shot. Generate a fresh QR from the dashboard Relay tab or `hermes pair` and scan again. If you only need chat plus standard voice, skip Relay pairing and use the Dashboard/Gateway connection; the same dashboard session authorizes both.
 
 ## Privacy Note
 
-Voice audio is uploaded to your relay server and from there to whichever provider you configured. If you're using a cloud provider (ElevenLabs, OpenAI, Groq, Mistral), your audio goes to them. If you're using local providers (faster-whisper, NeuTTS, Edge TTS), nothing leaves your network.
+Voice audio goes through the active speech route: the upstream Dashboard for
+standard Vanilla Hermes voice, or Relay for optional enhanced/realtime engines.
+From there it reaches whichever provider you configured. If you're using a cloud
+provider (ElevenLabs, OpenAI, Groq, Mistral), your audio goes to them. If you're
+using local providers (faster-whisper, NeuTTS, Edge TTS), nothing leaves your network.
 
 The mp3 files returned from `/voice/synthesize` are cached briefly in the app's cache directory and cleared automatically as new ones arrive (capped at 6 at a time). On the server side, the relay writes each `/voice/synthesize` render to a private temp file and deletes it after streaming, so relay synthesis no longer accumulates files in `~/voice-memos/` (other Hermes agent voice features may still use that directory).

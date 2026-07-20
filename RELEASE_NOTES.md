@@ -1,10 +1,10 @@
-# Hermes-Relay-Android v1.4.8
+# Hermes-Relay-Android v1.4.9
 
-**Release Date:** July 18, 2026
+**Release Date:** July 19, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.4.8-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.4.9-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,15 +12,19 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-This patch restores the public privacy-policy URL required by Google Play and moves the canonical policy to hermes-relay.dev.
+This patch makes the Hermes dashboard the standard connection path and refreshes setup, connection management, and profile identity throughout Android.
+
+## Changed
+
+- Connect through the Hermes dashboard for Chat, sessions, Manage, and voice with one sign-in. The API server remains an automatic fallback or headless compatibility path, and Relay remains optional for power features.
+- Onboarding and connection management now explain nearby, remote, Tailscale, custom-port, and Relay paths with clearer status, route, startup, Advanced, and Security controls.
 
 ## Fixed
 
-- The historical GitHub Pages privacy URL now serves the complete policy instead of returning 404.
-- The About screen opens the canonical policy on hermes-relay.dev.
-- Android release automation verifies both public policy URLs before uploading or publishing to Google Play.
+- Server default now shows Hermes' pinned active profile consistently across Chat, sessions, agent details, settings, voice, diagnostics, and profile inspection.
+- Successful local discovery adds useful hostname identity without replacing a custom connection label.
 
 ## Install / Verify
 
-- App version: **1.4.8** (versionCode **31**).
+- App version: **1.4.9** (versionCode **32**).
 - Standard Chat and Vanilla Hermes voice continue to work against unmodified upstream Hermes.

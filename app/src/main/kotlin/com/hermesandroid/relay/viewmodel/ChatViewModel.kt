@@ -454,6 +454,14 @@ class ChatViewModel : ViewModel() {
     /** Personality name → system prompt. Used to send the right prompt when switching. */
     private var personalityPrompts: Map<String, String> = emptyMap()
 
+    /** Dashboard `/api/config` fallback used when no API client is configured. */
+    private var dashboardConfigLoader: (suspend () -> Result<JsonObject>?)? = null
+
+    fun setDashboardConfigLoader(loader: suspend () -> Result<JsonObject>?) {
+        dashboardConfigLoader = loader
+        fetchPersonalities()
+    }
+
     /** Flat model ids from `GET /v1/models` (SSE fallback source; gateway uses [modelProviders]). */
     private val _availableModels = MutableStateFlow<List<String>>(emptyList())
     val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
@@ -2120,7 +2128,7 @@ class ChatViewModel : ViewModel() {
      */
     val boundHandler: ChatHandler? get() = chatHandler
 
-    fun initialize(apiClient: HermesApiClient, chatHandler: ChatHandler) {
+    fun initialize(apiClient: HermesApiClient?, chatHandler: ChatHandler) {
         this.apiClient = apiClient
         if (this.chatHandler !== chatHandler) {
             checkpointStatusJob?.cancel()
@@ -2269,7 +2277,7 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun updateApiClient(client: HermesApiClient) {
+    fun updateApiClient(client: HermesApiClient?) {
         // A route handoff / reconnect rebuilds the HTTP API client. An SSE turn
         // is bound to the OLD client, so it must be cancelled. A GATEWAY turn
         // is NOT — it runs on the gateway client (which survives a
@@ -2358,7 +2366,6 @@ class ChatViewModel : ViewModel() {
     }
 
     fun switchProfileContext(contextKey: String, sessionId: String?) {
-        val client = apiClient
         val handler = chatHandler ?: return
         val isInitialContextBinding = activeProfileContextKey == null
         handler.activeAgentName = currentAgentDisplayName()
@@ -2422,9 +2429,8 @@ class ChatViewModel : ViewModel() {
             onSessionChanged?.invoke(sessionId)
         }
 
-        if (sessionId == null || client == null) {
-            // Fresh draft (or no client to load from) — there's nothing to hold
-            // for, so clear the previous transcript now and show the empty state.
+        if (sessionId == null) {
+            // Fresh draft — there is no transcript to load.
             handler.clearMessages()
             _isLoadingHistory.value = false
             _initialChatSettled.value = true
@@ -2479,9 +2485,15 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun fetchPersonalities() {
-        val client = apiClient ?: return
         viewModelScope.launch {
-            val config = client.getPersonalities()
+            val config = if (apiClient != null) {
+                apiClient?.getPersonalities()
+            } else {
+                dashboardConfigLoader
+                    ?.invoke()
+                    ?.getOrNull()
+                    ?.let(::parseDashboardPersonalityConfig)
+            } ?: return@launch
             _personalityNames.value = config.names
             _defaultPersonality.value = config.defaultName
             personalityPrompts = config.prompts
@@ -2524,6 +2536,20 @@ class ChatViewModel : ViewModel() {
      */
     fun refreshModels() {
         fetchModels()
+    }
+
+    /** Clear server-owned catalogs before a different connection starts loading. */
+    fun resetConnectionCatalogs() {
+        _availableSkills.value = emptyList()
+        _personalityNames.value = emptyList()
+        _defaultPersonality.value = ""
+        personalityPrompts = emptyMap()
+        _availableModels.value = emptyList()
+        _serverCommands.value = emptyList()
+        _modelProviders.value = emptyList()
+        _gatewayCurrentModel.value = ""
+        _gatewayCurrentProvider.value = ""
+        _serverModelName.value = ""
     }
 
     // --- Session management ---
@@ -2604,7 +2630,6 @@ class ChatViewModel : ViewModel() {
     }
 
     fun createNewChat() {
-        val client = apiClient ?: return
         val handler = chatHandler ?: return
 
         // Gateway turns continue as detached siblings; SSE remains exclusive.
@@ -2639,6 +2664,8 @@ class ChatViewModel : ViewModel() {
             AppAnalytics.onSessionCreated()
             return
         }
+
+        val client = apiClient ?: return
 
         viewModelScope.launch {
             val selectedProfile = selectedProfileProvider()
@@ -2758,8 +2785,8 @@ class ChatViewModel : ViewModel() {
     }
 
     fun switchSession(sessionId: String) {
-        apiClient ?: return
         val handler = chatHandler ?: return
+        if (streamingEndpoint != "gateway" && apiClient == null) return
 
         // Keep a Gateway sibling alive and detach its callbacks. SSE remains a
         // single exclusive stream and is interrupted on navigation.
@@ -2815,8 +2842,9 @@ class ChatViewModel : ViewModel() {
     }
 
     fun deleteSession(sessionId: String) {
-        val client = apiClient ?: return
         val handler = chatHandler ?: return
+        val client = apiClient
+        if (streamingEndpoint != "gateway" && client == null) return
 
         // Save reference before removing (for rollback on failure)
         val removedSession = handler.sessions.value.find { it.sessionId == sessionId }
@@ -2842,7 +2870,7 @@ class ChatViewModel : ViewModel() {
             val success = if (streamingEndpoint == "gateway") {
                 profileSessionDeleter?.invoke(sessionId) ?: false
             } else {
-                client.deleteSession(sessionId)
+                client?.deleteSession(sessionId) == true
             }
             if (success) {
                 // Re-fetch so a server that still has the row can't leave it
@@ -2860,8 +2888,9 @@ class ChatViewModel : ViewModel() {
     }
 
     fun renameSession(sessionId: String, newTitle: String) {
-        val client = apiClient ?: return
         val handler = chatHandler ?: return
+        val client = apiClient
+        if (streamingEndpoint != "gateway" && client == null) return
 
         val previousTitle = handler.sessions.value.find { it.sessionId == sessionId }?.title
         // Optimistic rename
@@ -2886,7 +2915,7 @@ class ChatViewModel : ViewModel() {
                     )
                 }
             } else {
-                client.renameSession(sessionId, newTitle)
+                client?.renameSession(sessionId, newTitle)
             }
         }
     }
@@ -2923,8 +2952,10 @@ class ChatViewModel : ViewModel() {
             return
         }
 
-        val client = apiClient ?: return
         val handler = chatHandler ?: return
+        val client = apiClient
+        if (streamingEndpoint != "gateway" && client == null) return
+        if (streamingEndpoint == "gateway" && gatewayClient == null && client == null) return
 
         // Server slash commands (gateway transport only) execute via
         // slash.exec / command.dispatch instead of becoming a prompt.
@@ -2982,7 +3013,9 @@ class ChatViewModel : ViewModel() {
                         // Turn ended while the steer RPC was in flight —
                         // send it as a normal next-turn prompt instead.
                         val client = apiClient
-                        if (client != null) sendMessageInternal(client, handler, text)
+                        if (gatewayClient != null || client != null) {
+                            sendMessageInternal(client, handler, text)
+                        }
                     }
                 }
             }
@@ -3375,7 +3408,6 @@ class ChatViewModel : ViewModel() {
      */
     fun regenerateFromMessage(userMessageId: String, newText: String): Boolean {
         if (newText.isBlank()) return false
-        val client = apiClient ?: return false
         val handler = chatHandler ?: return false
         if (streamingEndpoint != "gateway" || gatewayClient == null) return false
         if (activeStream != null) return false
@@ -3395,7 +3427,7 @@ class ChatViewModel : ViewModel() {
         if (ordinal < 0) return false
         handler.truncateMessagesFrom(userMessageId)
         pendingTruncateOrdinal = ordinal
-        sendMessageInternal(client, handler, newText)
+        sendMessageInternal(apiClient, handler, newText)
         return true
     }
 
@@ -4415,14 +4447,16 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun drainQueue() {
-        val client = apiClient ?: return
         val handler = chatHandler ?: return
+        val client = apiClient
+        if (streamingEndpoint != "gateway" && client == null) return
+        if (streamingEndpoint == "gateway" && gatewayClient == null && client == null) return
         val next = _queuedMessages.value.firstOrNull() ?: return
         _queuedMessages.update { it.drop(1) }
         sendMessageInternal(client, handler, next)
     }
 
-    private fun sendMessageInternal(client: HermesApiClient, handler: ChatHandler, text: String) {
+    private fun sendMessageInternal(client: HermesApiClient?, handler: ChatHandler, text: String) {
         AppAnalytics.onMessageSent()
         val interfaceContextPrompt = nextInterfaceContextPrompt
         nextInterfaceContextPrompt = null
@@ -4527,6 +4561,10 @@ class ChatViewModel : ViewModel() {
                 interfaceContextPrompt,
             )
         } else {
+            if (client == null) {
+                handler.onStreamError("API fallback is not configured for this connection.")
+                return
+            }
             viewModelScope.launch {
                 val selectedProfile = selectedProfileProvider()
                 val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
@@ -5391,7 +5429,7 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun startStream(
-        client: HermesApiClient,
+        client: HermesApiClient?,
         handler: ChatHandler,
         sessionId: String,
         message: String,
@@ -5823,12 +5861,16 @@ class ChatViewModel : ViewModel() {
         // SSE dispatch shared by the three HTTP endpoints AND the gateway
         // branch's per-turn fallback (gateway unreachable / not the resolved
         // transport). Warns once per dispatch about any attachment it can't carry.
-        fun dispatchSse(endpoint: String): ActiveTurnHandle {
+        fun dispatchSse(endpoint: String): ActiveTurnHandle? {
+            val sseClient = client ?: run {
+                onErrorCb("Gateway unavailable and no API fallback is configured.")
+                return null
+            }
             dispatchedSseEndpoint = endpoint
             updateTurnCheckpointTransport(endpoint)
             warnIfAttachmentsDropped(endpoint)
             return when (endpoint) {
-            "runs" -> client.sendRunStream(
+            "runs" -> sseClient.sendRunStream(
                     message = message,
                     systemMessage = systemMsg,
                     attachments = attachments,
@@ -5851,7 +5893,7 @@ class ChatViewModel : ViewModel() {
                     modelOverride = modelOverride,
                     profileName = profileName,
                 ).asTurnHandle()
-            "completions" -> client.sendChatCompletionsStream(
+            "completions" -> sseClient.sendChatCompletionsStream(
                     message = message,
                     systemMessage = systemMsg,
                     attachments = attachments,
@@ -5870,7 +5912,7 @@ class ChatViewModel : ViewModel() {
                     modelOverride = modelOverride,
                     profileName = profileName,
                 ).asTurnHandle()
-            else -> client.sendChatStream(
+            else -> sseClient.sendChatStream(
                     sessionId = sessionId,
                     message = message,
                     systemMessage = systemMsg,
@@ -5927,12 +5969,14 @@ class ChatViewModel : ViewModel() {
         // traces persist server-side, so this happens at most once per batch.
         val sseDrainEndpoint = resolveSseFallback(handler)
         val forceSseForTraceDrain =
+            client != null &&
             voiceIntentMessages != null &&
                 streamingEndpoint == "gateway" &&
                 profileName == null &&
                 sseDrainEndpoint == "sessions"
         val effectiveEndpoint =
-            if ((interfaceContextPrompt != null || forceSseForTraceDrain) &&
+            if (client != null &&
+                (interfaceContextPrompt != null || forceSseForTraceDrain) &&
                 streamingEndpoint == "gateway"
             ) {
                 sseDrainEndpoint
@@ -6828,6 +6872,40 @@ internal fun parseCommandsCatalog(catalog: JsonObject): List<SlashCommand> {
         )
     }
     return out
+}
+
+/** Dashboard `/api/config` response -> the same personality catalog as API mode. */
+internal fun parseDashboardPersonalityConfig(
+    root: JsonObject,
+): HermesApiClient.PersonalityConfig {
+    // Dashboard builds have returned both the API-compatible `{config:{...}}`
+    // envelope and the config tree directly; accept either without guessing.
+    val config = root["config"] as? JsonObject ?: root
+    val personalities = ((config["agent"] as? JsonObject)?.get("personalities") as? JsonObject)
+        ?.entries
+        ?.mapNotNull { (name, value) ->
+            val prompt = (value as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            name to prompt
+        }
+        ?.toMap()
+        .orEmpty()
+    val display = config["display"] as? JsonObject
+    val configuredPersonality = display?.stringValue("personality")
+    val defaultName = listOf(
+        configuredPersonality?.takeUnless { it.equals("default", ignoreCase = true) },
+        display?.stringValue("agent_name"),
+        display?.stringValue("assistant_name"),
+        display?.stringValue("display_name"),
+        display?.stringValue("name"),
+        display?.stringValue("skin"),
+        configuredPersonality,
+    ).firstOrNull { !it.isNullOrBlank() }.orEmpty()
+    return HermesApiClient.PersonalityConfig(
+        names = personalities.keys.toList(),
+        prompts = personalities,
+        defaultName = defaultName,
+        modelName = root.stringValue("model") ?: config.stringValue("model").orEmpty(),
+    )
 }
 
 private fun isUnsupportedMobileCommand(name: String, pair: JsonArray): Boolean {

@@ -32,32 +32,36 @@ nicht die `.aab`-Datei herunter; sie ist nur für Google Play bestimmt.
 
 ## 2. Hermes erreichbar machen
 
-Android benötigt den Hermes-API-Server, normalerweise unter `:8642`:
+Android verwendet standardmäßig das Hermes Dashboard/Gateway unter `:9119`.
+Es stellt Chat, Sitzungen, Anmeldung, Manage und Standard-Voice bereit. Starte
+es mit `hermes dashboard` und mache diese Adresse für das Telefon erreichbar.
 
-- `API_SERVER_ENABLED=true` aktiviert den Server.
-- `API_SERVER_HOST=0.0.0.0` macht ihn im Netzwerk erreichbar.
-- `API_SERVER_KEY` schützt Chat-Anfragen mit einem Bearer-Schlüssel.
-- `hermes gateway` startet Hermes und den aktivierten API-Server.
+Der API-Server unter `:8642` ist optional: Er dient als automatischer
+Chat-Fallback oder für erweiterte headless Kompatibilität. Einen API-Schlüssel
+brauchst du nur, wenn du diesen optionalen Endpunkt konfigurierst. Der
+Serverbetreiber erstellt `API_SERVER_KEY` selbst; das Dashboard stellt keinen bereit.
 
 ::: warning Netzwerkzugriff absichern
-`0.0.0.0` erlaubt anderen Geräten im Netzwerk den Zugriff. Verwende einen
-starken API-Schlüssel. Stelle einen unverschlüsselten Port niemals direkt ins
-Internet; verwende für den Fernzugriff Tailscale, ein VPN oder HTTPS.
+Stelle einen unverschlüsselten Dashboard-, API- oder Relay-Port niemals direkt
+ins Internet; verwende für den Fernzugriff Tailscale, ein VPN oder HTTPS.
 :::
 
-Das Dashboard unter `:9119` ist optional. Es wird für Manage und Standard-Voice
-benötigt und hat eine eigene Anmeldung; der API-Schlüssel ist kein Dashboard-Login.
+Die Dashboard-Anmeldung verwendet Cookies und kurzlebige Gateway-Tickets. Ein
+API-Schlüssel ist davon getrennt und kein Dashboard-Login.
 
 ## 3. Verbinden und chatten
 
 1. Öffne **Connect** in der Android-App.
-2. Suche Hermes im LAN, scanne einen Einrichtungs-QR-Code oder trage API-URL und Schlüssel ein.
-3. Tippe auf **Connect**.
-4. Prüfe, ob **Chat · Ready** angezeigt wird.
-5. Öffne Chat und sende die erste Nachricht.
+2. Suche Hermes im LAN, trage die Dashboard/Gateway-URL ein oder scanne einen Einrichtungs-QR; ältere API-first-QRs bleiben kompatibel.
+3. Melde dich bei Aufforderung am Dashboard an.
+4. Tippe auf **Connect** und prüfe **Chat · Ready**.
+5. Füge API-Fallback, Relay oder weitere Remote-Routen bei Bedarf später unter **Advanced** hinzu.
 
-Manage und Voice dürfen noch eine Anmeldung verlangen. Ein ungepaartes Relay
-ist ebenfalls normal.
+Eine Tailscale-Dashboard-Adresse wie `http://100.x.y.z:9119` oder eine separat
+veröffentlichte `.ts.net`-Adresse kann ohne API-Server oder API-Schlüssel als Route hinzugefügt und geprüft werden.
+
+Dieselbe Anmeldung schaltet Chat, Sitzungen, Manage und Voice frei. Ein
+ungepaartes Relay und ein nicht verfügbarer API-Fallback sind normal.
 
 ## Optional: Relay-Werkzeuge hinzufügen
 

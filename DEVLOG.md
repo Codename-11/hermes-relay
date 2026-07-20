@@ -1,5 +1,54 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-19 — Android 1.4.9 release preparation
+
+Android advanced to 1.4.9 with versionCode 32 after the dashboard-primary
+connection and onboarding work merged to `dev`. The public changelog, GitHub
+release notes, in-app What's New surfaces, English and Simplified Chinese Play
+notes, and store-listing copy now describe the Android-only patch. Unreleased
+Relay security hardening and the Windows gateway PID fix remain assigned to the
+independent server release track.
+
+## 2026-07-19 — Connection management detail pass
+
+The Connections list now uses compact capability chips and exposes a cold-start
+preference when more than one server is saved. Last used remains the default;
+pinning a startup connection does not change the active connection during the
+current run. Dashboard-only connections now render their configured Dashboard
+and authentication status in Routes instead of an empty endpoint list, while
+optional API fallback routes remain explicitly separate.
+
+Advanced settings render directly in their dedicated tab without a redundant
+expander. Security adds Dashboard authentication, credential-storage, Relay
+session, sign-out, and transport posture facts sourced from current runtime
+state. Android catalogs and localization source hashes were refreshed alongside
+focused startup-persistence coverage.
+
+## 2026-07-18 — Dashboard-primary connection contract
+
+The canonical Android connection model now treats one Hermes installation as a
+stable identity with independently optional endpoints. Dashboard/Gateway owns
+the standard upstream chat, authentication, sessions, Manage, and voice path;
+the API server is an automatic fallback and advanced headless compatibility
+surface; Relay remains an additive extension for terminal, bridge, media, and
+enhanced voice capabilities. Existing API-first records and pairing payloads
+remain compatible without defining normal onboarding.
+
+The audit reconciled `AGENTS.md`, `docs/spec.md`, `docs/decisions.md`,
+`docs/upstream-surface-matrix.md`, `README.md`,
+`user-docs/features/connections.md`, `user-docs/features/dashboard.md`,
+`CHANGELOG.md`, and `DEVLOG.md`. `RELEASE.md` was reviewed and required no
+change because it contains no connection-routing contract.
+
+## 2026-07-18 — Non-signalling Windows gateway PID probes
+
+Relay profile discovery now prefers Hermes' supported psutil liveness check and
+falls back to native Windows process handles when psutil is unavailable. The
+POSIX signal-zero probe is restricted to POSIX hosts, preventing relay startup
+and periodic profile rescans from signalling or terminating the gateway named
+by `gateway.pid`. Regression coverage uses disposable child processes instead
+of pointing PID fixtures at the test runner.
+
 ## 2026-07-18 — Android privacy-policy URL hotfix
 
 The canonical Android privacy policy moved to a stable public page on

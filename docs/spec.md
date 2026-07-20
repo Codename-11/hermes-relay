@@ -4,7 +4,7 @@
 
 **Status:** v1.0.0 stable. The default path supports chat, Manage, and voice on vanilla upstream Hermes without installing the Relay plugin. Relay is additive: terminal, bridge/device control, notification companion, remote access, extra/provider-native voice, desktop tooling, and dashboard Relay management. Historical phase notes remain in this file for context; the current route ownership source of truth is [`docs/upstream-surface-matrix.md`](upstream-surface-matrix.md).
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-07-15
+**Updated:** 2026-07-18
 
 ---
 
@@ -23,7 +23,10 @@ Current capabilities are split between vanilla upstream Hermes and optional Rela
 | **Bridge / Device Control** | Yes | Agent controls the sideload phone with explicit safety gates |
 | **Relay power features** | Yes | Remote access, notification companion, provider-native voice, desktop tooling, media relay |
 
-Vanilla Hermes mode may work with only API/dashboard routes. Pairing adds the Relay URL, session token, terminal/bridge grants, and optional network candidates.
+The standard Vanilla Hermes connection needs only the Dashboard/Gateway surface.
+An API-server endpoint can be discovered or added as an automatic fallback for
+chat and advanced headless compatibility. Pairing adds the Relay URL, session
+token, terminal/bridge grants, and optional network candidates.
 
 **What it is not:**
 - Not a web wrapper — native Kotlin + Jetpack Compose
@@ -35,7 +38,7 @@ Vanilla Hermes mode may work with only API/dashboard routes. Pairing adds the Re
 ## 2. Design Principles
 
 1. **Vanilla Hermes first** — chat, Manage, and voice must work against unmodified upstream Hermes before any Relay power path is considered.
-2. **Secure by default** — WSS/HTTPS for remote Relay paths; dashboard and API auth stay on their native upstream surfaces.
+2. **Secure by default** — WSS/HTTPS for remote paths; dashboard, API, and Relay auth stay on their native surfaces.
 3. **Realtime where the surface supports it** — gateway chat can stream live thinking; API-server SSE remains the fallback; terminal and bridge stay realtime through Relay.
 4. **Clean UX** — Material 3, minimal setup, and clear route identity for Vanilla Hermes vs Relay.
 5. **Offline-aware** — graceful degradation when connection drops. Auto-reconnect with exponential backoff.
@@ -67,6 +70,14 @@ Hermes-Relay plugin
   |-- dashboard tab       -> plugin/dashboard/
   `-- diagnostics         -> hermes relay doctor
 ```
+
+A saved **Connection** represents one Hermes installation, not one transport.
+Its stable identity is independent of endpoint URLs. Dashboard/Gateway is the
+standard upstream surface; API server and Relay endpoints are optional
+capabilities that can be discovered, added, removed, and diagnosed separately.
+The normal UI reports outcomes such as Chat, Manage, Voice, API fallback, and
+Relay extensions instead of treating a missing optional endpoint as a broken
+connection.
 
 ### 3.2 Protocol
 
@@ -394,7 +405,7 @@ The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafety
 ### Settings Tab
 - **Active agent card (v0.6.0)** — top-of-screen summary card showing the current Connection / Profile / Personality. Tap navigates to Chat and auto-opens the agent sheet via the `openAgentSheet` nav arg, giving Settings-originating users a one-tap path to change agent context without leaving the flow.
 - **Connections** (v0.6.0+) — lists every paired Hermes server with a per-card status chip. Actions: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove. Add-connection button launches the standard QR flow. Settings briefly treats a paired + disconnected relay as **Connecting** during the reconnect grace window, then promotes it to **Relay unreachable - tap to reconnect** if the live socket does not recover. API / Relay / Session detail sheets include compact sanitized recent-activity tails, and **Settings -> Diagnostics** shows the consolidated app-level API, relay, session, endpoint, and voice activity buffer. See `docs/decisions.md` §19.
-- **Connection (single-server settings)** — unified "Pair with your server" card (primary action: Scan QR) with a single status summary covering API server, relay, and the active paired session. Collapsible "Manual configuration" card exposes API URL / API key / Relay URL / insecure-transport toggle + "Save & Test" (calls `RelayHttpClient.probeHealth`). **Pair wizard cross-validates URL schemes** in v0.6.0 (e.g. an API field with `wss://` surfaces an inline hint), and **stamps the active Connection's pairing metadata** on successful auth. Collapsible "Manual pairing code (fallback)" card for camera-less / SSH-only setups. Transport security badge (🔒 secure / 🔓 insecure-with-reason / 🔓 insecure-unknown) rendered inline. Paired Devices screen linked from here for the full device list + per-channel grant revoke.
+- **Connection (single-server settings)** — summary-first detail for one Hermes installation. Dashboard/Gateway health drives standard Chat, Manage, Sessions, and Voice readiness. API fallback and Relay extensions appear as independently optional capabilities. Advanced configuration exposes manual Dashboard, API, and Relay endpoints plus their native credentials; missing API or Relay settings never make a healthy Dashboard/Gateway connection look broken. Pairing-code and QR fallbacks remain available for Relay and compatibility setups. Transport security posture and paired-device grants remain visible without leading the normal setup flow with ports or bearer keys.
 - **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), streaming endpoint selector (`auto` / `sessions` / `runs`), Stats for Nerds (analytics charts)
 - **Voice** — route-aware voice engine selector (`Vanilla Hermes` via dashboard audio, `Relay Voice Output`, and experimental `Realtime Agent`), global interaction mode (tap / hold / continuous), silence threshold slider, Auto-TTS toggle, selected-engine cards for dashboard or relay-backed settings, language picker, and a Test Current Engine card. Vanilla Hermes voice depends on Manage/dashboard auth; Relay-backed engines run a fast relay health preflight before uploading audio or opening a realtime provider session so a hung relay surfaces as a connection error instead of an indefinite Thinking state.
 - **Notification companion** — opt-in status, "Open Android Settings" action, test notification dump
@@ -441,7 +452,7 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/api/profiles/{name}/soul` | GET | Profile-scoped raw `SOUL.md` read. Returns `{profile, path, content, exists, size_bytes}` with optional `truncated: true` when content exceeds the 200KB inline cap. Absent SOUL.md returns 200 with `exists: false` and an empty content string so the Inspector can distinguish "no soul" from transport failure. Same auth model as `/config`. 404 on unknown profile; 500 `{error: "soul_read_failed"}` on decode error. See §22 in decisions.md. |
 | `/api/profiles/{name}/memory` | GET | Profile-scoped memory listing. Returns `{profile, memories_dir, entries: [{name, filename, path, content, size_bytes, truncated}], total}` for `*.md` files directly under `<profile>/memories/` (non-recursive). Ordering: `MEMORY.md` first, `USER.md` second, remainder alphabetical. Each entry capped at 50KB inline with `truncated: true` when larger. Absent memories dir → 200 with empty `entries` array. Same auth model as `/config`. 404 on unknown profile. See §22 in decisions.md. |
 
-### 6.2 Chat — Vanilla Hermes Gateway with API Fallback
+### 6.2 Chat — Dashboard/Gateway Primary with Optional API Fallback
 
 Chat bypasses the Relay server entirely. In `Auto`, Android uses the upstream
 dashboard `/api/ws` gateway when dashboard auth is ready because that is the
@@ -796,9 +807,11 @@ The `ActionResult.data` field indicates which tier succeeded (`"direct"` / `"par
 ### Phase V — Voice Mode
 **Status: shipped 2026-04-12**
 
-Voice conversation runs via relay-hosted voice endpoints. Chat still goes
-directly to the API server; voice adds a modality on top, not a separate chat
-channel. The default exact assistant narration path is `/voice/output/*`, a
+Voice conversation uses upstream dashboard audio by default, with Relay-hosted
+voice endpoints available as optional enhanced engines. Chat uses the upstream
+Dashboard/Gateway first and can fall back to the API server; voice adds a
+modality on top, not a separate chat channel. The Relay exact-assistant
+narration path is `/voice/output/*`, a
 first-class streaming TTS renderer. The older realtime lab path remains
 available at `/voice/realtime/*` for provider-agent experiments, while the
 experimental Realtime Agent engine uses `/voice/realtime-agent/*` to bind
@@ -847,7 +860,7 @@ See `docs/decisions.md` → **Voice Mode — Architecture** for the historical b
 
 ## 8. Current Scope
 
-As of v1.0.0, the current scope is maintaining the vanilla-Hermes-first contract while keeping Relay power features additive and cleanly manageable. Vanilla Hermes chat, Manage, and dashboard voice must continue to work against unmodified upstream Hermes. Relay work should be plugin-owned, diagnosable through `hermes relay doctor`, and removable without becoming a hidden requirement for the vanilla Hermes app path.
+As of v1.0.0, the current scope is maintaining the vanilla-Hermes-first contract while keeping Relay power features additive and cleanly manageable. Vanilla Hermes Dashboard/Gateway chat, Manage, sessions, and dashboard voice must continue to work against unmodified upstream Hermes without an API-server or Relay requirement. API fallback remains optional and Relay work should be plugin-owned, diagnosable through `hermes relay doctor`, and removable without becoming a hidden requirement for the vanilla Hermes app path.
 
 **Still non-goals for the current cadence:**
 - Biometric session lock (fingerprint/face gate on terminal and/or chat resume). Tracked under Phase 4.

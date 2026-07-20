@@ -36,10 +36,12 @@ a staging branch.
 
 ## Non-negotiables (the short list)
 
-- **Vanilla Hermes path = upstream-only.** The default (no-plugin) connection —
-  chat via the API server, Vanilla Hermes voice via the Hermes dashboard — must work
-  against unmodified upstream hermes-agent. Server-side needs go through upstream
-  PRs or the optional relay plugin, never fork patches.
+- **Vanilla Hermes path = upstream-only.** The standard (no-plugin) connection
+  uses the upstream Dashboard/Gateway for chat, authentication, Manage, sessions,
+  and Vanilla Hermes voice. The API server is an optional automatic fallback and
+  advanced headless-compatibility surface; Relay adds optional extensions. This
+  path must work against unmodified upstream hermes-agent. Server-side needs go
+  through upstream PRs or the optional relay plugin, never fork patches.
 - **Verify endpoints against upstream** (`gateway/platforms/api_server.py` /
   `tui_gateway/server.py` in hermes-agent) before assuming a route exists.
 - **Conventional Commits + `main`/`dev` branching.** Normal branches start at

@@ -1,1 +1,1 @@
-The privacy policy now lives at hermes-relay.dev, the About screen opens it directly, and release automation verifies the public policy before publishing.
+Connect through the Hermes dashboard with one sign-in for Chat, sessions, Manage, and voice. Setup and connection details now explain nearby, remote, Tailscale, custom-port, optional Relay, route, and security choices. Server default also displays Hermes' pinned active profile consistently across the app.

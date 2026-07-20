@@ -219,6 +219,16 @@ data class RelayPairing(
     val transportHint: String? = null,
 )
 
+/** True only when a scoped Relay scan can immediately begin authentication. */
+internal fun HermesPairingPayload.hasUsableRelayPairing(): Boolean {
+    val relay = relay ?: return false
+    if (relay.code.isBlank()) return false
+    val uri = runCatching { URI(relay.url.trim()) }.getOrNull() ?: return false
+    val supportedScheme = uri.scheme.equals("ws", ignoreCase = true) ||
+        uri.scheme.equals("wss", ignoreCase = true)
+    return supportedScheme && !uri.host.isNullOrBlank()
+}
+
 private val json = Json {
     ignoreUnknownKeys = true
     isLenient = true
@@ -258,8 +268,8 @@ private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
     return try {
         // Quick check: must contain a `host` field and be valid JSON. We no
         // longer reject based on the `hermes` version int — future v4+ QRs
-        // should still parse on this phone so Bailey doesn't have to ship a
-        // whole release to keep up with wire-format growth.
+        // should still parse so wire-format growth does not require an app
+        // release for every compatible payload version.
         val obj = json.decodeFromString<JsonObject>(raw)
         val version = obj["hermes"]?.jsonPrimitive?.intOrNull ?: 1
         if (version < 1) return null
@@ -532,7 +542,8 @@ private fun mapBoxToViewport(
 @Composable
 fun QrPairingScanner(
     onPairingDetected: (HermesPairingPayload) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    relayOnly: Boolean = false,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -628,7 +639,10 @@ fun QrPairingScanner(
                     )
                 }
                 Text(
-                    text = stringResource(R.string.qr_scanner_title),
+                    text = stringResource(
+                        if (relayOnly) R.string.qr_scanner_relay_title
+                        else R.string.qr_scanner_title,
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.align(Alignment.Center)
@@ -740,7 +754,11 @@ fun QrPairingScanner(
                                                     ) {
                                                         val rawValue = barcode.rawValue ?: continue
                                                         val payload = parseHermesPairingQr(rawValue)
-                                                        if (payload != null && hasDetected.compareAndSet(false, true)) {
+                                                        if (
+                                                            payload != null &&
+                                                            (!relayOnly || payload.hasUsableRelayPairing()) &&
+                                                            hasDetected.compareAndSet(false, true)
+                                                        ) {
                                                             lockedPayload = payload
                                                             return@addOnSuccessListener
                                                         }
@@ -798,13 +816,19 @@ fun QrPairingScanner(
                     modifier = Modifier.size(32.dp)
                 )
                 Text(
-                    text = stringResource(R.string.qr_scanner_instruction),
+                    text = stringResource(
+                        if (relayOnly) R.string.qr_scanner_relay_instruction
+                        else R.string.qr_scanner_instruction,
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    text = stringResource(R.string.qr_scanner_subtext),
+                    text = stringResource(
+                        if (relayOnly) R.string.qr_scanner_relay_subtext
+                        else R.string.qr_scanner_subtext,
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center

@@ -103,10 +103,13 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EnhancedVoiceOverrides
+import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
+import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.displayLabel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
@@ -128,6 +131,7 @@ import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
 import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
 import com.hermesandroid.relay.ui.screens.DashboardManagementScreen
+import com.hermesandroid.relay.ui.screens.DashboardSignInScreen
 import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
@@ -151,12 +155,17 @@ import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.relay.RelayProfileInspectorClient
 import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.upstream.DynamicDashboardCookieJar
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
+import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.viewmodel.ChatTransportPath
+import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
+import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
@@ -180,6 +189,68 @@ suspend fun SnackbarHostState.showHumanError(err: HumanError) {
         actionLabel = err.actionLabel,
         duration = if (err.retryable) SnackbarDuration.Long else SnackbarDuration.Short,
     )
+}
+
+/** Startup chrome should wait for either standard chat surface, not Relay. */
+internal fun hasConfiguredStartupChat(connection: Connection?): Boolean =
+    connection?.capabilities?.chatConfigured == true
+
+/**
+ * App-root chat health derived only from the two transports that can carry a
+ * conversation. Optional Relay state is deliberately absent.
+ */
+internal fun resolveAppChatRuntimeStatus(
+    connection: Connection?,
+    gatewayAvailability: GatewayAvailability,
+    apiHealth: ConnectionViewModel.HealthStatus,
+): ChatRuntimeStatus {
+    val capabilities = connection?.capabilities
+    val gateway = when {
+        capabilities?.dashboardGatewayConfigured != true -> ChatTransportReadiness.NotConfigured
+        gatewayAvailability == GatewayAvailability.Ready -> ChatTransportReadiness.Ready
+        gatewayAvailability == GatewayAvailability.Unknown -> ChatTransportReadiness.Connecting
+        else -> ChatTransportReadiness.Unavailable
+    }
+    val api = when {
+        capabilities?.apiServerConfigured != true -> ChatTransportReadiness.NotConfigured
+        apiHealth == ConnectionViewModel.HealthStatus.Reachable -> ChatTransportReadiness.Ready
+        apiHealth == ConnectionViewModel.HealthStatus.Unknown ||
+            apiHealth == ConnectionViewModel.HealthStatus.Probing -> ChatTransportReadiness.Connecting
+        else -> ChatTransportReadiness.Unavailable
+    }
+    return resolveChatRuntimeStatus(gateway = gateway, apiSse = api)
+}
+
+/** Route represented by the app footer's currently usable chat transport. */
+internal fun resolveFooterRouteCandidate(
+    runtimeStatus: ChatRuntimeStatus,
+    activeEndpoint: EndpointCandidate?,
+    connection: Connection?,
+    effectiveDashboardUrl: String,
+): EndpointCandidate? {
+    val connected = runtimeStatus as? ChatRuntimeStatus.Connected ?: return null
+    return when (connected.transport) {
+        ChatTransportPath.Gateway -> {
+            val dashboardUrl = effectiveDashboardUrl.trim().trimEnd('/')
+                .ifBlank { connection?.resolvedDashboardUrl.orEmpty() }
+            if (dashboardUrl.isBlank()) {
+                null
+            } else {
+                val activeDashboardUrl = activeEndpoint?.dashboard?.url
+                    ?.trim()
+                    ?.trimEnd('/')
+                activeEndpoint?.takeIf { activeDashboardUrl == dashboardUrl }
+                    ?: Connection.endpointCandidateFromDashboardUrl(
+                        role = Connection.inferRouteRole(dashboardUrl),
+                        priority = activeEndpoint?.priority ?: 0,
+                        dashboardUrl = dashboardUrl,
+                    )
+            }
+        }
+
+        ChatTransportPath.ApiSse -> activeEndpoint?.takeIf { it.api != null }
+            ?: connection?.routeCandidates?.firstOrNull { it.api != null }
+    }
 }
 
 sealed class Screen(
@@ -214,6 +285,17 @@ sealed class Screen(
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
     data object Manage : Screen("manage", "Manage", Icons.Filled.Settings)
+    data object DashboardSignIn : Screen(
+        "dashboard_sign_in?source={source}",
+        "Dashboard sign in",
+        Icons.Filled.Settings,
+    ) {
+        const val ARG_SOURCE: String = "source"
+        const val SOURCE_GENERAL: String = "general"
+        const val SOURCE_PAIR: String = "pair"
+        const val SOURCE_ONBOARDING: String = "onboarding"
+        fun route(source: String = SOURCE_GENERAL): String = "dashboard_sign_in?source=$source"
+    }
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
 
     // Non-bottom-nav destinations — reached by explicit navigation, not the
@@ -359,6 +441,12 @@ fun RelayApp() {
     // ConnectionStore's mutations are all suspend fns and we don't want to
     // block the main dispatcher from inside the composable body.
     val connectionSwitchScope = rememberCoroutineScope()
+    // Add-connection preparation may outlive the initiating list frame now
+    // that navigation happens immediately. Keep the job by placeholder id so
+    // an instant Back can wait for creation and then discard it safely.
+    val pendingAddConnectionJobs = remember {
+        mutableMapOf<String, kotlinx.coroutines.Job>()
+    }
 
     // One-time init: the terminal channel ViewModel registers with the shared
     // multiplexer and observes the relay connection state so it can attach/
@@ -434,11 +522,13 @@ fun RelayApp() {
         }
     }
 
-    // Initialize ChatViewModel reactively when the chat-routed API client becomes available
+    // Bind chat state independently of the optional API fallback client.
     val chatApiClient by connectionViewModel.chatApiClient.collectAsState()
+    val chatTransportReady by connectionViewModel.chatReady.collectAsState()
     val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val effectiveSessionProfileName by connectionViewModel.effectiveSessionProfileName.collectAsState()
+    val effectiveDisplayProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
@@ -633,9 +723,10 @@ fun RelayApp() {
         }
     }
 
-    LaunchedEffect(chatApiClient) {
-        val client = chatApiClient ?: return@LaunchedEffect
+    var boundCatalogConnectionId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(chatApiClient, activeConnectionId) {
         val handler = connectionViewModel.chatHandler
+        val connectionChanged = boundCatalogConnectionId != activeConnectionId
         // A route handoff / reconnect rebuilds the API client (new instance)
         // while the chat is unchanged — the bound handler is the same. Take the
         // cheap path: swap the client reference only, no re-init. This is what
@@ -643,11 +734,24 @@ fun RelayApp() {
         // switch or a reconnect. A genuine re-bind (different handler) falls
         // through to the full one-time wiring below.
         if (chatViewModel.boundHandler === handler) {
-            chatViewModel.updateApiClient(client)
+            if (connectionChanged) {
+                chatViewModel.resetConnectionCatalogs()
+                // The active pointer changes before an API target is rebuilt.
+                // Never let the outgoing API client refill the new connection's
+                // catalogs during that window. Dashboard-only (null -> null)
+                // refreshes immediately through the already-installed loader.
+                chatViewModel.updateApiClient(null)
+            } else {
+                chatViewModel.updateApiClient(chatApiClient)
+            }
+            boundCatalogConnectionId = activeConnectionId
             return@LaunchedEffect
         }
 
-        chatViewModel.initialize(client, handler)
+        // The Dashboard/Gateway transport is independently sufficient for
+        // chat, so handler and dashboard callbacks must bind even when no API
+        // fallback client is configured.
+        chatViewModel.initialize(chatApiClient, handler)
 
         // Wire inbound-media dependencies. Idempotent rewire of the
         // ChatHandler callbacks.
@@ -675,10 +779,7 @@ fun RelayApp() {
             )
         }
         chatViewModel.setDisplayProfileProvider {
-            AgentDisplay.effectiveDisplayProfile(
-                selectedProfile = connectionViewModel.selectedProfile.value,
-                profiles = connectionViewModel.agentProfiles.value,
-            )
+            connectionViewModel.effectiveDisplayProfile.value
         }
         chatViewModel.setDisplayAliasProvider {
             connectionViewModel.profileDisplayAlias.value
@@ -693,6 +794,12 @@ fun RelayApp() {
         // …and load a tapped session's transcript from that same profile's DB.
         chatViewModel.setProfileMessageLoader { sessionId ->
             connectionViewModel.loadProfileScopedMessages(sessionId)
+        }
+        // Personality choices live in Dashboard `/api/config` on a
+        // dashboard-only connection. The setter immediately refreshes after
+        // this callback is installed, covering the null-API initialization.
+        chatViewModel.setDashboardConfigLoader {
+            connectionViewModel.loadActiveDashboardConfig()
         }
         // …and delete from that same profile's DB so a non-default profile's
         // session can't be resurrected by the next profile-scoped list.
@@ -710,6 +817,7 @@ fun RelayApp() {
         chatViewModel.onSessionChanged = { sessionId ->
             connectionViewModel.saveLastSessionId(sessionId)
         }
+        boundCatalogConnectionId = activeConnectionId
     }
 
     // Reload sessions / switch profile context only on a SEMANTIC change
@@ -718,16 +826,15 @@ fun RelayApp() {
     // means a route handoff (which churns the client) no longer triggers a
     // refreshSessions() that would flash/reload the chat. `switchProfileContext`
     // already no-ops when the context key + session are unchanged.
-    val chatClientReady = chatApiClient != null
     LaunchedEffect(
-        chatClientReady,
+        chatTransportReady,
         activeConnectionId,
         selectedProfile?.name,
         effectiveSessionProfileName,
         lastSessionId,
         profileSelectionSettled,
     ) {
-        if (!chatClientReady) return@LaunchedEffect
+        if (!chatTransportReady) return@LaunchedEffect
         // Cold-start profile-isolation guard: hold the first profile-scoped load
         // until the persisted profile selection has SETTLED, so the session
         // drawer (and the restored session context) don't briefly load the
@@ -770,7 +877,7 @@ fun RelayApp() {
         )
     }
 
-    LaunchedEffect(selectedProfile?.name, agentProfiles, profileDisplayAlias) {
+    LaunchedEffect(selectedProfile?.name, effectiveDisplayProfile?.name, agentProfiles, profileDisplayAlias) {
         chatViewModel.refreshAgentDisplayName(relabelGenericMessages = true)
     }
 
@@ -847,10 +954,10 @@ fun RelayApp() {
     // re-runs activeGatewayChatClient(), which RETARGETS the in-flight gateway
     // client to follow the new dashboard route instead of stranding the turn on
     // the dead one.
-    val effectiveApiUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
     // Debounce a route FLIP before re-acquiring the gateway chat client. The
     // network-layer hysteresis (ConnectionManager) already keeps _activeEndpoint
-    // stable on a transient endpoint-resolution miss, so effectiveApiUrl should
+    // stable on a transient endpoint-resolution miss, so the Dashboard URL should
     // not flap — this is belt-and-suspenders against any residual sub-second
     // LAN⇄Tailscale flip, which would otherwise shutdown the warm gateway socket
     // (when idle) or retarget mid-turn (burning MAX_TURN_REJOINS). The FIRST
@@ -859,9 +966,17 @@ fun RelayApp() {
     // unaffected; only a genuine url change waits for a settle window, and if
     // the url flips back within it the LaunchedEffect cancels + restarts so no
     // rebuild happens.
-    var lastAcquiredApiUrl by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(streamingEndpoint, serverCapabilities, gatewayAvailability, effectiveApiUrl) {
-        if (lastAcquiredApiUrl != null && lastAcquiredApiUrl != effectiveApiUrl) {
+    var lastAcquiredDashboardUrl by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(
+        streamingEndpoint,
+        serverCapabilities,
+        gatewayAvailability,
+        effectiveDashboardUrl,
+    ) {
+        if (
+            lastAcquiredDashboardUrl != null &&
+            lastAcquiredDashboardUrl != effectiveDashboardUrl
+        ) {
             delay(750L)
         }
         val resolved = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
@@ -870,7 +985,7 @@ fun RelayApp() {
         chatViewModel.updateGatewayClient(
             if (resolved == "gateway") connectionViewModel.activeGatewayChatClient() else null,
         )
-        lastAcquiredApiUrl = effectiveApiUrl
+        lastAcquiredDashboardUrl = effectiveDashboardUrl
     }
 
     // What's New auto-show
@@ -961,7 +1076,6 @@ fun RelayApp() {
         CrashReportGate()
 
         val navController = rememberNavController()
-        var postOnboardingRoute by remember { mutableStateOf<String?>(null) }
 
         // === PHASE3-safety-rails-followup: cross-layer deep-link nav ===
         // Collect navigation requests posted by external launchers (e.g., the
@@ -1022,17 +1136,6 @@ fun RelayApp() {
             launch {
                 connectionViewModel.phoneThreadChatIds.collect { map ->
                     chatViewModel.seedThreadChatIds(map)
-                }
-            }
-        }
-
-        LaunchedEffect(onboardingCompleted, postOnboardingRoute) {
-            val route = postOnboardingRoute
-            if (onboardingCompleted && route != null) {
-                postOnboardingRoute = null
-                navController.navigate(route) {
-                    popUpTo(Screen.Onboarding.route) { inclusive = true }
-                    launchSingleTop = true
                 }
             }
         }
@@ -1127,11 +1230,8 @@ fun RelayApp() {
         // bottom navigation bar so the voice overlay can own the entire screen
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
-        val globalConnectionStatus by connectionViewModel.globalConnectionStatus.collectAsState()
         val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
-        val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
-        val relayReady by connectionViewModel.relayReady.collectAsState()
         val activeConnection by connectionViewModel.activeConnection.collectAsState()
         val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
         val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
@@ -1166,17 +1266,16 @@ fun RelayApp() {
             startupGateTimedOut = true
         }
 
-        val hasStartupConnection = activeConnection?.apiServerUrl?.isNotBlank() == true
-        // A published activeEndpoint counts as "hermes online": the route
-        // resolver only publishes a winner after a successful HEAD /health
-        // probe against that route's API URL. At cold start this evidence
-        // lands within ~1s — long before the client-based health probe,
-        // which can't run until the API client exists (the client build
-        // used to queue behind the Keystore decrypt; see
-        // apiKeyForClientBuild in ConnectionViewModel).
-        val startupApiUp = apiReachable ||
-            apiHealth == ConnectionViewModel.HealthStatus.Reachable ||
-            activeEndpoint != null
+        val hasStartupConnection = hasConfiguredStartupChat(activeConnection)
+        val appChatRuntimeStatus = resolveAppChatRuntimeStatus(
+            connection = activeConnection,
+            gatewayAvailability = gatewayAvailability,
+            apiHealth = apiHealth,
+        )
+        // A Dashboard/Gateway-only connection is a complete standard Hermes
+        // connection. Startup readiness follows the same transport-neutral
+        // priority as the footer instead of waiting for an optional API probe.
+        val startupChatUp = appChatRuntimeStatus is ChatRuntimeStatus.Connected
 
         // An Unreachable verdict only counts after it SURVIVES a settle
         // window: the first health probe often runs against the persisted
@@ -1185,9 +1284,9 @@ fun RelayApp() {
         // first verdict was what flashed the disconnected chat UI at users
         // who were connected-just-waiting. The keyed effect restarts on
         // every health flip, cancelling a pending settle.
-        LaunchedEffect(apiHealth, startupGateReleased) {
+        LaunchedEffect(appChatRuntimeStatus, startupGateReleased) {
             if (startupGateReleased) return@LaunchedEffect
-            if (apiHealth == ConnectionViewModel.HealthStatus.Unreachable) {
+            if (hasStartupConnection && appChatRuntimeStatus is ChatRuntimeStatus.Unavailable) {
                 delay(3_000L)
                 startupUnreachableSettled = true
             } else {
@@ -1211,16 +1310,16 @@ fun RelayApp() {
                         StartupCheckState.Done,
                         "route · ${startupEndpoint.displayLabel()}",
                     )
-                    startupApiUp ->
+                    startupChatUp ->
                         StartupCheck(StartupCheckState.Done, "route · direct")
                     appReady ->
                         StartupCheck(StartupCheckState.Active, "resolving route")
                     else -> StartupCheck(StartupCheckState.Pending, "route")
                 },
                 when {
-                    startupApiUp ->
+                    startupChatUp ->
                         StartupCheck(StartupCheckState.Done, "hermes online")
-                    apiHealth == ConnectionViewModel.HealthStatus.Unreachable ->
+                    appChatRuntimeStatus is ChatRuntimeStatus.Unavailable ->
                         StartupCheck(StartupCheckState.Failed, "hermes unreachable")
                     appReady ->
                         StartupCheck(StartupCheckState.Active, "contacting hermes")
@@ -1232,7 +1331,7 @@ fun RelayApp() {
                 when {
                     chatReady && initialChatSettled ->
                         StartupCheck(StartupCheckState.Done, "conversation ready")
-                    startupApiUp ->
+                    startupChatUp ->
                         StartupCheck(StartupCheckState.Active, "loading conversation")
                     else -> StartupCheck(StartupCheckState.Pending, "conversation")
                 },
@@ -1460,7 +1559,7 @@ fun RelayApp() {
         // stays fully silent (the health "Connecting" cue used to flash here for a
         // few seconds and then clear with no "Connected" toast).
         val connectionReconnecting =
-            globalConnectionStatus?.active == true && !postResumeQuiet &&
+            appChatRuntimeStatus is ChatRuntimeStatus.Connecting && !postResumeQuiet &&
                 !suppressGlobalChrome && !showStartupSphere && !voiceUiState.voiceMode
         // === END v0.4.1 polish ===
 
@@ -1600,7 +1699,13 @@ fun RelayApp() {
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 if (!suppressGlobalChrome && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
-                    val routeLabel = activeEndpoint?.displayLabel()
+                    val footerRoute = resolveFooterRouteCandidate(
+                        runtimeStatus = appChatRuntimeStatus,
+                        activeEndpoint = activeEndpoint,
+                        connection = activeConnection,
+                        effectiveDashboardUrl = effectiveDashboardUrl,
+                    )
+                    val routeLabel = footerRoute?.displayLabel()
                         ?: activeConnection?.label
                         ?: stringResource(R.string.status_no_route)
                     val transportStatus = resolveChatTransportStatus(
@@ -1613,12 +1718,9 @@ fun RelayApp() {
                     } else {
                         routeLabel
                     }
-                    val profileLabel = selectedProfile?.name?.takeIf { it.isNotBlank() }
+                    val profileLabel = AgentDisplay.profileDisplayName(effectiveDisplayProfile)
                         ?: stringResource(R.string.status_profile_default)
-                    val displayProfile = AgentDisplay.effectiveDisplayProfile(
-                        selectedProfile = selectedProfile,
-                        profiles = agentProfiles,
-                    )
+                    val displayProfile = effectiveDisplayProfile
                     val modelLabel = AgentDisplay.displayModelName(gatewayCurrentModel)
                         ?: AgentDisplay.displayModelName(displayProfile?.model)
                         ?: AgentDisplay.displayModelName(serverModelName)
@@ -1701,8 +1803,9 @@ fun RelayApp() {
                             }
                         },
                         onManageSignIn = {
-                            postOnboardingRoute = Screen.Manage.route
-                            connectionViewModel.completeOnboarding()
+                            navController.navigate(
+                                Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_ONBOARDING),
+                            )
                         },
                         onOpenPermissions = {
                             navController.navigate(Screen.PermissionsSettings.route)
@@ -1832,6 +1935,11 @@ fun RelayApp() {
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
+                        onNavigateToSignIn = {
+                            navController.navigate(Screen.DashboardSignIn.route()) {
+                                launchSingleTop = true
+                            }
+                        },
                         // Standard back: return to wherever Manage was opened
                         // from (Settings → Hermes management, the agent sheet,
                         // etc.). The prior forced navigate(Chat) with
@@ -1864,6 +1972,39 @@ fun RelayApp() {
                         },
                     )
                     }
+                }
+                composable(
+                    route = Screen.DashboardSignIn.route,
+                    arguments = listOf(
+                        navArgument(Screen.DashboardSignIn.ARG_SOURCE) {
+                            type = NavType.StringType
+                            defaultValue = Screen.DashboardSignIn.SOURCE_GENERAL
+                        },
+                    ),
+                ) { backStackEntry ->
+                    val source = backStackEntry.arguments
+                        ?.getString(Screen.DashboardSignIn.ARG_SOURCE)
+                        ?: Screen.DashboardSignIn.SOURCE_GENERAL
+                    DashboardSignInScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                        onAuthenticated = {
+                            when (source) {
+                                Screen.DashboardSignIn.SOURCE_ONBOARDING -> {
+                                    connectionViewModel.completeOnboarding()
+                                    navController.navigate(Screen.Chat.route()) {
+                                        popUpTo(Screen.Onboarding.route) { inclusive = true }
+                                        launchSingleTop = true
+                                    }
+                                }
+                                Screen.DashboardSignIn.SOURCE_PAIR -> {
+                                    navController.popBackStack()
+                                    navController.popBackStack()
+                                }
+                                else -> navController.popBackStack()
+                            }
+                        },
+                    )
                 }
                 composable(Screen.Terminal.route) {
                     if (coldStartAuthState is AuthState.Paired) {
@@ -2082,6 +2223,7 @@ fun RelayApp() {
                         voiceClient = voiceClient,
                         connectionId = activeConnectionId,
                         selectedProfile = selectedProfile,
+                        displayProfile = effectiveDisplayProfile,
                         standardVoiceAvailability = standardVoiceAvailability,
                         standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
                         relayVoiceReady = relayVoiceReady,
@@ -2230,18 +2372,20 @@ fun RelayApp() {
                             navController.navigate(Screen.ConnectionDetail.route(id))
                         },
                         onAddConnection = {
-                            connectionSwitchScope.launch {
-                                // Create and switch to the placeholder before
-                                // opening the wizard. Otherwise a fast scan or
-                                // standard save can write into the outgoing
-                                // connection's auth store.
-                                val id = connectionViewModel.beginAddConnection(
-                                    preAllocatedId = java.util.UUID.randomUUID().toString(),
-                                )
-                                navController.navigate(
-                                    Screen.Pair.route(connectionId = id)
-                                )
+                            val id = java.util.UUID.randomUUID().toString()
+                            // Draw step 1 immediately. Placeholder persistence
+                            // and the heavy connection-context switch continue
+                            // underneath the discovery UI instead of blocking
+                            // navigation on encrypted-store/client setup.
+                            navController.navigate(Screen.Pair.route(connectionId = id))
+                            val job = connectionSwitchScope.launch {
+                                try {
+                                    connectionViewModel.beginAddConnection(preAllocatedId = id)
+                                } finally {
+                                    pendingAddConnectionJobs.remove(id)
+                                }
                             }
+                            pendingAddConnectionJobs[id] = job
                         },
                         onBack = { navController.popBackStack() },
                         // Pass the VM so the list cards can read live status
@@ -2283,7 +2427,7 @@ fun RelayApp() {
                         onRepair = { id ->
                             connectionSwitchScope.launch {
                                 connectionViewModel.switchConnection(id).join()
-                                navController.navigate(Screen.Pair.route(id))
+                                navController.navigate(Screen.Pair.route(id, autoStart = "relay"))
                             }
                         },
                         onRevoke = { id ->
@@ -2333,9 +2477,14 @@ fun RelayApp() {
                         ?.getString(Screen.Pair.ARG_CONNECTION_ID)
                     val autoStartArg = backStackEntry.arguments
                         ?.getString(Screen.Pair.ARG_AUTO_START)
+                    val pairConnections by connectionViewModel.connections.collectAsState()
+                    val pairActiveId by connectionViewModel.activeConnectionId.collectAsState()
+                    val pairSetupReady = connectionIdArg == null ||
+                        (pairActiveId == connectionIdArg && pairConnections.any { it.id == connectionIdArg })
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
                         autoStart = autoStartArg,
+                        setupReady = pairSetupReady,
                         // Offer demo only on the bare "Connect" entry (the
                         // "No Hermes connection" path) — not on add-connection /
                         // re-pair flows, which have a placeholder connection in
@@ -2354,8 +2503,9 @@ fun RelayApp() {
                             navController.popBackStack()
                         },
                         onManageSignIn = {
-                            navController.popBackStack()
-                            navController.navigate(Screen.Manage.route) {
+                            navController.navigate(
+                                Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
+                            ) {
                                 launchSingleTop = true
                             }
                         },
@@ -2367,6 +2517,10 @@ fun RelayApp() {
                             // never got a pairedAt stamp.
                             if (connectionIdArg != null) {
                                 connectionSwitchScope.launch {
+                                    // If Back wins the race with background
+                                    // preparation, wait until the placeholder
+                                    // exists before attempting to discard it.
+                                    pendingAddConnectionJobs.remove(connectionIdArg)?.join()
                                     connectionViewModel.discardPlaceholderConnection(connectionIdArg)
                                 }
                             }
@@ -2502,9 +2656,9 @@ fun RelayApp() {
                     // doesn't happen to match the one we're inspecting
                     // (shouldn't normally happen since the entry is
                     // keyed off the same Profile).
-                    val selectedProfile by connectionViewModel
-                        .selectedProfile.collectAsState()
-                    val modelLabel = selectedProfile
+                    val inspectorDisplayProfile by connectionViewModel
+                        .effectiveDisplayProfile.collectAsState()
+                    val modelLabel = inspectorDisplayProfile
                         ?.takeIf { it.name == profileNameArg }
                         ?.model
 

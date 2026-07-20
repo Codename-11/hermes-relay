@@ -170,31 +170,40 @@ class ProfileControllerLockTest {
     @Test
     fun serverDefault_resolvesStickyActiveProfileForSessionReads() {
         dashboardUrl = "https://dashboard.example"
-        coEvery { dashboardClient.getActiveProfileScope() } returns Result.success(
-            DashboardProfileScope(active = "victor", current = "default"),
+        val serverDefault = Profile(
+            name = "default",
+            model = "server-default-model",
+            description = "Root profile",
         )
-        coEvery { dashboardClient.listProfiles() } returns Result.success(emptyList())
-        coEvery { dashboardClient.listSessions(profile = "victor", limit = 200) } returns
+        val pinned = Profile(name = "pinned", model = "pinned-model", description = "Pinned profile")
+        coEvery { dashboardClient.getActiveProfileScope() } returns Result.success(
+            DashboardProfileScope(active = "pinned", current = "default"),
+        )
+        coEvery { dashboardClient.listProfiles() } returns Result.success(
+            listOf(serverDefault, pinned),
+        )
+        coEvery { dashboardClient.listSessions(profile = "pinned", limit = 200) } returns
             Result.success(emptyList<SessionItem>())
-        coEvery { dashboardClient.deleteSession("session-1", profile = "victor") } returns
+        coEvery { dashboardClient.deleteSession("session-1", profile = "pinned") } returns
             Result.success(buildJsonObject { })
-        coEvery { dashboardClient.renameSession("session-1", "Renamed", profile = "victor") } returns
+        coEvery { dashboardClient.renameSession("session-1", "Renamed", profile = "pinned") } returns
             Result.success(buildJsonObject { })
         controller.setPendingConnectionId(connectionId)
         controller.setPendingName(null)
 
         controller.refreshDashboardProfiles()
 
-        assertEquals("victor", awaitFlow(controller.effectiveSessionProfileName) { it == "victor" })
+        assertEquals("pinned", awaitFlow(controller.effectiveSessionProfileName) { it == "pinned" })
+        assertEquals(pinned, awaitFlow(controller.effectiveDisplayProfile) { it?.name == "pinned" })
         assertEquals("default", controller.serverDefaultProfileScope.value?.current)
         assertTrue(awaitFlow(controller.selectionSettled) { it })
         runBlocking { controller.listProfileScopedSessions()?.getOrThrow() }
         assertTrue(runBlocking { controller.deleteProfileScopedSession("session-1") })
         assertTrue(runBlocking { controller.renameProfileScopedSession("session-1", "Renamed") })
-        coVerify(exactly = 1) { dashboardClient.listSessions(profile = "victor", limit = 200) }
-        coVerify(exactly = 1) { dashboardClient.deleteSession("session-1", profile = "victor") }
+        coVerify(exactly = 1) { dashboardClient.listSessions(profile = "pinned", limit = 200) }
+        coVerify(exactly = 1) { dashboardClient.deleteSession("session-1", profile = "pinned") }
         coVerify(exactly = 1) {
-            dashboardClient.renameSession("session-1", "Renamed", profile = "victor")
+            dashboardClient.renameSession("session-1", "Renamed", profile = "pinned")
         }
     }
 

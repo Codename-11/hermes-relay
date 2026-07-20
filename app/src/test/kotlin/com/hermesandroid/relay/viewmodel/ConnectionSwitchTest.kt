@@ -126,6 +126,7 @@ class ConnectionSwitchTest {
                 hasPairCtx = cid == "connection-b",
             )
         },
+        rebuildAction: suspend () -> Unit = { apiClientRebuildCount[0]++ },
     ): ConnectionSwitchCoordinator {
         installedAuthManager = newAuthManagerMock(
             authState = AuthState.Paired("initial-token"),
@@ -140,7 +141,7 @@ class ConnectionSwitchTest {
             setApiServerUrl = { setApiServerUrlCapture += it },
             setRelayUrl = { setRelayUrlCapture += it },
             persistUrls = { a, r -> persistUrlsCapture += a to r },
-            rebuildApiClient = { apiClientRebuildCount[0]++ },
+            rebuildApiClient = rebuildAction,
         ).also { coord ->
             coord.registerStreamCancelCallback { streamCancelInvocations.trySend(Unit) }
             coord.registerVoiceStopCallback { voiceStopInvocations.trySend(Unit) }
@@ -260,6 +261,39 @@ class ConnectionSwitchTest {
         // Still persists the new active connection even though we didn't
         // connect — the user explicitly asked to switch.
         coVerify(exactly = 1) { connectionStore.setActiveConnection("connection-b") }
+    }
+
+    @Test
+    fun switchConnection_activatesTargetBeforeDashboardProbe() = runTest(dispatcher) {
+        var activeIdSeenByProbe: String? = null
+        val coord = buildCoordinator(
+            rebuildAction = {
+                apiClientRebuildCount[0]++
+                activeIdSeenByProbe = activeConnectionIdFlow.value
+            },
+        )
+
+        coord.switchConnection("connection-b").join()
+
+        assertEquals("connection-b", activeIdSeenByProbe)
+    }
+
+    @Test
+    fun switchConnection_skipsReconnectWhenRelayUrlIsBlank() = runTest(dispatcher) {
+        val dashboardOnly = sampleB.copy(
+            apiServerUrl = "",
+            relayUrl = "",
+            dashboardUrl = "http://host-b:9119",
+        )
+        connectionsFlow.value = listOf(sampleA, dashboardOnly)
+        val coord = buildCoordinator(authFactory = { _ ->
+            newAuthManagerMock(authState = AuthState.Paired("stored-token"), hasPairCtx = true)
+        })
+
+        coord.switchConnection(dashboardOnly.id).join()
+
+        verify(exactly = 0) { connectionManager.connect(any()) }
+        coVerify(exactly = 1) { connectionStore.setActiveConnection(dashboardOnly.id) }
     }
 
     @Test

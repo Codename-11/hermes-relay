@@ -1,6 +1,9 @@
 package com.hermesandroid.relay.ui.screens
 
 import android.content.Context
+import android.text.format.DateUtils
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,12 +24,24 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.CellTower
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Lan
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,21 +54,33 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.capabilities
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
+import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.statusText
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Level-1 list of Hermes connections. Reachable via Settings → Connections.
@@ -91,6 +118,15 @@ fun ConnectionsSettingsScreen(
     } else {
         false
     }
+    val startupConnectionId: String? = if (connectionViewModel != null) {
+        val startupId by connectionViewModel.startupConnectionId.collectAsState()
+        startupId
+    } else {
+        null
+    }
+    val scope = rememberCoroutineScope()
+    var switchingConnectionId by remember { mutableStateOf<String?>(null) }
+    var justSwitchedConnectionId by remember { mutableStateOf<String?>(null) }
 
     // Kick a WSS reconnect on entry in case the user landed here from a Stale
     // chip (same intent as the old inline screen).
@@ -101,7 +137,22 @@ fun ConnectionsSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.conn_title)) },
+                title = {
+                    Column {
+                        Text(stringResource(R.string.conn_title))
+                        if (connections.isNotEmpty()) {
+                            Text(
+                                text = pluralStringResource(
+                                    R.plurals.conn_server_count,
+                                    connections.size,
+                                    connections.size,
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -113,13 +164,6 @@ fun ConnectionsSettingsScreen(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
-            )
-        },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = onAddConnection,
-                icon = { Icon(imageVector = Icons.Filled.Add, contentDescription = null) },
-                text = { Text(stringResource(R.string.conn_add_connection)) },
             )
         },
     ) { innerPadding ->
@@ -149,6 +193,15 @@ fun ConnectionsSettingsScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (connections.size > 1 && connectionViewModel != null) {
+                    item {
+                        StartupConnectionSelector(
+                            connections = connections,
+                            startupConnectionId = startupConnectionId,
+                            onSelect = connectionViewModel::setStartupConnection,
+                        )
+                    }
+                }
                 items(connections, key = { it.id }) { connection ->
                     val isActive = connection.id == activeConnectionId
                     ConnectionListCard(
@@ -162,10 +215,118 @@ fun ConnectionsSettingsScreen(
                             connection.hasConfiguredRelay()
                         },
                         onClick = { onOpenConnection(connection.id) },
+                        onSwitch = if (!isActive && connectionViewModel != null) {
+                            {
+                                if (switchingConnectionId == null) {
+                                    scope.launch {
+                                        switchingConnectionId = connection.id
+                                        connectionViewModel.switchConnection(connection.id).join()
+                                        switchingConnectionId = null
+                                        if (connectionViewModel.activeConnectionId.value == connection.id) {
+                                            justSwitchedConnectionId = connection.id
+                                            delay(800)
+                                            if (justSwitchedConnectionId == connection.id) {
+                                                justSwitchedConnectionId = null
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            null
+                        },
+                        isSwitching = switchingConnectionId == connection.id,
+                        justSwitched = justSwitchedConnectionId == connection.id,
                     )
                 }
-                // Footer spacer so the last card isn't hidden by the FAB.
-                item { Spacer(modifier = Modifier.height(72.dp)) }
+                item {
+                    Button(
+                        onClick = onAddConnection,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                    ) {
+                        Icon(imageVector = Icons.Filled.Add, contentDescription = null)
+                        Text(
+                            text = stringResource(R.string.conn_add_connection),
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
+                item { Spacer(modifier = Modifier.height(16.dp)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StartupConnectionSelector(
+    connections: List<Connection>,
+    startupConnectionId: String?,
+    onSelect: (String?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = startupConnectionId
+        ?.let { id -> connections.firstOrNull { it.id == id }?.label }
+        ?: stringResource(R.string.conn_startup_last_used)
+
+    Box {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = true },
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AccessTime,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(end = 12.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.conn_startup_title),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(text = selectedLabel, style = MaterialTheme.typography.bodyLarge)
+                }
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = stringResource(R.string.conn_startup_choose),
+                )
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        Text(stringResource(R.string.conn_startup_last_used))
+                        Text(
+                            text = stringResource(R.string.conn_startup_recommended),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                onClick = {
+                    expanded = false
+                    onSelect(null)
+                },
+            )
+            connections.forEach { connection ->
+                DropdownMenuItem(
+                    text = { Text(connection.label) },
+                    onClick = {
+                        expanded = false
+                        onSelect(connection.id)
+                    },
+                )
             }
         }
     }
@@ -185,16 +346,28 @@ private fun ConnectionListCard(
     activeConnectionViewModel: ConnectionViewModel?,
     relayConfigured: Boolean,
     onClick: () -> Unit,
+    onSwitch: (() -> Unit)?,
+    isSwitching: Boolean,
+    justSwitched: Boolean,
 ) {
     val context = LocalContext.current
     // Active card: muted indigo wash instead of full-strength primaryContainer —
     // a card-sized fill of the brand blue overwhelmed body text (2026-06-10
     // feedback); small accents keep the vivid blue.
-    val containerColor = if (isActive) {
-        com.hermesandroid.relay.ui.theme.RelayRefresh.ElectricMuted.copy(alpha = 0.42f)
+    val targetContainerColor = if (isActive || isSwitching || justSwitched) {
+        com.hermesandroid.relay.ui.theme.RelayRefresh.ElectricMuted.copy(alpha = 0.25f)
     } else {
         MaterialTheme.colorScheme.surfaceVariant
     }
+    val containerColor by animateColorAsState(targetValue = targetContainerColor, label = "connectionCardColor")
+    val borderColor by animateColorAsState(
+        targetValue = if (isSwitching || justSwitched) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0f)
+        },
+        label = "connectionCardBorder",
+    )
 
     Card(
         modifier = Modifier
@@ -202,6 +375,7 @@ private fun ConnectionListCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = containerColor),
+        border = BorderStroke(if (isSwitching || justSwitched) 1.5.dp else 0.dp, borderColor),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -209,51 +383,86 @@ private fun ConnectionListCard(
         ) {
             // ── Title row ────────────────────────────────────────────────
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            if (isActive) com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+                            else MaterialTheme.colorScheme.primary,
+                        ),
+                )
                 Text(
                     text = connection.label,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 10.dp),
                 )
                 if (isActive) {
                     Badge(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                     ) {
-                        Text(text = stringResource(R.string.conn_active), modifier = Modifier.padding(horizontal = 6.dp))
+                        Text(
+                            text = stringResource(R.string.conn_active).uppercase(),
+                            modifier = Modifier.padding(horizontal = 6.dp),
+                        )
                     }
                 }
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 4.dp),
-                )
+                if (onSwitch != null || isSwitching || justSwitched) {
+                    OutlinedButton(
+                        onClick = { onSwitch?.invoke() },
+                        enabled = !isSwitching && !justSwitched,
+                    ) {
+                        when {
+                            isSwitching -> {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Text(stringResource(R.string.conn_switching), modifier = Modifier.padding(start = 6.dp))
+                            }
+                            justSwitched -> {
+                                Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Text(stringResource(R.string.conn_switched), modifier = Modifier.padding(start = 6.dp))
+                            }
+                            else -> Text(stringResource(R.string.conn_switch))
+                        }
+                    }
+                }
             }
 
             // ── Subtitle: hostname + status ──────────────────────────────
-            val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
-            val hasStandardApi = connection.apiServerUrl.isNotBlank()
-            val pairedStatus = when {
-                liveState != null &&
-                    (connection.pairedAt != null || liveState != RelayUiState.NotConfigured) ->
-                    liveState.statusText(connectedLabel = stringResource(R.string.conn_connected))
-                connection.pairedAt != null -> formatPairedRelative(context, connection.pairedAt)
-                hasStandardApi -> stringResource(R.string.conn_standard_not_paired)
-                else -> stringResource(R.string.conn_not_paired)
-            }
-            val statusColor = if (liveState == RelayUiState.Stale) {
-                MaterialTheme.colorScheme.tertiary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
+            val hostname = connection.primaryHost.ifBlank { connection.label }
+            val dashboardStatus = connection.dashboardLastStatus
+            val dashboardSignInRequired =
+                dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
+            val connectionStatus = when {
+                dashboardSignInRequired -> stringResource(R.string.conn_dashboard_sign_in)
+                dashboardStatus?.reachable == true -> stringResource(R.string.conn_dashboard_available)
+                dashboardStatus != null && !dashboardStatus.reachable -> stringResource(R.string.conn_dashboard_offline)
+                connection.resolvedDashboardUrl.isNotBlank() -> stringResource(R.string.conn_dashboard_unchecked)
+                else -> stringResource(R.string.conn_dashboard_missing)
             }
             Text(
-                text = "$hostname • $pairedStatus",
+                text = if (isSwitching) {
+                    stringResource(R.string.conn_connecting_to, connection.label)
+                } else {
+                    "Dashboard · $hostname"
+                },
                 style = MaterialTheme.typography.bodySmall,
-                color = statusColor,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = if (isActive) {
+                    stringResource(R.string.conn_last_used_now)
+                } else {
+                    connection.lastUsedAt?.let { formatUsedRelative(context, it) } ?: connectionStatus
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             // ── Steps/timeline summary (every card) ──────────────────────
@@ -267,6 +476,42 @@ private fun ConnectionListCard(
                 // detail — the same destination as the card tap.
                 onOpenDashboard = onClick,
             )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Lan,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .padding(end = 2.dp),
+                )
+                Text(
+                    text = when {
+                        connection.routeCandidates.isNotEmpty() -> connection.routeCandidates
+                            .sortedBy { it.priority }
+                            .joinToString(" · ") { route ->
+                                route.role.replaceFirstChar { it.titlecase() }
+                            }
+                        connection.resolvedDashboardUrl.isNotBlank() -> stringResource(R.string.conn_dashboard_only_route)
+                        else -> stringResource(R.string.conn_no_routes)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -304,6 +549,12 @@ private fun ConnectionSurfaceSummary(
     } else {
         null
     }
+    val gatewayAvailability: GatewayAvailability? = if (activeConnectionViewModel != null) {
+        val availability by activeConnectionViewModel.gatewayAvailability.collectAsState()
+        availability
+    } else {
+        null
+    }
     val standardVoiceAvailability: StandardVoiceAvailability? =
         if (activeConnectionViewModel != null) {
             val availability by activeConnectionViewModel.standardVoiceAvailability.collectAsState()
@@ -315,17 +566,41 @@ private fun ConnectionSurfaceSummary(
     val dashboardSignInRequired =
         dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
 
-    val apiText = when {
-        connection.apiServerUrl.isBlank() -> stringResource(R.string.conn_api_missing)
-        activeApiHealth == ConnectionViewModel.HealthStatus.Probing -> stringResource(R.string.conn_api_checking)
-        activeApiReachable == true -> stringResource(R.string.conn_api_ready)
-        isActive && activeApiReachable == false -> stringResource(R.string.conn_api_offline)
-        else -> stringResource(R.string.conn_api_configured)
+    val chatRuntimeStatus: ChatRuntimeStatus? = if (isActive) {
+        resolveChatRuntimeStatus(
+            gateway = when (gatewayAvailability) {
+                GatewayAvailability.Ready -> ChatTransportReadiness.Ready
+                GatewayAvailability.Unknown, null -> ChatTransportReadiness.Connecting
+                GatewayAvailability.SignInRequired,
+                GatewayAvailability.Unreachable,
+                GatewayAvailability.Unsupported -> ChatTransportReadiness.Unavailable
+            },
+            apiSse = when {
+                connection.apiServerUrl.isBlank() -> ChatTransportReadiness.NotConfigured
+                activeApiReachable == true -> ChatTransportReadiness.Ready
+                activeApiHealth == ConnectionViewModel.HealthStatus.Probing -> ChatTransportReadiness.Connecting
+                activeApiHealth == ConnectionViewModel.HealthStatus.Unreachable -> ChatTransportReadiness.Unavailable
+                else -> ChatTransportReadiness.Connecting
+            },
+        )
+    } else {
+        null
     }
-    val apiTone = when {
-        activeApiReachable == true -> SummaryTone.Good
-        connection.apiServerUrl.isBlank() -> SummaryTone.Warning
-        isActive && activeApiReachable == false -> SummaryTone.Warning
+
+    val chatText = when {
+        chatRuntimeStatus is ChatRuntimeStatus.Connected -> stringResource(R.string.conn_api_ready)
+        chatRuntimeStatus == ChatRuntimeStatus.Connecting -> stringResource(R.string.conn_api_checking)
+        gatewayAvailability == GatewayAvailability.SignInRequired -> stringResource(R.string.conn_dashboard_sign_in)
+        dashboardStatus?.reachable == true && !dashboardSignInRequired -> stringResource(R.string.conn_dashboard_available)
+        connection.capabilities.chatConfigured -> stringResource(R.string.conn_api_configured)
+        else -> stringResource(R.string.conn_api_missing)
+    }
+    val chatTone = when {
+        chatRuntimeStatus is ChatRuntimeStatus.Connected -> SummaryTone.Good
+        chatRuntimeStatus == ChatRuntimeStatus.Connecting -> SummaryTone.Info
+        gatewayAvailability == GatewayAvailability.SignInRequired -> SummaryTone.Info
+        dashboardStatus?.reachable == true && !dashboardSignInRequired -> SummaryTone.Good
+        connection.capabilities.chatConfigured -> SummaryTone.Neutral
         else -> SummaryTone.Neutral
     }
 
@@ -374,99 +649,78 @@ private fun ConnectionSurfaceSummary(
         else -> SummaryTone.Neutral
     }
 
-    // A single grouped surface with dot + label + value rows — the
-    // steps/timeline vocabulary shared with the detail's Features list.
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(12.dp),
+    Row(
         modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
-            ConnectionSurfaceRow(label = stringResource(R.string.conn_api_label), value = apiText, tone = apiTone)
-            SurfaceRowDivider()
-            ConnectionSurfaceRow(
-                label = stringResource(R.string.conn_dashboard_label),
-                value = dashboardText,
-                tone = dashboardTone,
-                onClick = if (dashboardSignInRequired) onOpenDashboard else null,
-            )
-            SurfaceRowDivider()
-            ConnectionSurfaceRow(
-                label = stringResource(R.string.conn_voice_label),
-                value = voiceText,
-                tone = voiceTone,
-                onClick = if (standardVoiceAvailability == StandardVoiceAvailability.SignInRequired) onOpenDashboard else null,
-            )
-            SurfaceRowDivider()
-            ConnectionSurfaceRow(label = stringResource(R.string.conn_relay_label), value = relayText, tone = relayTone)
-        }
+        ConnectionStatusChip(Icons.Filled.Chat, stringResource(R.string.conn_chat_label), chatText, chatTone, Modifier.weight(1f))
+        ConnectionStatusChip(
+            Icons.Filled.Dashboard,
+            stringResource(R.string.conn_manage_label),
+            dashboardText,
+            dashboardTone,
+            Modifier.weight(1f),
+            if (dashboardSignInRequired) onOpenDashboard else null,
+        )
+        ConnectionStatusChip(
+            Icons.Filled.GraphicEq,
+            stringResource(R.string.conn_voice_label),
+            voiceText,
+            voiceTone,
+            Modifier.weight(1f),
+            if (standardVoiceAvailability == StandardVoiceAvailability.SignInRequired) onOpenDashboard else null,
+        )
+        ConnectionStatusChip(Icons.Filled.CellTower, stringResource(R.string.conn_relay_label), relayText, relayTone, Modifier.weight(1f))
     }
 }
 
 private enum class SummaryTone { Neutral, Good, Info, Warning }
 
-/** Hairline divider between summary rows — inset so it reads as a list. */
 @Composable
-private fun SurfaceRowDivider() {
-    HorizontalDivider(
-        modifier = Modifier.padding(horizontal = 12.dp),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-    )
-}
-
-/**
- * One health line: status dot + label + value. The dot carries the tone so
- * the value text stays short and the row stays light.
- */
-@Composable
-private fun ConnectionSurfaceRow(
+private fun ConnectionStatusChip(
+    icon: ImageVector,
     label: String,
     value: String,
     tone: SummaryTone,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
 ) {
-    val dotColor = when (tone) {
-        SummaryTone.Good -> com.hermesandroid.relay.ui.theme.RelayRefresh.Green
-        SummaryTone.Info -> MaterialTheme.colorScheme.primary
-        SummaryTone.Warning -> MaterialTheme.colorScheme.error
-        SummaryTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-    }
-    val valueColor = when (tone) {
+    val accent = when (tone) {
         SummaryTone.Good -> com.hermesandroid.relay.ui.theme.RelayRefresh.Green
         SummaryTone.Info -> MaterialTheme.colorScheme.primary
         SummaryTone.Warning -> MaterialTheme.colorScheme.error
         SummaryTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 8.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    Surface(
+        modifier = modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(10.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(RoundedCornerShape(50))
-                .background(dotColor),
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodySmall,
-            color = valueColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Column(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelSmall,
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -477,21 +731,15 @@ private fun Connection.hasConfiguredRelay(): Boolean {
         !RelayUrlDeriver.isAutoManagedRelayUrl(trimmedRelayUrl, apiServerUrl)
 }
 
-/**
- * Hand-rolled "N minutes ago" formatter for the card subtitle. `DateUtils`
- * returns awkward copy ("in 0 minutes") for small deltas.
- */
-private fun formatPairedRelative(context: Context, pairedAtMillis: Long): String {
-    val deltaMs = System.currentTimeMillis() - pairedAtMillis
-    if (deltaMs < 0) return context.getString(R.string.conn_just_paired)
-    val minutes = TimeUnit.MILLISECONDS.toMinutes(deltaMs)
-    val hours = TimeUnit.MILLISECONDS.toHours(deltaMs)
-    val days = TimeUnit.MILLISECONDS.toDays(deltaMs)
-    return when {
-        minutes < 1L -> context.getString(R.string.conn_just_paired)
-        minutes < 60L -> context.resources.getQuantityString(R.plurals.conn_paired_minutes_ago, minutes.toInt(), minutes)
-        hours < 24L -> context.resources.getQuantityString(R.plurals.conn_paired_hours_ago, hours.toInt(), hours)
-        days < 30L -> context.resources.getQuantityString(R.plurals.conn_paired_days_ago, days.toInt(), days)
-        else -> context.getString(R.string.conn_paired)
+private fun formatUsedRelative(context: Context, usedAtMillis: Long): String {
+    val relative = if (System.currentTimeMillis() - usedAtMillis < DateUtils.MINUTE_IN_MILLIS) {
+        context.getString(R.string.conn_just_now)
+    } else {
+        DateUtils.getRelativeTimeSpanString(
+            usedAtMillis,
+            System.currentTimeMillis(),
+            DateUtils.MINUTE_IN_MILLIS,
+        ).toString()
     }
+    return context.getString(R.string.conn_last_used_format, relative)
 }
