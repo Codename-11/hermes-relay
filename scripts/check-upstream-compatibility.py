@@ -34,12 +34,32 @@ TEST_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "isolation_queue_and_delegation",
+        "isolation_queue_and_lineage",
         (
             "tests/test_tui_gateway_server.py",
             "-k",
-            "turn_isolation or compression_lineage or queued_prompt",
+            "turn_isolation or queued_prompt",
+        ),
+    ),
+    (
+        "delegation_ownership",
+        (
             "tests/cli/test_cli_async_delegation_delivery.py",
+            "tests/test_tui_gateway_server.py::test_notification_poller_drops_orphaned_events",
+            "tests/test_tui_gateway_server.py::test_notification_poller_delivers_owned_events",
+            "tests/test_tui_gateway_server.py::test_run_prompt_submit_requeues_foreign_completion",
+            "tests/test_tui_gateway_server.py::test_run_prompt_submit_delivers_completion_observed_by_poll",
+            "tests/test_tui_gateway_server.py::test_run_prompt_submit_requeues_all_unstarted_notifications_with_real_threading",
+            "tests/test_tui_gateway_server.py::test_run_prompt_submit_delivers_completion_owned_through_compression_lineage",
+            "tests/test_tui_gateway_server.py::test_run_prompt_submit_prefers_origin_ui_session_id",
+            "tests/tools/test_process_registry.py::test_drain_notifications_can_deliver_poll_observed_for_gateway",
+            "tests/tools/test_process_registry.py::test_drain_notifications_routes_foreign_before_local_skip",
+            "tests/tools/test_process_registry.py::test_drain_notifications_filters_addressed_completion_by_owns_event",
+            "tests/tools/test_process_registry.py::test_drain_notifications_filters_addressed_completion_by_session_key",
+            "tests/tools/test_process_registry.py::test_drain_notifications_session_key_filter_requeues_origin_only_event",
+            "tests/tools/test_process_registry.py::test_drain_notifications_ownerless_completion_preserves_legacy_delivery",
+            "tests/tools/test_process_registry.py::test_drain_notifications_ownerless_async_delegation_still_requires_proof",
+            "tests/tools/test_process_registry.py::test_drain_notifications_completion_callback_exception_fails_closed",
         ),
     ),
 )
@@ -132,7 +152,7 @@ def main() -> int:
         raise SystemExit("missing required upstream baseline(s): " + ", ".join(missing_baselines))
 
     test_paths = {
-        item
+        item.split("::", 1)[0]
         for _, arguments in TEST_GROUPS
         for item in arguments
         if item.startswith("tests/")
