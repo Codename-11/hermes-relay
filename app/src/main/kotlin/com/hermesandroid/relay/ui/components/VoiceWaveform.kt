@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.hermesandroid.relay.viewmodel.VoiceState
 import kotlin.math.PI
 import kotlin.math.max
@@ -140,6 +141,7 @@ fun VoiceWaveform(
     amplitude: Float,
     state: VoiceState,
     outputAudioActive: Boolean = false,
+    height: Dp = 56.dp,
     modifier: Modifier = Modifier,
 ) {
     // No downstream smoothing. The VoiceViewModel already runs an
@@ -201,7 +203,7 @@ fun VoiceWaveform(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(56.dp),
+            .height(height),
     ) {
         val width = size.width
         val height = size.height

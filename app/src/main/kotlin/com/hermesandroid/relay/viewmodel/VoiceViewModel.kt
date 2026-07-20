@@ -155,6 +155,13 @@ data class VoiceUiState(
     val backgroundRun: BackgroundRunState? = null,
 )
 
+data class VoicePreviewUiState(
+    val selectionKey: String? = null,
+    val isPlaying: Boolean = false,
+    val amplitude: Float = 0f,
+    val error: String? = null,
+)
+
 /** ADR 33 background/promoted Hermes run surface for the voice overlay. */
 data class BackgroundRunState(
     val runId: String? = null,
@@ -578,6 +585,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(VoiceUiState())
     val uiState: StateFlow<VoiceUiState> = _uiState.asStateFlow()
+
+    private val _voicePreviewState = MutableStateFlow(VoicePreviewUiState())
+    val voicePreviewState: StateFlow<VoicePreviewUiState> = _voicePreviewState.asStateFlow()
+    private var voicePreviewJob: Job? = null
 
     // Rolling voice pipeline telemetry for StatsForNerds → Voice section.
     // Updated on discrete lifecycle events (turn start/stop, STT call
@@ -2252,6 +2263,107 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 Toast.makeText(app, "Voice test failed: ${e.message ?: "playback error"}", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    /**
+     * Plays an ephemeral Relay voice-output session using the editor's draft
+     * selection. None of these values are persisted; saving remains an
+     * explicit, separate settings action.
+     *
+     * Calling this with the currently-playing key acts as a pause/stop toggle.
+     * Starting another key always stops the previous preview first, so two
+     * providers can never talk over one another.
+     */
+    fun previewVoiceOutput(
+        selectionKey: String,
+        provider: String,
+        model: String,
+        voice: String,
+        sampleRate: Int,
+        language: String,
+        sample: String = "Hello, this is Hermes. This is how this voice sounds.",
+        onResult: (Result<Unit>) -> Unit = {},
+    ) {
+        if (_voicePreviewState.value.isPlaying &&
+            _voicePreviewState.value.selectionKey == selectionKey
+        ) {
+            stopVoicePreview()
+            return
+        }
+
+        val client = voiceClient
+        val pcmPlayer = realtimePcmPlayer
+        if (client == null || pcmPlayer == null) {
+            val error = IllegalStateException("Relay voice preview is not available")
+            _voicePreviewState.value = VoicePreviewUiState(error = error.message)
+            onResult(Result.failure(error))
+            return
+        }
+
+        voicePreviewJob?.cancel()
+        pcmPlayer.stop()
+        _voicePreviewState.value = VoicePreviewUiState(
+            selectionKey = selectionKey,
+            isPlaying = true,
+        )
+        voicePreviewJob = viewModelScope.launch {
+            val audioBytes = AtomicInteger(0)
+            try {
+                val result = client.runVoiceOutput(
+                    text = sample,
+                    renderMode = "verbatim",
+                    provider = provider,
+                    model = model,
+                    voice = voice,
+                    sampleRate = sampleRate,
+                    language = language,
+                ) { event ->
+                    if (!event.isAudioDelta) return@runVoiceOutput
+                    val encoded = event.audioBase64 ?: return@runVoiceOutput
+                    val audio = try {
+                        Base64.getDecoder().decode(encoded)
+                    } catch (_: Exception) {
+                        return@runVoiceOutput
+                    }
+                    if (audio.isEmpty()) return@runVoiceOutput
+                    val level = pcmPlayer.write(audio, event.sampleRate ?: sampleRate)
+                    audioBytes.addAndGet(audio.size)
+                    _voicePreviewState.update { state ->
+                        state.copy(amplitude = level, isPlaying = true, error = null)
+                    }
+                }
+                val finalResult = result.fold(
+                    onSuccess = {
+                        if (audioBytes.get() <= 0) {
+                            Result.failure(IllegalStateException("Voice preview returned no audio"))
+                        } else {
+                            val drainMs = pcmPlayer.flushBufferedPlayback().coerceIn(250L, 4_500L)
+                            delay(drainMs)
+                            Result.success(Unit)
+                        }
+                    },
+                    onFailure = { Result.failure(it) },
+                )
+                onResult(finalResult)
+                _voicePreviewState.value = VoicePreviewUiState(
+                    error = finalResult.exceptionOrNull()?.message,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } finally {
+                pcmPlayer.stop()
+                if (_voicePreviewState.value.selectionKey == selectionKey) {
+                    _voicePreviewState.update { it.copy(isPlaying = false, amplitude = 0f) }
+                }
+            }
+        }
+    }
+
+    fun stopVoicePreview() {
+        voicePreviewJob?.cancel()
+        voicePreviewJob = null
+        realtimePcmPlayer?.stop()
+        _voicePreviewState.value = VoicePreviewUiState()
     }
 
     fun testRealtimeAgent(
@@ -5444,6 +5556,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        voicePreviewJob?.cancel()
+        voicePreviewJob = null
         closeRealtimeSession()
         // B4: release the listener + VAD engine native resources before
         // anything else. stopBargeInListener is defensive / idempotent.

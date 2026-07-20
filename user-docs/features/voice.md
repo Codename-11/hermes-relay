@@ -153,7 +153,10 @@ consistent across the response.
 
 ## Voice Settings
 
-**Settings → Voice** has these core sections:
+**Settings → Voice** is organized into three tabs: **Output**, **Listening**,
+and **Advanced**. Output keeps the engine, route, provider, model, voice, and
+save actions together; Listening contains interaction presets and barge-in;
+Advanced contains STT, host configuration, and the full-engine diagnostic test.
 
 ### Voice Engine
 
@@ -197,13 +200,21 @@ OpenAI voice choices are static from the official API docs because OpenAI does
 not provide a general voice-list endpoint for this surface. The picker groups
 provider voices, supports search for long voice lists, marks recommended/custom
 voices where the relay can tell, and validates model/voice/sample-rate
-compatibility before saving. **Advanced manual entry** lets you type raw IDs for
+compatibility before saving. The provider is summarized with its advertised
+model and voice counts. The selected model and recommended voices are grouped
+in one card, with a searchable **View all voices** picker for larger catalogs.
+**Advanced manual entry** lets you type raw IDs for
 providers or voices the relay does not advertise yet; those save as warnings
 rather than hard failures unless the relay knows the combination is incompatible.
 Saving while a profile is selected writes that profile's experimental
 `voice_output:` section, so `mizuki` can use one voice and `victor` another.
-**Save & test**
-persists the choice and plays the sample through the active profile voice.
+
+Inline play buttons beside the model and individual voices open an ephemeral
+voice-output session with the current draft provider/model/voice/language/sample
+rate. Previewing does **not** save the draft. Only one preview can play at once;
+the active row shows the same speaking waveform used by voice mode and its play
+button becomes Stop. **Discard** restores the saved profile values, while
+**Save** validates and persists the draft independently.
 
 When the streaming provider is **xAI Grok TTS**, an **Expressive speech tags**
 switch appears here. With it on, the relay injects xAI's inline/wrapping tone
