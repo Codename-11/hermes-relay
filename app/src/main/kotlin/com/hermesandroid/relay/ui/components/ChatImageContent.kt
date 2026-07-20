@@ -208,6 +208,9 @@ private fun ChatInlineImage.isRemote(): Boolean {
     return s.startsWith("http://") || s.startsWith("https://")
 }
 
+private fun ChatInlineImage.isInlineDataImage(): Boolean =
+    src.startsWith("data:image/", ignoreCase = true)
+
 /**
  * An absolute server-side path (e.g. `/home/agent/out.png`) — what the relay's
  * `/media/by-path` route expects. Not a remote URL and not a relative ref.
@@ -232,6 +235,7 @@ fun ChatInlineImages(
         images.forEach { image ->
             when {
                 image.isRemote() -> RemoteChatImage(image, maxWidth)
+                image.isInlineDataImage() -> DataUrlChatImage(image, maxWidth)
                 // A server-local file the agent referenced — fetch it through
                 // /media/by-path and render inline; on failure the notice shows
                 // the ACTUAL reason (for debugging) instead of a generic message.
@@ -248,6 +252,84 @@ fun ChatInlineImages(
                     image,
                     reason = "Unsupported image path: ${image.src}",
                 )
+            }
+        }
+    }
+}
+
+private sealed interface DataUrlImagePhase {
+    data object Loading : DataUrlImagePhase
+    data class Loaded(
+        val bitmap: ImageBitmap,
+        val bytes: ByteArray,
+        val mime: String,
+    ) : DataUrlImagePhase
+    data object Rejected : DataUrlImagePhase
+}
+
+/** Render the bounded data URLs emitted by upstream `_resolve_media_to_data_urls`. */
+@Composable
+private fun DataUrlChatImage(image: ChatInlineImage, maxWidth: Dp) {
+    var phase by remember(image.src) { mutableStateOf<DataUrlImagePhase>(DataUrlImagePhase.Loading) }
+    var viewerOpen by remember(image.src) { mutableStateOf(false) }
+    val blurMode = LocalMediaBlurMode.current
+    var revealed by remember(image.src) { mutableStateOf(false) }
+    LaunchedEffect(image.src) {
+        phase = withContext(Dispatchers.Default) {
+            val decoded = decodeInlineImageDataUrl(image.src) ?: return@withContext DataUrlImagePhase.Rejected
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(decoded.bytes, 0, decoded.bytes.size, bounds)
+            if (!isInlineImageDimensionsSafe(bounds.outWidth, bounds.outHeight)) {
+                return@withContext DataUrlImagePhase.Rejected
+            }
+            val bitmap = BitmapFactory.decodeByteArray(decoded.bytes, 0, decoded.bytes.size)
+                ?.asImageBitmap() ?: return@withContext DataUrlImagePhase.Rejected
+            DataUrlImagePhase.Loaded(bitmap, decoded.bytes, decoded.mime)
+        }
+    }
+    when (val current = phase) {
+        DataUrlImagePhase.Loading -> Box(
+            modifier = Modifier
+                .widthIn(max = maxWidth)
+                .height(120.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            contentAlignment = Alignment.Center,
+        ) { CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp) }
+        DataUrlImagePhase.Rejected -> UnrenderableImageNotice(
+            image.copy(src = "inline image"),
+            reason = "Unsupported or oversized inline image.",
+        )
+        is DataUrlImagePhase.Loaded -> {
+            if (viewerOpen) {
+                ChatImageViewer(
+                    source = ChatImageViewerSource.Bitmap(
+                        bitmap = current.bitmap,
+                        displayName = image.alt.ifBlank { "image" },
+                        mime = current.mime,
+                        bytesProvider = { current.bytes },
+                    ),
+                    onDismiss = { viewerOpen = false },
+                    sensitive = image.sensitive,
+                    initiallyRevealed = revealed,
+                )
+            }
+            InlineImageColumn(image, maxWidth) {
+                BlurredMedia(
+                    blurred = !revealed && shouldBlurImage(blurMode, image.sensitive),
+                    onReveal = { revealed = true },
+                ) {
+                    androidx.compose.foundation.Image(
+                        bitmap = current.bitmap,
+                        contentDescription = image.alt.ifBlank { "Generated image" },
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .widthIn(max = maxWidth)
+                            .heightIn(max = 360.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { viewerOpen = true },
+                    )
+                }
             }
         }
     }

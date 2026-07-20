@@ -176,3 +176,25 @@ Setup payloads should carry an explicit Dashboard/Gateway URL for new
 connections. Legacy API-first QRs remain importable; when their optional
 `dashboard_url` is absent Android may derive the conventional same-host `:9119`
 URL for compatibility.
+
+## API Fallback Compatibility Details
+
+- Android accepts the API server's final-response image data URLs for PNG,
+  JPEG, GIF, WebP, and BMP. Decoding is strict: MIME and file signatures must
+  agree, encoded and decoded bytes are capped at the upstream 5 MiB limit, and
+  oversized pixel dimensions are rejected before bitmap allocation. SVG and
+  unknown image types remain unsupported. Spoiler/alt sensitivity flags use the
+  same reveal gate as remote and Relay-fetched images.
+- `/v1/models` rows retain `id`, `root`, and `parent`. The picker sends the
+  alias `id` unchanged on sessions, completions, and runs requests, while a
+  differing `root` is shown as secondary route information.
+- A `503` OpenAI error with code `gateway_draining` retains its structured code
+  and bounded `Retry-After` hint through every SSE listener. Android identifies
+  this as an intentional Hermes restart/drain rather than a provider outage.
+  Before any event arrives, it retries once through a composite EventSource
+  owner; Stop/session-switch cancels the initial request, pending delay, and
+  replacement together. A second drain or any post-event failure remains an
+  explicit retry so the client cannot duplicate an admitted turn.
+- Gateway `session.create` and `session.resume` declare `source: webui`, the
+  existing upstream rich-chat platform hint. Hermes currently has no stable
+  `android` or `relay_desktop` platform hint; Relay clients must not invent one.
