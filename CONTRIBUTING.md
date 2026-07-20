@@ -168,10 +168,19 @@ Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/pl
 
 ## Testing
 
+- **Android pre-push gate:** `scripts\dev.bat prepush` on Windows or
+  `./scripts/dev.sh prepush` on macOS/Linux. This runs the Android repository
+  checks, Google Play debug lint, and the same focused unit-test shard used by
+  CI in one cached Gradle invocation. Run it before pushing Android PR updates
+  to catch common hosted failures without waiting for another full Actions
+  cycle; hosted CI remains the exhaustive all-variant gate.
 - **Android unit tests:** `scripts/dev.bat test` (runs JUnit + MockK + Compose testing)
 - **Python tests:** `python -m unittest plugin.tests.test_<name>` from the repo root with the hermes-agent venv active. `pytest` works too but the pre-existing `conftest.py` imports a module that isn't always installed — `unittest` avoids that entirely.
 
 CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched.
+Superseded Android runs on `dev` and PR refs are canceled automatically; `main`
+runs are never canceled because each release-branch commit must complete its
+independent validation.
 
 ## Questions?
 

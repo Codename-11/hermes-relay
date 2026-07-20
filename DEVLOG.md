@@ -1,5 +1,18 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-20 — Faster Android validation feedback
+
+Android contributors now have one cross-platform pre-push command for locale,
+documentation, collection-API, and version checks plus primary Play-variant
+lint and the focused CI unit-test shard. It uses daemon and configuration-cache
+reuse, supplies a conservative Gradle heap, and discovers the standard Windows
+Android SDK without writing worktree-local configuration. Hosted CI retains
+the exhaustive all-variant lint gate.
+
+Android CI now cancels a superseded run on `dev` or a pull-request ref while
+preserving every `main` run. A newer integration commit therefore stops paying
+for an older release smoke that can no longer become the tested release tip.
+
 ## 2026-07-19 — Android 1.4.9 release preparation
 
 Android advanced to 1.4.9 with versionCode 32 after the dashboard-primary

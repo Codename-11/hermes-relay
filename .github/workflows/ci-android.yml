@@ -38,10 +38,11 @@ on:
       - ".github/workflows/approve-release-android.yml"
       - ".github/workflows/release-android.yml"
 
-# Cancel in-progress runs for the same branch/PR, but let main and dev finish
+# Cancel superseded PR and dev runs. Never cancel main: every release-branch
+# commit must finish its independent validation.
 concurrency:
   group: ci-android-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # ──────────────────────────────────────────────
