@@ -9,7 +9,7 @@ buildscript {
     dependencies {
         // Meta Spatial 0.12.0 ships older AGP/Kotlin compiler artifacts on its
         // plugin classpath; AGP 9.2 provides the Android/Kotlin tooling here.
-        classpath("com.meta.spatial:spatial-gradle-plugin-impl:0.13.1") {
+        classpath("com.meta.spatial:spatial-gradle-plugin-impl:0.13.2") {
             exclude(group = "com.android.tools.build", module = "gradle")
             exclude(group = "org.jetbrains.kotlin", module = "kotlin-compiler-embeddable")
         }
