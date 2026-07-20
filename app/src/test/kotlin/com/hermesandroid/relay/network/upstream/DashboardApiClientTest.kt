@@ -501,6 +501,68 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun mcpOAuth_preservesProfileAndParsesOpaqueFlow() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"flow_id":"opaque-flow","server_name":"hosted","status":"authorization_required","authorization_url":"https://auth.example/authorize?state=secret"}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"flow_id":"opaque-flow","server_name":"hosted","status":"approved","authorization_url":null}""",
+            ),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        val started = client.startMcpOAuth("hosted tools", profile = "work profile").getOrThrow()
+        val approved = client.getMcpOAuthFlow(started.flowId).getOrThrow()
+
+        assertEquals("opaque-flow", started.flowId)
+        assertEquals("approved", approved.status)
+        assertEquals("/api/mcp/servers/hosted%20tools/auth?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/oauth/flows/opaque-flow", server.takeRequest().path)
+    }
+
+    @Test
+    fun customEndpointCrud_usesPublicDashboardRoutesAndRedactedResponse() = runTest {
+        val listBody = """
+            {"endpoints":[{"id":"local","name":"Local","base_url":"https://llm.example/v1","model":"qwen","models":["qwen"],"has_api_key":true,"api_key_preview":"sk-…1234","is_current":true}],"current":{"provider":"local","model":"qwen"}}
+        """.trimIndent()
+        repeat(5) {
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+                if (it == 2) """{"ok":true,"reachable":true,"message":"","models":["qwen"]}"""
+                else if (it == 3) """{"ok":true,"provider":"local","model":"qwen"}"""
+                else listBody,
+            ))
+        }
+        val client = DashboardApiClient(server.url("/").toString())
+        val draft = DashboardCustomEndpointDraft(
+            id = "local",
+            name = "Local",
+            baseUrl = "https://llm.example/v1",
+            model = "qwen",
+            apiKey = "never-persist-this",
+        )
+
+        val listed = client.getCustomEndpoints("work").getOrThrow()
+        client.saveCustomEndpoint(draft, "work").getOrThrow()
+        val validation = client.validateCustomEndpoint(draft, "work").getOrThrow()
+        client.activateCustomEndpoint("local", "work").getOrThrow()
+        client.deleteCustomEndpoint("local", "work").getOrThrow()
+
+        assertEquals("local", listed.currentProvider)
+        assertTrue(listed.endpoints.single().hasApiKey)
+        assertEquals(listOf("qwen"), validation.models)
+        assertEquals("/api/providers/custom-endpoints?profile=work", server.takeRequest().path)
+        val save = server.takeRequest()
+        assertEquals("/api/providers/custom-endpoints?profile=work", save.path)
+        assertTrue(save.body.readUtf8().contains("never-persist-this"))
+        assertEquals("/api/providers/custom-endpoints/validate?profile=work", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints/local/activate?profile=work", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints/local?profile=work", server.takeRequest().path)
+    }
+
+    @Test
     fun profileActions_useActiveAndDeleteRoutes() = runTest {
         server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok": true}"""))
         server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"content": "soul", "exists": true}"""))

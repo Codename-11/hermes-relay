@@ -14,6 +14,8 @@ Verified upstream source snapshot:
   `hermes_cli/web_server.py`, `hermes_cli/dashboard_auth/routes.py`,
   `tui_gateway/server.py`, `hermes_cli/plugins.py`,
   `hermes_cli/plugins_cmd.py`
+- Additive Manage contracts were rechecked at upstream MCP hosted-OAuth commits
+  through `4dc2b7be0` and custom-endpoint commit `3d9789357`.
 
 ## Ownership
 
@@ -27,7 +29,7 @@ Verified upstream source snapshot:
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth | Dashboard cookie/session path; separate from API bearer. Optional status diagnostics include Nous bootstrap validity and profile/gateway topology; these do not gate transport selection. |
 | Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. |
 | Dashboard `/api/audio/transcribe`, `/api/audio/speak` | Upstream dashboard | No | Vanilla Hermes voice | Manage sign-in unlocks Vanilla Hermes voice. API server has no `/v1/audio/*` route today. |
-| Dashboard `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*` | Upstream dashboard | No | Manage | Do not proxy through Relay. |
+| Dashboard `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*`, `/api/providers/custom-endpoints*` | Upstream dashboard | No | Manage | Do not proxy through Relay. Hosted MCP OAuth stays server-owned: Android opens only the returned HTTPS authorization URL and polls the opaque flow id. Custom-endpoint credentials are write-only; blank edits preserve an existing key. |
 | `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools | Owned by `plugin/relay/server.py`; Android must gate behind Relay readiness/session grants. |
 | Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab | FastAPI plugin backend proxies loopback requests to the Relay server. |
 | `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports vanilla upstream Hermes route reachability (including `/v1/toolsets`), dashboard Nous/topology state, sanitized gateway event-loop heartbeat state, plugin layout, Relay loopback state, and legacy bootstrap presence. |

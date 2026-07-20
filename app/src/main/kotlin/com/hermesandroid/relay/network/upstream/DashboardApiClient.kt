@@ -104,6 +104,53 @@ data class DashboardChatDisplaySettings(
     val toolDisplay: String? = null,
 )
 
+data class DashboardMcpOAuthFlow(
+    val flowId: String,
+    val serverName: String,
+    val status: String,
+    val authorizationUrl: String? = null,
+    val error: String? = null,
+) {
+    val isTerminal: Boolean get() = status == "approved" || status == "error"
+}
+
+data class DashboardCustomEndpoint(
+    val id: String,
+    val name: String,
+    val baseUrl: String,
+    val model: String,
+    val models: List<String> = emptyList(),
+    val contextLength: Int? = null,
+    val discoverModels: Boolean = true,
+    val hasApiKey: Boolean = false,
+    val apiKeyPreview: String? = null,
+    val isCurrent: Boolean = false,
+)
+
+data class DashboardCustomEndpoints(
+    val endpoints: List<DashboardCustomEndpoint>,
+    val currentProvider: String? = null,
+    val currentModel: String? = null,
+)
+
+data class DashboardCustomEndpointDraft(
+    val id: String? = null,
+    val name: String,
+    val baseUrl: String,
+    val model: String,
+    val apiKey: String? = null,
+    val contextLength: Int? = null,
+    val discoverModels: Boolean = true,
+    val makeDefault: Boolean = false,
+)
+
+data class DashboardCustomEndpointValidation(
+    val ok: Boolean,
+    val reachable: Boolean,
+    val message: String,
+    val models: List<String>,
+)
+
 /** One entry from `GET /api/audio/elevenlabs/voices` — non-secret voice metadata. */
 data class ElevenLabsVoice(
     val voiceId: String,
@@ -489,6 +536,59 @@ class DashboardApiClient(
 
     suspend fun removeMcpServer(name: String): Result<JsonObject> =
         deleteJsonObject("/api/mcp/servers/${pathSegment(name)}")
+
+    suspend fun startMcpOAuth(
+        name: String,
+        profile: String? = null,
+    ): Result<DashboardMcpOAuthFlow> =
+        postJsonObject("/api/mcp/servers/${pathSegment(name)}/auth${profileQuery(profile)}")
+            .mapCatching(::parseMcpOAuthFlow)
+
+    suspend fun getMcpOAuthFlow(flowId: String): Result<DashboardMcpOAuthFlow> =
+        getJsonObject("/api/mcp/oauth/flows/${pathSegment(flowId)}")
+            .mapCatching(::parseMcpOAuthFlow)
+
+    suspend fun getCustomEndpoints(profile: String? = null): Result<DashboardCustomEndpoints> =
+        getJsonObject("/api/providers/custom-endpoints${profileQuery(profile)}")
+            .mapCatching(::parseCustomEndpoints)
+
+    suspend fun saveCustomEndpoint(
+        draft: DashboardCustomEndpointDraft,
+        profile: String? = null,
+    ): Result<DashboardCustomEndpoints> =
+        postJsonObject(
+            "/api/providers/custom-endpoints${profileQuery(profile)}",
+            customEndpointPayload(draft),
+        ).mapCatching(::parseCustomEndpoints)
+
+    suspend fun validateCustomEndpoint(
+        draft: DashboardCustomEndpointDraft,
+        profile: String? = null,
+    ): Result<DashboardCustomEndpointValidation> =
+        postJsonObject(
+            "/api/providers/custom-endpoints/validate${profileQuery(profile)}",
+            customEndpointPayload(draft),
+        ).mapCatching { root ->
+            DashboardCustomEndpointValidation(
+                ok = root.booleanField("ok") == true,
+                reachable = root.booleanField("reachable") == true,
+                message = root.stringField("message").orEmpty(),
+                models = root.stringList("models"),
+            )
+        }
+
+    suspend fun activateCustomEndpoint(
+        id: String,
+        profile: String? = null,
+    ): Result<JsonObject> =
+        postJsonObject("/api/providers/custom-endpoints/${pathSegment(id)}/activate${profileQuery(profile)}")
+
+    suspend fun deleteCustomEndpoint(
+        id: String,
+        profile: String? = null,
+    ): Result<DashboardCustomEndpoints> =
+        deleteJsonObject("/api/providers/custom-endpoints/${pathSegment(id)}${profileQuery(profile)}")
+            .mapCatching(::parseCustomEndpoints)
 
     suspend fun installMcpCatalogEntry(
         name: String,
@@ -941,6 +1041,57 @@ class DashboardApiClient(
             return params.joinToString(prefix = "?", separator = "&")
         }
 
+        private fun parseMcpOAuthFlow(root: JsonObject): DashboardMcpOAuthFlow {
+            val flowId = root.stringField("flow_id")
+                ?: throw IOException("MCP OAuth response did not include a flow id")
+            val status = root.stringField("status")
+                ?: throw IOException("MCP OAuth response did not include a status")
+            return DashboardMcpOAuthFlow(
+                flowId = flowId,
+                serverName = root.stringField("server_name").orEmpty(),
+                status = status,
+                authorizationUrl = root.stringField("authorization_url"),
+                error = root.stringField("error"),
+            )
+        }
+
+        private fun parseCustomEndpoints(root: JsonObject): DashboardCustomEndpoints {
+            val current = root["current"] as? JsonObject
+            val endpoints = (root["endpoints"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val obj = element as? JsonObject ?: return@mapNotNull null
+                val id = obj.stringField("id") ?: return@mapNotNull null
+                DashboardCustomEndpoint(
+                    id = id,
+                    name = obj.stringField("name") ?: id,
+                    baseUrl = obj.stringField("base_url").orEmpty(),
+                    model = obj.stringField("model").orEmpty(),
+                    models = obj.stringList("models"),
+                    contextLength = obj.intField("context_length"),
+                    discoverModels = obj.booleanField("discover_models") != false,
+                    hasApiKey = obj.booleanField("has_api_key") == true,
+                    apiKeyPreview = obj.stringField("api_key_preview"),
+                    isCurrent = obj.booleanField("is_current") == true,
+                )
+            }
+            return DashboardCustomEndpoints(
+                endpoints = endpoints,
+                currentProvider = current?.stringField("provider"),
+                currentModel = current?.stringField("model"),
+            )
+        }
+
+        private fun customEndpointPayload(draft: DashboardCustomEndpointDraft): JsonObject =
+            buildJsonObject {
+                draft.id?.takeIf { it.isNotBlank() }?.let { put("id", it) }
+                put("name", draft.name)
+                put("base_url", draft.baseUrl)
+                put("model", draft.model)
+                draft.apiKey?.takeIf { it.isNotBlank() }?.let { put("api_key", it) }
+                draft.contextLength?.takeIf { it > 0 }?.let { put("context_length", it) }
+                put("discover_models", draft.discoverModels)
+                put("make_default", draft.makeDefault)
+            }
+
         fun defaultClient(
             cookieStore: DashboardCookieStore = InMemoryDashboardCookieStore(),
         ): OkHttpClient = OkHttpClient.Builder()
@@ -1383,3 +1534,8 @@ private fun JsonObject?.booleanField(name: String): Boolean? =
 
 private fun JsonObject?.intField(name: String): Int? =
     (this?.get(name) as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+
+private fun JsonObject?.stringList(name: String): List<String> =
+    (this?.get(name) as? JsonArray).orEmpty().mapNotNull { element ->
+        (element as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+    }

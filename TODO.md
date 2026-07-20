@@ -58,6 +58,10 @@ intentionally remain outside that code batch:
 - Keep Standard voice labeled host-global until upstream exposes a stable
   profile/per-request audio contract; do not emulate it through Relay on the
   vanilla path.
+- Keep provider exclusion/disable filtering out of Android Manage until the
+  public model-options payload identifies excluded and disabled providers.
+  `include_unconfigured=1` currently re-adds indistinguishable setup rows, so
+  empty models are not authoritative evidence that a provider should be hidden.
 
 ---
 

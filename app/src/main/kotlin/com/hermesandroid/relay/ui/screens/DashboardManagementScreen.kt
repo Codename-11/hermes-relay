@@ -2,6 +2,8 @@
 
 package com.hermesandroid.relay.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -99,6 +101,8 @@ import androidx.compose.ui.window.Dialog
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardCustomEndpointDraft
+import com.hermesandroid.relay.network.upstream.McpOAuthFlowCoordinator
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardAuthProvider
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
@@ -136,6 +140,7 @@ private enum class DashboardManagementSection(val path: String) {
     Cron("/api/cron/jobs"),
     Mcp("/api/mcp/servers"),
     Catalog("/api/mcp/catalog"),
+    CustomEndpoints("/api/providers/custom-endpoints"),
     Profiles("/api/profiles"),
     Models("/api/model/info"),
     Keys("/api/env"),
@@ -147,6 +152,7 @@ private enum class DashboardManagementSection(val path: String) {
         Cron -> stringResource(R.string.dashboard_tab_cron)
         Mcp -> stringResource(R.string.dashboard_tab_mcp)
         Catalog -> stringResource(R.string.dashboard_tab_catalog)
+        CustomEndpoints -> stringResource(R.string.dashboard_tab_custom_endpoints)
         Profiles -> stringResource(R.string.dashboard_tab_profiles)
         Models -> stringResource(R.string.dashboard_tab_models)
         Keys -> stringResource(R.string.dashboard_tab_keys)
@@ -160,6 +166,7 @@ private enum class DashboardManagementSection(val path: String) {
         Cron -> stringResource(R.string.dashboard_tab_cron_lower)
         Mcp -> stringResource(R.string.dashboard_tab_mcp_lower)
         Catalog -> stringResource(R.string.dashboard_tab_catalog_lower)
+        CustomEndpoints -> stringResource(R.string.dashboard_tab_custom_endpoints_lower)
         Profiles -> stringResource(R.string.dashboard_tab_profiles_lower)
         Models -> stringResource(R.string.dashboard_tab_models_lower)
         Keys -> stringResource(R.string.dashboard_tab_keys_lower)
@@ -287,6 +294,7 @@ private enum class DashboardSectionAction {
     CreateProfile,
     BrowseSkillsHub,
     UpdateSkillsHub,
+    AddCustomEndpoint,
 }
 
 /** Editor session for a profile's SOUL.md — content is the FULL file from GET. */
@@ -349,6 +357,9 @@ fun DashboardManagementScreen(
     var expensiveModelConfirm by remember { mutableStateOf<ExpensiveModelConfirm?>(null) }
     var showSkillsHub by remember { mutableStateOf(false) }
     var soulEditor by remember { mutableStateOf<SoulEditorState?>(null) }
+    var oauthMcpItem by remember { mutableStateOf<DashboardSummaryItem?>(null) }
+    var customEndpointEditor by remember { mutableStateOf<DashboardSummaryItem?>(null) }
+    var showCustomEndpointEditor by remember { mutableStateOf(false) }
 
     val section = managementSections[selectedTab]
     val connectionId = activeConnection?.id ?: "default"
@@ -959,6 +970,38 @@ fun DashboardManagementScreen(
         )
     }
 
+    oauthMcpItem?.let { item ->
+        McpOAuthDialog(
+            item = item,
+            clientFactory = clientFactory,
+            onApproved = {
+                oauthMcpItem = null
+                forceReloadKey = payloadKey
+                reloadNonce += 1
+                actionMessage = context.getString(R.string.dashboard_mcp_oauth_approved)
+            },
+            onDismiss = { oauthMcpItem = null },
+        )
+    }
+
+    if (showCustomEndpointEditor) {
+        CustomEndpointDialog(
+            existing = customEndpointEditor,
+            clientFactory = clientFactory,
+            onSaved = {
+                showCustomEndpointEditor = false
+                customEndpointEditor = null
+                forceReloadKey = payloadKey
+                reloadNonce += 1
+                actionMessage = context.getString(R.string.dashboard_custom_endpoint_saved)
+            },
+            onDismiss = {
+                showCustomEndpointEditor = false
+                customEndpointEditor = null
+            },
+        )
+    }
+
     if (confirmClearDashboardSession) {
         val clearedMsg = stringResource(R.string.dashboard_session_cleared)
         AlertDialog(
@@ -1139,11 +1182,20 @@ fun DashboardManagementScreen(
                                                 )
                                             DashboardActionKind.EditProfileSoul ->
                                                 openSoulEditor(item)
+                                            DashboardActionKind.AuthenticateMcp ->
+                                                oauthMcpItem = item
+                                            DashboardActionKind.EditCustomEndpoint,
+                                            DashboardActionKind.ValidateCustomEndpoint -> {
+                                                customEndpointEditor = item
+                                                showCustomEndpointEditor = true
+                                            }
                                             // Always confirm: this flips the
                                             // server's persistent active agent for
                                             // every client, unlike the ephemeral
                                             // per-conversation switch in chat.
-                                            DashboardActionKind.ActivateProfile ->
+                                            DashboardActionKind.ActivateProfile,
+                                            DashboardActionKind.ActivateCustomEndpoint,
+                                            DashboardActionKind.DeleteCustomEndpoint ->
                                                 pendingAction = PendingDashboardAction(item, action)
                                             else -> if (action.destructive) {
                                                 pendingAction = PendingDashboardAction(item, action)
@@ -1162,6 +1214,10 @@ fun DashboardManagementScreen(
                                                 showSkillsHub = true
                                             DashboardSectionAction.UpdateSkillsHub ->
                                                 runUpdateSkillsHub()
+                                            DashboardSectionAction.AddCustomEndpoint -> {
+                                                customEndpointEditor = null
+                                                showCustomEndpointEditor = true
+                                            }
                                         }
                                     },
                                 )
@@ -1232,6 +1288,11 @@ private fun manageTileSpec(section: DashboardManagementSection): ManageTileSpec 
         icon = Icons.Filled.AutoAwesome,
         title = stringResource(R.string.dashboard_tile_catalog_title),
         subtitle = stringResource(R.string.dashboard_tile_catalog_sub),
+    )
+    DashboardManagementSection.CustomEndpoints -> ManageTileSpec(
+        icon = Icons.Filled.Link,
+        title = stringResource(R.string.dashboard_tile_custom_endpoints_title),
+        subtitle = stringResource(R.string.dashboard_tile_custom_endpoints_sub),
     )
     DashboardManagementSection.Models -> ManageTileSpec(
         icon = Icons.Filled.Tune,
@@ -1437,6 +1498,14 @@ private fun ManageOverviewBody(
                 title = stringResource(R.string.dashboard_tile_models_title),
                 subtitle = stringResource(R.string.dashboard_tile_models_sub),
                 onClick = { onSelectSection(DashboardManagementSection.Models) },
+            )
+        }
+        item {
+            RelayNavTile(
+                icon = Icons.Filled.Link,
+                title = stringResource(R.string.dashboard_tile_custom_endpoints_title),
+                subtitle = stringResource(R.string.dashboard_tile_custom_endpoints_sub),
+                onClick = { onSelectSection(DashboardManagementSection.CustomEndpoints) },
             )
         }
         item {
@@ -1981,6 +2050,7 @@ private fun LoadedBody(
     val actionLabelNewProfile = stringResource(R.string.dashboard_section_action_new_profile)
     val actionLabelBrowseHub = stringResource(R.string.dashboard_section_action_browse_hub)
     val actionLabelUpdateInstalled = stringResource(R.string.dashboard_section_action_update_installed)
+    val actionLabelAddEndpoint = stringResource(R.string.dashboard_custom_endpoint_add)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -2004,6 +2074,9 @@ private fun LoadedBody(
             DashboardManagementSection.Skills -> listOf(
                 DashboardSectionAction.BrowseSkillsHub to actionLabelBrowseHub,
                 DashboardSectionAction.UpdateSkillsHub to actionLabelUpdateInstalled,
+            )
+            DashboardManagementSection.CustomEndpoints -> listOf(
+                DashboardSectionAction.AddCustomEndpoint to actionLabelAddEndpoint,
             )
             else -> emptyList()
         }
@@ -2082,6 +2155,7 @@ private fun dashboardActionLabel(kind: DashboardActionKind): String = when (kind
     DashboardActionKind.EnableMcp -> stringResource(R.string.dashboard_action_enable)
     DashboardActionKind.DisableMcp -> stringResource(R.string.dashboard_action_disable)
     DashboardActionKind.TestMcp -> stringResource(R.string.dashboard_action_test)
+    DashboardActionKind.AuthenticateMcp -> stringResource(R.string.dashboard_action_authenticate)
     DashboardActionKind.RemoveMcp -> stringResource(R.string.dashboard_action_remove)
     DashboardActionKind.ViewProfileSoul -> stringResource(R.string.dashboard_action_soul)
     DashboardActionKind.EditProfileSoul -> stringResource(R.string.dashboard_action_edit_soul)
@@ -2091,6 +2165,10 @@ private fun dashboardActionLabel(kind: DashboardActionKind): String = when (kind
     DashboardActionKind.EnableSkill -> stringResource(R.string.dashboard_action_enable)
     DashboardActionKind.DisableSkill -> stringResource(R.string.dashboard_action_disable)
     DashboardActionKind.DeleteProfile -> stringResource(R.string.dashboard_action_delete)
+    DashboardActionKind.EditCustomEndpoint -> stringResource(R.string.dashboard_action_edit)
+    DashboardActionKind.ValidateCustomEndpoint -> stringResource(R.string.dashboard_action_validate)
+    DashboardActionKind.ActivateCustomEndpoint -> stringResource(R.string.dashboard_action_use)
+    DashboardActionKind.DeleteCustomEndpoint -> stringResource(R.string.dashboard_action_delete)
 }
 
 /**
@@ -2111,6 +2189,7 @@ private fun dashboardActionLabel(context: android.content.Context, kind: Dashboa
         DashboardActionKind.EnableMcp -> context.getString(R.string.dashboard_action_enable)
         DashboardActionKind.DisableMcp -> context.getString(R.string.dashboard_action_disable)
         DashboardActionKind.TestMcp -> context.getString(R.string.dashboard_action_test)
+        DashboardActionKind.AuthenticateMcp -> context.getString(R.string.dashboard_action_authenticate)
         DashboardActionKind.RemoveMcp -> context.getString(R.string.dashboard_action_remove)
         DashboardActionKind.ViewProfileSoul -> context.getString(R.string.dashboard_action_soul)
         DashboardActionKind.EditProfileSoul -> context.getString(R.string.dashboard_action_edit_soul)
@@ -2120,6 +2199,10 @@ private fun dashboardActionLabel(context: android.content.Context, kind: Dashboa
         DashboardActionKind.EnableSkill -> context.getString(R.string.dashboard_action_enable)
         DashboardActionKind.DisableSkill -> context.getString(R.string.dashboard_action_disable)
         DashboardActionKind.DeleteProfile -> context.getString(R.string.dashboard_action_delete)
+        DashboardActionKind.EditCustomEndpoint -> context.getString(R.string.dashboard_action_edit)
+        DashboardActionKind.ValidateCustomEndpoint -> context.getString(R.string.dashboard_action_validate)
+        DashboardActionKind.ActivateCustomEndpoint -> context.getString(R.string.dashboard_action_use)
+        DashboardActionKind.DeleteCustomEndpoint -> context.getString(R.string.dashboard_action_delete)
     }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -3100,6 +3183,168 @@ private fun SkillsHubDialog(
     }
 }
 
+@Composable
+private fun McpOAuthDialog(
+    item: DashboardSummaryItem,
+    clientFactory: () -> DashboardApiClient,
+    onApproved: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var running by remember(item) { mutableStateOf(false) }
+    var message by remember(item) { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.dashboard_mcp_oauth_title, item.title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.dashboard_mcp_oauth_body))
+                message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !running,
+                onClick = {
+                    running = true
+                    message = null
+                    scope.launch {
+                        val result = try {
+                            withDashboardClient(clientFactory) { client ->
+                                McpOAuthFlowCoordinator(client).complete(
+                                    serverName = item.id.ifBlank { item.title },
+                                    profile = item.profile,
+                                ) { url ->
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                        )
+                                    }.isSuccess
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Result.failure(e)
+                        }
+                        result.fold(
+                            onSuccess = { onApproved() },
+                            onFailure = { error ->
+                                running = false
+                                message = error.message ?: context.getString(R.string.dashboard_mcp_oauth_failed)
+                            },
+                        )
+                    }
+                },
+            ) { Text(stringResource(R.string.dashboard_action_authenticate)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.dashboard_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun CustomEndpointDialog(
+    existing: DashboardSummaryItem?,
+    clientFactory: () -> DashboardApiClient,
+    onSaved: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var name by remember(existing) { mutableStateOf(existing?.title.orEmpty()) }
+    var baseUrl by remember(existing) { mutableStateOf(existing?.subtitle.orEmpty()) }
+    var model by remember(existing) {
+        mutableStateOf(existing?.meta?.substringAfter("model=", "")?.substringBefore(" · ").orEmpty())
+    }
+    var apiKey by remember(existing) { mutableStateOf("") }
+    var contextLength by remember(existing) {
+        mutableStateOf(existing?.meta?.substringAfter("context=", "")?.substringBefore(" · ").orEmpty())
+    }
+    var discoverModels by remember(existing) {
+        mutableStateOf(existing?.meta?.contains("discover=off") != true)
+    }
+    var busy by remember(existing) { mutableStateOf(false) }
+    var message by remember(existing) { mutableStateOf<String?>(null) }
+
+    fun draft() = DashboardCustomEndpointDraft(
+        id = existing?.id,
+        name = name.trim(),
+        baseUrl = baseUrl.trim(),
+        model = model.trim(),
+        apiKey = apiKey.takeIf { it.isNotBlank() },
+        contextLength = contextLength.toIntOrNull(),
+        discoverModels = discoverModels,
+    )
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text(stringResource(if (existing == null) R.string.dashboard_custom_endpoint_add else R.string.dashboard_custom_endpoint_edit)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.dashboard_custom_endpoint_name)) }, enabled = !busy)
+                OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text(stringResource(R.string.dashboard_custom_endpoint_url)) }, enabled = !busy)
+                OutlinedTextField(model, { model = it }, label = { Text(stringResource(R.string.dashboard_custom_endpoint_model)) }, enabled = !busy)
+                OutlinedTextField(
+                    apiKey,
+                    { apiKey = it },
+                    label = { Text(stringResource(R.string.dashboard_custom_endpoint_key)) },
+                    supportingText = { Text(stringResource(R.string.dashboard_custom_endpoint_key_help)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                    enabled = !busy,
+                )
+                OutlinedTextField(contextLength, { contextLength = it.filter(Char::isDigit) }, label = { Text(stringResource(R.string.dashboard_custom_endpoint_context)) }, enabled = !busy)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(discoverModels, { discoverModels = it }, enabled = !busy)
+                    Text(stringResource(R.string.dashboard_custom_endpoint_discover))
+                }
+                message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(
+                    enabled = !busy && baseUrl.isNotBlank(),
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            val result = withDashboardClient(clientFactory) { it.validateCustomEndpoint(draft()) }
+                            busy = false
+                            message = result.fold(
+                                onSuccess = { validation ->
+                                    validation.message.ifBlank {
+                                        context.getString(R.string.dashboard_custom_endpoint_valid, validation.models.size)
+                                    }
+                                },
+                                onFailure = { it.message ?: context.getString(R.string.dashboard_custom_endpoint_validate_failed) },
+                            )
+                        }
+                    },
+                ) { Text(stringResource(R.string.dashboard_action_validate)) }
+                TextButton(
+                    enabled = !busy && name.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank(),
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            val result = withDashboardClient(clientFactory) { it.saveCustomEndpoint(draft()) }
+                            result.fold(onSuccess = { onSaved() }, onFailure = {
+                                busy = false
+                                message = it.message ?: context.getString(R.string.dashboard_custom_endpoint_save_failed)
+                            })
+                        }
+                    },
+                ) { Text(stringResource(R.string.dashboard_save)) }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.dashboard_cancel)) } },
+    )
+}
+
 /**
  * Full-file SOUL.md editor. The dashboard GET returns the complete file (no
  * truncation), so saving the edited buffer back is a lossless round-trip.
@@ -3184,6 +3429,7 @@ private fun summarize(
         DashboardManagementSection.Catalog -> root.arrayItems("entries", "catalog", "items")
             ?.mapIndexed { index, item -> summarizeObjectItem(item, "Catalog ${index + 1}") }
             ?: emptyList()
+        DashboardManagementSection.CustomEndpoints -> summarizeCustomEndpoints(root)
         DashboardManagementSection.Profiles -> {
             root.arrayItems("profiles", "items")
                 ?.mapIndexed { index, item -> summarizeObjectItem(item, "Profile ${index + 1}") }
@@ -3285,7 +3531,7 @@ private fun summarizeObjectItem(
     )
 }
 
-private fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
+internal fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
     val hasSchedule = obj["schedule"] != null || obj["cron"] != null || obj.stringField("next_run") != null
     val hasTransport = obj.stringField("transport") != null ||
         obj.stringField("command") != null ||
@@ -3322,6 +3568,9 @@ private fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
                 add(DashboardItemAction("Enable", DashboardActionKind.EnableMcp))
             } else {
                 add(DashboardItemAction("Disable", DashboardActionKind.DisableMcp))
+            }
+            if (obj.stringField("auth") == "oauth") {
+                add(DashboardItemAction("Authenticate", DashboardActionKind.AuthenticateMcp))
             }
             add(DashboardItemAction("Test", DashboardActionKind.TestMcp))
             add(DashboardItemAction("Remove", DashboardActionKind.RemoveMcp, destructive = true))
@@ -3361,6 +3610,31 @@ private fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
         }
     }
 }
+
+internal fun summarizeCustomEndpoints(root: JsonElement): List<DashboardSummaryItem> =
+    root.arrayItems("endpoints")?.mapNotNull { element ->
+        val obj = element as? JsonObject ?: return@mapNotNull null
+        val id = obj.stringField("id") ?: return@mapNotNull null
+        val model = obj.stringField("model").orEmpty()
+        DashboardSummaryItem(
+            id = id,
+            title = obj.stringField("name") ?: id,
+            subtitle = obj.stringField("base_url"),
+            meta = listOfNotNull(
+                model.takeIf { it.isNotBlank() }?.let { "model=$it" },
+                obj.booleanField("is_current")?.takeIf { it }?.let { "active" },
+                obj.booleanField("has_api_key")?.takeIf { it }?.let { "credential set" },
+                obj.intField("context_length")?.let { "context=$it" },
+                obj.booleanField("discover_models")?.takeIf { !it }?.let { "discover=off" },
+            ).joinToString(" · ").takeIf { it.isNotBlank() },
+            actions = listOf(
+                DashboardItemAction("Edit", DashboardActionKind.EditCustomEndpoint),
+                DashboardItemAction("Validate", DashboardActionKind.ValidateCustomEndpoint),
+                DashboardItemAction("Use", DashboardActionKind.ActivateCustomEndpoint, destructive = true),
+                DashboardItemAction("Delete", DashboardActionKind.DeleteCustomEndpoint, destructive = true),
+            ),
+        )
+    } ?: emptyList()
 
 private fun summarizeRoot(root: JsonElement): String {
     return when (root) {
@@ -3415,7 +3689,8 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
         )
         DashboardActionKind.DeleteCron,
         DashboardActionKind.RemoveMcp,
-        DashboardActionKind.DeleteProfile -> null
+        DashboardActionKind.DeleteProfile,
+        DashboardActionKind.DeleteCustomEndpoint -> null
         DashboardActionKind.InstallMcpCatalog -> copy(
             meta = appendMeta(meta, "installed"),
             actions = emptyList(),
@@ -3427,6 +3702,7 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
         DashboardActionKind.ViewCronRuns,
         DashboardActionKind.TriggerCron,
         DashboardActionKind.TestMcp,
+        DashboardActionKind.AuthenticateMcp,
         DashboardActionKind.ViewProfileSoul,
         DashboardActionKind.ActivateProfile,
         DashboardActionKind.SetEnvKey,
@@ -3434,6 +3710,9 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
         DashboardActionKind.EditProfileDescription,
         DashboardActionKind.SetProfileModel,
         DashboardActionKind.EditProfileSoul -> this
+        DashboardActionKind.EditCustomEndpoint,
+        DashboardActionKind.ValidateCustomEndpoint,
+        DashboardActionKind.ActivateCustomEndpoint -> this
     }
 }
 
@@ -3549,11 +3828,16 @@ private suspend fun DashboardApiClient.runDashboardAction(
         DashboardActionKind.EnableMcp -> setMcpServerEnabled(id, enabled = true)
         DashboardActionKind.DisableMcp -> setMcpServerEnabled(id, enabled = false)
         DashboardActionKind.TestMcp -> testMcpServer(id)
+        DashboardActionKind.AuthenticateMcp ->
+            Result.failure(IllegalStateException("Authenticate requires hosted OAuth flow"))
         DashboardActionKind.RemoveMcp -> removeMcpServer(id)
         DashboardActionKind.InstallMcpCatalog -> installMcpCatalogEntry(id)
         DashboardActionKind.ViewProfileSoul -> getProfileSoul(id)
         DashboardActionKind.ActivateProfile -> setActiveProfile(id)
         DashboardActionKind.DeleteProfile -> deleteProfile(id)
+        DashboardActionKind.ActivateCustomEndpoint -> activateCustomEndpoint(id, item.profile)
+        DashboardActionKind.DeleteCustomEndpoint ->
+            deleteCustomEndpoint(id, item.profile).map { JsonObject(emptyMap()) }
         DashboardActionKind.RevealEnvKey -> revealEnvVar(id)
         DashboardActionKind.ClearEnvKey -> deleteEnvVar(id)
         // Input-backed kinds are intercepted at the onAction layer and routed
@@ -3562,6 +3846,9 @@ private suspend fun DashboardApiClient.runDashboardAction(
         DashboardActionKind.EditProfileDescription,
         DashboardActionKind.SetProfileModel,
         DashboardActionKind.EditProfileSoul ->
+            Result.failure(IllegalStateException("${action.label} requires input"))
+        DashboardActionKind.EditCustomEndpoint,
+        DashboardActionKind.ValidateCustomEndpoint ->
             Result.failure(IllegalStateException("${action.label} requires input"))
     }
 }
