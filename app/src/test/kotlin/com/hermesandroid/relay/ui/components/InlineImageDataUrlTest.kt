@@ -43,11 +43,12 @@ class InlineImageDataUrlTest {
     }
 
     @Test
-    fun boundsDecodedPixelCountWithoutOverflow() {
-        assertTrue(isInlineImageDimensionsSafe(4_000, 4_000))
-        assertFalse(isInlineImageDimensionsSafe(10_000, 10_000))
-        assertFalse(isInlineImageDimensionsSafe(Int.MAX_VALUE, Int.MAX_VALUE))
-        assertFalse(isInlineImageDimensionsSafe(0, 100))
+    fun samplesLargeImagesToBoundedThumbnailMemory() {
+        assertEquals(4, inlineImageSampleSize(4_000, 4_000))
+        assertEquals(1, inlineImageSampleSize(1_024, 1_024))
+        assertNull(inlineImageSampleSize(40_000, 100))
+        assertNull(inlineImageSampleSize(Int.MAX_VALUE, Int.MAX_VALUE))
+        assertNull(inlineImageSampleSize(0, 100))
     }
 
     @Test
@@ -58,5 +59,15 @@ class InlineImageDataUrlTest {
         assertEquals(1, images.size)
         assertTrue(images.single().sensitive)
         assertNotNull(decodeInlineImageDataUrl(images.single().src))
+    }
+
+    @Test
+    fun multipleInlineImagesAreCappedPerMessage() {
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+        val marker = "![image](${url("image/png", png)})"
+        val (body, images) = extractChatInlineImages(List(7) { marker }.joinToString("\n"))
+        assertEquals(INLINE_IMAGE_DATA_MAX_PER_MESSAGE, images.size)
+        assertTrue(body.contains("Additional inline images omitted"))
+        assertEquals(1, Regex("Additional inline images omitted").findAll(body).count())
     }
 }

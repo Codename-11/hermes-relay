@@ -3,7 +3,10 @@ package com.hermesandroid.relay.ui.components
 import java.util.Base64
 
 internal const val INLINE_IMAGE_DATA_MAX_BYTES = 5 * 1024 * 1024
-internal const val INLINE_IMAGE_MAX_PIXELS = 20_000_000L
+internal const val INLINE_IMAGE_THUMBNAIL_MAX_DIMENSION = 1_024
+internal const val INLINE_IMAGE_THUMBNAIL_MAX_PIXELS = 1_500_000L
+internal const val INLINE_IMAGE_SOURCE_MAX_DIMENSION = 32_768
+internal const val INLINE_IMAGE_DATA_MAX_PER_MESSAGE = 4
 private const val MAX_HEADER_CHARS = 64
 private val DATA_IMAGE_HEADER = Regex(
     "^data:(image/(?:png|jpeg|gif|webp|bmp));base64$",
@@ -57,9 +60,27 @@ private fun matchesImageMagic(mime: String, bytes: ByteArray): Boolean = when (m
     else -> false
 }
 
-internal fun isInlineImageDimensionsSafe(
+/**
+ * Power-of-two sample factor that bounds the decoded ARGB thumbnail to roughly
+ * 6 MiB and 1024 px on either axis. Null rejects invalid/extreme source bounds.
+ */
+internal fun inlineImageSampleSize(
     width: Int,
     height: Int,
-    maxPixels: Long = INLINE_IMAGE_MAX_PIXELS,
-): Boolean = width > 0 && height > 0 && maxPixels > 0 &&
-    width.toLong() <= maxPixels / height.toLong()
+    maxDimension: Int = INLINE_IMAGE_THUMBNAIL_MAX_DIMENSION,
+    maxPixels: Long = INLINE_IMAGE_THUMBNAIL_MAX_PIXELS,
+): Int? {
+    if (width <= 0 || height <= 0 || maxDimension <= 0 || maxPixels <= 0 ||
+        width > INLINE_IMAGE_SOURCE_MAX_DIMENSION || height > INLINE_IMAGE_SOURCE_MAX_DIMENSION
+    ) return null
+    var sample = 1
+    while (true) {
+        val sampledWidth = (width + sample - 1L) / sample
+        val sampledHeight = (height + sample - 1L) / sample
+        if (sampledWidth <= maxDimension && sampledHeight <= maxDimension &&
+            sampledWidth <= maxPixels / sampledHeight
+        ) return sample
+        if (sample >= 1 shl 15) return null
+        sample *= 2
+    }
+}
