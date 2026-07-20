@@ -289,6 +289,10 @@ class GatewayChatClient(
     private val _serverContext = MutableStateFlow<Pair<Int, Int>?>(null)
     val serverContext: StateFlow<Pair<Int, Int>?> = _serverContext.asStateFlow()
 
+    /** Optional upstream project identity for the active session. */
+    private val _serverProject = MutableStateFlow<GatewaySessionProject?>(null)
+    val serverProject: StateFlow<GatewaySessionProject?> = _serverProject.asStateFlow()
+
     /** Serializes connect / session-establish so concurrent sends share one socket. */
     private val connectMutex = Mutex()
 
@@ -720,14 +724,15 @@ class GatewayChatClient(
      * New Hermes gateways expose `session.activate`, which attaches the new
      * WebSocket transport to the exact live id saved in the client checkpoint.
      * If that id has already been reaped (or the method is unavailable), fall
-     * back to `session.resume` by durable session id. Its `running` + `inflight`
-     * fields decide whether a live mapper is installed or history should settle
-     * the turn instead.
+     * back to `session.resume` by durable session id. Its `running`, `inflight`,
+     * and optional `queued` fields decide whether a live mapper is installed or
+     * history should settle the turn instead.
      */
     suspend fun recoverTurn(
         storedId: String,
         preferredLiveId: String?,
         callbacks: GatewayTurnCallbacks,
+        queuedTurnProvider: ((GatewayQueuedTurn) -> GatewayInboundTurnRegistration?)? = null,
     ): Result<GatewaySessionRecovery> = runCatching {
         require(storedId.isNotBlank()) { "stored session id required" }
         val requestedProfile = currentSessionProfile()
@@ -757,6 +762,7 @@ class GatewayChatClient(
                 boundTurn = GatewayTurn(
                     callbacks = dispatchOn(callbacks),
                     dedupeAdjacentMessageStarts = true,
+                    deferEvents = true,
                 ).also { turn ->
                     turn.markRecoveredStarted()
                     activeTurn = turn
@@ -770,6 +776,7 @@ class GatewayChatClient(
                 response = activated.getOrNull()
                 if (response == null) {
                     if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.discardDeferredEvents()
                     boundTurn.detach()
                     boundTurn = null
                     Log.d(
@@ -807,7 +814,7 @@ class GatewayChatClient(
             storedSessionId = storedId
             liveSessionProfile = requestedProfile
             updateCancelledDrainLiveSession(storedId, recoveredLiveId)
-            (response["info"] as? JsonObject)?.let { applySessionInfo(it) }
+            applySessionResultInfo(response)
 
             val inflight = (response["inflight"] as? JsonObject)?.let { value ->
                 GatewayInflightTurn(
@@ -815,6 +822,11 @@ class GatewayChatClient(
                     assistant = value.stringField("assistant").orEmpty(),
                     streaming = value.booleanField("streaming") == true,
                 )
+            }
+            val queued = (response["queued"] as? JsonObject)?.let { value ->
+                value.stringField("user")
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(::GatewayQueuedTurn)
             }
             val running = response.booleanField("running") == true || inflight?.streaming == true
 
@@ -828,10 +840,47 @@ class GatewayChatClient(
                         activeTurn = turn
                     }
                 }
+                queued?.let { queuedTurn ->
+                    queuedTurnProvider?.invoke(queuedTurn)?.let { registration ->
+                        boundTurn.installQueuedSuccessor(registration)
+                    }
+                }
+                boundTurn.releaseDeferredEvents()
                 boundTurn.armWatchdog()
+            } else if (queued != null) {
+                // A queued-only snapshot belongs to the NEXT turn. Never let
+                // its events flow through the completed checkpoint's mapper.
+                val priorBoundTurn = boundTurn
+                boundTurn = null
+                val registration = queuedTurnProvider?.invoke(queued)
+                if (registration != null) {
+                    val queuedTurn = GatewayTurn(
+                        callbacks = dispatchOn(registration.callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                    )
+                    // recoverTurn is resumed on its caller's coroutine context;
+                    // ChatViewModel calls it from Main, so this admission runs
+                    // atomically with the checkpoint handoff. Posting back
+                    // through bindInboundTurn would deadlock waiting on the
+                    // same paused Main dispatcher during cold-start recovery.
+                    if (registration.onHandle(queuedTurn)) {
+                        priorBoundTurn?.redirectDeferredEventsTo(queuedTurn)
+                        boundTurn = queuedTurn
+                        activeTurn = queuedTurn
+                        queuedTurn.armWatchdog()
+                        priorBoundTurn?.detach()
+                    } else {
+                        priorBoundTurn?.discardDeferredEvents()
+                        priorBoundTurn?.detach()
+                    }
+                } else {
+                    priorBoundTurn?.discardDeferredEvents()
+                    priorBoundTurn?.detach()
+                }
             } else {
                 if (boundTurn != null) {
                     if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.discardDeferredEvents()
                     boundTurn.detach()
                 }
                 boundTurn = null
@@ -843,7 +892,9 @@ class GatewayChatClient(
                 running = running,
                 status = response.stringField("status"),
                 inflight = inflight,
-                handle = boundTurn?.takeUnless { it.ended },
+                queued = queued,
+                handle = (if (boundTurn?.ended == true) activeTurn else boundTurn)
+                    ?.takeUnless { it.ended },
             )
         }
     }
@@ -1368,13 +1419,14 @@ class GatewayChatClient(
             // resume result's embedded `info` (same shape session.info carries),
             // so a reopened session shows its ACTUAL model immediately instead of
             // a misleading default until the first turn's async session.info.
-            (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
+            applySessionResultInfo(result)
         }
     }
 
     /**
      * Apply connection-level session info (model / provider / reasoning effort /
-     * personality / yolo / fast / context usage) into the `_server*` state flows.
+     * personality / yolo / fast / context usage / project) into the `_server*`
+     * state flows.
      * Shared by the `session.info` event handler and the `session.resume` RPC
      * result — the resume response embeds the same `info` object, so reopening a
      * session can paint its real model up front rather than waiting for a turn.
@@ -1396,6 +1448,18 @@ class GatewayChatClient(
             info.stringField("credential_warning")?.takeIf { it.isNotBlank() }
         (info["yolo"] as? JsonPrimitive)?.booleanOrNull?.let { _serverYolo.value = it }
         (info["fast"] as? JsonPrimitive)?.booleanOrNull?.let { _serverFast.value = it }
+        _serverProject.value = (info["project"] as? JsonObject)?.let { project ->
+            project.stringField("name")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { name ->
+                    GatewaySessionProject(
+                        id = project.stringField("id")?.takeIf { it.isNotBlank() },
+                        slug = project.stringField("slug")?.takeIf { it.isNotBlank() },
+                        name = name,
+                        primaryPath = project.stringField("primary_path")?.takeIf { it.isNotBlank() },
+                    )
+                }
+        }
         // Context usage: require used > 0 — a COLD resume resets counters and
         // reports 0 until the first turn rebuilds the prompt; painting 0 would
         // mislead on a session that actually has history.
@@ -1406,6 +1470,12 @@ class GatewayChatClient(
                 _serverContext.value = used to max
             }
         }
+    }
+
+    /** Apply a session create/resume result without leaking metadata from the prior session. */
+    private fun applySessionResultInfo(result: JsonObject) {
+        _serverProject.value = null
+        (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
     }
 
     /** Resolve a process RPC against the exact live id, resuming after reconnect when possible. */
@@ -1505,7 +1575,7 @@ class GatewayChatClient(
                 storedSessionId = requestedStoredId
                 liveSessionProfile = requestedProfile
                 updateCancelledDrainLiveSession(requestedStoredId, live)
-                (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
+                applySessionResultInfo(result)
                 return
             }
             Log.w(
@@ -2091,8 +2161,14 @@ class GatewayChatClient(
     private inner class GatewayTurn(
         val callbacks: GatewayTurnCallbacks,
         dedupeAdjacentMessageStarts: Boolean = false,
+        deferEvents: Boolean = false,
     ) : ActiveTurnHandle {
         private val mapper = GatewayEventMapper(callbacks, dedupeAdjacentMessageStarts)
+        private val deferredEventLock = Any()
+        private val deferredEvents = mutableListOf<Pair<String, JsonObject?>>()
+        private var eventsDeferred = deferEvents
+        private var redirectedTo: GatewayTurn? = null
+        private var queuedSuccessor: Pair<GatewayInboundTurnRegistration, GatewayTurn>? = null
 
         /** t0 = construction ≈ sendTurn entry (the moment the user sent). */
         val tracer = TurnLatencyTracer("gateway")
@@ -2133,6 +2209,21 @@ class GatewayChatClient(
             private set
 
         fun onEvent(type: String, payload: JsonObject?) {
+            val redirect = synchronized(deferredEventLock) {
+                if (eventsDeferred) {
+                    deferredEvents += type to payload
+                    return
+                }
+                redirectedTo
+            }
+            if (redirect != null) {
+                redirect.onEvent(type, payload)
+                return
+            }
+            processEvent(type, payload)
+        }
+
+        private fun processEvent(type: String, payload: JsonObject?) {
             if (type != "session.info") started = true
             tracer.mark("ttfe")
             if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
@@ -2152,6 +2243,74 @@ class GatewayChatClient(
             if (mapper.turnEnded) {
                 disarmWatchdog()
                 tracer.done()
+                handoffQueuedSuccessor()
+            }
+        }
+
+        /**
+         * Preserve a queued prompt reported beside an in-flight recovery as a
+         * distinct next turn. Its mapper starts deferred so events that race
+         * the resume acknowledgement cannot paint the completing prior turn.
+         */
+        fun installQueuedSuccessor(registration: GatewayInboundTurnRegistration) {
+            synchronized(deferredEventLock) {
+                if (queuedSuccessor == null) {
+                    queuedSuccessor = registration to GatewayTurn(
+                        callbacks = dispatchOn(registration.callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                        deferEvents = true,
+                    )
+                }
+            }
+        }
+
+        private fun handoffQueuedSuccessor() {
+            val successor = synchronized(deferredEventLock) {
+                queuedSuccessor?.also {
+                    queuedSuccessor = null
+                    redirectedTo = it.second
+                }
+            } ?: return
+            val (registration, turn) = successor
+
+            // Claim socket ownership immediately so the next message.start is
+            // buffered by this exact successor instead of being admitted as a
+            // generic unsolicited turn. UI admission is ordered after the
+            // prior turn's terminal callbacks on the shared dispatcher.
+            activeTurn = turn
+            callbackDispatcher {
+                if (registration.onHandle(turn)) {
+                    turn.releaseDeferredEvents()
+                    turn.armWatchdog()
+                } else {
+                    turn.discardDeferredEvents()
+                    turn.detach()
+                }
+            }
+        }
+
+        fun releaseDeferredEvents() {
+            val pending = synchronized(deferredEventLock) {
+                eventsDeferred = false
+                deferredEvents.toList().also { deferredEvents.clear() }
+            }
+            pending.forEach { (type, payload) -> onEvent(type, payload) }
+        }
+
+        fun redirectDeferredEventsTo(target: GatewayTurn) {
+            val pending = synchronized(deferredEventLock) {
+                eventsDeferred = false
+                redirectedTo = target
+                deferredEvents.toList().also { deferredEvents.clear() }
+            }
+            pending.forEach { (type, payload) -> target.onEvent(type, payload) }
+        }
+
+        fun discardDeferredEvents() {
+            synchronized(deferredEventLock) {
+                eventsDeferred = false
+                redirectedTo = null
+                deferredEvents.clear()
             }
         }
 

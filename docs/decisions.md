@@ -589,7 +589,10 @@ We considered four options:
    501 toggle stub remain — no native equivalent exists.
 3. Config/memory/available-models/session search: remove those compatibility
    handlers only after stable core APIs exist or the dependent Android surfaces
-   are redesigned.
+   are redesigned. While they remain, session search is offloaded through
+   upstream `AsyncSessionDB` (or `asyncio.to_thread` on older Hermes), and each
+   memory mutation request resets the optional upstream per-turn consolidation
+   failure budget so independent REST calls cannot consume one shared budget.
 4. Slash middleware: remove after native API-server slash preprocessing exists.
 5. Full cleanup: delete `hermes_relay_bootstrap/`, delete
    `hermes_relay_bootstrap.pth`, remove the `.pth` install block, and update
@@ -826,6 +829,7 @@ Client side (`app/src/main/kotlin/.../data/ProfileData.kt`, `auth/AuthManager.kt
 - `Profile` includes the `apiServer*` metadata and exposes `hasIsolatedApi`.
 - `AuthManager.parseAgentProfiles` reads the new `api_server_*` fields with safe defaults so older relays remain compatible.
 - `ConnectionViewModel` keeps a base API client for server health/settings and a chat-routed API client for actual chat. Selecting a profile with `apiServerUrl` swaps chat/session calls to that profile API URL while reusing the Connection's stored API bearer token.
+- **Multiplex routing (2026-07-19).** When dashboard `/api/status` positively reports `gateway_mode=multiplex` and the selected non-default profile appears in its `profiles` list, the chat-routed API client uses the shared listener at `/p/<encoded-profile>`. Dedicated `api_server_url` metadata still wins. Missing/older topology and the server-default selection stay on the root API URL, so no prefix is guessed. The optional compatibility bootstrap recognizes the prefix for slash-command route matching only; upstream middleware remains responsible for authorization and profile runtime scope.
 - `ChatViewModel` send path omits `profile`, `model`, and profile `SOUL.md` overrides when the selected profile has an isolated API route. The profile API server owns its own default model, SOUL, sessions, memory, tools, and `.env`; Android still appends phone context when enabled. If no isolated API route exists, it keeps the compatibility overlay behavior.
 - Chat session browsing is scoped to the selected profile route. On profile switch Android clears the old session list, refetches through the routed API client, and labels the drawer with the active profile/API fallback.
 - Voice requests carry the selected profile to relay-owned `/voice/*` routes. `/voice/config` resolves profile-local `tts`/`stt` where present, while `/voice/output/*` and `/voice/realtime/*` resolve experimental `voice_output` / `realtime_voice` sections from the selected profile config and fall back to relay defaults with explicit `config_scope` metadata.

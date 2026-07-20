@@ -2167,6 +2167,7 @@ async def handle_relay_info(request: web.Request) -> web.Response:
     else:
         server, _session = _require_bearer_session(request)
 
+    from ..gateway_diagnostics import assess_gateway_heartbeat
     from ..profiles import discover_profile_configs, relay_state
 
     profiles = [
@@ -2200,6 +2201,9 @@ async def handle_relay_info(request: web.Request) -> web.Response:
             "pending_commands": pending_commands,
             "media_entry_count": media_entry_count,
             "health": "ok",
+            # Read-only upstream signal. It is intentionally separate from
+            # Relay's own health and never drives restart/fallback behavior.
+            "gateway_heartbeat": assess_gateway_heartbeat(),
         }
     )
 

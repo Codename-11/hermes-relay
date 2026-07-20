@@ -56,6 +56,10 @@ class DoctorTests(unittest.TestCase):
             "http://api.example:8642/v1/capabilities",
         )
         self.assertEqual(
+            report["standard"]["api"]["toolsets"]["url"],
+            "http://api.example:8642/v1/toolsets",
+        )
+        self.assertEqual(
             report["standard"]["dashboard"]["audio_transcribe"]["method"],
             "HEAD",
         )
@@ -103,6 +107,45 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("Hermes-Relay doctor", rendered)
         self.assertIn("[OK] plugin-root", rendered)
         self.assertIn("vanilla upstream Hermes", rendered)
+
+    def test_doctor_surfaces_terminal_nous_and_topology(self) -> None:
+        probe = _probe_map({
+            "http://dash.example:9119/api/status": {
+                "ok": True,
+                "exists": True,
+                "status": 200,
+                "json": {
+                    "nous_session_valid": "terminal",
+                    "gateway_mode": "multiplex",
+                    "profiles": ["default", "worker"],
+                },
+            },
+        })
+        with mock.patch("plugin.doctor.assess_gateway_heartbeat", return_value={"status": "missing", "supported": False}):
+            report = doctor.collect_doctor_report(
+                dashboard_url="http://dash.example:9119", probe=probe, site_dirs=[]
+            )
+        checks = {item["id"]: item for item in report["checks"]}
+        self.assertEqual(checks["dashboard-nous-session"]["status"], "warn")
+        self.assertIn("multiplex", checks["dashboard-topology"]["summary"])
+
+    def test_doctor_ignores_non_object_dashboard_status_body(self) -> None:
+        probe = _probe_map({
+            "http://dash.example:9119/api/status": {
+                "ok": True,
+                "exists": True,
+                "status": 200,
+                "json": ["unexpected"],
+            },
+        })
+        with mock.patch("plugin.doctor.assess_gateway_heartbeat", return_value={"status": "missing", "supported": False}):
+            report = doctor.collect_doctor_report(
+                dashboard_url="http://dash.example:9119", probe=probe, site_dirs=[]
+            )
+
+        checks = {item["id"]: item for item in report["checks"]}
+        self.assertNotIn("dashboard-nous-session", checks)
+        self.assertNotIn("dashboard-topology", checks)
 
     def test_classify_manage_surface_ok_for_reachable_dashboard(self) -> None:
         surface = doctor.classify_manage_surface(

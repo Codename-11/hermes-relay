@@ -105,6 +105,7 @@ import kotlinx.serialization.json.contentOrNull
 import okhttp3.sse.EventSource
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -195,6 +196,12 @@ class ChatViewModel : ViewModel() {
         val priorUserMessageCount: Int,
         val baselineAssistantCount: Int,
         val startedAt: Long,
+    )
+
+    private data class QueuedRecoveryHandoff(
+        val checkpoint: ChatTurnCheckpoint,
+        val completedHistory: List<MessageItem>,
+        val queuedUserText: String,
     )
 
     /** Test seam for the recovery poll cadence — production uses the defaults. */
@@ -1195,6 +1202,7 @@ class ChatViewModel : ViewModel() {
     private fun createGatewayInboundTurnRegistration(
         client: GatewayChatClient,
         storedSessionId: String,
+        queuedRecovery: QueuedRecoveryHandoff? = null,
     ): GatewayInboundTurnRegistration? {
         val handler = chatHandler ?: return null
         fun matchesAdmissionContext(): Boolean =
@@ -1204,6 +1212,7 @@ class ChatViewModel : ViewModel() {
                 handler.currentSessionId.value == storedSessionId
 
         val messageId = "gateway-inbound-${UUID.randomUUID()}"
+        val queuedUserMessageId = "gateway-queued-user-${UUID.randomUUID()}"
         var baselineAssistantCount = 0
         var started = false
         var accepted = false
@@ -1356,7 +1365,26 @@ class ChatViewModel : ViewModel() {
         return GatewayInboundTurnRegistration(
             callbacks = callbacks,
             onHandle = { handle ->
-                if (matchesAdmissionContext() && activeStream == null && !handler.isStreaming.value) {
+                val replaceRecoveredCheckpoint = queuedRecovery != null && handler.isStreaming.value
+                val canReplaceRecoveredCheckpoint = queuedRecovery != null && activeStream == null
+                if (matchesAdmissionContext() && activeStream == null &&
+                    (!handler.isStreaming.value || canReplaceRecoveredCheckpoint)
+                ) {
+                    queuedRecovery?.takeIf { replaceRecoveredCheckpoint }?.let { handoff ->
+                        if (handoff.completedHistory.isNotEmpty()) {
+                            handler.loadMessageHistory(handoff.completedHistory)
+                        }
+                        val durableAssistantCount = handoff.completedHistory.count {
+                            it.role.equals("assistant", ignoreCase = true)
+                        }
+                        if (durableAssistantCount <= handoff.checkpoint.baselineAssistantCount) {
+                            // Persistence can trail the resume snapshot. Preserve
+                            // the prior checkpoint as a completed partial turn
+                            // instead of deleting it or appending the next answer.
+                            handler.restoreInFlightTurn(handoff.checkpoint)
+                        }
+                        finalizeTurnSideEffects(handler, handoff.checkpoint.assistant.id)
+                    }
                     // Admission and its transcript baseline are both captured
                     // on the callback/main dispatcher. Reading activeStream or
                     // messages on the WebSocket thread can observe a local
@@ -1369,6 +1397,45 @@ class ChatViewModel : ViewModel() {
                     activeStream = handle
                     activeStreamIsGateway = true
                     _steerableTurn.value = true
+                    queuedRecovery?.let { handoff ->
+                        val now = System.currentTimeMillis()
+                        handler.activeAgentName = currentAgentDisplayName()
+                        handler.addUserMessage(
+                            ChatMessage(
+                                id = queuedUserMessageId,
+                                role = MessageRole.USER,
+                                content = handoff.queuedUserText,
+                                timestamp = now,
+                            ),
+                        )
+                        handler.setLastSentMessage(handoff.queuedUserText)
+                        handler.addPlaceholderMessage(
+                            ChatMessage(
+                                id = messageId,
+                                role = MessageRole.ASSISTANT,
+                                content = "",
+                                timestamp = now + 1L,
+                                isStreaming = true,
+                                agentName = handler.activeAgentName,
+                            ),
+                        )
+                        started = true
+                        beginTurnCheckpoint(
+                            handler = handler,
+                            sessionId = storedSessionId,
+                            transport = "gateway",
+                            userMessageId = queuedUserMessageId,
+                            userText = handoff.queuedUserText,
+                            assistantMessageId = messageId,
+                            assistantTimestamp = now + 1L,
+                        )
+                        activeTurnCheckpointSeed?.liveSessionId =
+                            client.currentLiveSessionId(storedSessionId)
+                        handler.setTurnStatus(
+                            "Reconnected — queued: “${queuedPromptPreview(handoff.queuedUserText)}”",
+                        )
+                        scheduleCheckpointWrite(immediate = true)
+                    }
                     true
                 } else {
                     false
@@ -1677,6 +1744,9 @@ class ChatViewModel : ViewModel() {
     }
 
     private var selectedProfileProvider: () -> Profile? = { null }
+    private var isolatedProfileApiProvider: () -> Boolean = {
+        selectedProfileProvider()?.hasIsolatedApi == true
+    }
     private var sessionProfileNameProvider: () -> String? = {
         AgentDisplay.profileRequestName(selectedProfileProvider()?.name)
     }
@@ -1706,6 +1776,10 @@ class ChatViewModel : ViewModel() {
     fun setSelectedProfileProvider(provider: () -> Profile?) {
         selectedProfileProvider = provider
         refreshActiveAgentName()
+    }
+
+    fun setIsolatedProfileApiProvider(provider: () -> Boolean) {
+        isolatedProfileApiProvider = provider
     }
 
     /**
@@ -1878,6 +1952,9 @@ class ChatViewModel : ViewModel() {
      */
     private var lastSurfacedCredentialWarning: String? = null
 
+    private val _gatewayProjectName = MutableStateFlow<String?>(null)
+    val gatewayProjectName: StateFlow<String?> = _gatewayProjectName.asStateFlow()
+
     /**
      * Track the active client's `session.info`-derived state (personality, model,
      * provider, reasoning effort, credential warning, YOLO, fast) so a change made
@@ -1958,6 +2035,12 @@ class ChatViewModel : ViewModel() {
                         _contextWindow.value = ContextWindowUsage(usedTokens = used, maxTokens = max)
                         _contextUsage.value = (used.toFloat() / max).coerceIn(0f, 1f)
                     }
+                }
+            }
+            launch {
+                client.serverProject.collect { project ->
+                    if (gatewayClient !== client) return@collect
+                    _gatewayProjectName.value = project?.name
                 }
             }
         }
@@ -2669,7 +2752,7 @@ class ChatViewModel : ViewModel() {
 
         viewModelScope.launch {
             val selectedProfile = selectedProfileProvider()
-            val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
+            val useIsolatedProfileApi = isolatedProfileApiProvider()
             client.createSessionResult(
                 profileName = if (useIsolatedProfileApi) null else selectedProfile?.name,
                 model = if (useIsolatedProfileApi) {
@@ -4001,29 +4084,60 @@ class ChatViewModel : ViewModel() {
         )
 
         if (checkpoint.transport == "gateway" && client != null) {
-            val callbacks = recoveredGatewayCallbacks(handler, checkpoint)
+            val queuedSuccessorPending = AtomicBoolean(false)
+            val callbacks = recoveredGatewayCallbacks(handler, checkpoint, queuedSuccessorPending)
             val recovery = client.recoverTurn(
                 storedId = sessionId,
                 preferredLiveId = checkpoint.liveSessionId,
                 callbacks = callbacks,
+                queuedTurnProvider = { queued ->
+                    queuedSuccessorPending.set(true)
+                    createGatewayInboundTurnRegistration(
+                        client = client,
+                        storedSessionId = sessionId,
+                        queuedRecovery = QueuedRecoveryHandoff(
+                            checkpoint = checkpoint,
+                            completedHistory = initialHistory,
+                            queuedUserText = queued.user,
+                        ),
+                    )
+                },
             ).getOrNull()
+            if (recovery?.queued != null && !recovery.running && recovery.handle != null) {
+                val ownsQueuedHandoff =
+                    chatHandler === handler &&
+                        handler.currentSessionId.value == sessionId &&
+                        activeProfileContextKey == contextKey &&
+                        activeStream === recovery.handle
+                if (!ownsQueuedHandoff) recovery.handle.detach()
+                if (ownsQueuedHandoff) {
+                    gatewayProcessController.sessionReady(sessionId)
+                }
+                return true
+            }
             if (!ownsTurnCheckpoint(checkpoint, handler)) {
                 recovery?.handle?.detach()
                 return true
             }
-            if (recovery?.running == true && recovery.handle != null) {
+            if (recovery?.hasPendingWork == true && recovery.handle != null) {
                 activeStream = recovery.handle
                 activeStreamIsGateway = true
                 activeTurnCheckpointSeed?.liveSessionId = recovery.liveSessionId
-                handler.restoreInFlightTurn(
-                    checkpoint = checkpoint,
-                    upstreamAssistantText = recovery.inflight?.assistant,
-                )
-                handler.setTurnStatus(
-                    checkpoint.turnStatus?.takeIf { it.isNotBlank() }
-                        ?: "Reconnected — Hermes is still working…",
-                )
-                restorePendingAsk(handler, checkpoint)
+                if (recovery.running) {
+                    handler.restoreInFlightTurn(
+                        checkpoint = checkpoint,
+                        upstreamAssistantText = recovery.inflight?.assistant,
+                    )
+                    handler.setTurnStatus(
+                        if (recovery.queued != null) {
+                            "Reconnected — Hermes is working · queued: “${queuedPromptPreview(recovery.queued.user)}”"
+                        } else {
+                            checkpoint.turnStatus?.takeIf { it.isNotBlank() }
+                                ?: "Reconnected — Hermes is still working…"
+                        },
+                    )
+                    restorePendingAsk(handler, checkpoint)
+                }
                 scheduleCheckpointWrite(immediate = true)
                 gatewayProcessController.sessionReady(sessionId)
                 return true
@@ -4056,6 +4170,7 @@ class ChatViewModel : ViewModel() {
     private fun recoveredGatewayCallbacks(
         handler: ChatHandler,
         checkpoint: ChatTurnCheckpoint,
+        queuedSuccessorPending: AtomicBoolean,
     ): GatewayTurnCallbacks {
         val messageId = checkpoint.assistant.id
         fun owns(): Boolean = ownsTurnCheckpoint(checkpoint, handler)
@@ -4103,15 +4218,17 @@ class ChatViewModel : ViewModel() {
             onComplete = {
                 if (owns()) {
                     finalizeTurnSideEffects(handler, messageId)
-                    val expectedSessionId = checkpoint.sessionId
-                    viewModelScope.launch {
-                        val history = loadSessionHistory(expectedSessionId)
-                        if (handler.currentSessionId.value == expectedSessionId && history.isNotEmpty()) {
-                            handler.loadMessageHistory(history)
-                            refreshSessions()
-                            scheduleTitleReconcile(expectedSessionId)
+                    if (!queuedSuccessorPending.get()) {
+                        val expectedSessionId = checkpoint.sessionId
+                        viewModelScope.launch {
+                            val history = loadSessionHistory(expectedSessionId)
+                            if (handler.currentSessionId.value == expectedSessionId && history.isNotEmpty()) {
+                                handler.loadMessageHistory(history)
+                                refreshSessions()
+                                scheduleTitleReconcile(expectedSessionId)
+                            }
+                            drainQueue()
                         }
-                        drainQueue()
                     }
                 }
             },
@@ -4128,11 +4245,21 @@ class ChatViewModel : ViewModel() {
             },
             onError = { error ->
                 if (owns()) {
-                    activeStream = null
-                    _steerableTurn.value = false
-                    _steerNotice.value = null
-                    val latest = buildTurnCheckpoint() ?: checkpoint
-                    startCheckpointHistoryRecovery(handler, latest, error)
+                    if (queuedSuccessorPending.get()) {
+                        AppAnalytics.onStreamError()
+                        handler.onStreamError(error)
+                        clearTurnCheckpoint()
+                        activeStream = null
+                        _steerableTurn.value = false
+                        _steerNotice.value = null
+                        clearPendingAsk(approvalStamp = "Resolved")
+                    } else {
+                        activeStream = null
+                        _steerableTurn.value = false
+                        _steerNotice.value = null
+                        val latest = buildTurnCheckpoint() ?: checkpoint
+                        startCheckpointHistoryRecovery(handler, latest, error)
+                    }
                 }
             },
             onToolGenerating = { name ->
@@ -4567,7 +4694,7 @@ class ChatViewModel : ViewModel() {
             }
             viewModelScope.launch {
                 val selectedProfile = selectedProfileProvider()
-                val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
+                val useIsolatedProfileApi = isolatedProfileApiProvider()
                 client.createSessionResult(
                     profileName = if (useIsolatedProfileApi) null else selectedProfile?.name,
                     model = if (useIsolatedProfileApi) {
@@ -5423,7 +5550,7 @@ class ChatViewModel : ViewModel() {
         return composeInjectedContext(
             interfaceContextPrompt = null,
             selectedProfile = profile,
-            useIsolatedProfileApi = profile?.hasIsolatedApi == true,
+            useIsolatedProfileApi = isolatedProfileApiProvider(),
             relayServerBlocks = relayBlocks,
         )
     }
@@ -5441,7 +5568,7 @@ class ChatViewModel : ViewModel() {
         // Resolve the active profile pick once — used below for both
         // modelOverride and the system_message precedence rule.
         val selectedProfile = selectedProfileProvider()
-        val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
+        val useIsolatedProfileApi = isolatedProfileApiProvider()
 
         // The injected system_message (persona + phone-status + per-turn
         // context) is built by composeInjectedContext so the chat-screen audit
@@ -6774,6 +6901,11 @@ class ChatViewModel : ViewModel() {
             }
         }
     }
+}
+
+private fun queuedPromptPreview(prompt: String, maxChars: Int = 96): String {
+    val compact = prompt.replace(Regex("\\s+"), " ").trim()
+    return if (compact.length <= maxChars) compact else compact.take(maxChars - 1).trimEnd() + "…"
 }
 
 /** Production adapter for the independently-testable process controller. */

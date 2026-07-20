@@ -615,6 +615,14 @@ class RelayHttpClient(
         val capabilities: List<String> = emptyList(),
         val profiles: List<RelayProfileInfo> = emptyList(),
         val health: String = "unknown",
+        @SerialName("gateway_heartbeat") val gatewayHeartbeat: GatewayHeartbeat? = null,
+    )
+
+    @Serializable
+    data class GatewayHeartbeat(
+        val status: String = "missing",
+        val supported: Boolean = false,
+        @SerialName("age_seconds") val ageSeconds: Int? = null,
     )
 
     /** Fetch the installed plugin/protocol/profile capability contract. */

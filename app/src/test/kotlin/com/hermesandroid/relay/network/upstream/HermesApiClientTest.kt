@@ -18,6 +18,30 @@ import org.junit.Test
  */
 class HermesApiClientTest {
 
+    @Test
+    fun toolsetInventory_parserPreservesEnabledAndResolvedTools() {
+        val parsed = parseToolsetListBody(
+            Json { ignoreUnknownKeys = true },
+            """
+            {
+              "object": "list",
+              "platform": "api_server",
+              "data": [{
+                "name": "relay",
+                "label": "Relay",
+                "enabled": true,
+                "configured": true,
+                "tools": ["relay_status", "android_phone_status"]
+              }]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("relay", parsed?.single()?.name)
+        assertTrue(parsed?.single()?.enabled == true)
+        assertEquals(listOf("relay_status", "android_phone_status"), parsed?.single()?.tools)
+    }
+
     // --- buildApiRequestOrNull (#131 guard, streaming paths) ---
 
     @Test

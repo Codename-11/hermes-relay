@@ -29,7 +29,7 @@
     "build": "npm run gen:version && tsc -p tsconfig.build.json",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "build:bin": "npm run build:bin:win && npm run build:bin:linux && npm run build:bin:mac-x64 && npm run build:bin:mac-arm",
-    "build:bin:win": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-windows-x64 src/cli.ts --outfile dist/bin/hermes-relay-win-x64",
+    "build:bin:win": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-windows-x64 src/bunWindowsEntry.ts --outfile dist/bin/hermes-relay-win-x64",
     "build:bin:linux": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-linux-x64 src/cli.ts --outfile dist/bin/hermes-relay-linux-x64",
     "build:bin:mac-x64": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-darwin-x64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-x64",
     "build:bin:mac-arm": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-darwin-arm64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-arm64",

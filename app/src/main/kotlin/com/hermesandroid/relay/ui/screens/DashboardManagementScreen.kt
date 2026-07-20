@@ -1340,6 +1340,39 @@ private fun ManageOverviewBody(
                 onClearSession = onClearSession,
             )
         }
+        if (status?.nousSessionValid == "terminal") {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Text(
+                        text = stringResource(R.string.dashboard_nous_terminal_warning),
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
+        }
+        if (status?.gatewayMode != null || status?.profiles?.isNotEmpty() == true) {
+            item {
+                val mode = status.gatewayMode ?: "unknown"
+                val profiles = status.profiles.joinToString().ifBlank { "—" }
+                val ports = status.gateways.flatMap { gateway ->
+                    gateway.ports.map { (platform, port) -> "${gateway.profile}/$platform:$port" }
+                }.joinToString().ifBlank { "—" }
+                Text(
+                    text = stringResource(R.string.dashboard_gateway_topology, mode, profiles, ports),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
+        }
         val signInStatus = status
         if (signInStatus?.authRequired == true && authenticated != true) {
             item {
