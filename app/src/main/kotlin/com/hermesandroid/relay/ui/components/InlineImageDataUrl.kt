@@ -1,13 +1,20 @@
 package com.hermesandroid.relay.ui.components
 
 import java.util.Base64
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 internal const val INLINE_IMAGE_DATA_MAX_BYTES = 5 * 1024 * 1024
 internal const val INLINE_IMAGE_THUMBNAIL_MAX_DIMENSION = 1_024
 internal const val INLINE_IMAGE_THUMBNAIL_MAX_PIXELS = 1_500_000L
 internal const val INLINE_IMAGE_SOURCE_MAX_DIMENSION = 32_768
 internal const val INLINE_IMAGE_DATA_MAX_PER_MESSAGE = 4
+internal const val INLINE_IMAGE_DATA_MAX_TOTAL_BYTES = 8 * 1024 * 1024
 private const val MAX_HEADER_CHARS = 64
+private val inlineImageDecodeMutex = Mutex()
 private val DATA_IMAGE_HEADER = Regex(
     "^data:(image/(?:png|jpeg|gif|webp|bmp));base64$",
     RegexOption.IGNORE_CASE,
@@ -42,6 +49,40 @@ internal fun decodeInlineImageDataUrl(
     val bytes = runCatching { Base64.getDecoder().decode(encoded) }.getOrNull() ?: return null
     if (bytes.isEmpty() || bytes.size > maxBytes || !matchesImageMagic(mime, bytes)) return null
     return DecodedInlineImageData(bytes, mime)
+}
+
+/** Conservative decoded-size estimate that does not allocate a byte array. */
+internal fun inlineImageDecodedSizeUpperBound(source: String): Long? {
+    if (!source.startsWith("data:image/", ignoreCase = true)) return null
+    val comma = source.indexOf(',')
+    if (comma <= 0 || comma > MAX_HEADER_CHARS) return null
+    val encodedLength = source.length.toLong() - comma - 1L
+    if (encodedLength <= 0) return null
+    val padding = when {
+        source.endsWith("==") -> 2L
+        source.endsWith('=') -> 1L
+        else -> 0L
+    }
+    return ((encodedLength + 3L) / 4L) * 3L - padding
+}
+
+/**
+ * Serialize inline-image byte/bitmap work and keep it off the caller (usually
+ * Compose Main) thread. This prevents multiple Base64 and bitmap decode
+ * allocations from overlapping.
+ */
+internal suspend fun <T> withInlineImageDecodeLock(
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    block: () -> T,
+): T = withContext(dispatcher) {
+    inlineImageDecodeMutex.withLock { block() }
+}
+
+internal suspend fun decodeInlineImageDataUrlOffMain(
+    source: String,
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
+): DecodedInlineImageData? = withInlineImageDecodeLock(dispatcher) {
+    decodeInlineImageDataUrl(source)
 }
 
 private fun matchesImageMagic(mime: String, bytes: ByteArray): Boolean = when (mime) {

@@ -1,6 +1,10 @@
 package com.hermesandroid.relay.ui.components
 
 import java.util.Base64
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -69,5 +73,30 @@ class InlineImageDataUrlTest {
         assertEquals(INLINE_IMAGE_DATA_MAX_PER_MESSAGE, images.size)
         assertTrue(body.contains("Additional inline images omitted"))
         assertEquals(1, Regex("Additional inline images omitted").findAll(body).count())
+    }
+
+    @Test
+    fun cumulativeRawImageBudgetOmitsLaterImages() {
+        val signature = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+        val fourMiBPng = signature + ByteArray(4 * 1024 * 1024 - signature.size)
+        val marker = "![image](${url("image/png", fourMiBPng)})"
+        val (body, images) = extractChatInlineImages(List(3) { marker }.joinToString("\n"))
+        assertEquals(2, images.size)
+        assertTrue(body.contains("Additional inline images omitted"))
+    }
+
+    @Test
+    fun saveShareDecodeRunsOnRequestedBackgroundDispatcher() = runBlocking {
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+        val callerThread = Thread.currentThread()
+        val backgroundThread = AtomicReference(callerThread)
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "inline-image-decode-test").also(backgroundThread::set)
+        }
+            .asCoroutineDispatcher().use { dispatcher ->
+                val decoded = decodeInlineImageDataUrlOffMain(url("image/png", png), dispatcher)
+                assertNotNull(decoded)
+                assertFalse(callerThread === backgroundThread.get())
+            }
     }
 }

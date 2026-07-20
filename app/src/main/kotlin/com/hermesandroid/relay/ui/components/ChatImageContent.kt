@@ -162,14 +162,20 @@ fun extractChatInlineImages(content: String): Pair<String, List<ChatInlineImage>
     if (!content.contains("![")) return content to emptyList()
     val images = mutableListOf<ChatInlineImage>()
     var inlineDataImages = 0
+    var inlineDataBytes = 0L
     var inlineOverflowNoticeAdded = false
     val stripped = MARKDOWN_IMAGE_REGEX.replace(content) { m ->
         val spoilerWrapped = m.groupValues[1].isNotEmpty() && m.groupValues[4].isNotEmpty()
         val alt = m.groupValues[2].trim()
         val src = normalizeImageSrc(m.groupValues[3].trim())
-        if (src.startsWith("data:image/", ignoreCase = true) &&
-            inlineDataImages >= INLINE_IMAGE_DATA_MAX_PER_MESSAGE
-        ) {
+        val isInlineData = src.startsWith("data:image/", ignoreCase = true)
+        val inlineDataSize = inlineImageDecodedSizeUpperBound(src)
+        val exceedsInlineBudget = isInlineData && (
+            inlineDataSize == null || inlineDataSize > INLINE_IMAGE_DATA_MAX_BYTES ||
+                inlineDataImages >= INLINE_IMAGE_DATA_MAX_PER_MESSAGE ||
+                inlineDataBytes + inlineDataSize > INLINE_IMAGE_DATA_MAX_TOTAL_BYTES
+            )
+        if (exceedsInlineBudget) {
             return@replace if (inlineOverflowNoticeAdded) {
                 ""
             } else {
@@ -182,7 +188,10 @@ fun extractChatInlineImages(content: String): Pair<String, List<ChatInlineImage>
             src = src,
             sensitive = spoilerWrapped || isSensitiveAltText(alt),
         )
-        if (src.startsWith("data:image/", ignoreCase = true)) inlineDataImages += 1
+        if (inlineDataSize != null) {
+            inlineDataImages += 1
+            inlineDataBytes += inlineDataSize
+        }
         ""
     }
     if (images.isEmpty()) return content to emptyList()
@@ -288,12 +297,13 @@ private fun DataUrlChatImage(image: ChatInlineImage, maxWidth: Dp) {
     val blurMode = LocalMediaBlurMode.current
     var revealed by remember(image.src) { mutableStateOf(false) }
     LaunchedEffect(image.src) {
-        phase = withContext(Dispatchers.Default) {
-            val decoded = decodeInlineImageDataUrl(image.src) ?: return@withContext DataUrlImagePhase.Rejected
+        phase = withInlineImageDecodeLock {
+            val decoded = decodeInlineImageDataUrl(image.src)
+                ?: return@withInlineImageDecodeLock DataUrlImagePhase.Rejected
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(decoded.bytes, 0, decoded.bytes.size, bounds)
             val sample = inlineImageSampleSize(bounds.outWidth, bounds.outHeight)
-                ?: return@withContext DataUrlImagePhase.Rejected
+                ?: return@withInlineImageDecodeLock DataUrlImagePhase.Rejected
             val bitmap = BitmapFactory.decodeByteArray(
                 decoded.bytes,
                 0,
@@ -303,7 +313,7 @@ private fun DataUrlChatImage(image: ChatInlineImage, maxWidth: Dp) {
                     inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
                 },
             )
-                ?.asImageBitmap() ?: return@withContext DataUrlImagePhase.Rejected
+                ?.asImageBitmap() ?: return@withInlineImageDecodeLock DataUrlImagePhase.Rejected
             DataUrlImagePhase.Loaded(bitmap, decoded.mime)
         }
     }
@@ -330,7 +340,7 @@ private fun DataUrlChatImage(image: ChatInlineImage, maxWidth: Dp) {
                         // Decode the already-retained data URL only when the
                         // user requests Save/Share; don't keep a second 5 MiB
                         // byte array beside every thumbnail.
-                        bytesProvider = { decodeInlineImageDataUrl(image.src)?.bytes },
+                        bytesProvider = { decodeInlineImageDataUrlOffMain(image.src)?.bytes },
                     ),
                     onDismiss = { viewerOpen = false },
                     sensitive = image.sensitive,
