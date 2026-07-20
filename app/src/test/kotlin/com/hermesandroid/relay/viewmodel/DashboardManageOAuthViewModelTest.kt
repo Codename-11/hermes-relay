@@ -30,11 +30,12 @@ class DashboardManageOAuthViewModelTest {
     }
 
     @Test
-    fun clearAndUnsupportedRoute_areStableAcrossRecreation() = runTest {
+    fun clearAndCapabilityRoutes_areStableAcrossRecreation() = runTest {
         val handle = SavedStateHandle()
         val first = DashboardManageOAuthViewModel(handle)
         first.remember("opaque-flow", "hosted", null)
         first.markUnsupported("https://dashboard.example|work")
+        first.markSupported("https://dashboard.example|personal")
         first.clear()
         advanceUntilIdle()
 
@@ -43,5 +44,26 @@ class DashboardManageOAuthViewModelTest {
 
         assertNull(recreated.pending.value)
         assertTrue("https://dashboard.example|work" in recreated.unsupportedRoutes.value)
+        assertTrue("https://dashboard.example|personal" in recreated.supportedRoutes.value)
+    }
+
+    @Test
+    fun capabilityRoute_changesAreMutuallyExclusive() = runTest {
+        val handle = SavedStateHandle()
+        val viewModel = DashboardManageOAuthViewModel(handle)
+        val route = "https://dashboard.example|work"
+
+        viewModel.markUnsupported(route)
+        viewModel.markSupported(route)
+        advanceUntilIdle()
+
+        assertTrue(route in viewModel.supportedRoutes.value)
+        assertFalse(route in viewModel.unsupportedRoutes.value)
+
+        viewModel.markUnsupported(route)
+        advanceUntilIdle()
+
+        assertFalse(route in viewModel.supportedRoutes.value)
+        assertTrue(route in viewModel.unsupportedRoutes.value)
     }
 }

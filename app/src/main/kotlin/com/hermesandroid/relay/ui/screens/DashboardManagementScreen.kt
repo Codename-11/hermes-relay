@@ -186,8 +186,19 @@ internal fun dashboardSectionRequestPath(path: String, profile: String?): String
     return "$path?profile=$encoded"
 }
 
-internal fun isUnsupportedMcpOAuthError(error: Throwable): Boolean =
-    error.message.orEmpty().contains("HTTP 404")
+internal fun resolveMcpOAuthDialogItem(
+    requested: DashboardSummaryItem?,
+    pending: PendingMcpOAuth?,
+): DashboardSummaryItem? = pending?.let { flow ->
+    DashboardSummaryItem(
+        id = flow.serverName,
+        title = flow.serverName,
+        profile = flow.profile,
+    )
+} ?: requested
+
+internal fun canStartMcpOAuth(capabilitySupported: Boolean, pending: PendingMcpOAuth?): Boolean =
+    capabilitySupported && pending == null
 
 internal fun scopeDashboardManageItems(
     sectionPath: String,
@@ -367,6 +378,7 @@ fun DashboardManagementScreen(
     val effectiveProfileName by connectionViewModel.effectiveSessionProfileName.collectAsState()
     val pendingMcpOAuth by oauthViewModel.pending.collectAsState()
     val unsupportedOAuthRoutes by oauthViewModel.unsupportedRoutes.collectAsState()
+    val supportedOAuthRoutes by oauthViewModel.supportedRoutes.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
     var showingDetail by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableStateOf(0) }
@@ -392,7 +404,8 @@ fun DashboardManagementScreen(
 
     val section = managementSections[selectedTab]
     val oauthRouteKey = "$dashboardUrl|${effectiveProfileName.orEmpty()}"
-    val mcpOAuthSupported = oauthRouteKey !in unsupportedOAuthRoutes
+    val mcpOAuthSupported = oauthRouteKey in supportedOAuthRoutes
+    val mcpOAuthStartAllowed = canStartMcpOAuth(mcpOAuthSupported, pendingMcpOAuth)
     val connectionId = activeConnection?.id ?: "default"
     fun payloadKeyFor(targetSection: DashboardManagementSection): String =
         dashboardPayloadKey(
@@ -806,6 +819,27 @@ fun DashboardManagementScreen(
         }
     }
 
+    LaunchedEffect(oauthRouteKey, payloadState) {
+        val loadedState = payloadState as? DashboardPayloadState.Loaded ?: return@LaunchedEffect
+        if (dashboardUrl.isBlank() || oauthRouteKey in supportedOAuthRoutes || oauthRouteKey in unsupportedOAuthRoutes) {
+            return@LaunchedEffect
+        }
+        if (loadedState.status?.authRequired == true && loadedState.session?.authenticated != true) {
+            return@LaunchedEffect
+        }
+        val capability = try {
+            withDashboardClient(clientFactory) { client -> client.supportsHostedMcpOAuth() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+        capability.onSuccess { supported ->
+            if (supported) oauthViewModel.markSupported(oauthRouteKey)
+            else oauthViewModel.markUnsupported(oauthRouteKey)
+        }
+    }
+
     pendingAction?.let { pending ->
         val isActivateProfile = pending.action.kind == DashboardActionKind.ActivateProfile
         val actionLabel = dashboardActionLabel(pending.action)
@@ -1006,13 +1040,7 @@ fun DashboardManagementScreen(
         )
     }
 
-    val oauthDialogItem = oauthMcpItem ?: pendingMcpOAuth?.let { pending ->
-        DashboardSummaryItem(
-            id = pending.serverName,
-            title = pending.serverName,
-            profile = pending.profile,
-        )
-    }
+    val oauthDialogItem = resolveMcpOAuthDialogItem(oauthMcpItem, pendingMcpOAuth)
     if (oauthDialogItem != null && !oauthDialogHidden) {
         McpOAuthDialog(
             item = oauthDialogItem,
@@ -1021,11 +1049,6 @@ fun DashboardManagementScreen(
             clientFactory = clientFactory,
             onPending = { flow ->
                 oauthViewModel.remember(flow.flowId, flow.serverName, flow.profile)
-            },
-            onUnsupported = {
-                oauthViewModel.markUnsupported(oauthRouteKey)
-                oauthMcpItem = null
-                oauthDialogHidden = true
             },
             onApproved = {
                 oauthViewModel.clear()
@@ -1246,7 +1269,7 @@ fun DashboardManagementScreen(
                                             DashboardActionKind.EditProfileSoul ->
                                                 openSoulEditor(item)
                                             DashboardActionKind.AuthenticateMcp ->
-                                                if (mcpOAuthSupported) {
+                                                if (mcpOAuthStartAllowed) {
                                                     oauthDialogHidden = false
                                                     oauthMcpItem = item.copy(profile = effectiveProfileName)
                                                 }
@@ -1286,7 +1309,7 @@ fun DashboardManagementScreen(
                                             }
                                         }
                                     },
-                                    mcpOAuthSupported = mcpOAuthSupported,
+                                    mcpOAuthSupported = mcpOAuthStartAllowed,
                                 )
                             }
                             }
@@ -3276,7 +3299,6 @@ private fun McpOAuthDialog(
     pending: PendingMcpOAuth?,
     clientFactory: () -> DashboardApiClient,
     onPending: (PendingMcpOAuth) -> Unit,
-    onUnsupported: () -> Unit,
     onApproved: () -> Unit,
     onFlowFailed: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -3363,11 +3385,7 @@ private fun McpOAuthDialog(
                             },
                             onFailure = { error ->
                                 running = false
-                                if (isUnsupportedMcpOAuthError(error)) {
-                                    onUnsupported()
-                                } else {
-                                    message = error.message ?: context.getString(R.string.dashboard_mcp_oauth_failed)
-                                }
+                                message = error.message ?: context.getString(R.string.dashboard_mcp_oauth_failed)
                             },
                         )
                     }

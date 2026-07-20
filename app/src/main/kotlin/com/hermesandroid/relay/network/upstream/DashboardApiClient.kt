@@ -552,6 +552,27 @@ class DashboardApiClient(
         getJsonObject("/api/mcp/oauth/flows/${pathSegment(flowId)}")
             .mapCatching(::parseMcpOAuthFlow)
 
+    /**
+     * Read-only hosted-OAuth capability probe. New dashboards recognize the
+     * flow-status route and return its canonical expired-flow 404; older
+     * FastAPI routers return the generic route-level 404. No OAuth worker is
+     * started and no provider/browser interaction occurs.
+     */
+    suspend fun supportsHostedMcpOAuth(): Result<Boolean> {
+        val result = getJsonObject("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__")
+        return result.fold(
+            onSuccess = { Result.success(true) },
+            onFailure = { error ->
+                val message = error.message.orEmpty()
+                when {
+                    message.contains("OAuth flow not found or expired") -> Result.success(true)
+                    message.contains("HTTP 404") -> Result.success(false)
+                    else -> Result.failure(error)
+                }
+            },
+        )
+    }
+
     suspend fun getCustomEndpoints(): Result<DashboardCustomEndpoints> =
         getJsonObject("/api/providers/custom-endpoints")
             .mapCatching(::parseCustomEndpoints)

@@ -524,6 +524,42 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun mcpOAuthCapability_canonicalMissingFlowUsesReadOnlyGetAndIsSupported() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"detail":"OAuth flow not found or expired"}"""),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        assertTrue(client.supportsHostedMcpOAuth().getOrThrow())
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__", request.path)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun mcpOAuthCapability_genericFastApi404UsesReadOnlyGetAndIsUnsupported() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"detail":"Not Found"}"""),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        assertFalse(client.supportsHostedMcpOAuth().getOrThrow())
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__", request.path)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
     fun mcpMutations_preserveSelectedProfile() = runTest {
         repeat(5) {
             server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("{}"))

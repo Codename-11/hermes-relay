@@ -33,6 +33,8 @@ class DashboardManageOAuthViewModel(
 
     val unsupportedRoutes: StateFlow<ArrayList<String>> =
         savedStateHandle.getStateFlow(KEY_UNSUPPORTED_ROUTES, arrayListOf())
+    val supportedRoutes: StateFlow<ArrayList<String>> =
+        savedStateHandle.getStateFlow(KEY_SUPPORTED_ROUTES, arrayListOf())
 
     fun remember(flowId: String, serverName: String, profile: String?) {
         savedStateHandle[KEY_FLOW_ID] = flowId
@@ -53,6 +55,24 @@ class DashboardManageOAuthViewModel(
             next += routeKey
             savedStateHandle[KEY_UNSUPPORTED_ROUTES] = next
         }
+        removeRoute(KEY_SUPPORTED_ROUTES, supportedRoutes.value, routeKey)
+    }
+
+    fun markSupported(routeKey: String) {
+        if (routeKey.isBlank()) return
+        val next = ArrayList(supportedRoutes.value)
+        if (routeKey !in next) {
+            next += routeKey
+            savedStateHandle[KEY_SUPPORTED_ROUTES] = next
+        }
+        removeRoute(KEY_UNSUPPORTED_ROUTES, unsupportedRoutes.value, routeKey)
+    }
+
+    private fun removeRoute(key: String, routes: ArrayList<String>, routeKey: String) {
+        if (routeKey !in routes) return
+        val next = ArrayList(routes)
+        next.remove(routeKey)
+        savedStateHandle[key] = next
     }
 
     private fun currentPending(): PendingMcpOAuth? {
@@ -67,5 +87,6 @@ class DashboardManageOAuthViewModel(
         const val KEY_SERVER_NAME = "manage_mcp_oauth_server"
         const val KEY_PROFILE = "manage_mcp_oauth_profile"
         const val KEY_UNSUPPORTED_ROUTES = "manage_mcp_oauth_unsupported_routes"
+        const val KEY_SUPPORTED_ROUTES = "manage_mcp_oauth_supported_routes"
     }
 }

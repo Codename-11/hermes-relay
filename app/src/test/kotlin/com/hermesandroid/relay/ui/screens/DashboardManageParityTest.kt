@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import com.hermesandroid.relay.viewmodel.PendingMcpOAuth
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
@@ -54,9 +55,26 @@ class DashboardManageParityTest {
     }
 
     @Test
-    fun oauthUnsupportedGate_isOnlySetByExplicitMissingRoute() {
-        assertTrue(isUnsupportedMcpOAuthError(IllegalStateException("auth failed - HTTP 404: missing")))
-        assertFalse(isUnsupportedMcpOAuthError(IllegalStateException("auth failed - HTTP 409: running")))
-        assertFalse(isUnsupportedMcpOAuthError(IllegalStateException("auth failed - HTTP 429: capped")))
+    fun oauthCapabilityGate_requiresConfirmedSupportAndNoPendingFlow() {
+        assertFalse(canStartMcpOAuth(capabilitySupported = false, pending = null))
+        assertTrue(canStartMcpOAuth(capabilitySupported = true, pending = null))
+        assertFalse(
+            canStartMcpOAuth(
+                capabilitySupported = true,
+                pending = PendingMcpOAuth("flow-a", "server-a", "work"),
+            ),
+        )
+    }
+
+    @Test
+    fun dismissedPendingA_thenRequestedB_keepsDialogBoundToAAndBlocksB() {
+        val pendingA = PendingMcpOAuth("flow-a", "server-a", "work")
+        val requestedB = DashboardSummaryItem(id = "server-b", title = "Server B", profile = "work")
+
+        val resolved = resolveMcpOAuthDialogItem(requestedB, pendingA)
+
+        assertEquals("server-a", resolved?.id)
+        assertEquals("server-a", resolved?.title)
+        assertFalse(canStartMcpOAuth(capabilitySupported = true, pending = pendingA))
     }
 }
