@@ -1771,9 +1771,18 @@ class GatewayChatClientTest {
     fun `recoverTurn keeps inflight and queued resume live`() {
         harness.recoveryInflightStreaming = true
         harness.recoveryQueuedUser = "follow up"
+        val priorRecorder = Recorder()
+        val queuedRecorder = Recorder()
 
         val recovery = runBlocking {
-            client.recoverTurn("stored-42", null, Recorder().callbacks).getOrThrow()
+            client.recoverTurn(
+                "stored-42",
+                null,
+                priorRecorder.callbacks,
+                queuedTurnProvider = {
+                    GatewayInboundTurnRegistration(queuedRecorder.callbacks) { true }
+                },
+            ).getOrThrow()
         }
 
         assertTrue(recovery.running)
@@ -1781,7 +1790,88 @@ class GatewayChatClientTest {
         assertEquals("follow up", recovery.queued?.user)
         assertNotNull(recovery.inflight)
         assertNotNull(recovery.handle)
-        recovery.handle!!.detach()
+
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "current answer") },
+                "live-resumed",
+            ),
+        )
+        assertTrue(priorRecorder.completeLatch.await(5, TimeUnit.SECONDS))
+        serverWs.send(harness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "queued answer") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "queued answer") },
+                "live-resumed",
+            ),
+        )
+
+        assertTrue(queuedRecorder.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("current answer"), priorRecorder.textDeltas.toList())
+        assertEquals(listOf("queued answer"), queuedRecorder.textDeltas.toList())
+    }
+
+    @Test
+    fun `inflight and queued activation preserves turn boundary before acknowledgement`() {
+        runBlocking {
+            harness.recoveryInflightStreaming = true
+            harness.recoveryQueuedUser = "follow up"
+            harness.suppressAckMethods += "session.activate"
+            val priorRecorder = Recorder()
+            val queuedRecorder = Recorder()
+
+            val pending = async(Dispatchers.IO) {
+                client.recoverTurn(
+                    "stored-42",
+                    "live-running-queued",
+                    priorRecorder.callbacks,
+                    queuedTurnProvider = {
+                        GatewayInboundTurnRegistration(queuedRecorder.callbacks) { true }
+                    },
+                ).getOrThrow()
+            }
+            val ack = harness.awaitPendingAck()
+            ack.ws.send(
+                harness.eventFrame(
+                    "message.delta",
+                    buildJsonObject { put("text", " current") },
+                    "live-running-queued",
+                ),
+            )
+            ack.ws.send(
+                harness.eventFrame(
+                    "message.complete",
+                    buildJsonObject { put("text", "current") },
+                    "live-running-queued",
+                ),
+            )
+            ack.ws.send(harness.eventFrame("message.start", null, "live-running-queued"))
+            ack.ws.send(
+                harness.eventFrame(
+                    "message.delta",
+                    buildJsonObject { put("text", "queued") },
+                    "live-running-queued",
+                ),
+            )
+            harness.releaseAck(ack, harness.recoveryResult("live-running-queued"))
+
+            val recovery = pending.await()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (queuedRecorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
+            assertEquals(listOf(" current"), priorRecorder.textDeltas.toList())
+            assertEquals(listOf("queued"), queuedRecorder.textDeltas.toList())
+            recovery.handle?.detach()
+        }
     }
 
     @Test

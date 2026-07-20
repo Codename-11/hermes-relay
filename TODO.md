@@ -40,8 +40,8 @@ removal.
 
 The client/plugin implementation batch for queued recovery,
 multiplex-profile fallback routing, gateway diagnostics, Windows system-CA
-trust, and retained bootstrap async safety is complete on its feature branch.
-The following gates intentionally remain outside that code batch:
+trust, and retained bootstrap async safety is implemented. The following gates
+intentionally remain outside that code batch:
 
 - Run `docs/upstream-compatibility-certification.md` against an approved test
   gateway with real provider calls and an Android device. Include concurrent

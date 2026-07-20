@@ -840,6 +840,11 @@ class GatewayChatClient(
                         activeTurn = turn
                     }
                 }
+                queued?.let { queuedTurn ->
+                    queuedTurnProvider?.invoke(queuedTurn)?.let { registration ->
+                        boundTurn.installQueuedSuccessor(registration)
+                    }
+                }
                 boundTurn.releaseDeferredEvents()
                 boundTurn.armWatchdog()
             } else if (queued != null) {
@@ -888,7 +893,8 @@ class GatewayChatClient(
                 status = response.stringField("status"),
                 inflight = inflight,
                 queued = queued,
-                handle = boundTurn?.takeUnless { it.ended },
+                handle = (if (boundTurn?.ended == true) activeTurn else boundTurn)
+                    ?.takeUnless { it.ended },
             )
         }
     }
@@ -2162,6 +2168,7 @@ class GatewayChatClient(
         private val deferredEvents = mutableListOf<Pair<String, JsonObject?>>()
         private var eventsDeferred = deferEvents
         private var redirectedTo: GatewayTurn? = null
+        private var queuedSuccessor: Pair<GatewayInboundTurnRegistration, GatewayTurn>? = null
 
         /** t0 = construction ≈ sendTurn entry (the moment the user sent). */
         val tracer = TurnLatencyTracer("gateway")
@@ -2236,6 +2243,49 @@ class GatewayChatClient(
             if (mapper.turnEnded) {
                 disarmWatchdog()
                 tracer.done()
+                handoffQueuedSuccessor()
+            }
+        }
+
+        /**
+         * Preserve a queued prompt reported beside an in-flight recovery as a
+         * distinct next turn. Its mapper starts deferred so events that race
+         * the resume acknowledgement cannot paint the completing prior turn.
+         */
+        fun installQueuedSuccessor(registration: GatewayInboundTurnRegistration) {
+            synchronized(deferredEventLock) {
+                if (queuedSuccessor == null) {
+                    queuedSuccessor = registration to GatewayTurn(
+                        callbacks = dispatchOn(registration.callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                        deferEvents = true,
+                    )
+                }
+            }
+        }
+
+        private fun handoffQueuedSuccessor() {
+            val successor = synchronized(deferredEventLock) {
+                queuedSuccessor?.also {
+                    queuedSuccessor = null
+                    redirectedTo = it.second
+                }
+            } ?: return
+            val (registration, turn) = successor
+
+            // Claim socket ownership immediately so the next message.start is
+            // buffered by this exact successor instead of being admitted as a
+            // generic unsolicited turn. UI admission is ordered after the
+            // prior turn's terminal callbacks on the shared dispatcher.
+            activeTurn = turn
+            callbackDispatcher {
+                if (registration.onHandle(turn)) {
+                    turn.releaseDeferredEvents()
+                    turn.armWatchdog()
+                } else {
+                    turn.discardDeferredEvents()
+                    turn.detach()
+                }
             }
         }
 
@@ -2244,7 +2294,7 @@ class GatewayChatClient(
                 eventsDeferred = false
                 deferredEvents.toList().also { deferredEvents.clear() }
             }
-            pending.forEach { (type, payload) -> processEvent(type, payload) }
+            pending.forEach { (type, payload) -> onEvent(type, payload) }
         }
 
         fun redirectDeferredEventsTo(target: GatewayTurn) {

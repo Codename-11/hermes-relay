@@ -105,6 +105,7 @@ import kotlinx.serialization.json.contentOrNull
 import okhttp3.sse.EventSource
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -1356,11 +1357,12 @@ class ChatViewModel : ViewModel() {
         return GatewayInboundTurnRegistration(
             callbacks = callbacks,
             onHandle = { handle ->
+                val replaceRecoveredCheckpoint = queuedRecovery != null && handler.isStreaming.value
                 val canReplaceRecoveredCheckpoint = queuedRecovery != null && activeStream == null
                 if (matchesAdmissionContext() && activeStream == null &&
                     (!handler.isStreaming.value || canReplaceRecoveredCheckpoint)
                 ) {
-                    queuedRecovery?.let { handoff ->
+                    queuedRecovery?.takeIf { replaceRecoveredCheckpoint }?.let { handoff ->
                         if (handoff.completedHistory.isNotEmpty()) {
                             handler.loadMessageHistory(handoff.completedHistory)
                         }
@@ -4050,12 +4052,14 @@ class ChatViewModel : ViewModel() {
         )
 
         if (checkpoint.transport == "gateway" && client != null) {
-            val callbacks = recoveredGatewayCallbacks(handler, checkpoint)
+            val queuedSuccessorPending = AtomicBoolean(false)
+            val callbacks = recoveredGatewayCallbacks(handler, checkpoint, queuedSuccessorPending)
             val recovery = client.recoverTurn(
                 storedId = sessionId,
                 preferredLiveId = checkpoint.liveSessionId,
                 callbacks = callbacks,
                 queuedTurnProvider = { queued ->
+                    queuedSuccessorPending.set(true)
                     createGatewayInboundTurnRegistration(
                         client = client,
                         storedSessionId = sessionId,
@@ -4134,6 +4138,7 @@ class ChatViewModel : ViewModel() {
     private fun recoveredGatewayCallbacks(
         handler: ChatHandler,
         checkpoint: ChatTurnCheckpoint,
+        queuedSuccessorPending: AtomicBoolean,
     ): GatewayTurnCallbacks {
         val messageId = checkpoint.assistant.id
         fun owns(): Boolean = ownsTurnCheckpoint(checkpoint, handler)
@@ -4181,15 +4186,17 @@ class ChatViewModel : ViewModel() {
             onComplete = {
                 if (owns()) {
                     finalizeTurnSideEffects(handler, messageId)
-                    val expectedSessionId = checkpoint.sessionId
-                    viewModelScope.launch {
-                        val history = loadSessionHistory(expectedSessionId)
-                        if (handler.currentSessionId.value == expectedSessionId && history.isNotEmpty()) {
-                            handler.loadMessageHistory(history)
-                            refreshSessions()
-                            scheduleTitleReconcile(expectedSessionId)
+                    if (!queuedSuccessorPending.get()) {
+                        val expectedSessionId = checkpoint.sessionId
+                        viewModelScope.launch {
+                            val history = loadSessionHistory(expectedSessionId)
+                            if (handler.currentSessionId.value == expectedSessionId && history.isNotEmpty()) {
+                                handler.loadMessageHistory(history)
+                                refreshSessions()
+                                scheduleTitleReconcile(expectedSessionId)
+                            }
+                            drainQueue()
                         }
-                        drainQueue()
                     }
                 }
             },
@@ -4206,11 +4213,21 @@ class ChatViewModel : ViewModel() {
             },
             onError = { error ->
                 if (owns()) {
-                    activeStream = null
-                    _steerableTurn.value = false
-                    _steerNotice.value = null
-                    val latest = buildTurnCheckpoint() ?: checkpoint
-                    startCheckpointHistoryRecovery(handler, latest, error)
+                    if (queuedSuccessorPending.get()) {
+                        AppAnalytics.onStreamError()
+                        handler.onStreamError(error)
+                        clearTurnCheckpoint()
+                        activeStream = null
+                        _steerableTurn.value = false
+                        _steerNotice.value = null
+                        clearPendingAsk(approvalStamp = "Resolved")
+                    } else {
+                        activeStream = null
+                        _steerableTurn.value = false
+                        _steerNotice.value = null
+                        val latest = buildTurnCheckpoint() ?: checkpoint
+                        startCheckpointHistoryRecovery(handler, latest, error)
+                    }
                 }
             },
             onToolGenerating = { name ->
