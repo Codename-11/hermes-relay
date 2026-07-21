@@ -248,6 +248,7 @@ class EnvEnablementTests(_EnvIsolated):
         self.assertTrue(seed["enabled"])
         self.assertEqual(seed["home_channel"], {"chat_id": "myphone", "name": "Phone"})
         self.assertEqual(seed["relay_url"], "http://localhost:8767")
+        self.assertFalse(seed["typing_indicator"])
 
 
 # ── standalone sender ──────────────────────────────────────────────────────
@@ -324,6 +325,7 @@ class NormalizeReplyTests(_EnvIsolated):
                 "chat_id": "phone",
                 "reply_to": "m-1",
                 "message_id": "r-1",
+                "metadata": {"source": "notification", "priority": "high"},
             },
             "home",
         )
@@ -332,6 +334,31 @@ class NormalizeReplyTests(_EnvIsolated):
         self.assertEqual(out["chat_id"], "phone")
         self.assertEqual(out["reply_to"], "m-1")
         self.assertEqual(out["message_id"], "r-1")
+        self.assertEqual(out["metadata"], {"source": "notification", "priority": "high"})
+
+    def test_reply_metadata_defaults_to_empty_dict(self) -> None:
+        out = pp._normalize_reply({"text": "hi", "metadata": "bad"}, "home")
+        assert out is not None
+        self.assertEqual(out["metadata"], {})
+
+    def test_reply_metadata_is_sanitized(self) -> None:
+        out = pp._normalize_reply(
+            {
+                "text": "hi",
+                "metadata": {
+                    "safe": "x",
+                    "items": ["a", 1, {"drop": "nested"}],
+                    "nested": {"drop": "dict"},
+                    "long": "x" * 600,
+                },
+            },
+            "home",
+        )
+        assert out is not None
+        self.assertEqual(out["metadata"]["safe"], "x")
+        self.assertEqual(out["metadata"]["items"], ["a", 1])
+        self.assertNotIn("nested", out["metadata"])
+        self.assertEqual(len(out["metadata"]["long"]), 512)
 
     def test_chat_id_defaults_to_home(self) -> None:
         out = pp._normalize_reply({"text": "hi"}, "home-chan")

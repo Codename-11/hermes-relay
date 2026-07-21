@@ -59,8 +59,10 @@ intentionally remain outside that code batch:
   slash side effects do not reset the active TUI session's agent. Relay must not
   clear local model, reasoning, or Fast pins from a successful command response
   that did not mutate the agent those controls describe.
-- Upstream the first-class commentary event and profile-scoped cron execution
-  attempts API before adding Relay client parsers for those surfaces.
+- Keep profile-scoped cron execution attempts blocked on the public upstream API
+  proposed in `docs/upstream-contributions.md`. The first-class interim
+  assistant event is no longer blocked: Relay Android and desktop consume
+  upstream `message.interim` / `response_previewed`.
 - Keep Standard voice labeled host-global until upstream exposes a stable
   profile/per-request audio contract; do not emulate it through Relay on the
   vanilla path.
@@ -68,6 +70,10 @@ intentionally remain outside that code batch:
   public model-options payload identifies excluded and disabled providers.
   `include_unconfigured=1` currently re-adds indistinguishable setup rows, so
   empty models are not authoritative evidence that a provider should be hidden.
+- Expand the desktop upstream-baseline workflow into a live mock-provider E2E
+  once the harness can boot a credential-free upstream gateway deterministically.
+  The initial `ci-desktop-upstream-baseline` gate only checks a clean vanilla
+  checkout and the desktop typed gateway renderer/tests.
 
 ---
 

@@ -296,6 +296,7 @@ class ProactiveChannelTests(unittest.TestCase):
                         "chat_id": "phone",
                         "reply_to": "m-1",
                         "message_id": "r-1",
+                        "metadata": {"source": "inline-reply", "ok": True},
                         "ts": 1719600000000,
                     },
                 },
@@ -315,6 +316,7 @@ class ProactiveChannelTests(unittest.TestCase):
             self.assertEqual(r["chat_id"], "phone")
             self.assertEqual(r["reply_to"], "m-1")
             self.assertEqual(r["message_id"], "r-1")
+            self.assertEqual(r["metadata"], {"source": "inline-reply", "ok": True})
             self.assertEqual(r["ts"], 1719600000000)
             self.assertEqual(ch.reply_count, 1)
             # Drained — buffer is empty.

@@ -2867,13 +2867,21 @@ class ChatHandler {
         }
 
         _messages.update { messages ->
-            messages.map { msg ->
-                if (msg.id == messageId || msg.isStreaming) {
-                    msg.copy(isStreaming = false, isThinkingStreaming = false)
-                } else {
-                    msg
+            messages
+                .filterNot { msg ->
+                        msg.id == messageId &&
+                        msg.role == MessageRole.ASSISTANT &&
+                        msg.toolCalls.isEmpty() &&
+                        msg.thinkingContent.isBlank() &&
+                        (msg.content.isBlank() || isIntentionalSilenceMarker(msg.content))
                 }
-            }
+                .map { msg ->
+                    if (msg.id == messageId || msg.isStreaming) {
+                        msg.copy(isStreaming = false, isThinkingStreaming = false)
+                    } else {
+                        msg
+                    }
+                }
         }
 
         // Post-stream reconciliation: re-scan final content for any annotation
@@ -3073,3 +3081,15 @@ internal fun formatPhoneActionResult(
         append("Status ${result.status}.")
     }
 }
+
+internal fun isIntentionalSilenceMarker(content: String): Boolean =
+    when (content.trim().trim('"', '\'', '`').uppercase()) {
+        "NO_REPLY",
+        "[NO_REPLY]",
+        "SILENT",
+        "[SILENT]",
+        "<SILENT>",
+        "(SILENT)",
+        -> true
+        else -> false
+    }

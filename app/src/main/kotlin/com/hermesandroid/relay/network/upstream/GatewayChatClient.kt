@@ -2480,6 +2480,9 @@ class GatewayChatClient(
         onSessionId = { v -> callbackDispatcher { callbacks.onSessionId(v) } },
         onStart = { callbackDispatcher { callbacks.onStart() } },
         onTextDelta = { v -> callbackDispatcher { callbacks.onTextDelta(v) } },
+        onInterimMessage = { text, alreadyStreamed ->
+            callbackDispatcher { callbacks.onInterimMessage(text, alreadyStreamed) }
+        },
         onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
         onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },
         onToolCallDone = { a, b -> callbackDispatcher { callbacks.onToolCallDone(a, b) } },

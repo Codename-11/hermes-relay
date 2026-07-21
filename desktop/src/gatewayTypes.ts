@@ -182,6 +182,18 @@ export type GatewayEvent =
   | { payload: SessionInfo; session_id?: string; type: 'session.info' }
   | { payload?: { text?: string }; session_id?: string; type: 'thinking.delta' }
   | { payload?: undefined; session_id?: string; type: 'message.start' }
+  | {
+      payload?: {
+        already_streamed?: boolean
+        message?: string
+        preview?: string
+        rendered?: string
+        response_previewed?: boolean
+        text?: string
+      }
+      session_id?: string
+      type: 'message.interim'
+    }
   | { payload?: { kind?: string; text?: string }; session_id?: string; type: 'status.update' }
   | { payload: { line: string }; session_id?: string; type: 'gateway.stderr' }
   | { payload?: { cwd?: string; python?: string }; session_id?: string; type: 'gateway.start_timeout' }
@@ -218,7 +230,7 @@ export type GatewayEvent =
   | { payload: SubagentEventPayload; session_id?: string; type: 'subagent.complete' }
   | { payload: { rendered?: string; text?: string }; session_id?: string; type: 'message.delta' }
   | {
-      payload?: { reasoning?: string; rendered?: string; text?: string; usage?: Usage }
+      payload?: { reasoning?: string; rendered?: string; response_previewed?: boolean; text?: string; usage?: Usage }
       session_id?: string
       type: 'message.complete'
     }

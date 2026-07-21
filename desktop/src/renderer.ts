@@ -103,6 +103,28 @@ export class CliRenderer {
         return
       }
 
+      case 'message.interim': {
+        const text = ev.payload?.text ?? ev.payload?.message ?? ev.payload?.preview ?? ev.payload?.rendered
+        if (ev.payload?.already_streamed === true) {
+          if (this.inAssistantMessage && !this.lastDeltaEndedWithNewline) {
+            process.stdout.write('\n')
+          }
+          this.inAssistantMessage = false
+          this.lastDeltaEndedWithNewline = true
+        } else if (typeof text === 'string' && text.length > 0) {
+          if (!this.inAssistantMessage) {
+            process.stdout.write('\n')
+          }
+          process.stdout.write(text)
+          if (!text.endsWith('\n')) {
+            process.stdout.write('\n')
+          }
+          this.inAssistantMessage = false
+          this.lastDeltaEndedWithNewline = true
+        }
+        return
+      }
+
       case 'message.complete': {
         if (this.inAssistantMessage && !this.lastDeltaEndedWithNewline) {
           process.stdout.write('\n')
