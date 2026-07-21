@@ -3314,4 +3314,15 @@
     <string name="active_section_other_relay_methods">その他のペアリング方法</string>
     <string name="endpoints_tailscale_setup_hint">両方のデバイスで Tailscale に接続し、Hermes Dashboard がポート 9119 で到達可能である必要があります。</string>
     <string name="endpoints_setup_help">Tailscale セットアップヘルプ</string>
+    <string name="voice_settings_provider_desc">音声を生成する場所です。利用可能な選択肢は、この Hermes ホストとインストール済みプロバイダーから取得されます。</string>
+    <string name="voice_settings_model_desc">Latest はプロバイダーの更新に追従します。音声の動作を固定するには、バージョン付きモデルを選択します。</string>
+    <string name="voice_settings_voice_desc">返信の声を選択します。音声をプレビューしても選択は保存されません。</string>
+    <string name="voice_settings_language_desc">自動では、プロバイダーが話し言葉を検出します。検出が不安定な場合だけ言語を選択します。</string>
+    <string name="voice_settings_language_auto">自動</string>
+    <string name="voice_settings_provider_options_title">音声オプション</string>
+    <string name="voice_settings_provider_options_desc">選択したプロバイダーが対応する設定だけを表示します。</string>
+    <string name="voice_settings_auto_speak">返信を読み上げる</string>
+    <string name="voice_settings_auto_speak_desc">このホスト設定に対応する Hermes 画面で、アシスタントの返信を自動的に読み上げます。</string>
+    <string name="voice_settings_realtime_model_desc">Hermes チャットモデルではなく、ライブ音声セッションを制御します。Latest はプロバイダーの更新に追従し、バージョン付きモデルは固定されます。</string>
+    <string name="voice_settings_realtime_voice_desc">ライブセッション内で使う音声です。プロバイダーが公開している場合、組み込み音声とカスタム音声が表示されます。</string>
 </resources>

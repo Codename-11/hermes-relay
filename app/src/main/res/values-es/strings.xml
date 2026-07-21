@@ -2999,4 +2999,15 @@
     <string name="active_section_other_relay_methods">Otros métodos de vinculación</string>
     <string name="endpoints_tailscale_setup_hint">Tailscale debe estar conectado en ambos dispositivos y Hermes Dashboard debe ser accesible por el puerto 9119.</string>
     <string name="endpoints_setup_help">Ayuda para configurar Tailscale</string>
+    <string name="voice_settings_provider_desc">Dónde se genera la voz. Las opciones disponibles vienen de este host Hermes y sus proveedores instalados.</string>
+    <string name="voice_settings_model_desc">Latest sigue las actualizaciones del proveedor. Elige un modelo con versión para mantener fija la voz.</string>
+    <string name="voice_settings_voice_desc">Elige cómo suenan las respuestas. La vista previa de una voz no guarda la selección.</string>
+    <string name="voice_settings_language_desc">Automático permite que el proveedor detecte el idioma hablado. Elige un idioma solo si la detección no es fiable.</string>
+    <string name="voice_settings_language_auto">Automático</string>
+    <string name="voice_settings_provider_options_title">Opciones de voz</string>
+    <string name="voice_settings_provider_options_desc">Solo se muestran los ajustes compatibles con el proveedor seleccionado.</string>
+    <string name="voice_settings_auto_speak">Leer respuestas en voz alta</string>
+    <string name="voice_settings_auto_speak_desc">Habla automáticamente las respuestas del asistente en las superficies de Hermes que respetan este ajuste del host.</string>
+    <string name="voice_settings_realtime_model_desc">Controla la sesión de voz en vivo, no el modelo de chat de Hermes. Latest sigue las actualizaciones del proveedor; un modelo con versión queda fijo.</string>
+    <string name="voice_settings_realtime_voice_desc">La voz usada dentro de la sesión en vivo. Las voces integradas y personalizadas aparecen cuando el proveedor las anuncia.</string>
 </resources>

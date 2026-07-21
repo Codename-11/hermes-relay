@@ -3248,4 +3248,15 @@
     <string name="active_section_other_relay_methods">其他配对方式</string>
     <string name="endpoints_tailscale_setup_hint">两台设备都必须连接 Tailscale，并且 Hermes Dashboard 必须可通过端口 9119 访问。</string>
     <string name="endpoints_setup_help">Tailscale 设置帮助</string>
+    <string name="voice_settings_provider_desc">语音生成的位置。可用选项来自此 Hermes 主机及其已安装的提供商。</string>
+    <string name="voice_settings_model_desc">Latest 会跟随提供商升级。选择带版本的模型可固定语音行为。</string>
+    <string name="voice_settings_voice_desc">选择回复的声音。预览语音不会保存选择。</string>
+    <string name="voice_settings_language_desc">自动会让提供商检测口语语言。仅在检测不可靠时选择语言。</string>
+    <string name="voice_settings_language_auto">自动</string>
+    <string name="voice_settings_provider_options_title">语音选项</string>
+    <string name="voice_settings_provider_options_desc">只显示所选提供商支持的设置。</string>
+    <string name="voice_settings_auto_speak">朗读回复</string>
+    <string name="voice_settings_auto_speak_desc">在遵循此主机设置的 Hermes 界面上自动朗读助手回复。</string>
+    <string name="voice_settings_realtime_model_desc">控制实时语音会话，而不是 Hermes 聊天模型。Latest 会跟随提供商升级；带版本的模型会保持固定。</string>
+    <string name="voice_settings_realtime_voice_desc">实时会话中使用的语音。当提供商公布内置或自定义语音时，它们会显示出来。</string>
 </resources>
