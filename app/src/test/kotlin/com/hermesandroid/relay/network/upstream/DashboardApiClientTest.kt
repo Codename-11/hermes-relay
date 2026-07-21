@@ -896,6 +896,20 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun getTtsToolsetConfig_hitsRuntimeProviderRegistry() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"name":"tts","has_category":true,"providers":[]}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.getTtsToolsetConfig().getOrThrow()
+
+        assertEquals("/api/tools/toolsets/tts/config", server.takeRequest().path)
+    }
+
+    @Test
     fun previewSessionPrune_postsDryRunAndParsesPreview() = runTest {
         server.enqueue(
             MockResponse()

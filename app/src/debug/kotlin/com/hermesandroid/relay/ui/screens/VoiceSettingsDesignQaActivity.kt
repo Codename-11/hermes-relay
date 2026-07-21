@@ -32,7 +32,8 @@ import com.hermesandroid.relay.viewmodel.VoicePreviewUiState
 class VoiceSettingsDesignQaActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { HermesRelayTheme { VoiceSettingsDesignQaScene() } }
+        val themePreference = intent.getStringExtra("theme") ?: "auto"
+        setContent { HermesRelayTheme(themePreference = themePreference) { VoiceSettingsDesignQaScene() } }
     }
 }
 
@@ -108,7 +109,6 @@ private fun VoiceSettingsDesignQaScene() {
                 ),
                 onModelChange = {},
                 onVoiceChange = { selectedVoice = it },
-                onPreviewModel = {},
                 onPreviewVoice = {},
                 enabled = true,
             )

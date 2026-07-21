@@ -43,6 +43,8 @@ import kotlinx.coroutines.launch
  * live here.
  */
 data class VoiceConfigUiState(
+    val isLoading: Boolean = false,
+    val hasLoaded: Boolean = false,
     val voiceConfig: VoiceConfig? = null,
     val voiceConfigError: String? = null,
     val voiceOutputConfig: VoiceOutputConfig? = null,
@@ -107,6 +109,7 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
     val configErrorEvents: SharedFlow<HumanError> = _configErrorEvents.asSharedFlow()
 
     private var loadJob: Job? = null
+    private var loadGeneration: Long = 0L
 
     fun setBargeInEnabled(enabled: Boolean) {
         viewModelScope.launch { bargeInRepo.setEnabled(enabled) }
@@ -132,65 +135,78 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
      */
     fun loadVoiceConfig(client: RelayVoiceClient?, relayVoiceReady: Boolean) {
         loadJob?.cancel()
+        val generation = ++loadGeneration
         if (client == null || !relayVoiceReady) {
             _configState.value = VoiceConfigUiState()
             return
         }
+        _configState.value = VoiceConfigUiState(isLoading = true)
         loadJob = viewModelScope.launch {
-            val voiceResult = client.getVoiceConfig()
-            if (voiceResult.isSuccess) {
-                _configState.update {
-                    it.copy(voiceConfig = voiceResult.getOrNull(), voiceConfigError = null)
+            try {
+                val voiceResult = client.getVoiceConfig()
+                if (generation != loadGeneration) return@launch
+                if (voiceResult.isSuccess) {
+                    _configState.update {
+                        it.copy(voiceConfig = voiceResult.getOrNull(), voiceConfigError = null)
+                    }
+                } else {
+                    val human = classifyError(voiceResult.exceptionOrNull(), context = "voice_config", ctx = getApplication())
+                    _configState.update { it.copy(voiceConfigError = human.body) }
+                    _configErrorEvents.tryEmit(human)
                 }
-            } else {
-                val human = classifyError(voiceResult.exceptionOrNull(), context = "voice_config", ctx = getApplication())
-                _configState.update { it.copy(voiceConfigError = human.body) }
-                _configErrorEvents.tryEmit(human)
-            }
 
-            val outputResult = client.getVoiceOutputConfig()
-            if (outputResult.isSuccess) {
-                val config = outputResult.getOrNull()
-                _configState.update {
-                    it.copy(voiceOutputConfig = config, voiceOutputConfigError = null)
-                }
-                config?.default_provider?.takeIf { id -> id.isNotBlank() }?.let { providerId ->
-                    val optionsResult = client.getVoiceOutputProviderOptions(providerId)
-                    optionsResult.getOrNull()?.provider?.let { provider ->
-                        _configState.update {
-                            it.copy(
-                                voiceOutputProviderOptions =
-                                    it.voiceOutputProviderOptions + (provider.id to provider),
-                            )
+                val outputResult = client.getVoiceOutputConfig()
+                if (generation != loadGeneration) return@launch
+                if (outputResult.isSuccess) {
+                    val config = outputResult.getOrNull()
+                    _configState.update {
+                        it.copy(voiceOutputConfig = config, voiceOutputConfigError = null)
+                    }
+                    config?.default_provider?.takeIf { id -> id.isNotBlank() }?.let { providerId ->
+                        val optionsResult = client.getVoiceOutputProviderOptions(providerId)
+                        if (generation != loadGeneration) return@launch
+                        optionsResult.getOrNull()?.provider?.let { provider ->
+                            _configState.update {
+                                it.copy(
+                                    voiceOutputProviderOptions =
+                                        it.voiceOutputProviderOptions + (provider.id to provider),
+                                )
+                            }
                         }
                     }
+                } else {
+                    val human = classifyError(outputResult.exceptionOrNull(), context = "voice_config", ctx = getApplication())
+                    _configState.update { it.copy(voiceOutputConfigError = human.body) }
+                    _configErrorEvents.tryEmit(human)
                 }
-            } else {
-                val human = classifyError(outputResult.exceptionOrNull(), context = "voice_config", ctx = getApplication())
-                _configState.update { it.copy(voiceOutputConfigError = human.body) }
-                _configErrorEvents.tryEmit(human)
-            }
 
-            val realtimeResult = client.getRealtimeAgentConfig()
-            if (realtimeResult.isSuccess) {
-                val config = realtimeResult.getOrNull()
-                _configState.update {
-                    it.copy(realtimeConfig = config, realtimeConfigError = null)
-                }
-                config?.default_provider?.takeIf { id -> id.isNotBlank() }?.let { providerId ->
-                    val optionsResult = client.getRealtimeAgentProviderOptions(providerId)
-                    optionsResult.getOrNull()?.provider?.let { provider ->
-                        _configState.update {
-                            it.copy(
-                                realtimeProviderOptions =
-                                    it.realtimeProviderOptions + (provider.id to provider),
-                            )
+                val realtimeResult = client.getRealtimeAgentConfig()
+                if (generation != loadGeneration) return@launch
+                if (realtimeResult.isSuccess) {
+                    val config = realtimeResult.getOrNull()
+                    _configState.update {
+                        it.copy(realtimeConfig = config, realtimeConfigError = null)
+                    }
+                    config?.default_provider?.takeIf { id -> id.isNotBlank() }?.let { providerId ->
+                        val optionsResult = client.getRealtimeAgentProviderOptions(providerId)
+                        if (generation != loadGeneration) return@launch
+                        optionsResult.getOrNull()?.provider?.let { provider ->
+                            _configState.update {
+                                it.copy(
+                                    realtimeProviderOptions =
+                                        it.realtimeProviderOptions + (provider.id to provider),
+                                )
+                            }
                         }
                     }
+                } else {
+                    val human = classifyError(realtimeResult.exceptionOrNull(), context = "voice_config", ctx = getApplication())
+                    _configState.update { it.copy(realtimeConfig = null, realtimeConfigError = human.body) }
                 }
-            } else {
-                val human = classifyError(realtimeResult.exceptionOrNull(), context = "voice_config", ctx = getApplication())
-                _configState.update { it.copy(realtimeConfig = null, realtimeConfigError = human.body) }
+            } finally {
+                if (generation == loadGeneration) {
+                    _configState.update { it.copy(isLoading = false, hasLoaded = true) }
+                }
             }
         }
     }

@@ -55,16 +55,44 @@ class DashboardConfigEditingTest {
     }
 
     @Test
-    fun voiceConfigFields_filtersToTtsAndSttPrefixesOnly() {
+    fun voiceConfigFields_includesStandardVoiceBehaviorFields() {
         val voice = voiceConfigFields(parseConfigSchema(schema)).map { it.key }
 
         assertEquals(
-            listOf("tts.provider", "tts.elevenlabs.voice_id", "stt.enabled", "stt.local.model"),
+            listOf(
+                "tts.provider",
+                "tts.elevenlabs.voice_id",
+                "stt.enabled",
+                "stt.local.model",
+                "voice.silence_threshold",
+            ),
             voice,
         )
-        // The CLI-only `voice.*` category and unrelated `model` are excluded.
-        assertFalse(voice.any { it.startsWith("voice.") })
         assertFalse(voice.contains("model"))
+    }
+
+    @Test
+    fun parseTtsToolsetProviders_usesStableIdsAndKeepsRuntimeStatus() {
+        val providers = parseTtsToolsetProviders(
+            obj(
+                """
+                {
+                  "providers": [
+                    {"name":"Edge TTS","tts_provider":"edge","status":"ready","is_active":true},
+                    {"name":"My Plugin","tts_provider":"my_plugin","status":"needs_keys","is_active":false},
+                    {"name":"Old backend without a stable id","status":"ready"},
+                    {"name":"Duplicate","tts_provider":"edge","status":"ready"}
+                  ]
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals(listOf("edge", "my_plugin"), providers.map { it.id })
+        assertEquals("Edge TTS", providers.first().name)
+        assertEquals("ready", providers.first().status)
+        assertTrue(providers.first().isActive)
+        assertEquals("needs_keys", providers.last().status)
     }
 
     @Test
