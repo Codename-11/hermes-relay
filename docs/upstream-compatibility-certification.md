@@ -137,9 +137,13 @@ callback channel and must not be documented as equivalent.
 ## Relay client gate
 
 After the live upstream matrix passes, run the Relay client suites that cover
-gateway recovery, event mapping, checkpoints, and desktop gateway parsing. Then
-perform one Android device reconnect smoke. Do not claim device behavior from
-JVM fixtures alone.
+gateway recovery, event mapping, checkpoints, and desktop gateway parsing. The
+contract workflow also runs the provider-free desktop gateway baseline:
+`scripts/check-desktop-upstream-baseline.py` against an isolated vanilla
+upstream checkout, then the desktop mock-event renderer tests. That gate proves
+the required gateway event surface and Relay Desktop rendering assumptions, not
+real provider behavior. Then perform one Android device reconnect smoke. Do not
+claim device behavior from JVM fixtures alone.
 
 ## Evidence record
 
@@ -160,6 +164,7 @@ configuration to the public evidence.
 |---|---|---|
 | Baseline ancestry | Required fixes are in the tested source tree | Deployed processes run that tree |
 | Static fixture groups | Deterministic routing, isolation, queue, compression, and delegation contracts | Provider behavior, restart recovery, or event delivery over a real socket |
+| Desktop baseline contract | Vanilla upstream still declares the dashboard gateway and required event names consumed by Relay Desktop | Provider output, auth, or a live desktop session |
 | Live gateway matrix | Session/provider behavior for the recorded runtime and profile | Android lifecycle/reconnect behavior |
 | Android reconnect smoke | Client mapping and recovery on the exercised device | Other providers, profiles, gateway modes, or OS versions |
 

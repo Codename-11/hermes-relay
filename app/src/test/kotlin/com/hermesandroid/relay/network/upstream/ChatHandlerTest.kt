@@ -125,6 +125,47 @@ class ChatHandlerTest {
         assertEquals("Second", messages[1].content)
     }
 
+    @Test
+    fun onStreamComplete_removesExactIntentionalSilenceMarker() {
+        handler.onTextDelta("assist-1", "NO")
+        handler.onTextDelta("assist-1", "_REPLY")
+
+        handler.onStreamComplete("assist-1")
+
+        assertTrue(handler.messages.value.isEmpty())
+        assertFalse(handler.isStreaming.value)
+    }
+
+    @Test
+    fun onStreamComplete_removesEmptyAssistantPlaceholder() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assist-empty",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+
+        handler.onStreamComplete("assist-empty")
+
+        assertTrue(handler.messages.value.isEmpty())
+        assertFalse(handler.isStreaming.value)
+    }
+
+    @Test
+    fun onStreamComplete_keepsProseThatMentionsSilenceMarker() {
+        handler.onTextDelta("assist-1", "I will not use NO_REPLY here.")
+
+        handler.onStreamComplete("assist-1")
+
+        val messages = handler.messages.value
+        assertEquals(1, messages.size)
+        assertEquals("I will not use NO_REPLY here.", messages.single().content)
+        assertFalse(messages.single().isStreaming)
+    }
+
     // --- onStreamComplete ---
 
     @Test

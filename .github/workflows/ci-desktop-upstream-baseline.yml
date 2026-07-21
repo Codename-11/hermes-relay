@@ -1,0 +1,79 @@
+# Hermes-Relay - Desktop Vanilla-Upstream Baseline
+#
+# Manual/scheduled confidence gate for HRUI-055. This keeps the first CI shape
+# intentionally small: check out a clean upstream hermes-agent beside Relay and
+# run the desktop typed-stream/renderer tests that protect the gateway event
+# contract. A later expansion can boot the upstream gateway with a mock provider
+# once that harness is stable enough for CI.
+
+name: CI - Desktop Upstream Baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "NousResearch/hermes-agent ref to check"
+        required: false
+        default: "main"
+  schedule:
+    - cron: "30 6 * * 1"
+
+concurrency:
+  group: ci-desktop-upstream-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-baseline:
+    name: Desktop typed gateway baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout hermes-relay
+        uses: actions/checkout@v7
+
+      - name: Resolve upstream ref
+        id: ref
+        run: |
+          if [ -n "${{ github.event.inputs.upstream_ref }}" ]; then
+            REF="${{ github.event.inputs.upstream_ref }}"
+          else
+            REF="main"
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout vanilla upstream
+        uses: actions/checkout@v7
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ steps.ref.outputs.ref }}
+          path: _upstream
+          fetch-depth: 1
+
+      - name: Assert upstream checkout is vanilla
+        run: |
+          if [ -e "_upstream/hermes_relay_bootstrap" ] || \
+             [ -e "_upstream/plugin/hermes_relay_bootstrap" ] || \
+             find _upstream -name "hermes_relay_bootstrap.pth" 2>/dev/null | grep -q .; then
+            echo "FAIL: upstream checkout contains a relay bootstrap."; exit 1
+          fi
+          git -C _upstream status --short --untracked-files=no
+
+      - name: Run desktop gateway baseline contract
+        run: python scripts/check-desktop-upstream-baseline.py "_upstream"
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Run desktop gateway baseline tests
+        working-directory: desktop
+        env:
+          HERMES_UPSTREAM_BASELINE: ${{ github.workspace }}/_upstream
+        run: npx tsx --test tests/gatewayTypes.test.ts tests/renderer.test.ts tests/typedStreamRenderer.test.ts

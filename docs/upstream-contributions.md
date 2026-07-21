@@ -190,17 +190,18 @@ prove that the request metadata and expiry event carry the effective value,
 that a late response resolves zero entries, and that expiry affects only the
 active session's approval.
 
-## 10. First-Class Gateway Commentary Events
+## 10. First-Class Gateway Interim Assistant Events
 
-**Current state:** Codex runtimes deliver completed, redacted commentary through
-`interim_assistant_callback` on messaging-gateway paths, and the app-server
-bridge projects tool lifecycle and reasoning callbacks. The TUI gateway used by
-Hermes-Relay dashboard WebSocket chat does not wire that commentary callback.
-Relay therefore receives the tool lifecycle but cannot distinguish commentary
-from reasoning or final-answer text without guessing.
+**Current state:** Upstream TUI gateway now emits completed interim assistant
+text as `message.interim` and annotates duplicate final-answer commits with
+`response_previewed`. Relay Android and desktop consume the additive event:
+older servers keep working through `message.delta` / `message.complete`, while
+newer servers can show commentary and verify-candidate text before the final
+assistant commit.
 
-**Proposed:** Add a dedicated, optional gateway event for a completed commentary
-item, for example:
+**Historical proposal:** Before `message.interim` landed, the desired contract
+was a dedicated, optional gateway event for a completed commentary item, for
+example:
 
 ```json
 {
@@ -219,14 +220,14 @@ be stable within a live turn so reconnect replay cannot duplicate a commentary
 item.
 
 **Compatibility:** The event is additive. Older clients ignore it. Relay
-Android and desktop should not add a parser until the upstream event name and
-payload are accepted; once accepted, they can render commentary as a distinct
-transient/mid-turn assistant item.
+Android and desktop now treat `message.interim` as a completed assistant
+candidate and suppress duplicate final backfill when `response_previewed`
+indicates the final message has already been previewed.
 
-**Verification gate:** A TUI-gateway fixture emits commentary, a tool lifecycle,
-and a final answer in that order; proves `show_commentary: false` suppresses only
-commentary; proves analysis/reasoning is not leaked; and proves replay does not
-duplicate the commentary or final answer.
+**Verification gate:** TUI-gateway and Relay fixtures should emit interim
+assistant text, a tool lifecycle, and a final answer in that order; prove
+`show_commentary: false` suppresses only commentary; prove analysis/reasoning is
+not leaked; and prove replay does not duplicate the interim or final answer.
 
 ## 11. Profile-Scoped Cron Execution Attempts API
 
@@ -285,6 +286,40 @@ advertised and otherwise retain the current ordered two-RPC path.
 cancellation, and process failure between arm and submit; prove no later prompt
 inherits the stale override; and prove success/error/interrupt after submission
 still restores the prior model exactly once without a config write-through.
+
+## 13. Authoritative Gateway Session Reset Event
+
+**Current state:** `/new` is available through `slash.exec`, but that RPC runs in
+a separate slash worker. It can create a fresh conversation while the active TUI
+gateway session's agent, model override, reasoning override, and service-tier
+state remain attached to the prior live agent. A client that clears local state
+only because the slash command returned success can therefore show controls that
+no longer describe the agent that will answer the next prompt.
+
+**Proposed:** Add an authoritative reset operation or event on the active
+gateway session. Two compatible shapes would work:
+
+- `session.reset` RPC, scoped to the live session id, that performs the same
+  state transition as `/new` against the active gateway agent and returns the new
+  stored/live session ids plus the effective model/reasoning/fast settings.
+- A `session.reset` or `session.replaced` event emitted by `/new` only after the
+  active gateway session has actually been rebound, with the same new-session
+  metadata.
+
+The important contract is that the event/RPC is owned by the same active gateway
+session whose subsequent `prompt.submit` will consume the state. It should not be
+derived from a helper worker's success message alone.
+
+**Compatibility:** Existing `/new` text command behavior remains unchanged.
+Clients that do not understand the new RPC/event keep their current behavior.
+Relay Android should continue treating `/new` as blocked for local control reset
+until this contract exists.
+
+**Verification gate:** Gateway tests should prove that `/new` or `session.reset`
+clears per-session model, reasoning, fast, yolo, queued prompt, pending ask, and
+in-flight turn state on the active session; that it emits exactly one
+authoritative replacement event; and that a prompt submitted after reset reaches
+the newly created agent rather than the stale pre-reset one.
 
 ## Notes
 

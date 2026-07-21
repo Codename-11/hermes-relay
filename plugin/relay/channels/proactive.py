@@ -94,6 +94,8 @@ MAX_BUFFERED_REPLIES = 100
 # stale (a day-old "build is green" is noise, not signal).
 MAX_BUFFERED_OUTBOUND = 50
 OUTBOUND_TTL_SECONDS = 24 * 3600
+MAX_METADATA_KEYS = 24
+MAX_METADATA_STRING_LENGTH = 512
 
 
 class ProactiveError(Exception):
@@ -109,6 +111,32 @@ def _envelope(msg_type: str, payload: dict[str, Any], msg_id: str | None = None)
             "payload": payload,
         }
     )
+
+
+def _safe_metadata(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    safe: dict[str, Any] = {}
+    for raw_key, raw_value in value.items():
+        if len(safe) >= MAX_METADATA_KEYS:
+            break
+        if not isinstance(raw_key, str) or not raw_key:
+            continue
+        key = raw_key[:80]
+        if isinstance(raw_value, str):
+            safe[key] = raw_value[:MAX_METADATA_STRING_LENGTH]
+        elif isinstance(raw_value, (bool, int, float)) or raw_value is None:
+            safe[key] = raw_value
+        elif isinstance(raw_value, list):
+            items: list[Any] = []
+            for item in raw_value[:16]:
+                if isinstance(item, str):
+                    items.append(item[:MAX_METADATA_STRING_LENGTH])
+                elif isinstance(item, (bool, int, float)) or item is None:
+                    items.append(item)
+            if items:
+                safe[key] = items
+    return safe
 
 
 class ProactiveChannel:
@@ -398,6 +426,7 @@ class ProactiveChannel:
             "chat_id": payload.get("chat_id"),
             "reply_to": payload.get("reply_to"),
             "message_id": str(payload.get("message_id") or uuid.uuid4().hex[:12]),
+            "metadata": _safe_metadata(payload.get("metadata")),
             "ts": payload.get("ts") or int(time.time() * 1000),
         }
         self.enqueue_reply(reply)

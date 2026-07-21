@@ -5623,6 +5623,7 @@ class ChatViewModel : ViewModel() {
         // Track the current message ID — starts with our generated ID,
         // but updates when the server sends message.started with its own ID.
         var currentMessageId = assistantMessageId
+        var gatewayInterimSealedCurrentMessage = false
 
         // The SSE endpoint this turn actually dispatched on (null on a gateway
         // dispatch) — set by dispatchSse below. onErrorCb keys the dropped-
@@ -5668,6 +5669,26 @@ class ChatViewModel : ViewModel() {
         )
         activeStreamDeltas = streamDeltas
 
+        fun ensurePostInterimMessage() {
+            if (!gatewayInterimSealedCurrentMessage) return
+            streamDeltas.flushNow()
+            val nextMessageId = UUID.randomUUID().toString()
+            currentMessageId = nextMessageId
+            gatewayInterimSealedCurrentMessage = false
+            handler.addPlaceholderMessage(
+                ChatMessage(
+                    id = nextMessageId,
+                    role = MessageRole.ASSISTANT,
+                    content = "",
+                    timestamp = System.currentTimeMillis(),
+                    isStreaming = true,
+                    agentName = handler.activeAgentName,
+                    badges = if (interfaceContextPrompt != null) listOf("Voice") else emptyList(),
+                ),
+            )
+            updateTurnCheckpointAssistantId(nextMessageId)
+        }
+
         fun flushAndReleaseStreamDeltas() {
             streamDeltas.flushNow()
             if (activeStreamDeltas === streamDeltas) activeStreamDeltas = null
@@ -5684,6 +5705,7 @@ class ChatViewModel : ViewModel() {
             updateTurnCheckpointAssistantId(serverMsgId)
         }
         val onTextDeltaCb = { delta: String ->
+            ensurePostInterimMessage()
             if (!firstTokenNotified) {
                 firstTokenNotified = true
                 AppAnalytics.onFirstTokenReceived()
@@ -5691,19 +5713,32 @@ class ChatViewModel : ViewModel() {
             streamDeltas.appendText(delta)
         }
         val onThinkingDeltaCb = { delta: String ->
+            ensurePostInterimMessage()
             streamDeltas.appendThinking(delta)
         }
+        val onInterimMessageCb = { text: String, alreadyStreamed: Boolean ->
+            streamDeltas.flushNow()
+            if (!alreadyStreamed && text.isNotBlank()) {
+                handler.onTextDelta(currentMessageId, text)
+            }
+            handler.onTurnComplete(currentMessageId)
+            gatewayInterimSealedCurrentMessage = true
+            scheduleCheckpointWrite(immediate = true)
+        }
         val onToolCallStartCb = { toolCallId: String, toolName: String ->
+            ensurePostInterimMessage()
             streamDeltas.flushNow()
             handler.onToolCallStart(currentMessageId, toolCallId, toolName)
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallDoneCb = { toolCallId: String, resultPreview: String? ->
+            ensurePostInterimMessage()
             streamDeltas.flushNow()
             handler.onToolCallComplete(currentMessageId, toolCallId, resultPreview)
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallFailedCb = { toolCallId: String, errorMsg: String? ->
+            ensurePostInterimMessage()
             streamDeltas.flushNow()
             handler.onToolCallFailed(currentMessageId, toolCallId, errorMsg)
             scheduleCheckpointWrite(immediate = true)
@@ -6183,11 +6218,13 @@ class ChatViewModel : ViewModel() {
                         },
                         onStart = { },
                         onTextDelta = onTextDeltaCb,
+                        onInterimMessage = onInterimMessageCb,
                         onThinkingDelta = onThinkingDeltaCb,
                         onToolCallStart = onToolCallStartCb,
                         onToolCallDone = onToolCallDoneCb,
                         onToolCallFailed = onToolCallFailedCb,
                         onToolOutputRisk = { risk ->
+                            ensurePostInterimMessage()
                             streamDeltas.flushNow()
                             handler.onToolOutputRisk(currentMessageId, risk)
                             scheduleCheckpointWrite(immediate = true)
@@ -6200,11 +6237,13 @@ class ChatViewModel : ViewModel() {
                         onUsage = onUsageCb,
                         onError = onErrorCb,
                         onToolGenerating = { name ->
+                            ensurePostInterimMessage()
                             streamDeltas.flushNow()
                             handler.onToolGenerating(currentMessageId, name)
                             scheduleCheckpointWrite(immediate = true)
                         },
                         onSubagentEvent = { event ->
+                            ensurePostInterimMessage()
                             streamDeltas.flushNow()
                             handler.onSubagentEvent(currentMessageId, event)
                             scheduleCheckpointWrite(immediate = true)

@@ -57,9 +57,7 @@ class StandardHermesVoiceClient(
     override val route: VoiceAudioRoute = VoiceAudioRoute.Standard
 
     private val callClient: OkHttpClient =
-        okHttpClient.newBuilder()
-            .callTimeout(90, TimeUnit.SECONDS)
-            .build()
+        standardHermesDashboardAudioClient(okHttpClient)
 
     override suspend fun transcribe(audioFile: File): Result<String> = withContext(Dispatchers.IO) {
         val baseUrl = dashboardBaseUrl()
@@ -241,4 +239,24 @@ class StandardHermesVoiceClient(
         // dashboard rejects decoded transcription audio above 25 MB with 413.
         const val MAX_TRANSCRIBE_BYTES = 25L * 1024 * 1024
     }
+}
+
+internal const val STANDARD_HERMES_DASHBOARD_AUDIO_TIMEOUT_SECONDS = 180L
+
+internal fun standardHermesDashboardAudioTimeoutSeconds(requestedSeconds: Long): Long =
+    requestedSeconds.coerceIn(
+        minimumValue = 180L,
+        maximumValue = 600L,
+    )
+
+internal fun standardHermesDashboardAudioClient(
+    baseClient: OkHttpClient,
+    timeoutSeconds: Long = STANDARD_HERMES_DASHBOARD_AUDIO_TIMEOUT_SECONDS,
+): OkHttpClient {
+    val boundedTimeoutSeconds = standardHermesDashboardAudioTimeoutSeconds(timeoutSeconds)
+    return baseClient.newBuilder()
+        .callTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+        .readTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+        .writeTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+        .build()
 }

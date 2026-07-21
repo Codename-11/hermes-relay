@@ -18,6 +18,7 @@ class GatewayEventMapperTest {
 
     private class Recorder {
         val textDeltas = mutableListOf<String>()
+        val interimMessages = mutableListOf<Pair<String, Boolean>>()
         val thinkingDeltas = mutableListOf<String>()
         val toolStarts = mutableListOf<Pair<String, String>>()
         val toolDones = mutableListOf<Pair<String, String?>>()
@@ -42,6 +43,7 @@ class GatewayEventMapperTest {
             onSessionId = { sessionIds += it },
             onStart = { starts++ },
             onTextDelta = { textDeltas += it },
+            onInterimMessage = { text, alreadyStreamed -> interimMessages += text to alreadyStreamed },
             onThinkingDelta = { thinkingDeltas += it },
             onToolCallStart = { id, name -> toolStarts += id to name },
             onToolCallDone = { id, preview -> toolDones += id to preview },
@@ -170,6 +172,17 @@ class GatewayEventMapperTest {
     }
 
     @Test
+    fun `message complete backfills text when response was not previewed`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent("message.complete", obj("""{"text":"Final answer","response_previewed":false}"""))
+
+        assertEquals(listOf("Final answer"), r.textDeltas)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
     fun `message complete backfills text and reasoning when nothing streamed`() {
         val r = Recorder()
         val mapper = mapperWith(r)
@@ -179,6 +192,111 @@ class GatewayEventMapperTest {
         )
         assertEquals(listOf("Full answer"), r.textDeltas)
         assertEquals(listOf("the hidden why"), r.thinkingDeltas)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `message interim seals preview and previewed complete does not duplicate`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer","response_previewed":true}"""),
+        )
+
+        assertEquals(listOf("candidate answer" to false), r.interimMessages)
+        assertTrue(r.textDeltas.isEmpty())
+        assertEquals(1, r.starts)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `message complete after interim backfills distinct final when not previewed`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent("message.complete", obj("""{"text":"final answer"}"""))
+
+        assertEquals(listOf("candidate answer" to false), r.interimMessages)
+        assertEquals(listOf("final answer"), r.textDeltas)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `already streamed interim seals without replaying text`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent("message.delta", obj("""{"text":"candidate answer"}"""))
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":true}"""),
+        )
+
+        assertEquals(listOf("candidate answer" to true), r.interimMessages)
+        assertEquals(listOf("candidate answer"), r.textDeltas)
+    }
+
+    @Test
+    fun `message complete suppresses exact intentional silence marker`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent("message.complete", obj("""{"text":"[SILENT]"}"""))
+
+        assertTrue(r.textDeltas.isEmpty())
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `message delta suppresses exact intentional silence marker`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent("message.delta", obj("""{"text":"NO_REPLY"}"""))
+        mapper.onEvent("message.delta", obj("""{"text":"The profile said NO_REPLY for context."}"""))
+
+        assertEquals(listOf("The profile said NO_REPLY for context."), r.textDeltas)
+    }
+
+    @Test
+    fun `message interim already streamed seals without replaying text`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent("message.delta", obj("""{"text":"candidate "}"""))
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":true}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer","response_previewed":true}"""),
+        )
+
+        assertEquals(listOf("candidate "), r.textDeltas)
+        assertEquals(listOf("candidate answer" to true), r.interimMessages)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `message interim already streamed without text does not backfill previewed complete`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent("message.delta", obj("""{"text":"candidate"}"""))
+        mapper.onEvent("message.interim", obj("""{"already_streamed":true}"""))
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate","response_previewed":true}"""),
+        )
+
+        assertEquals(listOf("candidate"), r.textDeltas)
+        assertEquals(listOf("" to true), r.interimMessages)
         assertEquals(1, r.completes)
     }
 
@@ -601,7 +719,7 @@ class GatewayEventMapperTest {
         val r = Recorder()
         val mapper = mapperWith(r)
         listOf(
-            "reasoning.delta", "thinking.delta", "message.delta", "message.start",
+            "reasoning.delta", "thinking.delta", "message.delta", "message.interim", "message.start",
             "message.complete", "error", "clarify.request", "approval.request",
             "sudo.request", "secret.request", "reasoning.available",
             "sudo.expire", "secret.expire", "approval.expire",

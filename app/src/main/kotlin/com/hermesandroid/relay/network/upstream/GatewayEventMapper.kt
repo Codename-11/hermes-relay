@@ -35,6 +35,7 @@ class GatewayEventMapper(
     private var previousEventType: String? = null
     private var sawTextDelta = false
     private var sawThinkingDelta = false
+    private var previewedText: String? = null
     private var syntheticToolCounter = 0
     private var providerWaitStatusActive = false
     private var compactionStatusActive = false
@@ -95,10 +96,27 @@ class GatewayEventMapper(
 
             "message.delta" -> {
                 val text = payload.string("text")
-                if (!text.isNullOrEmpty()) {
+                if (!text.isNullOrEmpty() && !isIntentionalSilenceMarker(text)) {
                     clearActivityStatuses()
                     sawTextDelta = true
+                    previewedText = null
                     callbacks.onTextDelta(text)
+                }
+            }
+
+            "message.interim" -> {
+                val text = payload.string("text") ?: payload.string("message")
+                    ?: payload.string("preview") ?: payload.string("rendered")
+                val alreadyStreamed = payload.boolean("already_streamed") == true
+                if (!text.isNullOrBlank() || alreadyStreamed) {
+                    clearActivityStatuses()
+                    if (!sawMessageStart) {
+                        sawMessageStart = true
+                        callbacks.onStart()
+                    }
+                    callbacks.onInterimMessage(text.orEmpty(), alreadyStreamed)
+                    previewedText = text
+                    sawTextDelta = alreadyStreamed
                 }
             }
 
@@ -114,6 +132,7 @@ class GatewayEventMapper(
                 // assistant message began — close out the previous one.
                 if (sawMessageStart) callbacks.onTurnComplete()
                 sawMessageStart = true
+                previewedText = null
                 callbacks.onStart()
             }
 
@@ -164,7 +183,15 @@ class GatewayEventMapper(
                 // Non-streaming servers (or error turns) deliver everything
                 // here; backfill whatever never streamed.
                 val text = payload.string("text")
-                if (!sawTextDelta && !text.isNullOrEmpty()) {
+                val responsePreviewed = payload.boolean("response_previewed") == true
+                val duplicatesPreview = responsePreviewed &&
+                    !text.isNullOrEmpty() &&
+                    previewedText?.let { preview -> text.startsWith(preview) || preview.startsWith(text) } == true
+                if (!text.isNullOrEmpty() &&
+                    !duplicatesPreview &&
+                    !isIntentionalSilenceMarker(text) &&
+                    (!sawTextDelta || previewedText != null)
+                ) {
                     callbacks.onTextDelta(text)
                 }
                 val reasoning = payload.string("reasoning")

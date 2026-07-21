@@ -348,6 +348,13 @@ class GatewayTurnCallbacks(
     /** A gateway `message.start` opened an assistant response for this turn. */
     val onStart: () -> Unit,
     val onTextDelta: (String) -> Unit,
+    /**
+     * Gateway `message.interim` sealed an attempted assistant message before
+     * the terminal `message.complete`. When [alreadyStreamed] is false, [text]
+     * has not arrived through `message.delta` and should be rendered before
+     * sealing the current assistant segment.
+     */
+    val onInterimMessage: (text: String, alreadyStreamed: Boolean) -> Unit = { _, _ -> },
     val onThinkingDelta: (String) -> Unit,
     val onToolCallStart: (toolCallId: String, toolName: String) -> Unit,
     val onToolCallDone: (toolCallId: String, resultPreview: String?) -> Unit,
