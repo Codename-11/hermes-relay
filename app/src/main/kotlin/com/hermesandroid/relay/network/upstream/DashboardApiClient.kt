@@ -315,6 +315,14 @@ class DashboardApiClient(
     suspend fun getConfigSchema(): Result<JsonObject> = getJsonObject("/api/config/schema")
 
     /**
+     * Runtime TTS provider matrix used by upstream's Tools/Capabilities picker.
+     * This adds plugin provider names and readiness metadata. Command-provider
+     * IDs remain sourced from the dynamic config-schema enum.
+     */
+    suspend fun getTtsToolsetConfig(): Result<JsonObject> =
+        getJsonObject("/api/tools/toolsets/tts/config")
+
+    /**
      * Replace the runtime config (`PUT /api/config`). Upstream `save_config`
      * writes the WHOLE document, so [config] MUST be the full values tree
      * (read [getConfig], mutate, write back) — a partial object would drop

@@ -1274,8 +1274,10 @@ class RelayVoiceClient(
         inputSampleRate: Int = 16_000,
         chatSessionId: String? = null,
         conversationContext: List<RealtimeConversationContextMessage> = emptyList(),
+        provider: String? = null,
         model: String? = null,
         voice: String? = null,
+        sampleRate: Int? = null,
         onHandoff: (VoiceHandoffEvent) -> Unit = {},
         turnInputs: kotlinx.coroutines.channels.ReceiveChannel<RealtimeTurnInput>? = null,
         onTurnComplete: (RealtimeVoiceSummary) -> Unit = {},
@@ -1303,8 +1305,10 @@ class RelayVoiceClient(
             token = token,
             chatSessionId = chatSessionId,
             conversationContext = conversationContext,
+            provider = provider,
             model = model,
             voice = voice,
+            sampleRate = sampleRate,
         )
         if (sessionResult.isFailure) {
             return@withContext Result.failure(sessionResult.exceptionOrNull() ?: IOException("Realtime agent session failed"))
@@ -2671,16 +2675,24 @@ class RelayVoiceClient(
         token: String,
         chatSessionId: String?,
         conversationContext: List<RealtimeConversationContextMessage> = emptyList(),
+        provider: String? = null,
         model: String? = null,
         voice: String? = null,
+        sampleRate: Int? = null,
     ): Result<RealtimeSessionResponse> {
         val body = buildJsonObject {
             putProfile()
+            provider?.trim()?.takeIf { it.isNotBlank() }?.let {
+                put("provider", JsonPrimitive(it))
+            }
             model?.trim()?.takeIf { it.isNotBlank() }?.let {
                 put("model", JsonPrimitive(it))
             }
             voice?.trim()?.takeIf { it.isNotBlank() }?.let {
                 put("voice", JsonPrimitive(it))
+            }
+            sampleRate?.takeIf { it > 0 }?.let {
+                put("sample_rate", JsonPrimitive(it))
             }
             chatSessionId?.trim()?.takeIf { it.isNotBlank() }?.let {
                 put("chat_session_id", JsonPrimitive(it))

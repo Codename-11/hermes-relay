@@ -53,6 +53,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -157,10 +158,13 @@ data class VoiceUiState(
 
 data class VoicePreviewUiState(
     val selectionKey: String? = null,
+    val isLoading: Boolean = false,
     val isPlaying: Boolean = false,
     val amplitude: Float = 0f,
     val error: String? = null,
-)
+) {
+    val isActive: Boolean get() = isLoading || isPlaying
+}
 
 /** ADR 33 background/promoted Hermes run surface for the voice overlay. */
 data class BackgroundRunState(
@@ -589,6 +593,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val _voicePreviewState = MutableStateFlow(VoicePreviewUiState())
     val voicePreviewState: StateFlow<VoicePreviewUiState> = _voicePreviewState.asStateFlow()
     private var voicePreviewJob: Job? = null
+    private var voicePreviewGeneration: Long = 0L
 
     // Rolling voice pipeline telemetry for StatsForNerds → Voice section.
     // Updated on discrete lifecycle events (turn start/stop, STT call
@@ -2284,7 +2289,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         sample: String = "Hello, this is Hermes. This is how this voice sounds.",
         onResult: (Result<Unit>) -> Unit = {},
     ) {
-        if (_voicePreviewState.value.isPlaying &&
+        if (_voicePreviewState.value.isActive &&
             _voicePreviewState.value.selectionKey == selectionKey
         ) {
             stopVoicePreview()
@@ -2300,15 +2305,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        voicePreviewJob?.cancel()
-        pcmPlayer.stop()
+        val previousJob = voicePreviewJob
+        val generation = ++voicePreviewGeneration
         _voicePreviewState.value = VoicePreviewUiState(
             selectionKey = selectionKey,
-            isPlaying = true,
+            isLoading = true,
         )
         voicePreviewJob = viewModelScope.launch {
             val audioBytes = AtomicInteger(0)
             try {
+                previousJob?.cancelAndJoin()
+                if (generation != voicePreviewGeneration) return@launch
+                pcmPlayer.stop()
                 val result = client.runVoiceOutput(
                     text = sample,
                     renderMode = "verbatim",
@@ -2326,10 +2334,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         return@runVoiceOutput
                     }
                     if (audio.isEmpty()) return@runVoiceOutput
+                    if (generation != voicePreviewGeneration) return@runVoiceOutput
                     val level = pcmPlayer.write(audio, event.sampleRate ?: sampleRate)
                     audioBytes.addAndGet(audio.size)
                     _voicePreviewState.update { state ->
-                        state.copy(amplitude = level, isPlaying = true, error = null)
+                        if (state.selectionKey == selectionKey && generation == voicePreviewGeneration) {
+                            state.copy(amplitude = level, isLoading = false, isPlaying = true, error = null)
+                        } else {
+                            state
+                        }
                     }
                 }
                 val finalResult = result.fold(
@@ -2344,22 +2357,129 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     },
                     onFailure = { Result.failure(it) },
                 )
-                onResult(finalResult)
-                _voicePreviewState.value = VoicePreviewUiState(
-                    error = finalResult.exceptionOrNull()?.message,
-                )
+                if (generation == voicePreviewGeneration) {
+                    onResult(finalResult)
+                    _voicePreviewState.value = VoicePreviewUiState(
+                        error = finalResult.exceptionOrNull()?.message,
+                    )
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } finally {
+                if (generation == voicePreviewGeneration) {
+                    pcmPlayer.stop()
+                    _voicePreviewState.update { state ->
+                        if (state.selectionKey == selectionKey) {
+                            state.copy(isLoading = false, isPlaying = false, amplitude = 0f)
+                        } else {
+                            state
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Opens a one-shot provider-native session with the Realtime editor's
+     * unsaved provider/model/voice selection. The session endpoint accepts
+     * these as request-scoped overrides, so auditioning never mutates relay
+     * configuration or the active chat session.
+     */
+    fun previewRealtimeAgent(
+        selectionKey: String,
+        provider: String,
+        model: String,
+        voice: String,
+        sampleRate: Int,
+        sample: String = "Introduce this voice in one short sentence.",
+        onResult: (Result<Unit>) -> Unit = {},
+    ) {
+        if (_voicePreviewState.value.isActive && _voicePreviewState.value.selectionKey == selectionKey) {
+            stopVoicePreview()
+            return
+        }
+        val client = voiceClient
+        val pcmPlayer = realtimePcmPlayer
+        if (client == null || pcmPlayer == null) {
+            val error = IllegalStateException("Realtime voice preview is not available")
+            _voicePreviewState.value = VoicePreviewUiState(error = error.message)
+            onResult(Result.failure(error))
+            return
+        }
+
+        val previousJob = voicePreviewJob
+        val generation = ++voicePreviewGeneration
+        _voicePreviewState.value = VoicePreviewUiState(selectionKey = selectionKey, isLoading = true)
+        voicePreviewJob = viewModelScope.launch {
+            val audioBytes = AtomicInteger(0)
+            try {
+                previousJob?.cancelAndJoin()
+                if (generation != voicePreviewGeneration) return@launch
                 pcmPlayer.stop()
-                if (_voicePreviewState.value.selectionKey == selectionKey) {
-                    _voicePreviewState.update { it.copy(isPlaying = false, amplitude = 0f) }
+                val result = client.runRealtimeAgent(
+                    prompt = sample,
+                    inputPcm = ByteArray(0),
+                    inputSampleRate = 16_000,
+                    provider = provider,
+                    model = model,
+                    voice = voice,
+                    sampleRate = sampleRate,
+                ) { event, _ ->
+                    if (!event.isAudioDelta) return@runRealtimeAgent
+                    val encoded = event.audioBase64 ?: return@runRealtimeAgent
+                    val audio = try {
+                        Base64.getDecoder().decode(encoded)
+                    } catch (_: Exception) {
+                        return@runRealtimeAgent
+                    }
+                    if (audio.isEmpty()) return@runRealtimeAgent
+                    if (generation != voicePreviewGeneration) return@runRealtimeAgent
+                    val level = pcmPlayer.write(audio, event.sampleRate ?: sampleRate)
+                    audioBytes.addAndGet(audio.size)
+                    _voicePreviewState.update { state ->
+                        if (state.selectionKey == selectionKey && generation == voicePreviewGeneration) {
+                            state.copy(amplitude = level, isLoading = false, isPlaying = true, error = null)
+                        } else {
+                            state
+                        }
+                    }
+                }
+                val finalResult = result.fold(
+                    onSuccess = {
+                        if (audioBytes.get() <= 0) {
+                            Result.failure(IllegalStateException("Realtime preview returned no audio"))
+                        } else {
+                            val drainMs = pcmPlayer.flushBufferedPlayback().coerceIn(250L, 4_500L)
+                            delay(drainMs)
+                            Result.success(Unit)
+                        }
+                    },
+                    onFailure = { Result.failure(it) },
+                )
+                if (generation == voicePreviewGeneration) {
+                    onResult(finalResult)
+                    _voicePreviewState.value = VoicePreviewUiState(error = finalResult.exceptionOrNull()?.message)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } finally {
+                if (generation == voicePreviewGeneration) {
+                    pcmPlayer.stop()
+                    _voicePreviewState.update { state ->
+                        if (state.selectionKey == selectionKey) {
+                            state.copy(isLoading = false, isPlaying = false, amplitude = 0f)
+                        } else {
+                            state
+                        }
+                    }
                 }
             }
         }
     }
 
     fun stopVoicePreview() {
+        voicePreviewGeneration += 1
         voicePreviewJob?.cancel()
         voicePreviewJob = null
         realtimePcmPlayer?.stop()
