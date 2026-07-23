@@ -129,6 +129,52 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(checks["dashboard-nous-session"]["status"], "warn")
         self.assertIn("multiplex", checks["dashboard-topology"]["summary"])
 
+    def test_doctor_summarizes_dashboard_component_health(self) -> None:
+        probe = _probe_map({
+            "http://dash.example:9119/api/status": {
+                "ok": True,
+                "exists": True,
+                "status": 200,
+                "json": {
+                    "overall": "degraded",
+                    "components": {
+                        "gateway": {"status": "ok"},
+                        "storage": {"status": "degraded", "message": "state DB unavailable"},
+                    },
+                },
+            },
+        })
+        with mock.patch("plugin.doctor.assess_gateway_heartbeat", return_value={"status": "missing", "supported": False}):
+            report = doctor.collect_doctor_report(
+                dashboard_url="http://dash.example:9119", probe=probe, site_dirs=[]
+            )
+
+        checks = {item["id"]: item for item in report["checks"]}
+        self.assertEqual(checks["dashboard-component-health"]["status"], "warn")
+        self.assertIn("storage=degraded", checks["dashboard-component-health"]["summary"])
+        component_health = report["standard"]["dashboard"]["component_health"]
+        self.assertTrue(component_health["supported"])
+        self.assertEqual(component_health["components"]["storage"]["message"], "state DB unavailable")
+
+    def test_doctor_treats_missing_component_health_as_unsupported(self) -> None:
+        probe = _probe_map({
+            "http://dash.example:9119/api/status": {
+                "ok": True,
+                "exists": True,
+                "status": 200,
+                "json": {"nous_session_valid": True},
+            },
+        })
+        with mock.patch("plugin.doctor.assess_gateway_heartbeat", return_value={"status": "missing", "supported": False}):
+            report = doctor.collect_doctor_report(
+                dashboard_url="http://dash.example:9119", probe=probe, site_dirs=[]
+            )
+
+        checks = {item["id"]: item for item in report["checks"]}
+        self.assertEqual(checks["dashboard-component-health"]["status"], "ok")
+        self.assertIn("not exposed", checks["dashboard-component-health"]["summary"])
+        self.assertFalse(report["standard"]["dashboard"]["component_health"]["supported"])
+
     def test_doctor_ignores_non_object_dashboard_status_body(self) -> None:
         probe = _probe_map({
             "http://dash.example:9119/api/status": {

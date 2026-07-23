@@ -314,6 +314,100 @@ def _check(checks: list[dict[str, str]], check_id: str, status: str, summary: st
     checks.append({"id": check_id, "status": status, "summary": summary})
 
 
+def _component_status(raw: Any) -> str | None:
+    if isinstance(raw, dict):
+        for key in ("status", "state", "overall", "health"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+        if raw.get("ok") is True or raw.get("healthy") is True:
+            return "ok"
+        if raw.get("ok") is False or raw.get("healthy") is False:
+            return "degraded"
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower()
+    return None
+
+
+def _component_message(raw: Any) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    for key in ("message", "summary", "error", "reason"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _sanitize_dashboard_components(status_body: Any) -> dict[str, Any]:
+    """Extract optional upstream /api/status component rollup for diagnostics.
+
+    Older Hermes builds omit the object entirely. The doctor treats absence as
+    unsupported, not healthy or unhealthy, and only reports bounded text that is
+    already sanitized by upstream.
+    """
+    if not isinstance(status_body, dict):
+        return {"supported": False, "overall": None, "components": {}}
+    raw_components = status_body.get("components")
+    if not isinstance(raw_components, dict):
+        return {"supported": False, "overall": None, "components": {}}
+
+    components: dict[str, dict[str, Any]] = {}
+    for name, raw in sorted(raw_components.items(), key=lambda item: str(item[0])):
+        safe_name = str(name).strip()
+        if not safe_name:
+            continue
+        component_status = _component_status(raw) or "unknown"
+        item: dict[str, Any] = {"status": component_status}
+        message = _component_message(raw)
+        if message:
+            item["message"] = message
+        if isinstance(raw, dict):
+            for key in (
+                "configured",
+                "connected",
+                "healthy",
+                "ok",
+                "unhandled_5xx_count_5m",
+                "self_test",
+            ):
+                value = raw.get(key)
+                if isinstance(value, (bool, int, float, str)) or value is None:
+                    item[key] = value
+        components[safe_name] = item
+
+    overall = _component_status(status_body.get("overall"))
+    if overall is None:
+        statuses = {str(item["status"]).lower() for item in components.values()}
+        overall = "ok" if statuses and statuses <= {"ok", "healthy", "ready"} else "degraded"
+    return {"supported": True, "overall": overall, "components": components}
+
+
+def _component_check_status(component_health: dict[str, Any]) -> str:
+    if not component_health.get("supported"):
+        return "ok"
+    overall = str(component_health.get("overall") or "").lower()
+    if overall in {"ok", "healthy", "ready"}:
+        return "ok"
+    return "warn"
+
+
+def _component_check_summary(component_health: dict[str, Any]) -> str:
+    if not component_health.get("supported"):
+        return "dashboard component health rollup is not exposed by this Hermes build"
+    components = component_health.get("components")
+    if not isinstance(components, dict) or not components:
+        return "dashboard component health rollup is present but empty"
+    degraded = [
+        f"{name}={data.get('status', 'unknown')}"
+        for name, data in components.items()
+        if str(data.get("status", "")).lower() not in {"ok", "healthy", "ready"}
+    ]
+    if degraded:
+        return "dashboard component health reports " + ", ".join(degraded)
+    return "dashboard component health reports all components ready"
+
+
 def collect_doctor_report(
     *,
     api_url: str | None = None,
@@ -429,6 +523,13 @@ def collect_doctor_report(
     )
     dashboard_json = dashboard_status.get("json")
     topology = dashboard_json if isinstance(dashboard_json, dict) else {}
+    component_health = _sanitize_dashboard_components(topology)
+    _check(
+        checks,
+        "dashboard-component-health",
+        _component_check_status(component_health),
+        _component_check_summary(component_health),
+    )
     nous_state = topology.get("nous_session_valid")
     if nous_state == "terminal":
         _check(
@@ -542,6 +643,7 @@ def collect_doctor_report(
             "api": {"capabilities": api_capabilities, "toolsets": api_toolsets},
             "dashboard": {
                 "status": dashboard_status,
+                "component_health": component_health,
                 "audio_transcribe": dashboard_audio,
                 "ws_ticket": dashboard_ws_ticket,
                 "capabilities": dashboard_capabilities,
