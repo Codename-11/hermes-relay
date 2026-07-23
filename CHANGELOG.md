@@ -9,7 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [Server 1.4.3] - 2026-07-22
+
+### Added
+
+- **Relay diagnostics describe upstream Gateway compatibility.** Doctor and `/relay/info` report optional Gateway health, configuration-route, and capability signals so clients can distinguish an older upstream install from a Relay failure.
+
+### Fixed
+
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.
+- **Plugin bootstrap work no longer blocks the Gateway event loop.** Database initialization and compatibility-state inspection run off the async request path while preserving older upstream bootstrap behavior.
 - **Starting Relay no longer terminates a running Hermes gateway on Windows.** Profile discovery now checks gateway PIDs through non-signalling process APIs, including during periodic rescans.
 
 ## [Android 1.5.0] - 2026-07-22
