@@ -46,6 +46,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAskExpiry
 import com.hermesandroid.relay.network.upstream.GatewayAskResponse
 import com.hermesandroid.relay.network.upstream.GatewayBackgroundTurnCompletion
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayCompressResult
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
@@ -3060,7 +3061,7 @@ class ChatViewModel : ViewModel() {
         // slash.exec / command.dispatch instead of becoming a prompt.
         if (activeStream == null && maybeHandleServerSlashCommand(text.trim())) return
 
-        // Mid-turn: steer on the gateway transport, queue everywhere else.
+        // Mid-turn: redirect on the gateway transport, queue everywhere else.
         if (activeStream != null) {
             if (_steerableTurn.value && streamingEndpoint == "gateway") {
                 steerActiveTurn(text.trim())
@@ -3074,12 +3075,10 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * Inject [text] into the in-flight gateway turn via `session.steer`.
-     * Accepted steers land in the next tool batch's last result — the
-     * server records them inside a tool result, NOT as a user message, so
-     * we add a local `steer-` bubble that [ChatHandler.loadMessageHistory]
-     * preserves. Rejected/failed steers fall back to the existing queue
-     * with a one-line caption so the send never silently vanishes.
+     * Correct the in-flight gateway turn via `session.redirect`, falling back
+     * to legacy `session.steer` only on older gateways. Current upstream records
+     * a redirect as durable session state; the local echo is ordinary so the
+     * post-turn history reconcile can replace it with the server-owned row.
      */
     private fun steerActiveTurn(text: String) {
         val handler = chatHandler ?: return
@@ -3093,14 +3092,10 @@ class ChatViewModel : ViewModel() {
                 SteerResult.Queued -> {
                     handler.addUserMessage(
                         ChatMessage(
-                            id = "steer-${UUID.randomUUID()}",
+                            id = "redirect-${UUID.randomUUID()}",
                             role = MessageRole.USER,
                             content = text,
                             timestamp = System.currentTimeMillis(),
-                            // Steered text lands in a server-side tool result,
-                            // never as a user message, so this echo has no server
-                            // row — keep it across the post-turn reload.
-                            clientOnly = true,
                         )
                     )
                 }
@@ -3599,6 +3594,14 @@ class ChatViewModel : ViewModel() {
             return true
         }
 
+        if (normalizedName == "compress" || normalizedName == "compact") {
+            val focusTopic = text.substringAfter(' ', "").trim().takeIf { it.isNotBlank() }
+            viewModelScope.launch {
+                runServerCompressCommand(gateway, handler, focusTopic)
+            }
+            return true
+        }
+
         viewModelScope.launch {
             val commands = currentOrRefreshedServerCommands(gateway, handler) ?: return@launch
             val known = commands.any {
@@ -3627,6 +3630,68 @@ class ChatViewModel : ViewModel() {
         val parsed = parseCommandsCatalog(catalog)
         _serverCommands.value = parsed
         return parsed
+    }
+
+    private suspend fun runServerCompressCommand(
+        gateway: GatewayChatClient,
+        handler: ChatHandler,
+        focusTopic: String?,
+    ) {
+        val invokedSessionId = handler.currentSessionId.value
+        handler.addSystemNotice("Compressing conversation context…")
+        gateway.compressSession(focusTopic).fold(
+            onSuccess = { result ->
+                if (
+                    invokedSessionId != null &&
+                    handler.currentSessionId.value == invokedSessionId &&
+                    result.isAuthoritative
+                ) {
+                    handler.loadMessageHistory(result.messages)
+                }
+                result.effectiveUsage?.let(::applyCompressUsage)
+                invokedSessionId?.let { sessionId ->
+                    result.title?.let { title -> handler.renameSessionLocal(sessionId, title) }
+                }
+                val summary = when (result.status.lowercase()) {
+                    "aborted" -> "Compression aborted."
+                    "noop", "no_op" -> "Nothing to compress."
+                    "legacy" -> result.output ?: "Compression command sent through legacy slash support."
+                    else -> result.output ?: compressionSummary(result)
+                }
+                if (summary.isNotBlank()) handler.addSystemNotice(summary)
+                refreshSessions()
+            },
+            onFailure = { e ->
+                handler.addSystemNotice("/compress failed: ${e.message ?: "unknown error"}")
+            },
+        )
+    }
+
+    private fun compressionSummary(result: GatewayCompressResult): String {
+        val before = result.beforeMessages
+        val after = result.afterMessages
+        val removed = result.removed
+        return when {
+            before != null && after != null ->
+                "Context compressed — messages $before → $after."
+            removed != null && removed > 0 ->
+                "Context compressed — removed $removed messages."
+            else -> "Context compressed."
+        }
+    }
+
+    private fun applyCompressUsage(usage: UsageInfo) {
+        val ctxMax = usage.contextMax
+        if (ctxMax != null && ctxMax > 0) {
+            usage.contextUsed?.let { used ->
+                _contextUsage.value = (used.toFloat() / ctxMax).coerceIn(0f, 1f)
+                _contextWindow.value = ContextWindowUsage(usedTokens = used, maxTokens = ctxMax)
+                return
+            }
+            usage.contextPercent?.let { percent ->
+                _contextUsage.value = (percent / 100f).coerceIn(0f, 1f)
+            }
+        }
     }
 
     /**

@@ -77,6 +77,17 @@ class GatewayClientHarness(
     var steerStatus = "queued"
 
     @Volatile
+    var redirectStatus = "redirected"
+
+    @Volatile
+    var compressPayload: JsonObject = buildJsonObject {
+        put("status", "completed")
+        put("removed", 2)
+        put("before_messages", 8)
+        put("after_messages", 4)
+    }
+
+    @Volatile
     var reasoningEffort = "medium"
 
     @Volatile
@@ -181,9 +192,17 @@ class GatewayClientHarness(
                     )
                 }
                 "process.kill" -> buildJsonObject { put("status", "killed") }
+                "session.redirect" -> buildJsonObject {
+                    put("status", redirectStatus)
+                    put("text", (params["text"] as? JsonPrimitive)?.contentOrNull ?: "")
+                }
                 "session.steer" -> buildJsonObject {
                     put("status", steerStatus)
                     put("text", (params["text"] as? JsonPrimitive)?.contentOrNull ?: "")
+                }
+                "session.compress" -> compressPayload
+                "slash.exec" -> buildJsonObject {
+                    put("output", "legacy compression started")
                 }
                 "image.attach_bytes", "image.attach.bytes" -> buildJsonObject {
                     put("attached", true)
@@ -1061,37 +1080,103 @@ class GatewayChatClientTest {
         assertEquals("rm -rf /tmp/x — cleanup", ask.text)
     }
 
-    // --- Steer ---
+    // --- Active-turn correction ---
 
     @Test
-    fun `steer queued when the server accepts`() {
+    fun `redirect queued when the server accepts active-turn correction`() {
         val r = Recorder()
         client.sendTurn(null, "long job", null, r.callbacks) { r.preflightFailures += it }
         harness.awaitServerSocket()
         harness.awaitRpc("prompt.submit")
 
-        harness.steerStatus = "queued"
+        harness.redirectStatus = "redirected"
         assertEquals(SteerResult.Queued, runBlocking { client.steer("focus on tests") })
-        val steer = harness.awaitRpc("session.steer")
-        assertEquals("live-1", (steer["session_id"] as? JsonPrimitive)?.contentOrNull)
-        assertEquals("focus on tests", (steer["text"] as? JsonPrimitive)?.contentOrNull)
+        val redirect = harness.awaitRpc("session.redirect")
+        assertEquals("live-1", (redirect["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("focus on tests", (redirect["text"] as? JsonPrimitive)?.contentOrNull)
+        assertTrue(harness.rpcLog.none { it.first == "session.steer" })
     }
 
     @Test
-    fun `steer rejected propagates to the caller`() {
+    fun `redirect falls back to steer when unsupported`() {
         val r = Recorder()
         client.sendTurn(null, "long job", null, r.callbacks) { r.preflightFailures += it }
         harness.awaitServerSocket()
         harness.awaitRpc("prompt.submit")
 
-        harness.steerStatus = "rejected"
+        harness.methodNotFound.add("session.redirect")
+        harness.steerStatus = "queued"
+        assertEquals(SteerResult.Queued, runBlocking { client.steer("legacy correction") })
+        harness.awaitRpc("session.redirect")
+        val steer = harness.awaitRpc("session.steer")
+        assertEquals("live-1", (steer["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("legacy correction", (steer["text"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `redirect rejected propagates to the caller`() {
+        val r = Recorder()
+        client.sendTurn(null, "long job", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        harness.redirectStatus = "rejected"
         assertEquals(SteerResult.Rejected, runBlocking { client.steer("too late") })
     }
 
     @Test
-    fun `steer with no live session fails without touching the wire`() {
+    fun `redirect with no live session fails without touching the wire`() {
         assertEquals(SteerResult.Failed, runBlocking { client.steer("nothing running") })
+        assertTrue(harness.rpcLog.none { it.first == "session.redirect" })
         assertTrue(harness.rpcLog.none { it.first == "session.steer" })
+    }
+
+    @Test
+    fun `compress session uses dedicated rpc and parses authoritative messages`() {
+        val r = Recorder()
+        client.sendTurn(null, "long job", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        harness.compressPayload = buildJsonObject {
+            put("status", "completed")
+            put("removed", 3)
+            put("before_messages", 9)
+            put("after_messages", 4)
+            put(
+                "messages",
+                harness.json.parseToJsonElement(
+                    """
+                    [
+                      {"id":"1","role":"user","content":"hello"},
+                      {"id":"2","role":"assistant","content":"summary"}
+                    ]
+                    """.trimIndent(),
+                ),
+            )
+        }
+
+        val result = runBlocking { client.compressSession("tests").getOrThrow() }
+        val rpc = harness.awaitRpc("session.compress")
+        assertEquals("live-1", (rpc["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("tests", (rpc["focus_topic"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(3, result.removed)
+        assertEquals(2, result.messages.size)
+        assertTrue(harness.rpcLog.none { it.first == "slash.exec" })
+    }
+
+    @Test
+    fun `compress session falls back to slash exec when rpc is missing`() {
+        val r = Recorder()
+        client.sendTurn(null, "long job", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        harness.methodNotFound.add("session.compress")
+        val result = runBlocking { client.compressSession().getOrThrow() }
+        harness.awaitRpc("session.compress")
+        val slash = harness.awaitRpc("slash.exec")
+        assertEquals("/compress", (slash["command"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("legacy", result.status)
     }
 
     // --- Profile-bound sessions (upstream tui_gateway: session.create/resume
