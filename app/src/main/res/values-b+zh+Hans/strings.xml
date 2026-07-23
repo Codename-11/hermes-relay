@@ -70,7 +70,7 @@
     <string name="chat_input_start_voice">开始语音对话</string>
     <string name="chat_input_voice_setup_needed">语音对话——需要先设置</string>
     <string name="chat_input_stop_streaming">停止流式响应</string>
-    <string name="chat_input_steer_response">引导回复方向</string>
+    <string name="chat_input_steer_response">修正回复</string>
     <string name="chat_input_queue_message">排队发送消息</string>
 
     <!-- Bridge 返回标签 -->
@@ -101,7 +101,7 @@
 
     <!-- 聊天界面占位符 -->
     <string name="chat_placeholder_edit">编辑你的消息…</string>
-    <string name="chat_placeholder_steer">引导回复方向…</string>
+    <string name="chat_placeholder_steer">修正回复…</string>
     <string name="chat_placeholder_queue">排队发送消息…</string>
     <string name="chat_placeholder_message">输入消息…</string>
     <string name="chat_edit_busy_snackbar">暂时无法编辑——请等当前这一轮结束</string>

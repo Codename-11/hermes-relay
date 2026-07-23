@@ -70,7 +70,7 @@
     <string name="chat_input_start_voice">Start voice conversation</string>
     <string name="chat_input_voice_setup_needed">Voice conversation — setup needed</string>
     <string name="chat_input_stop_streaming">Stop streaming</string>
-    <string name="chat_input_steer_response">Steer the response</string>
+    <string name="chat_input_steer_response">Correct the response</string>
     <string name="chat_input_queue_message">Queue message</string>
 
     <!-- Bridge return labels -->
@@ -101,7 +101,7 @@
 
     <!-- Chat screen placeholders -->
     <string name="chat_placeholder_edit">Edit your message…</string>
-    <string name="chat_placeholder_steer">Steer the response…</string>
+    <string name="chat_placeholder_steer">Correct the response…</string>
     <string name="chat_placeholder_queue">Queue a message…</string>
     <string name="chat_placeholder_message">Message…</string>
     <string name="chat_edit_busy_snackbar">Can\'t edit right now — wait for the current turn to finish</string>

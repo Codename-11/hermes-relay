@@ -70,7 +70,7 @@
     <string name="chat_input_start_voice">Sprachgespräch starten</string>
     <string name="chat_input_voice_setup_needed">Sprachgespräch — Einrichtung erforderlich</string>
     <string name="chat_input_stop_streaming">Streaming stoppen</string>
-    <string name="chat_input_steer_response">Antwort steuern</string>
+    <string name="chat_input_steer_response">Antwort korrigieren</string>
     <string name="chat_input_queue_message">Nachricht einreihen</string>
 
     <!-- Bridge return labels -->
@@ -101,7 +101,7 @@
 
     <!-- Chat screen placeholders -->
     <string name="chat_placeholder_edit">Nachricht bearbeiten…</string>
-    <string name="chat_placeholder_steer">Antwort steuern…</string>
+    <string name="chat_placeholder_steer">Antwort korrigieren…</string>
     <string name="chat_placeholder_queue">Nachricht einreihen…</string>
     <string name="chat_placeholder_message">Nachricht…</string>
     <string name="chat_edit_busy_snackbar">Bearbeiten derzeit nicht möglich — warte, bis der aktuelle Durchlauf beendet ist</string>

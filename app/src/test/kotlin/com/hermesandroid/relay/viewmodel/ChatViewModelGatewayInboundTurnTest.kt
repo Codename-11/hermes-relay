@@ -822,7 +822,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun queuedMessageDrainsAfterUnsolicitedTurnCompletes() {
-        gatewayHarness.steerStatus = "rejected"
+        gatewayHarness.redirectStatus = "rejected"
         serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
         serverWs.send(
             gatewayHarness.eventFrame(
@@ -834,7 +834,7 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { handler.isStreaming.value }
 
         viewModel.sendMessage("Run this next")
-        gatewayHarness.awaitRpc("session.steer")
+        gatewayHarness.awaitRpc("session.redirect")
         awaitCondition { viewModel.queuedMessages.value == listOf("Run this next") }
 
         persistedHistory = persistedAnswerHistory()

@@ -70,7 +70,7 @@
     <string name="chat_input_start_voice">音声会話を開始する</string>
     <string name="chat_input_voice_setup_needed">音声会話 - 設定が必要です</string>
     <string name="chat_input_stop_streaming">ストリーミングを停止する</string>
-    <string name="chat_input_steer_response">応答を制御する</string>
+    <string name="chat_input_steer_response">応答を修正</string>
     <string name="chat_input_queue_message">キューメッセージ</string>
 
     <!-- Bridge return labels -->
@@ -101,7 +101,7 @@
 
     <!-- Chat screen placeholders -->
     <string name="chat_placeholder_edit">メッセージを編集してください…</string>
-    <string name="chat_placeholder_steer">応答を制御します…</string>
+    <string name="chat_placeholder_steer">応答を修正…</string>
     <string name="chat_placeholder_queue">メッセージをキューに入れます…</string>
     <string name="chat_placeholder_message">メッセージ…</string>
     <string name="chat_edit_busy_snackbar">現在編集できません - 現在のターンが終了するまで待ちます</string>

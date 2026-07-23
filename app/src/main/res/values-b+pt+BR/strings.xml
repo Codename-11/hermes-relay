@@ -64,7 +64,7 @@
     <string name="chat_input_start_voice">Iniciar conversa por voz</string>
     <string name="chat_input_voice_setup_needed">Conversa por voz — configuração necessária</string>
     <string name="chat_input_stop_streaming">Parar transmissão</string>
-    <string name="chat_input_steer_response">Direcionar a resposta</string>
+    <string name="chat_input_steer_response">Corrigir a resposta</string>
     <string name="chat_input_queue_message">Colocar mensagem na fila</string>
     <!-- Bridge return labels -->
     <string name="bridge_return_chat_label">Chat</string>
@@ -90,7 +90,7 @@
     <string name="demo_feature_manage">Gerenciar</string>
     <!-- Chat screen placeholders -->
     <string name="chat_placeholder_edit">Edite sua mensagem…</string>
-    <string name="chat_placeholder_steer">Direcione a resposta…</string>
+    <string name="chat_placeholder_steer">Corrija a resposta…</string>
     <string name="chat_placeholder_queue">Coloque uma mensagem na fila…</string>
     <string name="chat_placeholder_message">Mensagem…</string>
     <string name="chat_edit_busy_snackbar">Não é possível editar agora — aguarde o turno atual terminar</string>
