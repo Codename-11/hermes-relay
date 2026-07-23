@@ -1682,7 +1682,10 @@ class ChatHandler {
         // sessions as "Untitled" in the drawer (issue #133). Preserve the known
         // local title whenever the server hasn't supplied a non-blank one.
         val existingById = _sessions.value.associateBy { it.sessionId }
-        val mapped = items.map { item ->
+        // The drawer is always composed, even while closed, and keys rows by
+        // session id. A refresh race or duplicated upstream row must not put
+        // the same key into Compose's LazyColumn.
+        val mapped = items.distinctBy { it.id }.map { item ->
             val startedAtMs = timestampToMillis(item.startedAt)
             val lastActivityAtMs = timestampToMillis(item.resolvedLastActivity)
             val activityAtMs = firstPositive(lastActivityAtMs, startedAtMs)
@@ -1760,7 +1763,15 @@ class ChatHandler {
      * Add a newly created session to the list.
      */
     fun addSession(session: ChatSession) {
-        _sessions.update { listOf(session) + it }
+        // Gateway onSessionId and an overlapping REST refresh can both publish
+        // the same freshly-created session. Treat this as an idempotent upsert,
+        // preferring an existing server-enriched row while collapsing any
+        // duplicates that were already present.
+        _sessions.update { current ->
+            val existing = current.firstOrNull { it.sessionId == session.sessionId }
+            listOf(existing ?: session) +
+                current.filterNot { it.sessionId == session.sessionId }
+        }
     }
 
     // --- SSE streaming event entry points ---

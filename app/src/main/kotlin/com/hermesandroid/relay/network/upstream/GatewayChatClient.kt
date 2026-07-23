@@ -539,10 +539,10 @@ class GatewayChatClient(
                     // into the SSE fallback, which would resubmit the same
                     // prompt as a duplicate turn. Recovery belongs to the
                     // stream: the watchdog and mid-turn rejoin own it.
-                    if (turn.started || turn.ended) {
+                    if (turn.started || turn.ended || turn.transportRecoveryStarted) {
                         Log.w(
                             TAG,
-                            "prompt.submit ack failed after turn start " +
+                            "prompt.submit ack failed after turn start/rejoin " +
                                 "(${submitted.exceptionOrNull()?.message}) — no SSE fallback",
                         )
                         return@launch
@@ -2029,12 +2029,14 @@ class GatewayChatClient(
 
     /**
      * Recover an in-flight turn after a mid-turn socket loss by reconnecting
-     * the SOCKET ONLY and keeping [preservedLiveId] as the live session id.
+     * the socket and rebinding [preservedLiveId] to the new transport.
      *
-     * A bare reconnect lets the tail — including the final
-     * `message.complete` — keep matching without another RPC. Current upstream
-     * can rebind live sessions too, but older builds cannot, so this remains the
-     * lowest-common-denominator same-client recovery path.
+     * Current upstream detaches a live session from a closed WebSocket; a new
+     * socket receives no tail until `session.activate` attaches that exact live
+     * id. Older gateways do not expose the method, so method-not-found alone
+     * retains the legacy bare-socket behavior. We never call `session.resume`
+     * here: resuming a durable id can create a different live runtime and
+     * orphan the turn already executing server-side.
      *
      * Retries with backoff for up to [midTurnRejoinWindowMs] so a multi-second
      * radio blip doesn't abandon the turn. Events emitted while the socket was
@@ -2052,7 +2054,39 @@ class GatewayChatClient(
                     connectCooldownUntil = 0L
                     ensureConnected()
                 }
-                true
+                if (preservedLiveId == null) {
+                    true
+                } else {
+                    // Bind before activation so a tail event racing the RPC ack
+                    // still matches the original active turn.
+                    liveSessionId = preservedLiveId
+                    val activated = rpc(
+                        "session.activate",
+                        buildJsonObject { put("session_id", preservedLiveId) },
+                    )
+                    when {
+                        activated.isSuccess -> {
+                            activated.getOrNull()?.let(::applySessionResultInfo)
+                            true
+                        }
+                        activated.exceptionOrNull().isMethodNotFound() -> {
+                            Log.i(
+                                TAG,
+                                "session.activate unsupported during mid-turn rejoin — " +
+                                    "using legacy socket recovery",
+                            )
+                            true
+                        }
+                        else -> {
+                            Log.d(
+                                TAG,
+                                "Mid-turn session.activate retry failed: " +
+                                    activated.exceptionOrNull()?.message,
+                            )
+                            false
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 Log.d(TAG, "Mid-turn reconnect retry failed: ${e.message}")
                 false
@@ -2064,7 +2098,8 @@ class GatewayChatClient(
                 if (preservedLiveId != null) liveSessionId = preservedLiveId
                 Log.i(
                     TAG,
-                    "Gateway socket rejoined mid-turn (session=$storedSessionId) — kept live session, awaiting tail",
+                    "Gateway socket rejoined mid-turn (session=$storedSessionId) — " +
+                        "rebound live session, awaiting tail",
                 )
                 // A reconnect that followed a route RETARGET gets a short settle
                 // (the fresh socket won't replay the in-flight turn); a normal
@@ -2271,9 +2306,21 @@ class GatewayChatClient(
          */
         fun beginRejoin(): Boolean {
             val shouldRejoin = !ended && rejoinAttempts.incrementAndGet() <= MAX_TURN_REJOINS
-            if (shouldRejoin) reconcileRequired = true
+            if (shouldRejoin) {
+                reconcileRequired = true
+                transportRecoveryStarted = true
+            }
             return shouldRejoin
         }
+
+        /**
+         * A socket loss after `prompt.submit` makes server acceptance ambiguous
+         * even when no turn event or RPC ack reached Android. Once recovery has
+         * started, the caller must not resubmit through SSE.
+         */
+        @Volatile
+        var transportRecoveryStarted = false
+            private set
 
         private var watchdog: Job? = null
 

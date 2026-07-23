@@ -429,6 +429,20 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun updateSessions_deduplicatesDuplicateServerRows() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(id = "s1", title = "First"),
+                SessionItem(id = "s1", title = "Duplicate"),
+                SessionItem(id = "s2", title = "Other"),
+            ),
+        )
+
+        assertEquals(listOf("s1", "s2"), handler.sessions.value.map { it.sessionId })
+        assertEquals("First", handler.sessions.value.first().title)
+    }
+
+    @Test
     fun updateSessions_preservesLocalTitle_whenServerReturnsNullTitle() {
         // The server titles a session asynchronously after the first turn (and
         // never on the SSE/runs surfaces), so a re-list often returns the row
@@ -612,6 +626,38 @@ class ChatHandlerTest {
         assertEquals(2, sessions.size)
         assertEquals("s2", sessions[0].sessionId) // Prepended
         assertEquals("s1", sessions[1].sessionId)
+    }
+
+    @Test
+    fun addSession_collapsesRepeatedOptimisticRows() {
+        val session = ChatSession(sessionId = "s1", title = "Fresh", model = null)
+
+        handler.addSession(session)
+        handler.addSession(session)
+
+        assertEquals(listOf("s1"), handler.sessions.value.map { it.sessionId })
+    }
+
+    @Test
+    fun addSession_afterRefreshKeepsSingleServerEnrichedRow() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "s1",
+                    title = "Server title",
+                    model = "gpt-5.6",
+                    messageCount = 2,
+                ),
+            ),
+        )
+
+        handler.addSession(ChatSession(sessionId = "s1", title = "Optimistic", model = null))
+
+        val session = handler.sessions.value.single()
+        assertEquals("s1", session.sessionId)
+        assertEquals("Server title", session.title)
+        assertEquals("gpt-5.6", session.model)
+        assertEquals(2, session.messageCount)
     }
 
     // --- setSessionId ---

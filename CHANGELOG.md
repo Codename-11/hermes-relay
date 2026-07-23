@@ -34,6 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Voice settings and active-turn correction remain usable across supported languages.** New voice controls are localized and correction copy accurately describes the turn being replaced.
+- **Chat reconnects preserve the running Gateway turn without duplicating it.** Android reactivates the original live session after a socket loss, avoids resubmitting a prompt when its acknowledgement was lost, and de-duplicates session rows before they reach the drawer.
 - **Hosted Manage and direct-chat compatibility stay bounded and secure.** OAuth state remains tied to the selected dashboard, inline image memory is capped, and session reset and queued-recovery boundaries follow upstream contracts.
 
 ## [1.4.9] - 2026-07-19

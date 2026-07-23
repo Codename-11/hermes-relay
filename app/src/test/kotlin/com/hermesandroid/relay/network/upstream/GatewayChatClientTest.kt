@@ -1001,23 +1001,23 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `socket loss mid-turn reconnects without resume and completes on the original session`() {
+    fun `socket loss mid-turn activates original session without resume and completes`() {
         val r = Recorder()
         client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
         val ws1 = harness.awaitServerSocket()
         harness.awaitRpc("prompt.submit")
 
         // Server connection dies mid-turn (Wi-Fi roam analogue). The client
-        // must reconnect with a FRESH ticket but WITHOUT session.resume —
-        // upstream resume would mint a new id + fresh agent and orphan the
-        // running turn — then keep consuming the still-running turn's events,
-        // which arrive tagged with the ORIGINAL live session id ("live-1")
-        // on the shared gateway stream.
+        // must reconnect with a FRESH ticket and session.activate the original
+        // live runtime. session.resume would mint/rebind a different runtime and
+        // orphan the running turn.
         harness.rpcLog.clear()
         ws1.close(1011, "server crashed")
 
         val ws2 = harness.awaitServerSocket()
         assertTrue("reconnect must mint a fresh ticket", harness.ticketMints.get() >= 2)
+        val activate = harness.awaitRpc("session.activate")
+        assertEquals("live-1", (activate["session_id"] as? JsonPrimitive)?.contentOrNull)
 
         ws2.send(
             harness.eventFrame("message.delta", buildJsonObject { put("text", "after rejoin") }, "live-1"),
@@ -1036,6 +1036,51 @@ class GatewayChatClientTest {
             harness.rpcLog.none { it.first == "session.resume" },
         )
         assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `mid-turn activate method-not-found keeps legacy socket recovery`() {
+        harness.methodNotFound += "session.activate"
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws1 = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        harness.rpcLog.clear()
+        ws1.close(1011, "radio roam")
+        val ws2 = harness.awaitServerSocket()
+        harness.awaitRpc("session.activate")
+        ws2.send(
+            harness.eventFrame("message.complete", buildJsonObject { put("text", "legacy") }, "live-1"),
+        )
+
+        assertTrue(r.completeLatch.await(10, TimeUnit.SECONDS))
+        assertTrue(r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.resume" })
+    }
+
+    @Test
+    fun `lost submit ack before first event rejoins without duplicate fallback`() {
+        harness.suppressAckMethods += "prompt.submit"
+        val r = Recorder()
+        client.sendTurn(null, "only once", null, r.callbacks) { r.preflightFailures += it }
+        val ws1 = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        ws1.close(1011, "ack lost")
+        val ws2 = harness.awaitServerSocket()
+        val activate = harness.awaitRpc("session.activate")
+        assertEquals("live-1", (activate["session_id"] as? JsonPrimitive)?.contentOrNull)
+        ws2.send(
+            harness.eventFrame("message.complete", buildJsonObject { put("text", "done") }, "live-1"),
+        )
+
+        assertTrue(r.completeLatch.await(10, TimeUnit.SECONDS))
+        assertEquals(1, harness.rpcLog.count { it.first == "prompt.submit" })
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(r.errors.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.resume" })
     }
 
     @Test
