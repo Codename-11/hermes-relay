@@ -26,7 +26,7 @@ This feature release overhauls voice setup and playback, expands upstream Gatewa
 - Voice settings and active-turn correction copy remain complete across supported languages.
 - Chat reactivates the original live Gateway session after a connection loss, avoids duplicate prompt submission when an acknowledgement is lost, and prevents duplicate session rows from crashing the drawer.
 - Relay pairing retains Tailscale and other QR fallback routes when added to an existing Standard connection, recovers older stored routes, and shows a route-specific Dashboard sign-in action instead of leaving remote Chat loading.
-- Remote route checks use the API server's supported `GET /health` contract, and Manage labels host-side Nous provider authentication separately from Dashboard sign-in.
+- Remote route checks use the API server's supported `GET /health` contract. Selecting Tailscale now moves Dashboard/Gateway, sessions, Manage, Standard Voice, API, and Relay together instead of leaving dashboard-backed features on the saved LAN host; Manage also labels host-side Nous provider authentication separately from Dashboard sign-in.
 - Hosted Manage OAuth remains bound to the selected dashboard, direct-chat image memory is bounded, and session reset and recovery behavior follow upstream contracts.
 
 ## Install / Verify

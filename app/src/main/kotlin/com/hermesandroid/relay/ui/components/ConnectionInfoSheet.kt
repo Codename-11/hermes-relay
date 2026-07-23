@@ -715,9 +715,12 @@ fun AgentInfoSheet(
     // Connection summary state.
     val authState by connectionViewModel.authState.collectAsState()
     val apiServerUrl by connectionViewModel.apiServerUrl.collectAsState()
+    val effectiveApiServerUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
     val apiServerReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
+    val effectiveRelayUrl by connectionViewModel.effectiveRelayUrl.collectAsState()
+    val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
@@ -1566,11 +1569,12 @@ fun AgentInfoSheet(
                     connectionViewModel.resolveStreamingEndpoint(streamingEndpoint),
                 )
                 val routeLabel = if (sessionTransport.isGateway) {
-                    val dashboardUrl = activeConnection?.resolvedDashboardUrl.orEmpty()
                     activeConnection?.routeCandidates
-                        ?.firstOrNull { it.dashboard?.url?.trimEnd('/') == dashboardUrl.trimEnd('/') }
+                        ?.firstOrNull {
+                            it.dashboard?.url?.trimEnd('/') == effectiveDashboardUrl.trimEnd('/')
+                        }
                         ?.displayLabel()
-                        ?: dashboardUrl.takeIf { it.isNotBlank() }?.let { url ->
+                        ?: effectiveDashboardUrl.takeIf { it.isNotBlank() }?.let { url ->
                             com.hermesandroid.relay.data.Connection.endpointCandidateFromDashboardUrl(
                                 role = com.hermesandroid.relay.data.Connection.inferRouteRole(url),
                                 priority = 0,
@@ -1580,7 +1584,7 @@ fun AgentInfoSheet(
                 } else {
                     activeEndpoint?.displayLabel()
                         ?: com.hermesandroid.relay.data.Connection
-                            .extractDefaultLabel(apiServerUrl)
+                            .extractDefaultLabel(effectiveApiServerUrl)
                             .takeIf { it.isNotBlank() }
                 }
                 val relayConnected = relayConnectionState == ConnectionState.Connected
@@ -1714,8 +1718,8 @@ fun AgentInfoSheet(
                     routeLabel = routeLabel,
                     relayConnectionState = relayConnectionState,
                     capabilities = sessionCaps,
-                    apiServerUrl = apiServerUrl,
-                    relayUrl = relayUrl,
+                    apiServerUrl = effectiveApiServerUrl,
+                    relayUrl = effectiveRelayUrl,
                     streamingEndpoint = streamingEndpoint,
                     gatewayAvailability = gatewayAvailability,
                     serverCapabilities = serverCapabilities,

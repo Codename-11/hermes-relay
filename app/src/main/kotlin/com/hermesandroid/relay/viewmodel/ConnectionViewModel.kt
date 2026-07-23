@@ -191,6 +191,34 @@ internal fun hasConfiguredHermesConnection(connection: Connection?): Boolean =
     connection?.capabilities?.anySurfaceConfigured == true
 
 /**
+ * Resolve the Dashboard/Gateway surface for the route the resolver selected.
+ *
+ * A saved dashboard URL describes the primary route; it must not pin every
+ * runtime route to that host. When a LAN connection has an explicit dashboard
+ * URL and the resolver selects Tailscale, keeping the saved LAN URL makes
+ * Gateway sessions, Manage, and standard voice all appear offline even though
+ * the selected Tailscale candidate is reachable.
+ */
+internal fun resolveEffectiveDashboardUrl(
+    connection: Connection?,
+    endpoint: EndpointCandidate?,
+): String {
+    if (connection == null) return ""
+    endpoint?.dashboard?.url
+        ?.takeIf { it.isNotBlank() }
+        ?.let { return it }
+    if (
+        endpoint != null &&
+        Connection.isAutoManagedDashboardUrl(connection.dashboardUrl, connection.apiServerUrl)
+    ) {
+        return endpoint.api?.url
+            ?.let(Connection::deriveDefaultDashboardUrl)
+            .orEmpty()
+    }
+    return connection.resolvedDashboardUrl
+}
+
+/**
  * Add Relay transport metadata to the connection's existing standard routes
  * without adopting the Relay QR's API/Dashboard identity.
  */
@@ -1044,22 +1072,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
-     * Runtime dashboard route. Explicit dashboard overrides stay on the
-     * persisted connection, but auto-managed dashboard URLs follow the active
-     * API route so Manage can move from LAN to Tailscale with Chat.
+     * Runtime dashboard route. A selected endpoint's Dashboard/Gateway URL
+     * wins because it is part of that route just like API and Relay. When an
+     * older candidate has only API metadata, auto-managed dashboards can still
+     * derive the conventional Dashboard URL; otherwise the saved URL remains
+     * the fallback.
      */
     val effectiveDashboardUrl: StateFlow<String> = combine(
         activeConnection,
         connectionManager.activeEndpoint,
     ) { connection, endpoint ->
-        when {
-            connection == null -> ""
-            endpoint != null &&
-                Connection.isAutoManagedDashboardUrl(connection.dashboardUrl, connection.apiServerUrl) ->
-                endpoint.dashboard?.url
-                    ?: endpoint.api?.url?.let(Connection::deriveDefaultDashboardUrl).orEmpty()
-            else -> connection.resolvedDashboardUrl
-        }
+        resolveEffectiveDashboardUrl(connection, endpoint)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /**
