@@ -114,6 +114,8 @@ data class Connection(
         const val LEGACY_TOKEN_STORE_KEY: String = "hermes_companion_auth_hw"
 
         const val DEFAULT_DASHBOARD_PORT: Int = 9119
+        const val DEFAULT_API_PORT: Int = 8642
+        const val DEFAULT_RELAY_PORT: Int = 8767
 
         /**
          * Derive a stable per-connection EncryptedSharedPreferences filename
@@ -189,6 +191,29 @@ data class Connection(
             return "$scheme://$hostPart:$dashboardPort"
         }
 
+        /** Derive the conventional same-host direct API fallback from a Dashboard URL. */
+        fun deriveDefaultApiUrl(
+            dashboardUrl: String,
+            apiPort: Int = DEFAULT_API_PORT,
+        ): String? {
+            val trimmed = dashboardUrl.trim().trimEnd('/')
+            if (trimmed.isEmpty()) return null
+
+            val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
+            val scheme = when (uri.scheme?.lowercase()) {
+                "http" -> "http"
+                "https" -> "https"
+                else -> return null
+            }
+            val host = uri.host?.takeIf { it.isNotBlank() } ?: return null
+            val hostPart = if (host.contains(":") && !host.startsWith("[")) {
+                "[$host]"
+            } else {
+                host
+            }
+            return "$scheme://$hostPart:$apiPort"
+        }
+
         fun isAutoManagedDashboardUrl(dashboardUrl: String?, apiServerUrl: String): Boolean {
             val trimmed = dashboardUrl?.trim()?.trimEnd('/').orEmpty()
             if (trimmed.isEmpty()) return true
@@ -198,7 +223,7 @@ data class Connection(
 
         fun deriveDefaultRelayUrl(
             apiServerUrl: String,
-            relayPort: Int = 8767,
+            relayPort: Int = DEFAULT_RELAY_PORT,
         ): String? {
             val trimmed = apiServerUrl.trim().trimEnd('/')
             if (trimmed.isEmpty()) return null

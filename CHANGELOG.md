@@ -35,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Voice settings and active-turn correction remain usable across supported languages.** New voice controls are localized and correction copy accurately describes the turn being replaced.
 - **Chat reconnects preserve the running Gateway turn without duplicating it.** Android reactivates the original live session after a socket loss, avoids resubmitting a prompt when its acknowledgement was lost, and de-duplicates session rows before they reach the drawer.
+- **Relay pairing preserves Tailscale and other fallback routes.** Adding Relay to an existing Standard connection now keeps every signed QR route, restores older per-device endpoints hidden by the connection upgrade, and gives remote Dashboard routes their API fallback. When a host-scoped Dashboard sign-in is still required, Chat shows the route-specific sign-in action instead of loading indefinitely.
 - **Hosted Manage and direct-chat compatibility stay bounded and secure.** OAuth state remains tied to the selected dashboard, inline image memory is capped, and session reset and queued-recovery boundaries follow upstream contracts.
 
 ## [1.4.9] - 2026-07-19

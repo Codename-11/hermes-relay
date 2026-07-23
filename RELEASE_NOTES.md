@@ -25,6 +25,7 @@ This feature release overhauls voice setup and playback, expands upstream Gatewa
 
 - Voice settings and active-turn correction copy remain complete across supported languages.
 - Chat reactivates the original live Gateway session after a connection loss, avoids duplicate prompt submission when an acknowledgement is lost, and prevents duplicate session rows from crashing the drawer.
+- Relay pairing retains Tailscale and other QR fallback routes when added to an existing Standard connection, recovers older stored routes, and shows a route-specific Dashboard sign-in action instead of leaving remote Chat loading.
 - Hosted Manage OAuth remains bound to the selected dashboard, direct-chat image memory is bounded, and session reset and recovery behavior follow upstream contracts.
 
 ## Install / Verify

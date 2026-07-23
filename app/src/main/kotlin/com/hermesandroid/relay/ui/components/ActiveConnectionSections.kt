@@ -2098,6 +2098,9 @@ fun ActiveCardRoutesSection(
                 outcomeFor = { candidate ->
                     routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate)]
                 },
+                dashboardAuthenticated = connection.dashboardLastStatus?.authenticated,
+                dashboardSignInRequired = connection.dashboardLastStatus?.authRequired == true &&
+                    connection.dashboardLastStatus.authenticated != true,
                 preferredRole = preferredRole,
                 manualOverrideRole = manualOverrideRole,
                 onUseNow = { candidate -> connectionViewModel.useRouteNow(candidate.role) },
@@ -2127,10 +2130,12 @@ fun ActiveCardRoutesSection(
         if (routeEditorOpen) {
             RouteEditorDialog(
                 original = routeEditorOriginal,
-                onSave = { role, apiUrl, onResult ->
+                relayEnabled = connection.relayUrl.isNotBlank() ||
+                    endpoints.any { it.relay != null },
+                onSave = { role, dashboardUrl, onResult ->
                     connectionViewModel.saveExtraRoute(
                         role = role,
-                        apiUrl = apiUrl,
+                        dashboardUrl = dashboardUrl,
                         original = routeEditorOriginal,
                         onResult = onResult,
                     )

@@ -113,4 +113,90 @@ class RelayPairingPersistencePolicyTest {
             result.routeCandidates.map { it.relay?.url },
         )
     }
+
+    @Test
+    fun `relay pairing appends QR routes missing from LAN-only standard connection`() {
+        val lan = EndpointCandidate(
+            role = "lan",
+            priority = 0,
+            dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+            api = ApiEndpoint("192.168.1.20", 8642),
+        )
+        val current = Connection(
+            id = "hermes-node",
+            label = "Hermes node",
+            apiServerUrl = "http://192.168.1.20:8642",
+            relayUrl = "",
+            tokenStoreKey = "hermes_auth_node",
+            dashboardUrl = "http://192.168.1.20:9119",
+            routeCandidates = listOf(lan),
+        )
+        val relayRoutes = listOf(
+            EndpointCandidate(
+                role = "lan",
+                priority = 0,
+                api = ApiEndpoint("192.168.1.20", 8642),
+                relay = RelayEndpoint("ws://192.168.1.20:8767", "ws"),
+            ),
+            EndpointCandidate(
+                role = "tailscale",
+                priority = 1,
+                api = ApiEndpoint("100.71.8.56", 8642),
+                relay = RelayEndpoint("ws://100.71.8.56:8767", "ws"),
+            ),
+        )
+
+        val result = preserveStandardConnectionWhileApplyingRelay(
+            current = current,
+            relayUrl = "ws://192.168.1.20:8767",
+            relayRoutes = relayRoutes,
+        )
+
+        assertEquals(listOf("lan", "tailscale"), result.routeCandidates.map { it.role })
+        assertEquals("100.71.8.56", result.routeCandidates[1].api?.host)
+        assertEquals("ws://100.71.8.56:8767", result.routeCandidates[1].relay?.url)
+    }
+
+    @Test
+    fun `relay pairing fills API and Relay on manually-added dashboard route`() {
+        val tailscaleDashboard = DashboardEndpoint("http://100.71.8.56:9119")
+        val current = Connection(
+            id = "hermes-node",
+            label = "Hermes node",
+            apiServerUrl = "http://192.168.1.20:8642",
+            relayUrl = "ws://192.168.1.20:8767",
+            tokenStoreKey = "hermes_auth_node",
+            dashboardUrl = "http://192.168.1.20:9119",
+            routeCandidates = listOf(
+                EndpointCandidate(
+                    role = "lan",
+                    priority = 0,
+                    dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+                    api = ApiEndpoint("192.168.1.20", 8642),
+                ),
+                EndpointCandidate(
+                    role = "tailscale",
+                    priority = 1,
+                    dashboard = tailscaleDashboard,
+                ),
+            ),
+        )
+        val qrTailscale = EndpointCandidate(
+            role = "tailscale",
+            priority = 1,
+            api = ApiEndpoint("100.71.8.56", 8642),
+            relay = RelayEndpoint("ws://100.71.8.56:8767", "ws"),
+        )
+
+        val result = preserveStandardConnectionWhileApplyingRelay(
+            current = current,
+            relayUrl = current.relayUrl,
+            relayRoutes = listOf(qrTailscale),
+        )
+
+        val route = result.routeCandidates.single { it.role == "tailscale" }
+        assertEquals(tailscaleDashboard, route.dashboard)
+        assertEquals(qrTailscale.api, route.api)
+        assertEquals(qrTailscale.relay, route.relay)
+    }
 }

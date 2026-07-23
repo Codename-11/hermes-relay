@@ -43,6 +43,22 @@ class ConnectionDashboardFieldsTest {
     }
 
     @Test
+    fun deriveDefaultApiUrl_usesSameHostAndApiPort() {
+        assertEquals(
+            "http://100.75.1.2:8642",
+            Connection.deriveDefaultApiUrl("http://100.75.1.2:9119"),
+        )
+    }
+
+    @Test
+    fun deriveDefaultApiUrl_preservesHttpsAndIpv6Host() {
+        assertEquals(
+            "https://[fd7a:115c:a1e0::1]:8642",
+            Connection.deriveDefaultApiUrl("https://[fd7a:115c:a1e0::1]:9119"),
+        )
+    }
+
+    @Test
     fun resolvedDashboardUrl_usesExplicitOverride() {
         val connection = sampleConnection(
             dashboardUrl = "https://dashboard.example.com",

@@ -30,6 +30,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.capabilities
@@ -93,6 +94,7 @@ import com.hermesandroid.relay.viewmodel.connection.PairingController
 import com.hermesandroid.relay.viewmodel.connection.ProfileController
 import com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController
 import okhttp3.OkHttpClient
+import java.net.URI
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -101,7 +103,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -196,12 +197,55 @@ internal fun hasConfiguredHermesConnection(connection: Connection?): Boolean =
 internal fun mergeRelayTransportIntoStandardRoutes(
     standardRoutes: List<EndpointCandidate>,
     relayRoutes: List<EndpointCandidate>,
-): List<EndpointCandidate> = standardRoutes.map { standard ->
-    val relay = relayRoutes
-        .firstOrNull { it.role.equals(standard.role, ignoreCase = true) }
-        ?.relay
-        ?: return@map standard
-    standard.copy(relay = relay)
+): List<EndpointCandidate> {
+    if (standardRoutes.isEmpty()) {
+        return relayRoutes.sortedWith(
+            compareBy<EndpointCandidate> { it.priority }.thenBy { it.role },
+        )
+    }
+
+    val standardRoles = standardRoutes.map { it.role.lowercase() }.toSet()
+    val merged = standardRoutes.map { standard ->
+        val paired = relayRoutes
+            .firstOrNull { it.role.equals(standard.role, ignoreCase = true) }
+            ?: return@map standard
+        val sameHost = standard.routeHost()?.equals(paired.routeHost(), ignoreCase = true) == true
+        // The Standard connection remains authoritative for any surface it
+        // already configured. A Relay QR fills missing surfaces and refreshes
+        // its own transport, so a manually-added dashboard-only Tailscale
+        // route gains the QR's same-host API fallback instead of remaining
+        // Gateway-only. Never graft a QR API from a different host.
+        standard.copy(
+            api = standard.api ?: paired.api.takeIf { sameHost },
+            dashboard = standard.dashboard ?: paired.dashboard.takeIf { sameHost },
+            relay = paired.relay ?: standard.relay,
+            proxy = standard.proxy ?: paired.proxy,
+            security = standard.security ?: paired.security,
+            recommended = standard.recommended || paired.recommended,
+        )
+    }
+    // Relay-only pairing used to map over Standard's existing roles and drop
+    // every unmatched QR role. The common LAN-only Standard + LAN/Tailscale QR
+    // therefore looked paired while it had no remote route. Preserve the full
+    // signed QR route set, appending roles Standard did not know yet.
+    val missingQrRoles = relayRoutes.filterNot {
+        it.role.lowercase() in standardRoles
+    }
+    return (merged + missingQrRoles)
+        .distinctBy { "${it.role.lowercase()}|${it.routeAuthority()}" }
+        .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
+}
+
+private fun EndpointCandidate.routeHost(): String? {
+    val raw = primaryRouteUrl() ?: return null
+    val normalized = when {
+        raw.startsWith("ws://", ignoreCase = true) ->
+            "http://${raw.substringAfter("://")}"
+        raw.startsWith("wss://", ignoreCase = true) ->
+            "https://${raw.substringAfter("://")}"
+        else -> raw
+    }
+    return runCatching { URI(normalized).host }.getOrNull()
 }
 
 /** Pure persistence policy used by Relay-only QR apply and its regression tests. */
@@ -632,12 +676,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /** Currently-active endpoint, for the Endpoints card. */
     val activeEndpoint = connectionManager.activeEndpoint
 
-    private fun activeRouteCandidatesSnapshot(): List<EndpointCandidate> {
+    private suspend fun activeRouteCandidatesSnapshot(): List<EndpointCandidate> {
         val activeId = connectionStore.activeConnectionId.value ?: return emptyList()
-        return connectionStore.connections.value
+        val current = connectionStore.connections.value
             .firstOrNull { it.id == activeId }
-            ?.routeCandidates
-            .orEmpty()
+            ?: return emptyList()
+        val deviceId = runCatching { authManager.getOrCreateDeviceId() }.getOrNull()
+        val pairedRoutes = deviceId?.let { id ->
+            runCatching {
+                PairingPreferences.getDeviceEndpoints(getApplication(), id).first()
+            }.getOrDefault(emptyList())
+        }.orEmpty()
+        val recovered = mergeRelayTransportIntoStandardRoutes(
+            standardRoutes = current.routeCandidates,
+            relayRoutes = pairedRoutes,
+        )
+        if (recovered != current.routeCandidates) {
+            connectionStore.updateConnection(current.copy(routeCandidates = recovered))
+        }
+        return recovered
     }
 
     private fun normalizeStandardRouteCandidates(
@@ -5457,19 +5514,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun observeDeviceEndpoints(): kotlinx.coroutines.flow.Flow<List<EndpointCandidate>> {
         return activeConnection.flatMapLatest { connection ->
             val savedRoutes = connection?.routeCandidates.orEmpty()
-            if (savedRoutes.isNotEmpty()) {
-                kotlinx.coroutines.flow.flowOf(savedRoutes)
-            } else {
-                kotlinx.coroutines.flow.flow {
-                    val deviceId = runCatching { authManager.getOrCreateDeviceId() }.getOrNull()
-                    if (deviceId == null) {
-                        emit(emptyList())
-                        return@flow
-                    }
-                    emitAll(
-                        PairingPreferences.getDeviceEndpoints(getApplication(), deviceId)
-                    )
-                }
+            kotlinx.coroutines.flow.flow {
+                val deviceId = runCatching { authManager.getOrCreateDeviceId() }.getOrNull()
+                val pairedRoutes = deviceId?.let { id ->
+                    runCatching {
+                        PairingPreferences.getDeviceEndpoints(getApplication(), id).first()
+                    }.getOrDefault(emptyList())
+                }.orEmpty()
+                emit(
+                    mergeRelayTransportIntoStandardRoutes(
+                        standardRoutes = savedRoutes,
+                        relayRoutes = pairedRoutes,
+                    ),
+                )
             }
         }
     }
@@ -5478,7 +5535,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * Add or replace an extra fallback route on the active connection — the
      * standard path's manual equivalent of a v3 pairing QR's `endpoints`
      * array. The primary route (priority 0) mirrors the connection's main
-     * Dashboard/Gateway route and is edited through the connection detail,
+     * Dashboard/Gateway address and is edited through the connection detail,
      * never here.
      *
      * Legacy candidate sources (per-device PairingPreferences from old QR
@@ -5492,12 +5549,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun saveExtraRoute(
         role: String,
-        apiUrl: String,
+        dashboardUrl: String,
         original: EndpointCandidate? = null,
         onResult: (String?) -> Unit,
     ) {
         if (original?.priority == 0) {
-            onResult("The primary route mirrors the connection's API URL — edit that instead")
+            onResult("The primary route mirrors the connection's Dashboard/Gateway address — edit that instead")
             return
         }
         viewModelScope.launch {
@@ -5508,7 +5565,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
             // Accept bare hosts/IPs — http:// is assumed and the standard
             // Dashboard/Gateway port defaults to 9119.
-            val trimmedUrl = Connection.normalizeDashboardUrlInput(apiUrl)
+            val trimmedUrl = Connection.normalizeDashboardUrlInput(dashboardUrl)
             val existing = seedRouteCandidates(current)
             if (existing.isEmpty()) {
                 onResult("Set the connection's Dashboard/Gateway URL first")
@@ -5524,6 +5581,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 priority = original?.priority
                     ?: ((withoutOriginal.maxOfOrNull { it.priority } ?: 0) + 1),
                 dashboardUrl = trimmedUrl,
+                apiServerUrl = Connection.deriveDefaultApiUrl(trimmedUrl),
+                relayUrl = if (
+                    current.relayUrl.isNotBlank() ||
+                    original?.relay != null ||
+                    existing.any { it.relay != null }
+                ) {
+                    Connection.deriveDefaultApiUrl(trimmedUrl)
+                        ?.let(Connection::deriveDefaultRelayUrl)
+                } else {
+                    null
+                },
             )
             if (candidate == null) {
                 onResult(
@@ -5557,13 +5625,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /**
      * Remove an extra fallback route. The primary route (priority 0) is
-     * protected — it mirrors the connection's API URL. Clears a preferred-
+     * protected — it mirrors the connection's Dashboard/Gateway address. Clears a preferred-
      * route override that pointed at the removed route, mirroring
      * [persistActiveConnectionUrls]' stale-preference handling.
      */
     fun removeExtraRoute(candidate: EndpointCandidate, onResult: (String?) -> Unit = {}) {
         if (candidate.priority == 0) {
-            onResult("The primary route can't be removed — edit the connection's API URL instead")
+            onResult("The primary route can't be removed — edit the connection's Dashboard/Gateway address instead")
             return
         }
         viewModelScope.launch {
@@ -5609,12 +5677,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * Routes card is currently displaying is what an edit starts from.
      */
     private suspend fun seedRouteCandidates(current: Connection): List<EndpointCandidate> {
-        current.routeCandidates.takeIf { it.isNotEmpty() }?.let { return it }
         val fromPairing = runCatching {
             val deviceId = authManager.getOrCreateDeviceId()
             PairingPreferences.getDeviceEndpoints(getApplication(), deviceId).first()
         }.getOrDefault(emptyList())
-        if (fromPairing.isNotEmpty()) return fromPairing
+        val recovered = mergeRelayTransportIntoStandardRoutes(
+            standardRoutes = current.routeCandidates,
+            relayRoutes = fromPairing,
+        )
+        if (recovered.isNotEmpty()) return recovered
         val dashboardUrl = current.resolvedDashboardUrl.takeIf { it.isNotBlank() }
             ?: return emptyList()
         return listOfNotNull(

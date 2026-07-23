@@ -527,6 +527,7 @@ fun ChatScreen(
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val standardVoiceSignInRouteHint by
         connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
+    val dashboardRouteMovedHint by connectionViewModel.dashboardRouteMovedHint.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
@@ -1934,6 +1935,9 @@ fun ChatScreen(
                         chatReady = chatReady,
                         isLoadingHistory = isLoadingHistory,
                         isLoadingSessions = isLoadingSessions,
+                        gatewayAvailability = chatGatewayAvailability,
+                        dashboardRouteMovedHint = dashboardRouteMovedHint,
+                        onNavigateToManage = onNavigateToManage,
                         onNavigateToConnections = onNavigateToConnections,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -3247,6 +3251,9 @@ private fun ChatColdStartLoadingState(
     chatReady: Boolean,
     isLoadingHistory: Boolean,
     isLoadingSessions: Boolean,
+    gatewayAvailability: GatewayAvailability,
+    dashboardRouteMovedHint: String?,
+    onNavigateToManage: () -> Unit,
     onNavigateToConnections: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -3309,14 +3316,51 @@ private fun ChatColdStartLoadingState(
             )
         }
 
-        ChatLoadingCommandPanel(
-            commands = commands,
-            onNavigateToConnections = onNavigateToConnections,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-        )
+        val dashboardSignInRequired =
+            gatewayAvailability == GatewayAvailability.SignInRequired && !apiReachable
+        if (dashboardSignInRequired) {
+            ElevatedCard(
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                ),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.dashboard_signin_required_title),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = dashboardRouteMovedHint?.let { route ->
+                            stringResource(R.string.dashboard_signin_route_hint, route)
+                        } ?: stringResource(R.string.chat_settings_gateway_needs_signin_desc),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = onNavigateToManage,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.voice_settings_sign_in_via_manage))
+                    }
+                }
+            }
+        } else {
+            ChatLoadingCommandPanel(
+                commands = commands,
+                onNavigateToConnections = onNavigateToConnections,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+            )
+        }
     }
 }
 
