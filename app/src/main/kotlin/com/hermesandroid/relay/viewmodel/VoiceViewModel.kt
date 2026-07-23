@@ -36,6 +36,10 @@ import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.relay.VoiceHandoffEvent
 import com.hermesandroid.relay.network.shared.VoiceAudioClient
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
+import com.hermesandroid.relay.network.shared.VoiceSpeechStream
+import com.hermesandroid.relay.network.shared.VoiceSpeechStreamCallbacks
+import com.hermesandroid.relay.network.shared.VoiceSpeechStreamOutcome
+import com.hermesandroid.relay.network.shared.VoiceSpeechStreamStatus
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
@@ -69,6 +73,7 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.contentOrNull
 import java.io.File
+import java.io.IOException
 import java.util.Base64
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
@@ -82,6 +87,17 @@ import com.hermesandroid.relay.data.VoiceAudioRoute
  * overlay + MorphingSphere state in V2b/V3.
  */
 enum class VoiceState { Idle, Listening, Transcribing, Thinking, Speaking, Error }
+
+private enum class StandardSpeechStreamState {
+    Idle,
+    Opening,
+    Streaming,
+    LegacyFallback,
+    Consumed,
+}
+
+internal fun shouldFallbackStandardSpeech(outcome: VoiceSpeechStreamOutcome): Boolean =
+    !outcome.audioStarted && outcome.status != VoiceSpeechStreamStatus.Stopped
 
 internal fun realtimeTranscriptState(micCaptureActive: Boolean): VoiceState =
     if (micCaptureActive) VoiceState.Listening else VoiceState.Transcribing
@@ -674,6 +690,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingRawDelta: StringBuilder = StringBuilder()
 
     private var streamObserverJob: Job? = null
+    private var standardSpeechStreamJob: Job? = null
+    private var standardSpeechStream: VoiceSpeechStream? = null
+    private var standardSpeechStreamGeneration: Long = 0L
+    private var standardSpeechStreamState: StandardSpeechStreamState = StandardSpeechStreamState.Idle
+    private var standardSpeechStreamText: StringBuilder = StringBuilder()
+    private var standardSpeechStreamFinishRequested: Boolean = false
+    private val standardSpeechStreamAudioSeen = AtomicBoolean(false)
+    private val standardSpeechStreamAudioBytes = AtomicInteger(0)
+    private val standardSpeechStreamBargeInStarted = AtomicBoolean(false)
     private var ttsConsumerJob: Job? = null
     private var realtimeTtsConsumerJob: Job? = null
     private var amplitudeBridgeJob: Job? = null
@@ -944,6 +969,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceRelayPreflight: (suspend () -> Result<Unit>)? = null,
         voiceHandoffReporter: ((VoiceHandoffEvent) -> Unit)? = null,
     ) {
+        cancelStandardSpeechStream("voice dependencies rewired")
         this.voiceClient = voiceClient
         this.voiceAudioClient = voiceAudioClient ?: RelayVoiceAudioClientAdapter(voiceClient)
         this.chatViewModel = chatViewModel
@@ -1663,6 +1689,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // B4: tear down the barge-in listener + timers before we kill the
         // player so AEC doesn't try to track a released audio session.
         stopBargeInListener()
+        cancelStandardSpeechStream("voice mode exited")
         duckingWatchdog?.cancel(); duckingWatchdog = null
         resumeWatchdog?.cancel(); resumeWatchdog = null
         handoffStatusClearJob?.cancel(); handoffStatusClearJob = null
@@ -1758,6 +1785,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // listener and cancel any pending resume. Normal "tap mic to
         // talk" path also lands here, so we always leave Speaking cleanly.
         stopBargeInListener()
+        cancelStandardSpeechStream("microphone capture started")
         resumeWatchdog?.cancel(); resumeWatchdog = null
         lastInterruptedAtChunkIndex = null
         clearSpokenChunksState()
@@ -2069,6 +2097,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // bargeInDetected while the resume watchdog is deliberating.
         // stopBargeInListener is null-safe.
         stopBargeInListener()
+        cancelStandardSpeechStream("speech interrupted")
         // 2026-04-18: the silence watchdog only runs during Listening, but
         // cancel defensively so a stale job from the prior turn can't
         // fire stopListening() after we've already returned to Idle.
@@ -3052,6 +3081,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         ignoreAssistantId = chatVm.messages.value
             .lastOrNull { it.role == MessageRole.ASSISTANT }?.id
 
+        prepareStandardSpeechStream()
+
         // Kick off streaming observer BEFORE sending the message so we don't
         // miss early deltas that arrive synchronously from the callback.
         startStreamObserver(chatVm)
@@ -3106,6 +3137,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         fun sessionIsCurrent(): Boolean =
             realtimeSessionGeneration.get() == sessionGeneration
         if (!prewarm) providerRealtimeAgentTurnActive.set(true)
+        cancelStandardSpeechStream("provider-native realtime turn")
         // New turn requested → allow this response's audio through again.
         realtimeAudioSuppressed = false
         streamObserverJob?.cancel()
@@ -4011,6 +4043,186 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // ---------------------------------------------------------------------
 
     /**
+     * Optimistically open upstream's per-reply PCM socket while Hermes starts
+     * the chat turn. Deltas are buffered until the fresh single-use dashboard
+     * ticket is minted and the WebSocket opens. Older hosts, expired auth, and
+     * non-streaming providers all converge on [activateStandardSpeechFallback]
+     * before any PCM is heard, preserving the existing POST pipeline.
+     */
+    private fun prepareStandardSpeechStream() {
+        cancelStandardSpeechStream("new Standard voice turn")
+        val client = voiceAudioClient ?: return
+        if (client.effectiveRoute != VoiceAudioRoute.Standard || realtimePcmPlayer == null) return
+
+        val generation = ++standardSpeechStreamGeneration
+        standardSpeechStreamState = StandardSpeechStreamState.Opening
+        standardSpeechStreamText = StringBuilder()
+        standardSpeechStreamFinishRequested = false
+        standardSpeechStreamAudioSeen.set(false)
+        standardSpeechStreamAudioBytes.set(0)
+        standardSpeechStreamBargeInStarted.set(false)
+
+        standardSpeechStreamJob = viewModelScope.launch {
+            var openedSession: VoiceSpeechStream? = null
+            try {
+                val result = client.openSpeechStream(
+                    VoiceSpeechStreamCallbacks(
+                        onStart = { sampleRate, channels ->
+                            Log.i(
+                                TAG,
+                                "Standard speech stream ready sampleRate=$sampleRate channels=$channels",
+                            )
+                        },
+                        onPcm = { pcm, sampleRate ->
+                            viewModelScope.launch {
+                                if (generation != standardSpeechStreamGeneration ||
+                                    standardSpeechStreamState == StandardSpeechStreamState.Idle ||
+                                    standardSpeechStreamState == StandardSpeechStreamState.LegacyFallback
+                                ) {
+                                    return@launch
+                                }
+                                handleStandardSpeechPcm(pcm, sampleRate)
+                            }
+                        },
+                    ),
+                )
+                if (generation != standardSpeechStreamGeneration) {
+                    result.getOrNull()?.stop()
+                    return@launch
+                }
+                openedSession = result.getOrNull()
+                if (openedSession == null) {
+                    activateStandardSpeechFallback(
+                        generation,
+                        result.exceptionOrNull() ?: IOException("Streaming voice unavailable"),
+                    )
+                    return@launch
+                }
+
+                standardSpeechStream = openedSession
+                standardSpeechStreamState = StandardSpeechStreamState.Streaming
+                val buffered = standardSpeechStreamText.toString()
+                if (buffered.isNotEmpty()) openedSession.append(buffered)
+                if (standardSpeechStreamFinishRequested) openedSession.finish()
+
+                val outcome = openedSession.awaitOutcome()
+                if (generation != standardSpeechStreamGeneration) return@launch
+                standardSpeechStream = null
+                if (shouldFallbackStandardSpeech(outcome)) {
+                    activateStandardSpeechFallback(generation, outcome.error)
+                    return@launch
+                }
+
+                standardSpeechStreamState = StandardSpeechStreamState.Consumed
+                if (outcome.audioStarted) {
+                    realtimePcmPlayer?.flushBufferedPlayback()
+                    Log.i(
+                        TAG,
+                        "Standard speech stream finished status=${outcome.status} " +
+                            "bytes=${standardSpeechStreamAudioBytes.get()}",
+                    )
+                }
+                scheduleAgentAudioCompletionCheck()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (generation == standardSpeechStreamGeneration) {
+                    activateStandardSpeechFallback(generation, error)
+                }
+            } finally {
+                if (generation != standardSpeechStreamGeneration) openedSession?.stop()
+                if (generation == standardSpeechStreamGeneration) standardSpeechStreamJob = null
+            }
+        }
+    }
+
+    /** Returns true when the Standard WebSocket owns this text delta. */
+    private fun offerStandardSpeechText(text: String): Boolean {
+        if (text.isEmpty()) return standardSpeechStreamOwnsReply()
+        return when (standardSpeechStreamState) {
+            StandardSpeechStreamState.Opening -> {
+                standardSpeechStreamText.append(text)
+                true
+            }
+            StandardSpeechStreamState.Streaming -> {
+                standardSpeechStreamText.append(text)
+                standardSpeechStream?.append(text)
+                true
+            }
+            StandardSpeechStreamState.Consumed -> true
+            StandardSpeechStreamState.Idle,
+            StandardSpeechStreamState.LegacyFallback,
+            -> false
+        }
+    }
+
+    private fun standardSpeechStreamOwnsReply(): Boolean =
+        standardSpeechStreamState == StandardSpeechStreamState.Opening ||
+            standardSpeechStreamState == StandardSpeechStreamState.Streaming ||
+            standardSpeechStreamState == StandardSpeechStreamState.Consumed
+
+    /** Returns true when stream completion is owned by the Standard socket. */
+    private fun finishStandardSpeechStream(): Boolean {
+        return when (standardSpeechStreamState) {
+            StandardSpeechStreamState.Opening -> {
+                standardSpeechStreamFinishRequested = true
+                true
+            }
+            StandardSpeechStreamState.Streaming -> {
+                standardSpeechStreamFinishRequested = true
+                standardSpeechStream?.finish()
+                true
+            }
+            StandardSpeechStreamState.Consumed -> true
+            StandardSpeechStreamState.Idle,
+            StandardSpeechStreamState.LegacyFallback,
+            -> false
+        }
+    }
+
+    private fun activateStandardSpeechFallback(generation: Long, error: Throwable?) {
+        if (generation != standardSpeechStreamGeneration ||
+            standardSpeechStreamState == StandardSpeechStreamState.LegacyFallback ||
+            standardSpeechStreamState == StandardSpeechStreamState.Idle
+        ) {
+            return
+        }
+        Log.i(TAG, "Standard speech streaming unavailable; using POST fallback: ${error?.message}")
+        standardSpeechStream?.stop()
+        standardSpeechStream = null
+        standardSpeechStreamState = StandardSpeechStreamState.LegacyFallback
+        val buffered = standardSpeechStreamText.toString()
+        standardSpeechStreamText = StringBuilder()
+        if (buffered.isNotEmpty()) {
+            appendSanitizedDelta(buffered)
+            if (standardSpeechStreamFinishRequested) {
+                flushRemainingBuffer()
+            } else {
+                drainSentences()
+                rearmIdleFlush()
+            }
+        }
+        scheduleAgentAudioCompletionCheck()
+    }
+
+    private fun cancelStandardSpeechStream(reason: String) {
+        if (standardSpeechStreamState != StandardSpeechStreamState.Idle) {
+            Log.i(TAG, "Stopping Standard speech stream: $reason")
+        }
+        standardSpeechStreamGeneration += 1
+        standardSpeechStream?.stop()
+        standardSpeechStream = null
+        standardSpeechStreamJob?.cancel()
+        standardSpeechStreamJob = null
+        standardSpeechStreamState = StandardSpeechStreamState.Idle
+        standardSpeechStreamText = StringBuilder()
+        standardSpeechStreamFinishRequested = false
+        standardSpeechStreamAudioSeen.set(false)
+        standardSpeechStreamAudioBytes.set(0)
+        standardSpeechStreamBargeInStarted.set(false)
+    }
+
+    /**
      * Observe [ChatViewModel.messages]. When the last assistant message
      * grows (isStreaming=true), diff the content against our last snapshot,
      * push the new delta into [sentenceBuffer], and flush completed
@@ -4038,7 +4250,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 } else if (lastObservedMessageId != msgId) {
                     // A new assistant turn appeared — flush whatever's left
                     // from the previous one, then switch tracking.
-                    flushRemainingBuffer()
+                    if (!finishStandardSpeechStream()) flushRemainingBuffer()
                     resetBrokeredToolSpeechState()
                     lastObservedMessageId = msgId
                     lastObservedContentLength = 0
@@ -4061,7 +4273,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     streamComplete = true
                     idleFlushJob?.cancel()
                     idleFlushJob = null
-                    flushRemainingBuffer()
+                    if (!finishStandardSpeechStream()) flushRemainingBuffer()
                     // Speaking state will naturally end when TTS queue drains.
                     // We can't easily wait here without blocking the collector;
                     // the TTS consumer transitions back to Idle.
@@ -4080,7 +4292,6 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * (the chat surface has its own renderer and wants the markdown).
      */
     private fun onStreamDelta(delta: String, fullContent: String) {
-        appendSanitizedDelta(delta)
         _uiState.update {
             it.copy(
                 state = VoiceState.Speaking,
@@ -4088,6 +4299,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 responseText = fullContent,
             )
         }
+        if (offerStandardSpeechText(delta)) return
+        appendSanitizedDelta(delta)
         drainSentences()
         rearmIdleFlush()
     }
@@ -4126,7 +4339,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun enqueueBrokeredToolStatus(status: String) {
         if (status.isBlank()) return
-        if (enqueueSentenceForTts(status, immediate = true)) {
+        val offeredToStandardStream = offerStandardSpeechText("$status ")
+        if (offeredToStandardStream || enqueueSentenceForTts(status, immediate = true)) {
             _uiState.update { state ->
                 state.copy(
                     state = VoiceState.Speaking,
@@ -4519,7 +4733,40 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         } catch (_: Exception) {
             return
         }
-        if (audio.isEmpty()) return
+        handlePcmAudioChunk(
+            audio = audio,
+            sampleRate = event.sampleRate ?: 24_000,
+            source = "Realtime",
+            pcmPlayer = pcmPlayer,
+            audioSeen = audioSeen,
+            audioBytes = audioBytes,
+            bargeInStarted = bargeInStarted,
+        )
+    }
+
+    private fun handleStandardSpeechPcm(audio: ByteArray, sampleRate: Int) {
+        val pcmPlayer = realtimePcmPlayer ?: return
+        handlePcmAudioChunk(
+            audio = audio,
+            sampleRate = sampleRate,
+            source = "Standard",
+            pcmPlayer = pcmPlayer,
+            audioSeen = standardSpeechStreamAudioSeen,
+            audioBytes = standardSpeechStreamAudioBytes,
+            bargeInStarted = standardSpeechStreamBargeInStarted,
+        )
+    }
+
+    private fun handlePcmAudioChunk(
+        audio: ByteArray,
+        sampleRate: Int,
+        source: String,
+        pcmPlayer: RealtimePcmPlayer,
+        audioSeen: AtomicBoolean,
+        audioBytes: AtomicInteger,
+        bargeInStarted: AtomicBoolean,
+    ) {
+        if (audio.isEmpty() || sampleRate <= 0) return
         audioSeen.set(true)
         audioBytes.addAndGet(audio.size)
         lastRealtimeAudioDeltaAtMs = System.currentTimeMillis()
@@ -4530,11 +4777,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             deliveringChipClearJob?.cancel()
             settleBackgroundRunChip(reason = "summary_audio_started")
         }
-        val sampleRate = event.sampleRate ?: 24_000
         Log.i(
             TAG,
-            "Realtime audio delta event=${event.audioEventId ?: 0} bytes=${audio.size} " +
-                "sampleRate=$sampleRate rms=${event.rmsLevel ?: -1f} peak=${event.peakLevel ?: -1f}",
+            "$source audio delta bytes=${audio.size} sampleRate=$sampleRate",
         )
         val level = pcmPlayer.write(audio, sampleRate)
         scheduleRealtimeAmplitudeRelease(audio.size, sampleRate, lastRealtimeAudioDeltaAtMs)
@@ -4959,7 +5204,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         return decideAgentAudioCompletion(
             voiceMode = _uiState.value.voiceMode,
             observerStopped = streamObserverJob?.isActive != true,
-            pendingTtsWork = pendingInTtsQueue.get(),
+            pendingTtsWork = pendingInTtsQueue.get() +
+                if (standardSpeechStreamState == StandardSpeechStreamState.Opening ||
+                    standardSpeechStreamState == StandardSpeechStreamState.Streaming
+                ) {
+                    1
+                } else {
+                    0
+                },
             hasPendingSynthFiles = pendingTtsFiles.isNotEmpty(),
             realtimePlaybackRemainingMs = effectiveRemaining,
             realtimeTailGuardRemainingMs = continuousResumeTailGuardRemainingMs(),
@@ -4969,6 +5221,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun finishAgentAudioOutput() {
         continuousResumeJob = null
         stopBargeInListener()
+        cancelStandardSpeechStream("audio output finished")
         realtimeAmplitudeDecayJob?.cancel()
         realtimeAmplitudeDecayJob = null
         firstFrameWatchdogJob?.cancel()
@@ -5682,6 +5935,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // B4: release the listener + VAD engine native resources before
         // anything else. stopBargeInListener is defensive / idempotent.
         stopBargeInListener()
+        cancelStandardSpeechStream("view model cleared")
         duckingWatchdog?.cancel()
         resumeWatchdog?.cancel()
         silenceWatchdogJob?.cancel()

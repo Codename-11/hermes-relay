@@ -3,6 +3,31 @@ package com.hermesandroid.relay.network.shared
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import java.io.File
 
+enum class VoiceSpeechStreamStatus {
+    Completed,
+    Fallback,
+    Stopped,
+    Failed,
+}
+
+data class VoiceSpeechStreamOutcome(
+    val status: VoiceSpeechStreamStatus,
+    val audioStarted: Boolean,
+    val error: Throwable? = null,
+)
+
+data class VoiceSpeechStreamCallbacks(
+    val onStart: (sampleRate: Int, channels: Int) -> Unit = { _, _ -> },
+    val onPcm: (pcm16Le: ByteArray, sampleRate: Int) -> Unit,
+)
+
+interface VoiceSpeechStream {
+    fun append(text: String)
+    fun finish()
+    fun stop()
+    suspend fun awaitOutcome(): VoiceSpeechStreamOutcome
+}
+
 /**
  * Transport-neutral STT/TTS contract. The routing seam between the Standard
  * (dashboard) and Relay voice clients — implementations live in `network.upstream`
@@ -25,6 +50,16 @@ interface VoiceAudioClient {
 
     suspend fun transcribe(audioFile: File): Result<String>
     suspend fun synthesize(text: String): Result<File>
+
+    /**
+     * Open one provider-backed PCM stream for an assistant reply. A null
+     * success means this route has no streaming surface and the caller should
+     * keep using [synthesize]. Concrete implementations must queue [VoiceSpeechStream.append]
+     * calls made before the socket opens and report whether any PCM was emitted
+     * so callers never replay already-heard audio during compatibility fallback.
+     */
+    suspend fun openSpeechStream(callbacks: VoiceSpeechStreamCallbacks): Result<VoiceSpeechStream?> =
+        Result.success(null)
 }
 
 /**
@@ -69,6 +104,12 @@ class AutoVoiceAudioClient(
 
     override suspend fun synthesize(text: String): Result<File> =
         runWithSelectedRoute { it.synthesize(text) }
+
+    override suspend fun openSpeechStream(
+        callbacks: VoiceSpeechStreamCallbacks,
+    ): Result<VoiceSpeechStream?> = runWithSelectedRoute { client ->
+        client.openSpeechStream(callbacks)
+    }
 
     private suspend fun <T> runWithSelectedRoute(
         block: suspend (VoiceAudioClient) -> Result<T>,

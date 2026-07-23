@@ -18,7 +18,7 @@ Current capabilities are split between vanilla upstream Hermes and optional Rela
 |---------|----------------|------|
 | **Chat** | No | Talk to any Hermes agent profile with dashboard `/api/ws` live thinking when signed in, or API-server SSE fallback |
 | **Manage** | No | Dashboard-backed config, profiles, model/provider keys, skills, MCP, and diagnostics |
-| **Vanilla Hermes voice** | No | Dashboard `/api/audio/transcribe` + `/api/audio/speak` with the Manage session |
+| **Vanilla Hermes voice** | No | Dashboard `/api/audio/transcribe`, streaming `/api/audio/speak-stream`, and compatible `/api/audio/speak` fallback with the Manage session |
 | **Terminal** | Yes | Secure remote shell access to the Hermes server via tmux |
 | **Bridge / Device Control** | Yes | Agent controls the sideload phone with explicit safety gates |
 | **Relay power features** | Yes | Remote access, notification companion, provider-native voice, desktop tooling, media relay |
@@ -909,7 +909,7 @@ Current Android dependency versions. Source of truth is `gradle/libs.versions.to
 | **API-server chat fallback** | `/api/sessions/*/chat/stream`, `/v1/chat/completions`, or `/v1/runs` based on capability probes; a known selected multiplex profile uses the shared listener's `/p/<profile>` prefix |
 | **API-server sessions** | `GET/POST/PATCH/DELETE /api/sessions` for CRUD |
 | **Manage** | Dashboard `/api/status`, `/api/auth/me`, `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*` |
-| **Vanilla Hermes voice** | Dashboard `POST /api/audio/transcribe` and `POST /api/audio/speak` |
+| **Vanilla Hermes voice** | Dashboard `POST /api/audio/transcribe`, WebSocket `/api/audio/speak-stream`, and `POST /api/audio/speak` compatibility fallback |
 | **Plugin system** | `register_tool()` via `ctx` for `android_*` and `desktop_*` tools |
 | **Relay plugin** | `hermes pair`, `hermes relay start`, `hermes relay doctor`, `hermes relay compat`, dashboard `/relay` plugin tab |
 | **Dashboard plugin** | Lives at `plugin/dashboard/`; see §10.1 below |
