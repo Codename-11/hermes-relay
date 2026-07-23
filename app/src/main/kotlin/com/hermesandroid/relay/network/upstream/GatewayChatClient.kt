@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.network.upstream
 
 import android.util.Log
+import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.TurnLatencyTracer
 import kotlinx.coroutines.CompletableDeferred
@@ -17,6 +19,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -24,6 +27,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
@@ -130,6 +134,7 @@ class GatewayChatClient(
          * not enough.
          */
         private const val ATTACH_RPC_TIMEOUT_MS = 60_000L
+        private const val COMPRESS_RPC_TIMEOUT_MS = 120_000L
 
         /** Upstream image byte-upload RPC (underscore — `image.attach_bytes`, content_base64). */
         private const val ATTACH_METHOD_UPSTREAM = "image.attach_bytes"
@@ -903,29 +908,100 @@ class GatewayChatClient(
     }
 
     /**
-     * Inject [text] into the in-flight turn (`session.steer`). The server
-     * only accepts a steer while a tool batch is running — [SteerResult.Rejected]
-     * means "no batch in flight, queue it instead". [SteerResult.Failed]
-     * covers transport/RPC failure (no live session, socket down, 4010 …) —
-     * callers should fall back to the local queue for both non-queued cases.
+     * Inject [text] into the in-flight turn. Current upstream exposes this as
+     * `session.redirect`, which can redirect an active model turn while keeping
+     * valid work/context. Older gateways only expose `session.steer`; fall back
+     * to that legacy RPC only when the redirect method is absent/unsupported so
+     * old installs still queue the correction instead of dropping it.
      */
     suspend fun steer(text: String): SteerResult {
         val sid = liveSessionId ?: return SteerResult.Failed
-        val result = rpc(
-            "session.steer",
-            buildJsonObject {
-                put("session_id", sid)
-                put("text", text)
-            },
-        )
+        val params = buildJsonObject {
+            put("session_id", sid)
+            put("text", text)
+        }
+        val redirect = rpc("session.redirect", params)
+        val result = if (redirect.isLegacyRedirectUnsupported()) {
+            Log.i(TAG, "session.redirect unsupported — falling back to session.steer (session=$storedSessionId)")
+            rpc("session.steer", params)
+        } else {
+            redirect
+        }
         val outcome = when (result.getOrNull()?.stringField("status")) {
-            "queued" -> SteerResult.Queued
+            "redirected", "queued" -> SteerResult.Queued
             "rejected" -> SteerResult.Rejected
             else -> SteerResult.Failed
         }
-        Log.i(TAG, "Steer → $outcome (session=$storedSessionId)")
+        Log.i(TAG, "Active-turn correction → $outcome (session=$storedSessionId)")
         return outcome
     }
+
+    /**
+     * Compress the live gateway session through the dedicated upstream RPC.
+     * `/compress` is intentionally not sent through generic slash execution on
+     * modern gateways because `session.compress` returns authoritative transcript,
+     * usage, title/model/session-info, and compute-host isolation metadata.
+     */
+    suspend fun compressSession(focusTopic: String? = null): Result<GatewayCompressResult> {
+        val sid = liveSessionId
+            ?: return Result.failure(GatewayRpcException("no live session"))
+        val params = buildJsonObject {
+            put("session_id", sid)
+            focusTopic?.trim()?.takeIf { it.isNotBlank() }?.let { put("focus_topic", it) }
+        }
+        val direct = rpc("session.compress", params, timeoutMs = COMPRESS_RPC_TIMEOUT_MS)
+        val result = if (direct.exceptionOrNull().isMethodNotFound()) {
+            val legacyCommand = "/compress" + focusTopic
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { " $it" }
+                .orEmpty()
+            slashExec(legacyCommand).map { slashResult ->
+                buildJsonObject {
+                    put("status", "legacy")
+                    slashResult.stringField("output")?.let { put("output", it) }
+                }
+            }
+        } else {
+            direct
+        }
+        return result.map { payload ->
+            applySessionResultInfo(payload)
+            payload.toGatewayCompressResult()
+        }
+    }
+
+    private fun Result<JsonObject>.isLegacyRedirectUnsupported(): Boolean {
+        val error = exceptionOrNull() ?: return false
+        val message = error.message.orEmpty()
+        return error.isMethodNotFound() ||
+            (error as? GatewayRpcException)?.code == 4010 ||
+            message.contains("does not support active-turn redirect", ignoreCase = true)
+    }
+
+    private fun JsonObject.toGatewayCompressResult(): GatewayCompressResult =
+        GatewayCompressResult(
+            status = stringField("status") ?: "completed",
+            output = stringField("output"),
+            removed = (this["removed"] as? JsonPrimitive)?.intOrNull,
+            beforeMessages = (this["before_messages"] as? JsonPrimitive)?.intOrNull,
+            afterMessages = (this["after_messages"] as? JsonPrimitive)?.intOrNull,
+            beforeTokens = (this["before_tokens"] as? JsonPrimitive)?.intOrNull,
+            afterTokens = (this["after_tokens"] as? JsonPrimitive)?.intOrNull,
+            usage = GatewayEventMapper.parseGatewayUsage(this["usage"] as? JsonObject),
+            info = this["info"] as? JsonObject,
+            messages = (this["messages"] as? JsonArray)?.let { messages ->
+                runCatching {
+                    json.decodeFromJsonElement(
+                        ListSerializer(MessageItem.serializer()),
+                        messages,
+                    )
+                }.getOrElse {
+                    Log.w(TAG, "session.compress returned unreadable messages", it)
+                    emptyList()
+                }
+            }.orEmpty(),
+        )
 
     /** Answer a [GatewayAsk.Kind.CLARIFY] ask. */
     suspend fun respondClarify(requestId: String, answer: String): Result<GatewayAskResponse> =
@@ -2510,7 +2586,7 @@ class GatewayChatClient(
 
 /** Outcome of [GatewayChatClient.steer] — Rejected and Failed both mean "queue locally instead". */
 enum class SteerResult {
-    /** Server accepted — text lands in the next tool batch's last result. */
+    /** Server accepted the active-turn correction. */
     Queued,
 
     /** Server reachable but no tool batch in flight to steer. */
@@ -2544,6 +2620,28 @@ internal class GatewayConnectAttemptException(message: String) : Exception(messa
 internal class GatewayRpcException(message: String, val code: Int? = null) : Exception(message)
 
 private const val JSONRPC_METHOD_NOT_FOUND = -32601
+
+data class GatewayCompressResult(
+    val status: String,
+    val output: String? = null,
+    val removed: Int? = null,
+    val beforeMessages: Int? = null,
+    val afterMessages: Int? = null,
+    val beforeTokens: Int? = null,
+    val afterTokens: Int? = null,
+    val usage: UsageInfo? = null,
+    val info: JsonObject? = null,
+    val messages: List<MessageItem> = emptyList(),
+) {
+    val effectiveUsage: UsageInfo?
+        get() = usage ?: GatewayEventMapper.parseGatewayUsage(info?.get("usage") as? JsonObject)
+
+    val title: String?
+        get() = info?.stringField("title")?.takeIf { it.isNotBlank() }
+
+    val isAuthoritative: Boolean
+        get() = messages.isNotEmpty()
+}
 
 private fun Throwable?.isMethodNotFound(): Boolean {
     val rpcError = this as? GatewayRpcException ?: return false
