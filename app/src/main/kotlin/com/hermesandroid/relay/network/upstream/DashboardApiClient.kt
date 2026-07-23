@@ -56,6 +56,7 @@ data class DashboardStatus(
     val profiles: List<String> = emptyList(),
     @SerialName("gateway_mode") val gatewayMode: String? = null,
     val gateways: List<DashboardGatewayTopology> = emptyList(),
+    val componentHealth: DashboardComponentHealthRollup = DashboardComponentHealthRollup(),
 )
 
 @Serializable
@@ -63,6 +64,25 @@ data class DashboardGatewayTopology(
     val profile: String,
     val ports: Map<String, Int> = emptyMap(),
     @SerialName("served_profiles") val servedProfiles: List<String> = emptyList(),
+)
+
+@Serializable
+data class DashboardComponentHealthRollup(
+    val supported: Boolean = false,
+    val overall: String? = null,
+    val components: List<DashboardComponentHealth> = emptyList(),
+)
+
+@Serializable
+data class DashboardComponentHealth(
+    val name: String,
+    val status: String,
+    val message: String? = null,
+    val configured: Int? = null,
+    val connected: Int? = null,
+    val healthy: Boolean? = null,
+    val ok: Boolean? = null,
+    @SerialName("unhandled_5xx_count_5m") val unhandled5xxCount5m: Int? = null,
 )
 
 @Serializable
@@ -1166,6 +1186,41 @@ class DashboardApiClient(
                 profiles = profiles,
                 gatewayMode = root.stringField("gateway_mode"),
                 gateways = gateways,
+                componentHealth = parseComponentHealth(root),
+            )
+        }
+
+        private fun parseComponentHealth(root: JsonObject): DashboardComponentHealthRollup {
+            val rawComponents = root["components"] as? JsonObject
+                ?: return DashboardComponentHealthRollup()
+            val components = rawComponents.mapNotNull { (name, element) ->
+                val component = element as? JsonObject ?: return@mapNotNull null
+                val safeName = name.trim().takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                DashboardComponentHealth(
+                    name = safeName,
+                    status = component.stringField("status")
+                        ?: component.stringField("state")
+                        ?: component.stringField("health")
+                        ?: component.booleanField("ok")?.let { if (it) "ok" else "degraded" }
+                        ?: component.booleanField("healthy")?.let { if (it) "ok" else "degraded" }
+                        ?: "unknown",
+                    message = component.stringField("message")
+                        ?: component.stringField("summary")
+                        ?: component.stringField("error")
+                        ?: component.stringField("reason"),
+                    configured = component.intField("configured"),
+                    connected = component.intField("connected"),
+                    healthy = component.booleanField("healthy"),
+                    ok = component.booleanField("ok"),
+                    unhandled5xxCount5m = component.intField("unhandled_5xx_count_5m"),
+                )
+            }.sortedBy { it.name }
+            return DashboardComponentHealthRollup(
+                supported = true,
+                overall = root.stringField("overall")
+                    ?: root.stringField("status")
+                    ?: root.stringField("health"),
+                components = components,
             )
         }
 

@@ -33,5 +33,41 @@ class DashboardStatusTopologyTest {
 
         assertNull(status.gatewayMode)
         assertEquals(emptyList<String>(), status.profiles)
+        assertEquals(false, status.componentHealth.supported)
+        assertEquals(emptyList<String>(), status.componentHealth.components.map { it.name })
+    }
+
+    @Test
+    fun parseStatus_readsComponentHealthRollup() {
+        val root = json.decodeFromString<JsonObject>(
+            """{
+                "auth_required": false,
+                "overall": "degraded",
+                "components": {
+                  "gateway": {"status": "ok"},
+                  "storage": {
+                    "status": "degraded",
+                    "message": "state DB unavailable",
+                    "healthy": false,
+                    "unhandled_5xx_count_5m": 2
+                  },
+                  "platforms": {"configured": 3, "connected": 1}
+                }
+            }""",
+        )
+
+        val status = DashboardApiClient.parseStatus(root)
+
+        assertEquals(true, status.componentHealth.supported)
+        assertEquals("degraded", status.componentHealth.overall)
+        assertEquals(listOf("gateway", "platforms", "storage"), status.componentHealth.components.map { it.name })
+        val storage = status.componentHealth.components.first { it.name == "storage" }
+        assertEquals("degraded", storage.status)
+        assertEquals("state DB unavailable", storage.message)
+        assertEquals(false, storage.healthy)
+        assertEquals(2, storage.unhandled5xxCount5m)
+        val platforms = status.componentHealth.components.first { it.name == "platforms" }
+        assertEquals(3, platforms.configured)
+        assertEquals(1, platforms.connected)
     }
 }
