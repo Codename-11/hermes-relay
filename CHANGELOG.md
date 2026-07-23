@@ -6,15 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Added
-
-- **Android shows a diffusion animation while Hermes generates an image.** Active `image_generate` tool calls render a theme-aware placeholder in chat until the result arrives; no special server protocol is required.
-
 ### Fixed
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.
 - **Starting Relay no longer terminates a running Hermes gateway on Windows.** Profile discovery now checks gateway PIDs through non-signalling process APIs, including during periodic rescans.
+
+## [Android 1.5.0] - 2026-07-22
+
+### Added
+
+- **Voice settings are organized around Standard and Realtime paths.** Provider, model, and voice choices use a cleaner card layout with upstream-aware discovery, useful descriptions, inline previews, waveform feedback, loading skeletons, and an expandable scrolling voice browser.
+- **Standard Hermes speech streams while replies are generated.** Android plays completed speech segments as they arrive, interrupts prior playback before starting another preview or reply, and stops audio when leaving voice mode.
+- **Manage and diagnostics expose more upstream Gateway controls.** Android consumes health hints, follows canonical redirects, compresses larger RPC payloads, scopes diagnostics by profile, and surfaces compatibility information without requiring Relay-only behavior.
+- **Chat shows richer upstream state.** One-turn model selection, queued-recovery and project labels, interim Gateway events, and a theme-aware image-generation animation make active work easier to follow.
+
+### Fixed
+
+- **Voice settings and active-turn correction remain usable across supported languages.** New voice controls are localized and correction copy accurately describes the turn being replaced.
+- **Hosted Manage and direct-chat compatibility stay bounded and secure.** OAuth state remains tied to the selected dashboard, inline image memory is capped, and session reset and queued-recovery boundaries follow upstream contracts.
 
 ## [1.4.9] - 2026-07-19
 

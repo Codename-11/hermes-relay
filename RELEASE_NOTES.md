@@ -1,10 +1,10 @@
-# Hermes-Relay-Android v1.4.9
+# Hermes-Relay-Android v1.5.0
 
-**Release Date:** July 19, 2026
+**Release Date:** July 22, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.4.9-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.5.0-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,19 +12,21 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-This patch makes the Hermes dashboard the standard connection path and refreshes setup, connection management, and profile identity throughout Android.
+This feature release overhauls voice setup and playback, expands upstream Gateway-aware controls, and makes active Hermes work easier to understand.
 
-## Changed
+## Added
 
-- Connect through the Hermes dashboard for Chat, sessions, Manage, and voice with one sign-in. The API server remains an automatic fallback or headless compatibility path, and Relay remains optional for power features.
-- Onboarding and connection management now explain nearby, remote, Tailscale, custom-port, and Relay paths with clearer status, route, startup, Advanced, and Security controls.
+- Standard and Realtime voice settings now have distinct, organized cards for provider, model, and voice selection, with upstream-aware discovery, descriptions, inline previews, waveform feedback, loading skeletons, and an expandable scrolling voice browser.
+- Standard Hermes speech now streams completed reply segments as they arrive. Starting another preview or reply stops the prior audio, and leaving voice mode stops playback.
+- Manage and diagnostics consume upstream health hints and compatibility details, follow canonical Gateway redirects, compress larger RPC payloads, and preserve profile-scoped behavior.
+- Chat surfaces one-turn model selection, queued recovery, project labels, interim Gateway events, and image-generation progress.
 
 ## Fixed
 
-- Server default now shows Hermes' pinned active profile consistently across Chat, sessions, agent details, settings, voice, diagnostics, and profile inspection.
-- Successful local discovery adds useful hostname identity without replacing a custom connection label.
+- Voice settings and active-turn correction copy remain complete across supported languages.
+- Hosted Manage OAuth remains bound to the selected dashboard, direct-chat image memory is bounded, and session reset and recovery behavior follow upstream contracts.
 
 ## Install / Verify
 
-- App version: **1.4.9** (versionCode **32**).
+- App version: **1.5.0** (versionCode **33**).
 - Standard Chat and Vanilla Hermes voice continue to work against unmodified upstream Hermes.

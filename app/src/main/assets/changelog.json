@@ -1,6 +1,34 @@
 {
  "versions": [
   {
+   "version": "1.5.0",
+   "title": "Voice that keeps pace",
+   "date": "2026-07-22",
+   "sections": [
+    {
+     "header": "A clearer voice studio",
+     "bullets": [
+      "Standard and Realtime paths now organize provider, model, and voice choices in focused cards with upstream-aware discovery and descriptions.",
+      "Preview voices inline with loading feedback and a lighter waveform, then expand and scroll the voice browser without leaving the page."
+     ]
+    },
+    {
+     "header": "Natural streaming speech",
+     "bullets": [
+      "Standard Hermes replies begin speaking completed segments while the rest of the answer is still being generated.",
+      "Starting new audio stops the prior preview or reply, and leaving voice mode stops playback."
+     ]
+    },
+    {
+     "header": "More upstream-aware controls",
+     "bullets": [
+      "Manage and diagnostics consume Gateway health and compatibility details while keeping Standard Hermes usable without Relay.",
+      "Chat now shows one-turn model choices, queued recovery, project labels, interim events, and image-generation progress."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.9",
    "title": "Clearer Hermes connections",
    "date": "2026-07-19",
