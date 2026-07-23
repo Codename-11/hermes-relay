@@ -2813,6 +2813,10 @@ internal data class ModelProviderOption(
  */
 internal fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
     val providers = root["providers"] as? JsonArray ?: return emptyList()
+    val excludedProviders = (root["excluded_providers"] as? JsonArray).orEmpty()
+        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank) }
+        .map { it.lowercase() }
+        .toSet()
     return providers.mapNotNull { element ->
         val obj = element as? JsonObject ?: return@mapNotNull null
         val id = obj.stringField("slug")
@@ -2820,6 +2824,10 @@ internal fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
             ?: obj.stringField("provider")
             ?: obj.stringField("name")
             ?: return@mapNotNull null
+        if (id.lowercase() in excludedProviders) return@mapNotNull null
+        if (obj.booleanField("enabled") == false || obj.booleanField("excluded") == true) {
+            return@mapNotNull null
+        }
         val models = (obj["models"] as? JsonArray)?.mapNotNull { modelElement ->
             when (modelElement) {
                 is JsonPrimitive -> modelElement.contentOrNull
