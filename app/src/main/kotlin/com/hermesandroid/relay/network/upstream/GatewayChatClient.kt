@@ -2584,12 +2584,12 @@ class GatewayChatClient(
     )
 }
 
-/** Outcome of [GatewayChatClient.steer] — Rejected and Failed both mean "queue locally instead". */
+/** Outcome of an active-turn correction — Rejected and Failed both mean "queue locally instead". */
 enum class SteerResult {
     /** Server accepted the active-turn correction. */
     Queued,
 
-    /** Server reachable but no tool batch in flight to steer. */
+    /** Server reachable but no active turn is available to correct. */
     Rejected,
 
     /** Transport/RPC failure (no live session, socket down, unsupported …). */

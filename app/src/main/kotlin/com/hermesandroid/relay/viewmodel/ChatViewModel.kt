@@ -1658,14 +1658,14 @@ class ChatViewModel : ViewModel() {
     /**
      * True while the in-flight turn is actually running on the gateway
      * transport (not an SSE fallback) — the only state in which
-     * `session.steer` can land. Drives the STEER trailing slot.
+     * `session.redirect` can land. Drives the correction trailing slot.
      */
     private val _steerableTurn = MutableStateFlow(false)
     val steerableTurn: StateFlow<Boolean> = _steerableTurn.asStateFlow()
 
     /**
-     * One-line caption feedback after a steer attempt fell back to the
-     * queue ("Queued — delivers after this turn"). Cleared at turn end.
+     * One-line caption feedback after an active-turn correction fell back to the
+     * queue ("Queued — sends after this turn"). Cleared at turn end.
      */
     private val _steerNotice = MutableStateFlow<String?>(null)
     val steerNotice: StateFlow<String?> = _steerNotice.asStateFlow()
@@ -3102,9 +3102,9 @@ class ChatViewModel : ViewModel() {
                 SteerResult.Rejected, SteerResult.Failed -> {
                     if (activeStream != null) {
                         _queuedMessages.update { it + text }
-                        _steerNotice.value = "Queued — delivers after this turn"
+                        _steerNotice.value = "Queued — sends after this turn"
                     } else {
-                        // Turn ended while the steer RPC was in flight —
+                        // Turn ended while the correction RPC was in flight —
                         // send it as a normal next-turn prompt instead.
                         val client = apiClient
                         if (gatewayClient != null || client != null) {

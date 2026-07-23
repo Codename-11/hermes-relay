@@ -591,7 +591,7 @@ fun ChatScreen(
     val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
     // Whether the NEXT turn would ride the gateway transport — gates the
     // "Edit & resend" menu entry (conversation rewind needs the gateway).
-    // Per-turn steerability comes from [steerableTurn], which also covers
+    // Per-turn correction availability comes from [steerableTurn], which also covers
     // the preflight-SSE-fallback window.
     val streamingEndpointPref by connectionViewModel.streamingEndpoint.collectAsState()
     val chatServerCapabilities by connectionViewModel.serverCapabilities.collectAsState()
@@ -2320,7 +2320,7 @@ fun ChatScreen(
                                 )
                             }
 
-                            // Steered sends live inside a server-side tool
+                            // Legacy steered sends live inside a server-side tool
                             // result, not a user message — flag the local
                             // bubble so the scrollback explains itself.
                             if (message.role == MessageRole.USER && message.id.startsWith("steer-")) {
@@ -2689,7 +2689,7 @@ fun ChatScreen(
             }
 
             // Input bar — pill field with ONE trailing slot morphing
-            // Send / Voice / Stop / Steer / Queue. "+" taps the file picker,
+            // Send / Voice / Stop / Correct / Queue. "+" taps the file picker,
             // long-press opens the CommandPalette (the dedicated "/" button
             // is gone — typing "/" still surfaces InlineAutocomplete).
             val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()

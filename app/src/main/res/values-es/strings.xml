@@ -63,7 +63,7 @@
     <string name="chat_input_start_voice">Iniciar conversación de voz</string>
     <string name="chat_input_voice_setup_needed">Conversación de voz: se necesita configuración</string>
     <string name="chat_input_stop_streaming">dejar de transmitir</string>
-    <string name="chat_input_steer_response">Dirigir la respuesta</string>
+    <string name="chat_input_steer_response">Corregir la respuesta</string>
     <string name="chat_input_queue_message">mensaje de cola</string>
     <string name="bridge_return_chat_label">Charlar</string>
     <string name="bridge_return_manage_label">Administrar</string>
@@ -84,7 +84,7 @@
     <string name="status_profile_format">perfil: %1$s</string>
     <string name="demo_feature_manage">Administrar</string>
     <string name="chat_placeholder_edit">Edita tu mensaje...</string>
-    <string name="chat_placeholder_steer">Dirige la respuesta...</string>
+    <string name="chat_placeholder_steer">Corrige la respuesta...</string>
     <string name="chat_placeholder_queue">Poner en cola un mensaje...</string>
     <string name="chat_placeholder_message">Mensaje…</string>
     <string name="chat_edit_busy_snackbar">No se puede editar en este momento: espera a que termine el turno actual</string>
