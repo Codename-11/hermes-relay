@@ -3329,6 +3329,6 @@
     <string name="diag_toolsets_inventory" translatable="false">API toolsets: %1$d of %2$d enabled · Relay tools visible: %3$s</string>
     <string name="diag_yes" translatable="false">yes</string>
     <string name="diag_no" translatable="false">no</string>
-    <string name="dashboard_nous_terminal_warning" translatable="false">Nous sign-in is no longer valid. Sign in again before starting an inference turn.</string>
+    <string name="dashboard_nous_terminal_warning" translatable="false">The Nous provider login needs attention on the Hermes host. This is separate from Manage sign-in; chat can continue through another configured provider.</string>
     <string name="dashboard_gateway_topology" translatable="false">Gateway: %1$s · Profiles: %2$s · Ports: %3$s</string>
 </resources>

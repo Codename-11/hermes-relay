@@ -448,7 +448,6 @@ private fun EndpointRow(
                 candidate = candidate,
                 dashboardAuthenticated = dashboardAuthenticated,
                 dashboardSignInRequired = dashboardSignInRequired,
-                dashboardReachable = outcome?.reachable,
                 modifier = Modifier.padding(start = 26.dp, end = 4.dp, top = 8.dp),
             )
         }
@@ -501,7 +500,6 @@ private fun RouteSurfaceMap(
     candidate: EndpointCandidate,
     dashboardAuthenticated: Boolean? = null,
     dashboardSignInRequired: Boolean = false,
-    dashboardReachable: Boolean? = null,
     modifier: Modifier = Modifier,
 ) {
     val dashboardUrl = candidate.dashboard?.url
@@ -524,7 +522,6 @@ private fun RouteSurfaceMap(
                 status = when {
                     dashboardSignInRequired -> stringResource(R.string.active_section_sign_in_required)
                     dashboardAuthenticated == true -> stringResource(R.string.active_section_signed_in)
-                    dashboardReachable == true -> stringResource(R.string.endpoints_reachable)
                     dashboardUrl != null -> stringResource(R.string.active_section_configured)
                     else -> stringResource(R.string.active_section_not_configured)
                 },

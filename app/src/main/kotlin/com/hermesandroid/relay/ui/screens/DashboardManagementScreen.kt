@@ -1520,14 +1520,14 @@ private fun ManageOverviewBody(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                     ),
                 ) {
                     Text(
                         text = stringResource(R.string.dashboard_nous_terminal_warning),
                         modifier = Modifier.padding(12.dp),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
                 }
             }
