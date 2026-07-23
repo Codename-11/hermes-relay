@@ -24,6 +24,7 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.DemoMode
+import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.R
@@ -207,14 +208,9 @@ internal fun resolveEffectiveDashboardUrl(
     endpoint?.dashboard?.url
         ?.takeIf { it.isNotBlank() }
         ?.let { return it }
-    if (
-        endpoint != null &&
-        Connection.isAutoManagedDashboardUrl(connection.dashboardUrl, connection.apiServerUrl)
-    ) {
-        return endpoint.api?.url
-            ?.let(Connection::deriveDefaultDashboardUrl)
-            .orEmpty()
-    }
+    endpoint?.api?.url
+        ?.let(Connection::deriveDefaultDashboardUrl)
+        ?.let { return it }
     return connection.resolvedDashboardUrl
 }
 
@@ -260,8 +256,18 @@ internal fun mergeRelayTransportIntoStandardRoutes(
         it.role.lowercase() in standardRoles
     }
     return (merged + missingQrRoles)
+        .map(EndpointCandidate::withDerivedDashboard)
         .distinctBy { "${it.role.lowercase()}|${it.routeAuthority()}" }
         .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
+}
+
+private fun EndpointCandidate.withDerivedDashboard(): EndpointCandidate {
+    if (dashboard != null) return this
+    val derived = api?.url
+        ?.let(Connection::deriveDefaultDashboardUrl)
+        ?.let(::DashboardEndpoint)
+        ?: return this
+    return copy(dashboard = derived)
 }
 
 private fun EndpointCandidate.routeHost(): String? {

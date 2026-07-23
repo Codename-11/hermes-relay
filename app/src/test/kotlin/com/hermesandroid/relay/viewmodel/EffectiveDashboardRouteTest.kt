@@ -29,9 +29,9 @@ class EffectiveDashboardRouteTest {
     }
 
     @Test
-    fun `auto managed dashboard derives from selected legacy API-only route`() {
+    fun `selected API-only route derives dashboard even when primary dashboard is explicit`() {
         val connection = connection(
-            dashboardUrl = null,
+            dashboardUrl = "http://192.168.1.20:9119",
             apiServerUrl = "http://192.168.1.20:8642",
         )
         val tailscale = EndpointCandidate(
@@ -47,7 +47,7 @@ class EffectiveDashboardRouteTest {
     }
 
     @Test
-    fun `explicit saved dashboard remains fallback when selected route lacks dashboard`() {
+    fun `explicit saved dashboard remains fallback when selected route lacks standard surfaces`() {
         val connection = connection(
             dashboardUrl = "https://dashboard.example.com",
             apiServerUrl = "https://api.example.com",
@@ -55,7 +55,6 @@ class EffectiveDashboardRouteTest {
         val incompleteRoute = EndpointCandidate(
             role = "custom",
             priority = 1,
-            api = ApiEndpoint("100.71.8.56", 8642),
         )
 
         assertEquals(

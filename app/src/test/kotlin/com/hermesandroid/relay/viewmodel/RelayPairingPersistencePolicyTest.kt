@@ -154,7 +154,44 @@ class RelayPairingPersistencePolicyTest {
 
         assertEquals(listOf("lan", "tailscale"), result.routeCandidates.map { it.role })
         assertEquals("100.71.8.56", result.routeCandidates[1].api?.host)
+        assertEquals(
+            "http://100.71.8.56:9119",
+            result.routeCandidates[1].dashboard?.url,
+        )
         assertEquals("ws://100.71.8.56:8767", result.routeCandidates[1].relay?.url)
+    }
+
+    @Test
+    fun `relay pairing repairs an already persisted API-only tailscale route`() {
+        val tailscaleApi = ApiEndpoint("100.71.8.56", 8642)
+        val tailscaleRelay = RelayEndpoint("ws://100.71.8.56:8767", "ws")
+        val current = Connection(
+            id = "hermes-node",
+            label = "Hermes node",
+            apiServerUrl = "http://192.168.1.20:8642",
+            relayUrl = "ws://192.168.1.20:8767",
+            tokenStoreKey = "hermes_auth_node",
+            dashboardUrl = "http://192.168.1.20:9119",
+            routeCandidates = listOf(
+                EndpointCandidate(
+                    role = "tailscale",
+                    priority = 1,
+                    api = tailscaleApi,
+                    relay = tailscaleRelay,
+                ),
+            ),
+        )
+
+        val result = preserveStandardConnectionWhileApplyingRelay(
+            current = current,
+            relayUrl = current.relayUrl,
+            relayRoutes = current.routeCandidates,
+        )
+
+        assertEquals(
+            "http://100.71.8.56:9119",
+            result.routeCandidates.single().dashboard?.url,
+        )
     }
 
     @Test
