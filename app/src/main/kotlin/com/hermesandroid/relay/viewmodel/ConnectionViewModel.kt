@@ -109,6 +109,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
@@ -3889,6 +3890,24 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     } else {
                         rebuildApiClient()
                     }
+                }
+        }
+
+        // Dashboard/Gateway can move independently of the optional API
+        // fallback (for example, a custom dashboard-only route). Do not carry
+        // the previous host's availability or cookie-backed status into the
+        // new route while its probe is in flight. collectLatest cancels an
+        // obsolete probe if the resolver changes routes again.
+        viewModelScope.launch {
+            effectiveDashboardUrl
+                .drop(1)
+                .distinctUntilChanged()
+                .collectLatest {
+                    _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
+                    _standardAudioApiReachable.value = false
+                    _serverChatDisplaySettings.value = null
+                    updateGatewayAvailability(GatewayAvailability.Unknown)
+                    probeStandardVoice()
                 }
         }
 
