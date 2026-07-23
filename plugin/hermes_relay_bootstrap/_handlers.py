@@ -67,6 +67,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,49 @@ def _current_model_settings(config: Dict[str, Any]) -> Dict[str, Any]:
             "base_url": "",
         }
     return {"model": "", "provider": "", "api_mode": "", "base_url": ""}
+
+
+def _normalized_route_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return raw.rstrip("/")
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return raw.rstrip("/")
+    port = parsed.port
+    netloc = host
+    if port is not None and not (
+        (scheme == "http" and port == 80) or
+        (scheme == "https" and port == 443)
+    ):
+        netloc = f"{host}:{port}"
+    path = parsed.path.rstrip("/")
+    query = urlencode(sorted(parse_qsl(parsed.query, keep_blank_values=True)))
+    return urlunsplit((scheme, netloc, path, query, ""))
+
+
+def _model_route_identity(model_cfg: Dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(model_cfg.get("default") or model_cfg.get("model") or "").strip(),
+        str(model_cfg.get("provider") or "").strip().lower(),
+        _normalized_route_url(model_cfg.get("base_url")),
+    )
+
+
+def _maybe_clear_context_pin(
+    original_model_cfg: Dict[str, Any],
+    updated_model_cfg: Dict[str, Any],
+) -> None:
+    """Drop stale route-owned context pins when the configured route changes."""
+    if "context_length" not in updated_model_cfg:
+        return
+    if _model_route_identity(original_model_cfg) != _model_route_identity(updated_model_cfg):
+        updated_model_cfg.pop("context_length", None)
 
 
 def _parse_int(value: Any, default: int, minimum: int = 0) -> int:
@@ -511,10 +555,13 @@ def _make_config_handlers(adapter, upstream):
         model_cfg = config.get("model")
         if isinstance(model_cfg, dict):
             updated_model_cfg = dict(model_cfg)
+            original_model_cfg = dict(model_cfg)
         elif isinstance(model_cfg, str) and model_cfg.strip():
             updated_model_cfg = {"default": model_cfg.strip()}
+            original_model_cfg = {"default": model_cfg.strip()}
         else:
             updated_model_cfg = {}
+            original_model_cfg = {}
 
         if "model" in body:
             updated_model_cfg["default"] = str(body.get("model") or "").strip()
@@ -522,6 +569,7 @@ def _make_config_handlers(adapter, upstream):
             updated_model_cfg["provider"] = str(body.get("provider") or "").strip()
         if "base_url" in body:
             updated_model_cfg["base_url"] = str(body.get("base_url") or "").strip()
+        _maybe_clear_context_pin(original_model_cfg, updated_model_cfg)
 
         config["model"] = updated_model_cfg
         try:

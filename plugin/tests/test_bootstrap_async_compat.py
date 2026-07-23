@@ -186,5 +186,91 @@ class BootstrapMemoryBudgetTest(unittest.IsolatedAsyncioTestCase):
         store.add.assert_called_once_with("memory", "remember this")
 
 
+class BootstrapConfigRouteIdentityTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        _handlers._adapter_state.clear()
+
+    async def _patch_config(self, starting_config: dict, body: dict) -> dict:
+        saved: list[dict] = []
+        upstream = {
+            "web": web,
+            "load_config": mock.MagicMock(return_value=starting_config),
+            "save_config": mock.MagicMock(side_effect=saved.append),
+            "curated_models_for_provider": mock.MagicMock(return_value=[]),
+            "list_available_providers": mock.MagicMock(return_value=[]),
+        }
+        handler = _handlers._make_config_handlers(_Adapter(), upstream)["update_config"]
+
+        response = await handler(_Request(body=body))
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(saved), 1)
+        return saved[0]["model"]
+
+    async def test_model_change_clears_stale_context_length(self) -> None:
+        model = await self._patch_config(
+            {
+                "model": {
+                    "default": "old-model",
+                    "provider": "openrouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "context_length": 262144,
+                    "temperature": 0.2,
+                }
+            },
+            {"model": "new-model"},
+        )
+
+        self.assertEqual(model["default"], "new-model")
+        self.assertEqual(model["temperature"], 0.2)
+        self.assertNotIn("context_length", model)
+
+    async def test_provider_change_clears_stale_context_length(self) -> None:
+        model = await self._patch_config(
+            {
+                "model": {
+                    "default": "same-model",
+                    "provider": "openrouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "context_length": 262144,
+                }
+            },
+            {"provider": "anthropic"},
+        )
+
+        self.assertEqual(model["provider"], "anthropic")
+        self.assertNotIn("context_length", model)
+
+    async def test_equivalent_base_url_preserves_context_length(self) -> None:
+        model = await self._patch_config(
+            {
+                "model": {
+                    "default": "same-model",
+                    "provider": "custom",
+                    "base_url": "https://Example.COM:443/v1/?b=2&a=1",
+                    "context_length": 8192,
+                }
+            },
+            {"base_url": "https://example.com/v1?a=1&b=2"},
+        )
+
+        self.assertEqual(model["context_length"], 8192)
+
+    async def test_different_base_url_path_clears_context_length(self) -> None:
+        model = await self._patch_config(
+            {
+                "model": {
+                    "default": "same-model",
+                    "provider": "custom",
+                    "base_url": "https://example.com/v1",
+                    "context_length": 8192,
+                }
+            },
+            {"base_url": "https://example.com/alternate"},
+        )
+
+        self.assertNotIn("context_length", model)
+
+
 if __name__ == "__main__":
     unittest.main()
