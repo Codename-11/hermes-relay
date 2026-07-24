@@ -199,6 +199,7 @@ import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.SubagentLane
 import com.hermesandroid.relay.ui.components.ToolProgressCard
+import com.hermesandroid.relay.ui.components.isVisibleForToolDisplay
 import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
@@ -2341,12 +2342,15 @@ fun ChatScreen(
                                 }
                             }
 
-                            if (toolDisplay != "off" && !hasBackgroundTask) {
+                            if (!hasBackgroundTask) {
                                 // Subagent children (taskIndex != null) group
                                 // into lanes after the top-level tool cards;
                                 // the null group renders exactly as before.
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
                                 laneGroups[null]?.forEach { toolCall ->
+                                    if (!toolCall.isVisibleForToolDisplay(toolDisplay)) {
+                                        return@forEach
+                                    }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     if (toolCall.showsImageGenerationPlaceholder()) {
                                         ImageGenerationPlaceholder()
@@ -2360,12 +2364,14 @@ fun ChatScreen(
                                         }
                                     }
                                 }
-                                laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    SubagentLane(
-                                        taskIndex = taskIndex,
-                                        calls = laneGroups.getValue(taskIndex),
-                                    )
+                                if (toolDisplay != "off") {
+                                    laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        SubagentLane(
+                                            taskIndex = taskIndex,
+                                            calls = laneGroups.getValue(taskIndex),
+                                        )
+                                    }
                                 }
                             }
                         }

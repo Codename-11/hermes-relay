@@ -41,6 +41,14 @@ internal fun ToolCall.showsImageGenerationPlaceholder(): Boolean =
     !isComplete && name.trim().lowercase() == IMAGE_GENERATION_TOOL
 
 /**
+ * Image generation is a user-visible result lifecycle, not generic tool
+ * diagnostics. Keep its active canvas visible even when upstream
+ * `display.tool_progress` hides ordinary tool cards.
+ */
+internal fun ToolCall.isVisibleForToolDisplay(toolDisplay: String): Boolean =
+    toolDisplay != "off" || showsImageGenerationPlaceholder()
+
+/**
  * Theme-aware latent diffusion preview for an active Hermes image-generation
  * tool. It specializes the generic tool lifecycle already emitted by vanilla
  * Hermes; no Relay-only protocol or server patch is required.

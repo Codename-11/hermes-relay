@@ -24,6 +24,22 @@ class ImageGenerationPlaceholderTest {
     }
 
     @Test
+    fun `active image generation remains visible when generic tools are hidden`() {
+        val active = ToolCall(
+            id = "image-1",
+            name = "image_generate",
+            args = null,
+            result = null,
+            success = null,
+        )
+
+        assertTrue(active.isVisibleForToolDisplay("off"))
+        assertFalse(active.copy(name = "terminal").isVisibleForToolDisplay("off"))
+        assertFalse(active.copy(isComplete = true).isVisibleForToolDisplay("off"))
+        assertTrue(active.copy(name = "terminal").isVisibleForToolDisplay("compact"))
+    }
+
+    @Test
     fun `diffusion field changes across the animation cycle`() {
         val noisy = diffusionSignal(column = 12, row = 8, time = 0.25f, denoise = diffusionDenoise(0.08f))
         val resolved = diffusionSignal(column = 12, row = 8, time = 3.5f, denoise = diffusionDenoise(0.62f))
