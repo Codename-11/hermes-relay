@@ -1352,7 +1352,7 @@
     <string name="voice_settings_route_relay">Relay</string>
     <string name="voice_settings_route_relay_desc">Complemento de voz Relay: proveedores con reconocimiento de perfiles y salida de voz en streaming.</string>
     <string name="voice_settings_optional">Opcional</string>
-    <string name="voice_settings_signin_route_hint">Estás conectado a través de la ruta %1$s y los inicios de sesión en el panel de control son por anfitrión: un inicio de sesión desde tu red doméstica no se transfiere. Inicia sesión una vez en Gestionar mientras estás en esta ruta para desbloquear la voz aquí también.</string>
+    <string name="voice_settings_signin_route_hint">No se pudo reutilizar la sesión guardada del panel en la ruta %1$s. Abre Gestionar para volver a iniciar sesión y desbloquear la voz.</string>
     <string name="voice_settings_signin_default_hint">Su panel Hermes requiere iniciar sesión antes de que la voz estándar pueda transcribir o hablar. Iniciar sesión una vez en Administrar lo desbloquea para esta conexión.</string>
     <string name="voice_settings_sign_in_via_manage">Iniciar sesión a través de Administrar</string>
     <string name="voice_settings_unsupported_build_body">Esta compilación del servidor Hermes aún no expone las rutas de audio del panel. Actualice el agente hermes en el servidor o empareje Relay para usar la voz Relay.</string>
@@ -1571,7 +1571,7 @@
     <string name="dashboard_hours_ago">Hace %1$dh</string>
     <string name="dashboard_signin_required_title">Es necesario iniciar sesión en el panel</string>
     <string name="dashboard_signin_required_body">Administrar utiliza la sesión del panel Hermes en %1$s.</string>
-    <string name="dashboard_signin_route_hint">Estás en la ruta %1$s. Los inicios de sesión en el panel de control son por anfitrión, por lo que tu inicio de sesión desde la otra ruta no se transfiere. Inicia sesión una vez aquí y la aplicación mantendrá ambas sesiones.</string>
+    <string name="dashboard_signin_route_hint">No se pudo reutilizar la sesión guardada del panel en la ruta %1$s. Vuelve a iniciar sesión para actualizarla en las rutas de confianza de esta conexión.</string>
     <string name="dashboard_signin_with_provider">Iniciar sesión con %1$s</string>
     <string name="dashboard_username_password">Nombre de usuario y contraseña</string>
     <string name="dashboard_username">Nombre de usuario</string>

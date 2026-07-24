@@ -1570,7 +1570,7 @@
     <string name="voice_settings_route_relay">Relay</string>
     <string name="voice_settings_route_relay_desc">Use the provider, model, and voice saved for this profile through Relay.</string>
     <string name="voice_settings_optional">Optional</string>
-    <string name="voice_settings_signin_route_hint">You\'re connected over the %1$s route, and dashboard sign-ins are per-host — a sign-in from your home network doesn\'t carry over. Sign in once in Manage while on this route to unlock voice here too.</string>
+    <string name="voice_settings_signin_route_hint">The saved dashboard session could not be reused on the %1$s route. Open Manage to sign in again and unlock voice.</string>
     <string name="voice_settings_signin_default_hint">Your Hermes dashboard requires sign-in before standard voice can transcribe or speak. Signing in once in Manage unlocks it for this connection.</string>
     <string name="voice_settings_sign_in_via_manage">Sign in via Manage</string>
     <string name="voice_settings_unsupported_build_body">This Hermes server build doesn\'t expose the dashboard audio routes yet. Update hermes-agent on the server, or pair Relay to use Relay voice.</string>
@@ -1824,7 +1824,7 @@
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">Dashboard sign-in required</string>
     <string name="dashboard_signin_required_body">Manage uses the Hermes dashboard session at %1$s.</string>
-    <string name="dashboard_signin_route_hint">You\'re on the %1$s route. Dashboard sign-ins are per host, so your sign-in from the other route doesn\'t carry over — sign in once here and the app keeps both sessions.</string>
+    <string name="dashboard_signin_route_hint">The saved dashboard session could not be reused on the %1$s route. Sign in again to refresh it across this connection\'s trusted routes.</string>
     <string name="dashboard_signin_with_provider">Sign in with %1$s</string>
     <string name="dashboard_username_password">Username &amp; Password</string>
     <string name="dashboard_username">Username</string>

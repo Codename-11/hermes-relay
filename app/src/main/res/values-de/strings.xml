@@ -1476,7 +1476,7 @@
     <string name="voice_settings_route_relay">Relay</string>
     <string name="voice_settings_route_relay_desc">Sprachfunktion des Relay-Plugins — profilbezogene Anbieter und Streaming-Sprachausgabe.</string>
     <string name="voice_settings_optional">Optional</string>
-    <string name="voice_settings_signin_route_hint">Du bist über die Route %1$s verbunden, und Dashboard-Anmeldungen gelten pro Host — eine Anmeldung aus deinem Heimnetz wird nicht übernommen. Melde dich unter Verwalten einmal über diese Route an, um auch hier Sprache freizuschalten.</string>
+    <string name="voice_settings_signin_route_hint">Die gespeicherte Dashboard-Sitzung konnte über die Route %1$s nicht wiederverwendet werden. Öffne Verwalten, um dich erneut anzumelden und Sprache freizuschalten.</string>
     <string name="voice_settings_signin_default_hint">Dein Hermes-Dashboard erfordert eine Anmeldung, bevor Standardsprache transkribieren oder sprechen kann. Eine einmalige Anmeldung unter Verwalten schaltet sie für diese Verbindung frei.</string>
     <string name="voice_settings_sign_in_via_manage">Über Verwalten anmelden</string>
     <string name="voice_settings_unsupported_build_body">Dieser Hermes-Server-Build stellt die Dashboard-Audiorouten noch nicht bereit. Aktualisiere hermes-agent auf dem Server oder kopple Relay, um Relay-Sprache zu verwenden.</string>
@@ -1715,7 +1715,7 @@
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">Dashboard-Anmeldung erforderlich</string>
     <string name="dashboard_signin_required_body">Verwalten verwendet die Hermes-Dashboard-Sitzung unter %1$s.</string>
-    <string name="dashboard_signin_route_hint">Du verwendest die Route %1$s. Dashboard-Anmeldungen gelten pro Host, daher wird deine Anmeldung über die andere Route nicht übernommen — melde dich hier einmal an, dann behält die App beide Sitzungen.</string>
+    <string name="dashboard_signin_route_hint">Die gespeicherte Dashboard-Sitzung konnte über die Route %1$s nicht wiederverwendet werden. Melde dich erneut an, um sie für die vertrauenswürdigen Routen dieser Verbindung zu aktualisieren.</string>
     <string name="dashboard_signin_with_provider">Mit %1$s anmelden</string>
     <string name="dashboard_username_password">Benutzername &amp; Passwort</string>
     <string name="dashboard_username">Benutzername</string>

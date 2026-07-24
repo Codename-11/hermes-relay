@@ -1473,7 +1473,7 @@
     <string name="voice_settings_route_relay">Relay</string>
     <string name="voice_settings_route_relay_desc">Relay 插件语音——支持按个人资料的提供商和流式语音输出。</string>
     <string name="voice_settings_optional">可选</string>
-    <string name="voice_settings_signin_route_hint">您正通过 %1$s 路由连接，而仪表板登录是按主机区分的——家庭网络上的登录不会延续到此。请在此路由上在 Manage 中登录一次，以在此处解锁语音。</string>
+    <string name="voice_settings_signin_route_hint">无法在 %1$s 路由上复用已保存的仪表板会话。请打开“管理”重新登录并解锁语音。</string>
     <string name="voice_settings_signin_default_hint">您的 Hermes 仪表板需要先登录，标准语音才能转录或朗读。在 Manage 中登录一次即可为此连接解锁。</string>
     <string name="voice_settings_sign_in_via_manage">通过 Manage 登录</string>
     <string name="voice_settings_unsupported_build_body">此 Hermes 服务器构建尚未公开仪表板音频路由。请在服务器上更新 hermes-agent，或配对 Relay 以使用 Relay 语音。</string>
@@ -1712,7 +1712,7 @@
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">需要登录仪表盘</string>
     <string name="dashboard_signin_required_body">管理功能使用位于 %1$s 的 Hermes 仪表盘会话。</string>
-    <string name="dashboard_signin_route_hint">你当前使用 %1$s 路由。仪表盘登录按主机区分，所以在另一条路由上的登录不会自动延续——在这里登录一次，应用会同时保留两个会话。</string>
+    <string name="dashboard_signin_route_hint">无法在 %1$s 路由上复用已保存的仪表板会话。请重新登录，以便在此连接的可信路由之间刷新会话。</string>
     <string name="dashboard_signin_with_provider">使用 %1$s 登录</string>
     <string name="dashboard_username_password">用户名与密码</string>
     <string name="dashboard_username">用户名</string>

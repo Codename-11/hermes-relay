@@ -173,7 +173,7 @@ fun VoiceSettingsScreen(
     /**
      * Non-null endpoint display label (e.g. "Tailscale") when the sign-in
      * gate is up because the resolver moved the dashboard to a route the
-     * user hasn't signed in on yet — dashboard cookies are per-host.
+     * saved shared dashboard session was rejected or expired.
      */
     standardVoiceSignInRouteHint: String? = null,
     relayVoiceReady: Boolean = false,

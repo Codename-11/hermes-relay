@@ -1412,7 +1412,7 @@
     <string name="voice_settings_route_relay">Relay</string>
     <string name="voice_settings_route_relay_desc">Voz do plugin do Relay — provedores específicos por perfil e saída de voz em streaming.</string>
     <string name="voice_settings_optional">Opcional</string>
-    <string name="voice_settings_signin_route_hint">Você está conectado pela rota %1$s, e os logins do painel são específicos por host — o login feito na sua rede doméstica não é transferido. Entre uma vez em Gerenciar enquanto estiver nesta rota para liberar a voz aqui também.</string>
+    <string name="voice_settings_signin_route_hint">Não foi possível reutilizar a sessão salva do painel pela rota %1$s. Abra Gerenciar para entrar novamente e liberar a voz.</string>
     <string name="voice_settings_signin_default_hint">Seu painel do Hermes exige login antes que a voz padrão possa transcrever ou falar. Entrar uma vez em Gerenciar libera a voz para esta conexão.</string>
     <string name="voice_settings_sign_in_via_manage">Entrar por Gerenciar</string>
     <string name="voice_settings_unsupported_build_body">Esta versão do servidor Hermes ainda não oferece as rotas de áudio do painel. Atualize o hermes-agent no servidor ou pareie o Relay para usar a voz do Relay.</string>
@@ -1642,7 +1642,7 @@
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">É necessário entrar no painel</string>
     <string name="dashboard_signin_required_body">O Gerenciar usa a sessão do painel do Hermes em %1$s.</string>
-    <string name="dashboard_signin_route_hint">Você está na rota %1$s. Os logins do painel são específicos por host, então o login da outra rota não é transferido — entre uma vez aqui, e o app manterá as duas sessões.</string>
+    <string name="dashboard_signin_route_hint">Não foi possível reutilizar a sessão salva do painel pela rota %1$s. Entre novamente para atualizá-la nas rotas confiáveis desta conexão.</string>
     <string name="dashboard_signin_with_provider">Entrar com %1$s</string>
     <string name="dashboard_username_password">Nome de usuário e senha</string>
     <string name="dashboard_username">Nome de usuário</string>

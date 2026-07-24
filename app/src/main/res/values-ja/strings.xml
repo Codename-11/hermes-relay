@@ -1489,7 +1489,7 @@
     <string name="voice_settings_route_relay">Relay</string>
     <string name="voice_settings_route_relay_desc">Relay プラグイン音声 — プロファイル対応プロバイダーとストリーミング音声出力。</string>
     <string name="voice_settings_optional">オプション</string>
-    <string name="voice_settings_signin_route_hint">%1$s ルート経由で接続されており、ダッシュボードのサインインはホストごとに行われます。ホーム ネットワークからのサインインは引き継がれません。このルートの途中で [管理] に一度サインインすると、ここでも音声のロックが解除されます。</string>
+    <string name="voice_settings_signin_route_hint">%1$s ルートで保存済みのダッシュボード セッションを再利用できませんでした。[管理] を開いて再度サインインし、音声を有効にしてください。</string>
     <string name="voice_settings_signin_default_hint">Hermes ダッシュボードでは、標準音声を書き起こしたり話したりする前にサインインする必要があります。管理に一度サインインすると、この接続のロックが解除されます。</string>
     <string name="voice_settings_sign_in_via_manage">「管理」経由でサインインする</string>
     <string name="voice_settings_unsupported_build_body">この Hermes サーバー ビルドでは、ダッシュボードのオーディオ ルートがまだ公開されていません。サーバー上の hermes-agent を更新するか、Relay をペアにして Relay 音声を使用します。</string>
@@ -1728,7 +1728,7 @@
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">ダッシュボードへのサインインが必要です</string>
     <string name="dashboard_signin_required_body">管理は、%1$s で Hermes ダッシュボード セッションを使用します。</string>
-    <string name="dashboard_signin_route_hint">あなたは %1$s ルート上にいます。ダッシュボードのサインインはホストごとに行われるため、他のルートからのサインインは引き継がれません。ここで 1 回サインインすると、アプリは両方のセッションを維持します。</string>
+    <string name="dashboard_signin_route_hint">%1$s ルートで保存済みのダッシュボード セッションを再利用できませんでした。再度サインインして、この接続の信頼済みルート全体でセッションを更新してください。</string>
     <string name="dashboard_signin_with_provider">%1$s でサインインします</string>
     <string name="dashboard_username_password">ユーザー名 &amp; パスワード</string>
     <string name="dashboard_username">ユーザー名</string>

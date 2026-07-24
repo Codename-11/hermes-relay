@@ -1145,7 +1145,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * persisted URL. Dashboard session cookies are host-scoped, so a sign-in
      * performed on the LAN host does not authenticate the Tailscale host —
      * every dashboard-riding surface (Manage, standard voice) uses this to
-     * say *which* route it's on and why sign-in state didn't follow.
+     * say *which* route rejected the saved shared session.
      */
     val dashboardRouteMovedHint: StateFlow<String?> = combine(
         effectiveDashboardUrl,
@@ -4247,8 +4247,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     category = DiagnosticCategory.Voice,
                     severity = DiagnosticSeverity.Warning,
                     title = ctx.getString(R.string.conn_status_voice_signin),
-                    detail = "Dashboard sessions are per-host — a sign-in from another " +
-                        "route does not carry over; sign in once via Manage on this one",
+                    detail = "The encrypted dashboard session could not be reused on this " +
+                        "trusted route; open Manage to refresh the session",
                     url = dashboardUrl,
                 )
             }
