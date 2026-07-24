@@ -353,7 +353,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 或 http://你的服务器:8642</string>
     <string name="cw_api_url_supporting">聊天和会话使用的 Hermes API——裸主机名默认使用 API 端口 8642 和 http://（仪表盘的 9119 端口单独推导）</string>
     <string name="cw_scan_message">正在扫描本局域网寻找 Hermes 仪表盘/API…</string>
-    <string name="cw_dashboard_signin_hint">通过仪表盘登录以解锁管理和语音——API 密钥对聊天是可选的。</string>
+    <string name="cw_dashboard_signin_hint">通过仪表盘登录以解锁管理和语音——API 密钥仅用于可选的直接 API 回退。</string>
     <string name="cw_pair_relay_section">配对 Relay（可选）</string>
     <string name="cw_pair_relay_for">为 %1$s 配对 Relay</string>
     <string name="cw_pair_relay_scoped_desc">为这个已保存的 Hermes 连接添加可选的 Relay 扩展。这不会添加或替换服务器。</string>
@@ -2102,7 +2102,7 @@
     <string name="active_section_api_key_already_set">API 密钥已设置</string>
     <string name="active_section_api_key_needed_hint">使用在 Hermes 服务器上创建的 API_SERVER_KEY。此密钥并非由应用提供。</string>
     <string name="active_section_api_key_not_configured">API 密钥未配置</string>
-    <string name="active_section_api_key_optional">API 密钥（可选）</string>
+    <string name="active_section_api_key_optional">直接 API 的 API 密钥</string>
     <string name="active_section_api_key_stored_hint">密钥已安全存储。</string>
     <string name="active_section_api_reachable_voice_review">API 可达——请检查语音配置</string>
     <string name="active_section_api_relay_voice_reachable">API 可达——Relay 语音已配置</string>
@@ -3243,7 +3243,7 @@
     <string name="active_section_optional_api_fallback">可选的直接 API 回退</string>
     <string name="active_section_api_not_required">此连接使用 Hermes Dashboard 时不需要配置。</string>
     <string name="active_section_where_api_key">从哪里获取此密钥？</string>
-    <string name="active_section_api_key_explainer">API_SERVER_KEY 需要在 Hermes 服务器上创建，并非由此应用提供。仅在启用可选 API 服务器时进行配置，并在此输入相同的值。</string>
+    <string name="active_section_api_key_explainer">API_SERVER_KEY 需要在 Hermes 服务器上创建，并非由此应用提供。仅在启用可选 API 服务器时配置；该服务器需要可用密钥，并在此输入相同的值。</string>
     <string name="active_section_scan_relay_qr">扫描 Relay 二维码</string>
     <string name="active_section_other_relay_methods">其他配对方式</string>
     <string name="endpoints_tailscale_setup_hint">两台设备都必须连接 Tailscale，并且 Hermes Dashboard 必须可通过端口 9119 访问。</string>

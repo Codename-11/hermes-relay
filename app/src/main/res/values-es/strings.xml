@@ -311,7 +311,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 o http://your-server:8642</string>
     <string name="cw_api_url_supporting">Hermes API utilizado por Chat y sesiones — API puerto 8642 y http:// asumido para hosts desnudos (el 9119 del tablero se deriva por separado)</string>
     <string name="cw_scan_message">Escaneando esta LAN en busca de Hermes dashboard/API…</string>
-    <string name="cw_dashboard_signin_hint">Inicie sesión a través del panel para desbloquear Administrar y voz: la clave API es opcional para Chat.</string>
+    <string name="cw_dashboard_signin_hint">Inicie sesión a través del panel para desbloquear Administrar y voz: la clave API solo se usa para la alternativa directa opcional mediante API.</string>
     <string name="cw_pair_relay_section">Emparejar Relay (opcional)</string>
     <string name="cw_pair_relay_section_desc">¿Ya estás ejecutando el complemento Relay? Emparéjelo aquí para habilitar Terminal, Bridge y concesiones de canales.</string>
     <string name="cw_pair_relay_url_label">URL de Relay</string>
@@ -1915,7 +1915,7 @@
     <string name="active_section_api_key_already_set">La clave API ya está configurada</string>
     <string name="active_section_api_key_needed_hint">Use el API_SERVER_KEY creado en su servidor Hermes. La aplicación no proporciona esta clave.</string>
     <string name="active_section_api_key_not_configured">Clave API no configurada</string>
-    <string name="active_section_api_key_optional">Clave API (opcional)</string>
+    <string name="active_section_api_key_optional">Clave API para API directa</string>
     <string name="active_section_api_key_stored_hint">La clave se almacena de forma segura.</string>
     <string name="active_section_api_reachable_voice_review">API accesible: revisar la configuración de voz</string>
     <string name="active_section_api_relay_voice_reachable">API accesible: la voz Relay está configurada</string>
@@ -2992,7 +2992,7 @@
     <string name="active_section_optional_api_fallback">Alternativa directa opcional mediante API</string>
     <string name="active_section_api_not_required">No es necesaria cuando esta conexión usa Hermes Dashboard.</string>
     <string name="active_section_where_api_key">¿Dónde obtengo esta clave?</string>
-    <string name="active_section_api_key_explainer">API_SERVER_KEY se crea en su servidor Hermes; esta aplicación no la proporciona. Configúrela solo al habilitar el servidor API opcional e introduzca aquí el mismo valor.</string>
+    <string name="active_section_api_key_explainer">API_SERVER_KEY se crea en su servidor Hermes; esta aplicación no la proporciona. Configúrela solo al habilitar el servidor API opcional, que requiere una clave utilizable, e introduzca aquí el mismo valor.</string>
     <string name="active_section_choose_how_phone_reaches_named">Cómo accede este teléfono a %1$s</string>
     <string name="active_section_dashboard_home_lan">Dashboard · Red LAN doméstica</string>
     <string name="active_section_scan_relay_qr">Escanear QR de Relay</string>

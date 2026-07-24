@@ -50,6 +50,11 @@ For an app/Relay-safe update, verify all of the following before declaring the h
 
 ## Gaps and follow-up
 
+- HRUI-066 adds a concrete database/runtime gate to this workflow: the service
+  interpreter must move to a fixed SQLite line, all writers must be stopped for
+  backup/integrity checks, and the full Hermes process fleet must restart on the
+  upgraded interpreter. See
+  `docs/audits/2026-07-23-hrui-066-sqlite-wal-runtime-audit.md`.
 - Add a repo-local operator checklist or script that prints checkout revisions, service uptimes, and restart freshness in one place.
 - Prefer a revision marker endpoint in upstream Hermes so clients can compare the dashboard/gateway runtime revision to the checkout revision after updates.
 - Keep HRUI-056 open until the update command/path enforces this as an atomic restart-and-verify operation, or until the operator checklist is wired into the live deployment workflow.

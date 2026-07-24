@@ -1208,10 +1208,14 @@ class ChatHandler {
         val syncedRealtimeTurnContents = mutableSetOf<String>()
 
         val loaded = items.mapNotNull { item ->
-            val role = when (item.role) {
-                "user" -> MessageRole.USER
-                "assistant" -> MessageRole.ASSISTANT
-                "system" ->
+            val displayKind = item.displayKind?.trim()?.lowercase()
+            if (displayKind == "hidden") return@mapNotNull null
+            val role = when {
+                displayKind == "model_switch" ||
+                    displayKind == "async_delegation_complete" -> MessageRole.SYSTEM
+                item.role == "user" -> MessageRole.USER
+                item.role == "assistant" -> MessageRole.ASSISTANT
+                item.role == "system" ->
                     // Upstream injects role:system STEERING markers into the
                     // session history on model/personality change — e.g.
                     // "[System: The active model for this chat has changed to …]"
@@ -1227,9 +1231,11 @@ class ChatHandler {
                     } else {
                         MessageRole.SYSTEM
                     }
-                "tool" -> return@mapNotNull null // Merged into assistant tool calls above
+                item.role == "tool" -> return@mapNotNull null // Merged into assistant tool calls above
                 else -> return@mapNotNull null
             }
+            val displayContent = displayEventContent(displayKind, item.displayMetadata)
+            val rawServerContent = displayContent ?: item.contentText ?: ""
             // If > 1e12, already in milliseconds; otherwise convert from seconds
             val ts = item.timestamp ?: 0.0
             val timestampMs = if (ts > 1e12) ts.toLong() else (ts * 1000).toLong()
@@ -1241,8 +1247,8 @@ class ChatHandler {
                 emptyList()
             }
 
-            val messageId = item.id?.toString() ?: java.util.UUID.randomUUID().toString()
-            val rawContent = item.contentText ?: ""
+            val messageId = item.id ?: java.util.UUID.randomUUID().toString()
+            val rawContent = rawServerContent
 
             // Run the media marker parser on assistant content; strip matched
             // lines and queue hits for post-assignment dispatch.
@@ -1496,19 +1502,53 @@ class ChatHandler {
      * [loadMessageHistory] so reconciliation only adopts ids onto rows that
      * actually render.
      */
-    private fun renderedRoleOf(item: MessageItem): MessageRole? = when (item.role) {
-        "user" -> MessageRole.USER
-        "assistant" -> MessageRole.ASSISTANT
-        "system" ->
-            if (!showSystemMarkers &&
-                item.contentText?.trimStart()?.startsWith("[System:") == true
-            ) {
-                null
-            } else {
-                MessageRole.SYSTEM
+    private fun renderedRoleOf(item: MessageItem): MessageRole? =
+        when (item.displayKind?.trim()?.lowercase()) {
+            "hidden" -> null
+            "model_switch", "async_delegation_complete" -> MessageRole.SYSTEM
+            else -> when (item.role) {
+                "user" -> MessageRole.USER
+                "assistant" -> MessageRole.ASSISTANT
+                "system" ->
+                    if (!showSystemMarkers &&
+                        item.contentText?.trimStart()?.startsWith("[System:") == true
+                    ) {
+                        null
+                    } else {
+                        MessageRole.SYSTEM
+                    }
+                else -> null
             }
-        else -> null
-    }
+        }
+
+    private fun displayEventContent(displayKind: String?, metadata: JsonObject?): String? =
+        when (displayKind) {
+            "model_switch" -> {
+                val model = metadata.stringField("model")
+                    ?: metadata.stringField("to_model")
+                    ?: metadata.stringField("target_model")
+                if (model.isNullOrBlank()) "Model changed" else "Model changed to $model"
+            }
+            "async_delegation_complete" -> {
+                val count = metadata.intField("task_count")
+                    ?: metadata.intField("tasks")
+                    ?: metadata.intField("count")
+                when (count) {
+                    null -> "Background work completed"
+                    1 -> "1 background task completed"
+                    else -> "$count background tasks completed"
+                }
+            }
+            else -> null
+        }
+
+    private fun JsonObject?.stringField(key: String): String? =
+        (this?.get(key) as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun JsonObject?.intField(key: String): Int? =
+        (this?.get(key) as? JsonPrimitive)?.let { primitive ->
+            primitive.contentOrNull?.toIntOrNull()
+        }
 
     /**
      * Normalize content for reconciliation matching: strip `MEDIA:`/`CARD:` marker

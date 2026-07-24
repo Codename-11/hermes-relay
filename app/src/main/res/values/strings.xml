@@ -370,7 +370,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 or http://your-server:8642</string>
     <string name="cw_api_url_supporting">Hermes API used by Chat and sessions — API port 8642 and http:// assumed for bare hosts (the dashboard\'s 9119 is derived separately)</string>
     <string name="cw_scan_message">Scanning this LAN for Hermes dashboard/API…</string>
-    <string name="cw_dashboard_signin_hint">Sign in via the dashboard to unlock Manage and voice — the API key is optional for Chat.</string>
+    <string name="cw_dashboard_signin_hint">Sign in via the dashboard to unlock Manage and voice — the API key is only for the optional direct API fallback.</string>
     <string name="cw_pair_relay_section">Pair Relay (optional)</string>
     <string name="cw_pair_relay_for">Pair Relay with %1$s</string>
     <string name="cw_pair_relay_scoped_desc">Add the optional Relay extension to this saved Hermes connection. This does not add or replace a server.</string>
@@ -888,7 +888,7 @@
     <string name="active_section_optional_api_fallback">Optional direct API fallback</string>
     <string name="active_section_api_not_required">Not required when this connection uses the Hermes Dashboard.</string>
     <string name="active_section_where_api_key">Where do I get this?</string>
-    <string name="active_section_api_key_explainer">API_SERVER_KEY is created on your Hermes server; it is not supplied by this app. Configure it only when you enable the optional API server, then enter the same value here.</string>
+    <string name="active_section_api_key_explainer">API_SERVER_KEY is created on your Hermes server; it is not supplied by this app. Configure it only when you enable the optional API server, which requires a usable key, then enter the same value here.</string>
     <string name="active_section_core_hermes">Core Hermes</string>
     <string name="active_section_optional_relay">Optional Relay</string>
     <string name="active_section_extend_connection">Extend this connection</string>
@@ -2210,7 +2210,7 @@
     <string name="active_section_api_key_already_set">API key is already set</string>
     <string name="active_section_api_key_needed_hint">Use the API_SERVER_KEY created on your Hermes server. The app does not issue this key.</string>
     <string name="active_section_api_key_not_configured">API key not configured</string>
-    <string name="active_section_api_key_optional">API key (optional)</string>
+    <string name="active_section_api_key_optional">API key for direct API</string>
     <string name="active_section_api_key_stored_hint">Key is stored securely.</string>
     <string name="active_section_api_reachable_voice_review">API reachable — review voice config</string>
     <string name="active_section_api_relay_voice_reachable">API reachable — Relay voice is configured</string>

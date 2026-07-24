@@ -131,6 +131,8 @@ hermes setup --portal                      # log in / pick a provider — skip i
 
 # You, the server operator, create API_SERVER_KEY for this optional fallback.
 # openssl generates a strong random value; Hermes Dashboard does not supply one.
+# Current Hermes requires a usable key of at least 16 characters when the API
+# server is enabled.
 mkdir -p ~/.hermes
 API_SERVER_KEY="$(openssl rand -hex 32)"
 cat >> ~/.hermes/.env <<EOF
@@ -151,6 +153,8 @@ hermes setup --portal                      # log in / pick a provider — skip i
 
 # You, the server operator, create this key for the optional API fallback.
 # Hermes Dashboard does not supply an API_SERVER_KEY.
+# Current Hermes requires a usable key of at least 16 characters when the API
+# server is enabled.
 $HermesDir = Join-Path $HOME ".hermes"
 New-Item -ItemType Directory -Force $HermesDir | Out-Null
 $ApiKey = ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
@@ -170,8 +174,9 @@ hermes gateway
 What each line does: `API_SERVER_ENABLED=true` turns the API server on (it's off by
 default); `API_SERVER_HOST=0.0.0.0` makes it reachable on your network (Hermes
 defaults to `127.0.0.1`, which only the host itself can reach); `API_SERVER_PORT`
-is the port the app assumes; `API_SERVER_KEY` is the token the app sends on every
-request. Replace `<this-computer-ip>` with the address your phone can reach — a LAN
+is the port the app assumes; `API_SERVER_KEY` is the required bearer token the
+app sends on every request when this optional server is enabled. Replace
+`<this-computer-ip>` with the address your phone can reach — a LAN
 IP, Tailscale name, or HTTPS reverse-proxy host. Don't use `127.0.0.1` from Android
 unless Hermes is running on the phone itself.
 

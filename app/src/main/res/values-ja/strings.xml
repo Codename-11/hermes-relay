@@ -353,7 +353,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 または http://your-server:8642</string>
     <string name="cw_api_url_supporting">Hermes API チャットとセッションで使用されます — API ポート 8642 および http:// はベア ホストとして想定されます (ダッシュボードの 9119 は個別に派生します)</string>
     <string name="cw_scan_message">この LAN をスキャンして Hermes ダッシュボード/API を探しています…</string>
-    <string name="cw_dashboard_signin_hint">ダッシュボード経由でサインインして、管理と音声のロックを解除します。チャットでは API キーはオプションです。</string>
+    <string name="cw_dashboard_signin_hint">ダッシュボード経由でサインインして、管理と音声のロックを解除します。API キーは任意の直接 API フォールバックでのみ使います。</string>
     <string name="cw_pair_relay_section">Relay のペア (オプション)</string>
     <string name="cw_pair_relay_section_desc">すでに Relay プラグインを実行していますか?ここでペアリングすると、ターミナル、Bridge、およびチャネル許可が有効になります。</string>
     <string name="cw_pair_relay_url_label">Relay URL</string>
@@ -2118,7 +2118,7 @@
     <string name="active_section_api_key_already_set">API キーはすでに設定されています</string>
     <string name="active_section_api_key_needed_hint">Hermes サーバーで作成した API_SERVER_KEY を使用します。このキーはアプリから発行されません。</string>
     <string name="active_section_api_key_not_configured">API キーが構成されていません</string>
-    <string name="active_section_api_key_optional">API キー (オプション)</string>
+    <string name="active_section_api_key_optional">直接 API の API キー</string>
     <string name="active_section_api_key_stored_hint">鍵は安全に保管されます。</string>
     <string name="active_section_api_reachable_voice_review">API に到達可能 — 音声設定を確認してください</string>
     <string name="active_section_api_relay_voice_reachable">API 到達可能 — Relay 音声が設定されています</string>
@@ -3309,7 +3309,7 @@
     <string name="active_section_optional_api_fallback">任意の直接 API フォールバック</string>
     <string name="active_section_api_not_required">この接続が Hermes Dashboard を使用する場合は必要ありません。</string>
     <string name="active_section_where_api_key">このキーはどこで入手しますか？</string>
-    <string name="active_section_api_key_explainer">API_SERVER_KEY は Hermes サーバー上で作成します。このアプリからは発行されません。任意の API サーバーを有効にする場合のみ設定し、同じ値をここに入力してください。</string>
+    <string name="active_section_api_key_explainer">API_SERVER_KEY は Hermes サーバー上で作成します。このアプリからは発行されません。任意の API サーバーを有効にする場合のみ設定します。このサーバーには使用可能なキーが必要です。同じ値をここに入力してください。</string>
     <string name="active_section_scan_relay_qr">Relay QR をスキャン</string>
     <string name="active_section_other_relay_methods">その他のペアリング方法</string>
     <string name="endpoints_tailscale_setup_hint">両方のデバイスで Tailscale に接続し、Hermes Dashboard がポート 9119 で到達可能である必要があります。</string>

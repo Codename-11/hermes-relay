@@ -353,7 +353,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 oder http://dein-server:8642</string>
     <string name="cw_api_url_supporting">Von Chat und Sitzungen verwendete Hermes-API — bei reinen Hosts werden API-Port 8642 und http:// angenommen (Dashboard-Port 9119 wird separat abgeleitet)</string>
     <string name="cw_scan_message">Dieses LAN wird nach Hermes-Dashboard/API durchsucht…</string>
-    <string name="cw_dashboard_signin_hint">Melde dich über das Dashboard an, um Verwaltung und Sprache freizuschalten — der API-Schlüssel ist für Chat optional.</string>
+    <string name="cw_dashboard_signin_hint">Melde dich über das Dashboard an, um Verwaltung und Sprache freizuschalten — der API-Schlüssel gilt nur für den optionalen direkten API-Fallback.</string>
     <string name="cw_pair_relay_section">Relay koppeln (optional)</string>
     <string name="cw_pair_relay_for">Relay mit %1$s koppeln</string>
     <string name="cw_pair_relay_scoped_desc">Füge dieser gespeicherten Hermes-Verbindung die optionale Relay-Erweiterung hinzu. Dadurch wird kein Server hinzugefügt oder ersetzt.</string>
@@ -2105,7 +2105,7 @@
     <string name="active_section_api_key_already_set">API-Schlüssel ist bereits festgelegt</string>
     <string name="active_section_api_key_needed_hint">Verwende den auf deinem Hermes-Server erstellten API_SERVER_KEY. Die App stellt diesen Schlüssel nicht aus.</string>
     <string name="active_section_api_key_not_configured">API-Schlüssel nicht konfiguriert</string>
-    <string name="active_section_api_key_optional">API-Schlüssel (optional)</string>
+    <string name="active_section_api_key_optional">API-Schlüssel für direkte API</string>
     <string name="active_section_api_key_stored_hint">Schlüssel ist sicher gespeichert.</string>
     <string name="active_section_api_reachable_voice_review">API erreichbar — Sprachkonfiguration prüfen</string>
     <string name="active_section_api_relay_voice_reachable">API erreichbar — Relay-Sprache ist konfiguriert</string>
@@ -3309,7 +3309,7 @@
     <string name="active_section_optional_api_fallback">Optionaler direkter API-Fallback</string>
     <string name="active_section_api_not_required">Nicht erforderlich, wenn diese Verbindung das Hermes Dashboard verwendet.</string>
     <string name="active_section_where_api_key">Wo erhalte ich diesen Schlüssel?</string>
-    <string name="active_section_api_key_explainer">API_SERVER_KEY wird auf deinem Hermes-Server erstellt und nicht von dieser App bereitgestellt. Konfiguriere ihn nur für den optionalen API-Server und gib hier denselben Wert ein.</string>
+    <string name="active_section_api_key_explainer">API_SERVER_KEY wird auf deinem Hermes-Server erstellt und nicht von dieser App bereitgestellt. Konfiguriere ihn nur für den optionalen API-Server, der einen verwendbaren Schlüssel verlangt, und gib hier denselben Wert ein.</string>
     <string name="active_section_scan_relay_qr">Relay-QR scannen</string>
     <string name="active_section_other_relay_methods">Andere Kopplungsmethoden</string>
     <string name="endpoints_tailscale_setup_hint">Tailscale muss auf beiden Geräten verbunden und Hermes Dashboard auf Port 9119 erreichbar sein.</string>

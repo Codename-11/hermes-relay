@@ -259,6 +259,8 @@ data class MessageItem(
     val toolCallId: String? = null,
     val timestamp: Double? = null,
     @SerialName("finish_reason") val finishReason: String? = null,
+    @SerialName("display_kind") val displayKind: String? = null,
+    @SerialName("display_metadata") val displayMetadata: JsonObject? = null,
     // Reasoning persisted with the assistant message (upstream serializes
     // both names; reasoning is the canonical one). Restored into
     // ChatMessage.thinkingContent so the Thought-process block survives a
