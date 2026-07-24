@@ -64,6 +64,7 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardChatDisplaySettings
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.network.upstream.mirrorDashboardSessionCookies
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
@@ -4205,6 +4206,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             updateGatewayAvailability(GatewayAvailability.Unknown)
             return
         }
+        withContext(Dispatchers.IO) {
+            mirrorDashboardSessionCookies(
+                store = dashboardCookieStoreFor(connectionId),
+                targetUrl = dashboardUrl.orEmpty(),
+                trustedHosts = trustedDashboardHosts(connectionId),
+            )
+        }
         val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
         try {
             val status = client.getStatus().getOrNull()
@@ -4258,6 +4266,28 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             updateGatewayAvailability(GatewayAvailability.Unreachable)
         } finally {
             client.shutdown()
+        }
+    }
+
+    private fun trustedDashboardHosts(connectionId: String): Set<String> {
+        val connection = connectionStore.connections.value
+            .firstOrNull { it.id == connectionId }
+            ?: return emptySet()
+        val urls = buildList {
+            connection.dashboardUrl?.let(::add)
+            Connection.deriveDefaultDashboardUrl(connection.apiServerUrl)
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::add)
+            connection.routeCandidates.forEach { candidate ->
+                candidate.dashboard?.url?.let(::add)
+                candidate.api?.url
+                    ?.let(Connection::deriveDefaultDashboardUrl)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(::add)
+            }
+        }
+        return urls.mapNotNullTo(mutableSetOf()) { url ->
+            runCatching { URI(url).host?.lowercase() }.getOrNull()
         }
     }
 

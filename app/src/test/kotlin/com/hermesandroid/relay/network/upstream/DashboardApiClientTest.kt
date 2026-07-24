@@ -304,6 +304,81 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun mirrorDashboardSessionCookies_reusesEncryptedSessionOnTrustedRoute() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie("hermes_session_at", "access", "192.168.1.20"),
+                storedCookie("hermes_session_rt", "refresh", "192.168.1.20"),
+                storedCookie("hermes_session_provider", "basic", "192.168.1.20"),
+            ),
+        )
+
+        val mirrored = mirrorDashboardSessionCookies(
+            store = store,
+            targetUrl = "http://100.64.0.20:9119",
+            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+        )
+        val cookies = DashboardCookieJar(store).loadForRequest(
+            "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
+        )
+
+        assertEquals(3, mirrored)
+        assertEquals(
+            listOf("hermes_session_at", "hermes_session_rt", "hermes_session_provider"),
+            cookies.map { it.name },
+        )
+    }
+
+    @Test
+    fun mirrorDashboardSessionCookies_doesNotCopyPkceOrToUnknownHost() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie("hermes_session_at", "access", "192.168.1.20"),
+                storedCookie("hermes_session_pkce", "verifier", "192.168.1.20"),
+            ),
+        )
+
+        assertEquals(
+            0,
+            mirrorDashboardSessionCookies(
+                store = store,
+                targetUrl = "http://attacker.example:9119",
+                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+            ),
+        )
+        assertEquals(
+            1,
+            mirrorDashboardSessionCookies(
+                store = store,
+                targetUrl = "http://100.64.0.20:9119",
+                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+            ),
+        )
+        val mirroredNames = DashboardCookieJar(store).loadForRequest(
+            "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
+        ).map { it.name }
+
+        assertEquals(listOf("hermes_session_at"), mirroredNames)
+    }
+
+    @Test
+    fun mirrorDashboardSessionCookies_explicitSignOutClearsEveryRoute() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(listOf(storedCookie("hermes_session", "session", "192.168.1.20")))
+        mirrorDashboardSessionCookies(
+            store = store,
+            targetUrl = "http://100.64.0.20:9119",
+            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+        )
+
+        store.clear()
+
+        assertTrue(store.load().isEmpty())
+    }
+
+    @Test
     fun getStatus_defaultsMissingAuthFieldsForOlderDashboard() = runTest {
         server.enqueue(
             MockResponse()
@@ -359,6 +434,22 @@ class DashboardApiClientTest {
         assertEquals("bailey", session.username)
         assertEquals("basic", session.provider)
     }
+
+    private fun storedCookie(
+        name: String,
+        value: String,
+        domain: String,
+    ) = StoredDashboardCookie(
+        name = name,
+        value = value,
+        expiresAt = Long.MAX_VALUE,
+        domain = domain,
+        path = "/",
+        secure = false,
+        httpOnly = true,
+        hostOnly = true,
+        persistent = true,
+    )
 
     @Test
     fun currentSession_mapsUnauthorizedToUnauthenticated() = runTest {
