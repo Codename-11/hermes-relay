@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-24 — Post-connect permission setup
+
+Android onboarding now finishes with a layered permission step after a
+successful Hermes connection. Standard Chat and Manage are explicitly ready
+without a phone grant; Android notifications are recommended through one
+user-triggered runtime prompt; camera, microphone, notification companion, and
+flavor-supported device tools remain individually optional on the centralized
+Permissions screen. Existing just-in-time permission prompts remain available
+when users skip setup.
+
+Coverage separates the Android-version notification policy from the Compose
+presentation and checks the recommended, granted, optional-review, and skip
+states. English and all shipped Android locale catalogs were updated together.
+
 ## 2026-07-20 — Image generation placeholder during turns
 
 Android chat now specializes the generic tool lifecycle for active

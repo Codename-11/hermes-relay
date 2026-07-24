@@ -56,6 +56,18 @@
     <string name="onboarding_realtime_label">リアルタイム</string>
     <string name="onboarding_realtime_description">プロバイダーネイティブのリアルタイム音声エージェントとプロファイル認識音声プロバイダー。</string>
     <string name="onboarding_review_permissions">権限の確認</string>
+    <string name="onboarding_finish_setup_title">セットアップを完了</string>
+    <string name="onboarding_finish_setup_description">Hermes への接続準備ができました。このスマートフォンで許可する機能を選ぶか、後で設定から変更できます。</string>
+    <string name="onboarding_chat_manage_ready">準備完了 — スマートフォンの権限は必要ありません。</string>
+    <string name="onboarding_chat_alerts">チャット通知</string>
+    <string name="onboarding_chat_alerts_description">有効にした通知をバックグラウンドでも受け取れるよう、Android の通知を許可します。</string>
+    <string name="onboarding_chat_alerts_ready">このアプリの通知は有効です。</string>
+    <string name="onboarding_optional_features">オプション機能</string>
+    <string name="onboarding_optional_features_description">カメラ、マイク、通知コンパニオン、利用可能な端末ツールは、選択するまで無効のままです。</string>
+    <string name="onboarding_review_optional_permissions">オプション権限を確認</string>
+    <string name="onboarding_enable_chat_alerts">チャット通知を有効にする</string>
+    <string name="onboarding_not_now">今はしない</string>
+    <string name="onboarding_finish">セットアップを完了</string>
 
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">ライブ音声会話</string>

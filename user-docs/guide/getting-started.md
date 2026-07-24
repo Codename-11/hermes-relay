@@ -263,6 +263,10 @@ On first launch:
      and headless configurations.
 3. Optional: add API fallback, Relay, or remote routes under **Advanced**.
 4. Tap **Connect**.
+5. On **Finish setup**, enable Android notifications if you want background
+   chat alerts. Camera, microphone, notification companion, and Device Control
+   permissions remain optional and can be reviewed one at a time. Choose
+   **Not now** to keep those features off and start chatting.
 
 That's it — Chat is live, and the Manage surfaces (Skills, Cron, MCP, Profiles,
 Models/Config) light up too. Manage may ask you to sign in to the dashboard the

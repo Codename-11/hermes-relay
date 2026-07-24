@@ -13,7 +13,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "886cf9b7710af423aab0e51ada49dfbf78cfacd71265eb1f0d973d309004b2ea",
+        "main": "efd8a7a6fd6f4a9a0f0dfbb33132f76bd95eefc25262bb0e3d0dff0247c78f65",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -26,7 +26,7 @@
       "docs_source_sha256": {
         "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
         "guide/quick-start.md": "1a5c4c89a992bd57c1e93702b270a466675c7f65fb8ebe20968febc621877049",
-        "guide/getting-started.md": "42fcf0913c8ba840ff3cffbdcff65f9ba47eeb18fe5faa7122f8eecdcc046c62",
+        "guide/getting-started.md": "d1d348b2ff7c05d639cddf33d14c1a2e4cac26e072fcd2b2988e37ea694d4bbd",
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
@@ -48,7 +48,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "886cf9b7710af423aab0e51ada49dfbf78cfacd71265eb1f0d973d309004b2ea",
+        "main": "efd8a7a6fd6f4a9a0f0dfbb33132f76bd95eefc25262bb0e3d0dff0247c78f65",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -61,7 +61,7 @@
       "docs_source_sha256": {
         "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
         "guide/quick-start.md": "1a5c4c89a992bd57c1e93702b270a466675c7f65fb8ebe20968febc621877049",
-        "guide/getting-started.md": "42fcf0913c8ba840ff3cffbdcff65f9ba47eeb18fe5faa7122f8eecdcc046c62",
+        "guide/getting-started.md": "d1d348b2ff7c05d639cddf33d14c1a2e4cac26e072fcd2b2988e37ea694d4bbd",
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
@@ -72,7 +72,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "886cf9b7710af423aab0e51ada49dfbf78cfacd71265eb1f0d973d309004b2ea",
+        "main": "efd8a7a6fd6f4a9a0f0dfbb33132f76bd95eefc25262bb0e3d0dff0247c78f65",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -85,7 +85,7 @@
       "docs_source_sha256": {
         "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
         "guide/quick-start.md": "1a5c4c89a992bd57c1e93702b270a466675c7f65fb8ebe20968febc621877049",
-        "guide/getting-started.md": "42fcf0913c8ba840ff3cffbdcff65f9ba47eeb18fe5faa7122f8eecdcc046c62",
+        "guide/getting-started.md": "d1d348b2ff7c05d639cddf33d14c1a2e4cac26e072fcd2b2988e37ea694d4bbd",
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
@@ -96,7 +96,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "886cf9b7710af423aab0e51ada49dfbf78cfacd71265eb1f0d973d309004b2ea",
+        "main": "efd8a7a6fd6f4a9a0f0dfbb33132f76bd95eefc25262bb0e3d0dff0247c78f65",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -109,7 +109,7 @@
       "docs_source_sha256": {
         "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
         "guide/quick-start.md": "1a5c4c89a992bd57c1e93702b270a466675c7f65fb8ebe20968febc621877049",
-        "guide/getting-started.md": "42fcf0913c8ba840ff3cffbdcff65f9ba47eeb18fe5faa7122f8eecdcc046c62",
+        "guide/getting-started.md": "d1d348b2ff7c05d639cddf33d14c1a2e4cac26e072fcd2b2988e37ea694d4bbd",
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
@@ -120,7 +120,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "886cf9b7710af423aab0e51ada49dfbf78cfacd71265eb1f0d973d309004b2ea",
+        "main": "efd8a7a6fd6f4a9a0f0dfbb33132f76bd95eefc25262bb0e3d0dff0247c78f65",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -133,7 +133,7 @@
       "docs_source_sha256": {
         "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
         "guide/quick-start.md": "1a5c4c89a992bd57c1e93702b270a466675c7f65fb8ebe20968febc621877049",
-        "guide/getting-started.md": "42fcf0913c8ba840ff3cffbdcff65f9ba47eeb18fe5faa7122f8eecdcc046c62",
+        "guide/getting-started.md": "d1d348b2ff7c05d639cddf33d14c1a2e4cac26e072fcd2b2988e37ea694d4bbd",
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
