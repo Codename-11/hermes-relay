@@ -2107,6 +2107,13 @@ stable identity independent of endpoint URLs.
 - **Relay is optional.** It adds pairing, terminal, bridge/device control,
   media, notification companion, enhanced voice, and desktop tooling. It never
   becomes a prerequisite for standard chat or management.
+- **Relay compatibility shims are narrow and read-only.** When upstream Gateway
+  suppresses `image_generate` lifecycle frames with tool progress disabled, a
+  paired Android client may poll Relay's `/chat/image-activity` route during
+  that active turn. Relay derives start/completion state from the selected
+  profile's authoritative Hermes session database without proxying chat.
+  Native Gateway lifecycle events take precedence, and absence of the optional
+  route silently restores the vanilla behavior.
 - **Readiness is capability-based.** Chat, Manage, Voice, API fallback, and
   Relay extensions report their own state. A missing optional endpoint does not
   mark the whole connection unhealthy.

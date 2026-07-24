@@ -135,6 +135,91 @@ class RelayHttpClient(
         val text: String,
     )
 
+    @Serializable
+    data class ImageActivitySnapshot(
+        @SerialName("session_id") val sessionId: String,
+        val profile: String,
+        val activities: List<ImageActivity> = emptyList(),
+    )
+
+    @Serializable
+    data class ImageActivity(
+        @SerialName("call_id") val callId: String,
+        @SerialName("tool_name") val toolName: String,
+        val state: String,
+        @SerialName("started_at") val startedAt: Double,
+        @SerialName("completed_at") val completedAt: Double? = null,
+    )
+
+    /**
+     * Poll the optional Relay image lifecycle bridge. A null success means the
+     * connected Relay predates the endpoint; callers should stop polling and
+     * continue using native Gateway events without surfacing an error.
+     */
+    suspend fun fetchImageActivity(
+        profile: String,
+        sessionId: String,
+        sinceEpochSeconds: Double,
+    ): Result<ImageActivitySnapshot?> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay URL not configured")
+            )
+        }
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+        val url = try {
+            "$httpBase/chat/image-activity".toHttpUrl().newBuilder()
+                .addQueryParameter("profile", profile)
+                .addQueryParameter("session_id", sessionId)
+                .addQueryParameter("since", sinceEpochSeconds.toString())
+                .build()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
+        }
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+        val activityClient = okHttpClient.newBuilder()
+            .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        try {
+            activityClient.newCall(request).execute().use { response ->
+                if (response.code == 404) {
+                    return@withContext Result.success(null)
+                }
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        IOException("Image activity request failed (HTTP ${response.code})")
+                    )
+                }
+                val body = response.body?.string().orEmpty()
+                if (body.isBlank()) {
+                    return@withContext Result.failure(IOException("Empty response body"))
+                }
+                Result.success(
+                    sessionsJson.decodeFromString(ImageActivitySnapshot.serializer(), body)
+                )
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     /**
      * Fetch `GET /media/<token>` from the relay over HTTP(S). Returns a
      * [Result] — success carries a [FetchedMedia], failure wraps the

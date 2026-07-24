@@ -526,7 +526,7 @@ Key classes:
 - **ChatViewModel** — orchestrates send/stream/cancel lifecycle, slash command handling
 - **AppAnalytics** — singleton tracking TTFT, completion times, token usage, health latency, stream success rates
 
-The relay server is **not involved** in chat streaming itself. It remains the home for bridge, terminal, and — as of 2026-04-11 — **inbound media delivery** (see 6.2a).
+The relay server is **not involved** in chat streaming itself. It remains the home for bridge, terminal, and — as of 2026-04-11 — **inbound media delivery** (see 6.2a). As an optional compatibility enhancement, a paired phone may poll `GET /chat/image-activity?profile=<name>&session_id=<id>&since=<epoch>` during an active Standard Gateway turn. Relay reads the selected profile's Hermes `state.db` in read-only mode and reports persisted `image_generate` start/completion state. This fills only the animation lifecycle gap on upstream configurations that suppress tool progress; it does not proxy prompts, deltas, results, or chat control, and Android stops using it when the route is absent.
 
 ### 6.2a Inbound Media (Agent → Phone file delivery)
 

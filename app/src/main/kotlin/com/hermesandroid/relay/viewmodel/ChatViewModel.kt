@@ -222,6 +222,7 @@ class ChatViewModel : ViewModel() {
     private var backgroundProcessSessionJob: Job? = null
     private var connectionSwitchJob: Job? = null
     private var sessionRefreshJob: Job? = null
+    private var imageActivityJob: Job? = null
     private val historyLoadGeneration = AtomicInteger(0)
     private val sessionRefreshGeneration = AtomicInteger(0)
     private val realtimeAgentUserMessages = mutableMapOf<String, String>()
@@ -5650,6 +5651,8 @@ class ChatViewModel : ViewModel() {
         // modelOverride and the system_message precedence rule.
         val selectedProfile = selectedProfileProvider()
         val useIsolatedProfileApi = isolatedProfileApiProvider()
+        val imageActivityProfile =
+            AgentDisplay.profileRequestName(selectedProfile?.name) ?: "default"
 
         // The injected system_message (persona + phone-status + per-turn
         // context) is built by composeInjectedContext so the chat-screen audit
@@ -5790,16 +5793,28 @@ class ChatViewModel : ViewModel() {
             gatewayInterimSealedCurrentMessage = true
             scheduleCheckpointWrite(immediate = true)
         }
+        val observedImageToolStates = mutableMapOf<String, String>()
         val onToolCallStartCb = { toolCallId: String, toolName: String ->
             ensurePostInterimMessage()
             streamDeltas.flushNow()
-            handler.onToolCallStart(currentMessageId, toolCallId, toolName)
+            val alreadyObserved =
+                toolName == "image_generate" &&
+                    observedImageToolStates.putIfAbsent(toolCallId, "running") != null
+            if (!alreadyObserved) {
+                handler.onToolCallStart(currentMessageId, toolCallId, toolName)
+            }
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallDoneCb = { toolCallId: String, resultPreview: String? ->
             ensurePostInterimMessage()
             streamDeltas.flushNow()
-            handler.onToolCallComplete(currentMessageId, toolCallId, resultPreview)
+            val alreadyCompleted = observedImageToolStates[toolCallId] == "completed"
+            if (observedImageToolStates.containsKey(toolCallId)) {
+                observedImageToolStates[toolCallId] = "completed"
+            }
+            if (!alreadyCompleted) {
+                handler.onToolCallComplete(currentMessageId, toolCallId, resultPreview)
+            }
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallFailedCb = { toolCallId: String, errorMsg: String? ->
@@ -5814,7 +5829,52 @@ class ChatViewModel : ViewModel() {
             handler.onTurnComplete(currentMessageId)
             scheduleCheckpointWrite(immediate = true)
         }
+        fun stopImageActivityBridge() {
+            imageActivityJob?.cancel()
+            imageActivityJob = null
+        }
+        fun startImageActivityBridge() {
+            val relay = relayHttpClient ?: return
+            stopImageActivityBridge()
+            imageActivityJob = viewModelScope.launch {
+                var consecutiveErrors = 0
+                while (true) {
+                    val activeSessionId = handler.currentSessionId.value
+                    if (activeSessionId.isNullOrBlank()) {
+                        delay(250)
+                        continue
+                    }
+                    val result = relay.fetchImageActivity(
+                        profile = imageActivityProfile,
+                        sessionId = activeSessionId,
+                        sinceEpochSeconds = (assistantTimestamp / 1000.0) - 1.0,
+                    )
+                    if (result.isFailure) {
+                        consecutiveErrors += 1
+                        if (consecutiveErrors >= 3) break
+                        delay(1_000)
+                        continue
+                    }
+                    consecutiveErrors = 0
+                    val snapshot = result.getOrNull() ?: break
+                    snapshot.activities.forEach { activity ->
+                        val prior = observedImageToolStates[activity.callId]
+                        if (prior == null) {
+                            onToolCallStartCb(activity.callId, activity.toolName)
+                        }
+                        if (
+                            activity.state == "completed" &&
+                            observedImageToolStates[activity.callId] != "completed"
+                        ) {
+                            onToolCallDoneCb(activity.callId, null)
+                        }
+                    }
+                    delay(750)
+                }
+            }
+        }
         val onCompleteCb = {
+            stopImageActivityBridge()
             flushAndReleaseStreamDeltas()
             // Double-finalize guard: if a straggler completion arrives while
             // the answer-recovery poller is running, the normal completion
@@ -5925,6 +5985,7 @@ class ChatViewModel : ViewModel() {
             }
         }
         val onErrorCb = { errorMsg: String ->
+            stopImageActivityBridge()
             flushAndReleaseStreamDeltas()
             val errorSessionId = handler.currentSessionId.value
             if (intentionallyCancelled) {
@@ -6243,6 +6304,7 @@ class ChatViewModel : ViewModel() {
                 dispatchSse(resolveSseFallback(handler))
 
             else -> {
+                startImageActivityBridge()
                 val isNewSession = handler.currentSessionId.value == null
                 val autoTitle = message.take(50).let { if (message.length > 50) "$it..." else it }
                 // The gateway carries NO phone-context preamble: prompt.submit
@@ -6435,6 +6497,8 @@ class ChatViewModel : ViewModel() {
         activeStreamDeltas = null
         activeStream?.cancel()
         activeStream = null
+        imageActivityJob?.cancel()
+        imageActivityJob = null
         _queuedMessages.value = emptyList()
         _steerableTurn.value = false
         _steerNotice.value = null
@@ -6967,6 +7031,8 @@ class ChatViewModel : ViewModel() {
     }
 
     override fun onCleared() {
+        imageActivityJob?.cancel()
+        imageActivityJob = null
         activeStreamDeltas?.flushNow()
         activeStreamDeltas = null
         flushTurnCheckpointForTeardown()

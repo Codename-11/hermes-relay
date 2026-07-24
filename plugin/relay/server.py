@@ -59,6 +59,7 @@ from .channels.proactive import ProactiveChannel, ProactiveError
 from .channels.terminal import TerminalHandler
 from .channels.tui import TuiHandler
 from .config import RelayConfig
+from .image_activity import read_image_activity
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
 from .session_store import read_phone_threads
 from .voice import VoiceHandler
@@ -2322,6 +2323,60 @@ def _resolve_profile_home(server: "RelayServer", name: str) -> Path | None:
     return home if home.is_dir() else None
 
 
+async def handle_image_activity(request: web.Request) -> web.Response:
+    """Return persisted ``image_generate`` lifecycle state for one chat turn.
+
+    ``GET /chat/image-activity?profile=<name>&session_id=<id>&since=<epoch>``
+    is a read-only Relay enhancement for upstream Gateway versions that hide
+    tool lifecycle events when tool progress is disabled. The paired phone
+    polls it only while a Standard Gateway turn is active.
+    """
+    server, session = _require_bearer_session(request)
+    if session.channel_is_expired("chat"):
+        raise web.HTTPForbidden(text="chat grant required")
+
+    profile = request.query.get("profile", "default").strip() or "default"
+    session_id = request.query.get("session_id", "").strip()
+    if not session_id or len(session_id) > 256:
+        return web.json_response(
+            {"error": "invalid_session_id"},
+            status=400,
+        )
+
+    since_raw = request.query.get("since", "").strip()
+    try:
+        since = float(since_raw)
+    except (TypeError, ValueError):
+        return web.json_response({"error": "invalid_since"}, status=400)
+    if not math.isfinite(since) or since < 0:
+        return web.json_response({"error": "invalid_since"}, status=400)
+
+    home = _resolve_profile_home(server, profile)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": profile},
+            status=404,
+        )
+    if profile == "default":
+        from .config import _effective_default_profile_home
+
+        home = _effective_default_profile_home(home)
+
+    activities = await asyncio.to_thread(
+        read_image_activity,
+        home / "state.db",
+        session_id,
+        since,
+    )
+    return web.json_response(
+        {
+            "session_id": session_id,
+            "profile": profile,
+            "activities": activities,
+        },
+    )
+
+
 _PROFILE_AVATAR_STEMS = (
     "avatar",
     "profile",
@@ -4151,6 +4206,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/sessions", handle_sessions_list)
     app.router.add_delete("/sessions/{token_prefix}", handle_sessions_revoke)
     app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)
+    app.router.add_get("/chat/image-activity", handle_image_activity)
     # Desktop tool dispatch — HTTP shim called by `plugin/tools/desktop_tool.py`
     # running inside hermes-gateway. Both endpoints loopback-only.
     # `/desktop/_ping` is the availability check the agent's check_fn uses

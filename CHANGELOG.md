@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Image generation stays visible when upstream tool progress is hidden.** A paired Relay can expose read-only image-tool activity from Hermes session state so Android shows and completes its existing generation animation during Standard Gateway turns; native Gateway lifecycle events remain authoritative and Relay remains optional.
+
 ### Fixed
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
