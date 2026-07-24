@@ -43,6 +43,14 @@ multiplex-profile fallback routing, gateway diagnostics, Windows system-CA
 trust, and retained bootstrap async safety is implemented. The following gates
 intentionally remain outside that code batch:
 
+- **Image-generation lifecycle while tool progress is hidden.** The upstream
+  TUI gateway suppresses every `tool.start` / `tool.complete` event when
+  `display.tool_progress` is off, so a client cannot distinguish an active
+  `image_generate` turn from generic model work. Propose a narrow upstream
+  exception that always emits the lifecycle for `image_generate` while leaving
+  unrelated tool diagnostics hidden. Android already treats that lifecycle as
+  presentation state rather than a generic tool card and keeps the diffusion
+  canvas visible when its local tool display is off.
 - Run `docs/upstream-compatibility-certification.md` against an approved test
   gateway with real provider calls and an Android device. Include concurrent
   model/image routing, turn isolation off/on, queued reconnect, same-profile

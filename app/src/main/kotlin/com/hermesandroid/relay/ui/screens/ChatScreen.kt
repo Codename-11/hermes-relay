@@ -197,6 +197,7 @@ import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
 import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
+import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.SubagentLane
 import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.isVisibleForToolDisplay
@@ -227,6 +228,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
+
+internal fun resolveChatHeaderSubtitle(
+    isStreaming: Boolean,
+    statusText: String,
+    projectName: String?,
+    personalityName: String?,
+    modelName: String?,
+): String = if (isStreaming) {
+    statusText
+} else {
+    listOfNotNull(
+        projectName?.takeIf { it.isNotBlank() },
+        personalityName?.takeIf { it.isNotBlank() },
+        modelName?.takeIf { it.isNotBlank() },
+    ).joinToString(" \u00B7 ").ifBlank { statusText }
+}
+
 /**
  * A same-author run breaks into a new visual group once the gap to the
  * neighboring message exceeds this — so a conversation resumed after a pause
@@ -1589,13 +1607,16 @@ fun ChatScreen(
                     // yet (server config still loading), fall back to the plain
                     // connection status \u2014 never the literal "None"/"Default"
                     // personality label.
-                    val subtitleText = when {
-                        !headerChatReady -> statusText
-                        else -> listOfNotNull(
-                            gatewayProjectName?.takeIf { it.isNotBlank() },
-                            nonDefaultPersonality,
-                            modelName?.takeIf { it.isNotBlank() },
-                        ).joinToString(" \u00B7 ").ifBlank { statusText }
+                    val subtitleText = if (!headerChatReady) {
+                        statusText
+                    } else {
+                        resolveChatHeaderSubtitle(
+                            isStreaming = isStreaming,
+                            statusText = statusText,
+                            projectName = gatewayProjectName,
+                            personalityName = nonDefaultPersonality,
+                            modelName = modelName,
+                        )
                     }
                     val subtitleColor = if (headerChatReady) {
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -1728,6 +1749,10 @@ fun ChatScreen(
                                             transitionSpec = { loadedContentTransform() },
                                             label = "chatHeaderSubtitle",
                                         ) { line ->
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
                                             Text(
                                                 text = line,
                                                 style = MaterialTheme.typography.bodySmall,
@@ -1735,6 +1760,13 @@ fun ChatScreen(
                                                 maxLines = 1,
                                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                             )
+                                            if (isStreaming && animationEnabled) {
+                                                StreamingDots(
+                                                    color = subtitleColor,
+                                                    modifier = Modifier.clearAndSetSemantics { },
+                                                )
+                                            }
+                                        }
                                         }
                                     }
                                 }
