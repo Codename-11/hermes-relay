@@ -1,5 +1,28 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-23 — Android user-CA trust for self-hosted Hermes
+
+The shared Android network security configuration now accepts CA certificates
+that the device owner deliberately installed in Android's user credential store,
+in addition to system roots. Because the policy is attached to the common
+application manifest, it covers both product flavors and every platform-backed
+Hermes transport: endpoint probes, Dashboard requests and authentication
+WebView, redirects, Gateway WebSockets, API streaming, Standard Voice, and
+Relay HTTPS/WSS. Default OkHttp and WebView certificate-chain and hostname
+checks remain active, and Relay's independent certificate pinner is not
+overridden.
+
+An app-wide policy is required for arbitrary operator-supplied server names and
+for consistent WebView behavior. A runtime opt-in would require parallel custom
+trust implementations for each client and could not safely reconfigure WebView;
+per-connection CA import would add private trust-material lifecycle without
+covering all transports. The tradeoff is that Android disables public
+Certificate Transparency verification when user trust anchors are enabled.
+User documentation records the deliberate-installation boundary and a device or
+emulator validation procedure with positive chain and negative hostname checks.
+JVM coverage locks the accepted anchor sources and rejects pin overrides or
+debug-only trust additions.
+
 ## 2026-07-23 — Bounded Android code-highlighting ranges
 
 Android Markdown code rendering now validates every syntax-highlighting span

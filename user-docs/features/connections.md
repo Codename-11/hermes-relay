@@ -72,6 +72,44 @@ dashboard when required. The API server and Relay are optional and can be added
 later without recreating the connection. Existing API-first setup QRs remain
 importable for compatibility.
 
+## Private and user-installed certificate authorities
+
+Both Google Play and sideload builds accept HTTPS/WSS certificates that chain
+to either Android's system roots or a CA deliberately installed in the phone's
+**user credential store**. This supports private, self-hosted PKI without an
+"ignore TLS errors" mode. The server certificate must still be within its
+validity period, chain to the installed CA, and contain the exact Dashboard/API/
+Relay hostname or IP address in its Subject Alternative Name. Relay certificate
+pins, when present, remain an additional check.
+
+This is an app-wide Android trust policy because connections can use arbitrary
+operator-supplied hostnames and the same policy must cover native HTTP, redirects,
+Dashboard sign-in, Gateway WebSockets, API streaming, voice, and Relay. A
+per-domain XML policy cannot name hosts that are not known at build time. Android
+does not apply public Certificate Transparency verification to connections when
+the app allows user-installed trust anchors; install only CAs you control and
+remove them from Android Settings when they are no longer needed.
+
+To validate a local CA on a device or emulator:
+
+1. Issue the reverse proxy's leaf certificate from the local CA. Include the
+   exact test DNS name or IP address in the leaf certificate's SAN extension.
+2. Copy only the CA certificate (never its private key) to the device. For an
+   emulator, `adb push local-ca.crt /sdcard/Download/` is convenient.
+3. In Android Settings, open **Security & privacy → More security settings →
+   Encryption & credentials → Install a certificate → CA certificate**. Menu
+   wording varies slightly by Android version. Select `local-ca.crt` and confirm
+   it appears under **Trusted credentials → User**.
+4. Configure the Dashboard, optional API server, and optional Relay reverse
+   proxy to present the leaf certificate plus any required intermediate chain.
+5. Add the HTTPS Dashboard address in Hermes-Relay. Verify Dashboard discovery
+   and sign-in, start a Chat reply to exercise the Gateway WSS route, open
+   Manage, and run a Standard Voice preview. If API fallback or Relay uses the
+   same private CA, test those capabilities from the connection detail screen.
+6. Negative-check hostname verification by trying the same server through an
+   address absent from the certificate SAN. It must still fail with a certificate
+   hostname error.
+
 ## Live status and diagnostics
 
 Pairing and live reachability are shown separately. A connection can still be

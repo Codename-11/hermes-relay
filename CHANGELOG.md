@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android accepts deliberately installed private certificate authorities.** Google Play and sideload builds now use Android's user CA store alongside system roots for self-hosted HTTPS/WSS connections while preserving certificate-chain, hostname, and Relay pin verification.
 - **Malformed code blocks no longer crash Android Markdown rendering.** Syntax highlighting now bounds dependency-provided spans before applying them, preserving valid highlighting while safely ignoring reversed or out-of-bounds ranges.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
