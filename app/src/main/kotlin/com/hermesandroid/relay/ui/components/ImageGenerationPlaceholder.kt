@@ -41,6 +41,25 @@ internal fun ToolCall.showsImageGenerationPlaceholder(): Boolean =
     !isComplete && name.trim().lowercase() == IMAGE_GENERATION_TOOL
 
 /**
+ * Keep the image canvas alive across the short tool-complete → media-arrival
+ * handoff. Once a result surface exists it can crossfade into the same bubble;
+ * a failed or fully-finished turn never leaves a stale canvas behind.
+ */
+internal fun shouldShowImageGenerationPlaceholder(
+    toolCalls: List<ToolCall>,
+    isStreaming: Boolean,
+    hasMediaResult: Boolean,
+): Boolean {
+    val imageCalls = toolCalls.filter {
+        it.name.trim().lowercase() == IMAGE_GENERATION_TOOL
+    }
+    if (imageCalls.any { !it.isComplete }) return true
+    return !hasMediaResult &&
+        isStreaming &&
+        imageCalls.any { it.isComplete && it.success != false }
+}
+
+/**
  * Image generation is a user-visible result lifecycle, not generic tool
  * diagnostics. Keep its active canvas visible even when upstream
  * `display.tool_progress` hides ordinary tool cards.

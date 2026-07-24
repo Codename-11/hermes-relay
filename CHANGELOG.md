@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Image generation stays visible when upstream tool progress is hidden.** A paired Relay can expose read-only image-tool activity from Hermes session state so Android shows and completes its existing generation animation during Standard Gateway turns; native Gateway lifecycle events remain authoritative and Relay remains optional.
+- **Image generation stays visible when upstream tool progress is hidden.** A paired Relay can expose read-only image-tool activity from Hermes session state so Android shows and completes its existing generation animation during Standard Gateway turns; the image canvas replaces generic streaming progress and crossfades into the result within one stable assistant bubble. Native Gateway lifecycle events remain authoritative and Relay remains optional.
 
 ### Fixed
 

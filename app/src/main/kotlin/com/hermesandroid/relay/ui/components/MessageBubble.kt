@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -205,6 +206,11 @@ fun MessageBubble(
             extractChatInlineImages(message.content)
         }
     }
+    val showImageGeneration = shouldShowImageGenerationPlaceholder(
+        toolCalls = message.toolCalls,
+        isStreaming = message.isStreaming,
+        hasMediaResult = message.attachments.isNotEmpty() || inlineImages.isNotEmpty(),
+    )
 
     // Provide the sensitive-media blur mode to the attachment / inline-image
     // renderers below, sourced as locally as possible (here, not threaded
@@ -309,6 +315,7 @@ fun MessageBubble(
         val showBubble = isUser || isSystem ||
             message.content.isNotBlank() ||
             message.isStreaming ||
+            showImageGeneration ||
             message.cards.isNotEmpty() ||
             message.attachments.isNotEmpty() ||
             inlineImages.isNotEmpty()
@@ -478,32 +485,41 @@ fun MessageBubble(
                     }
                 }
 
-                // Attachments — two or more loaded images collapse into one
-                // grid + swipe-across gallery. Every other item stays on the
-                // unified InboundAttachmentCard path, and layout items retain
-                // their original ChatMessage.attachments indices so retry /
-                // manual-fetch callbacks cannot drift after grouping.
-                if (message.attachments.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    val attachmentItems = remember(message.attachments) {
-                        attachmentLayoutItems(message.attachments)
-                    }
-                    attachmentItems.forEach { item ->
-                        when (item) {
-                            is AttachmentLayoutItem.Gallery -> AttachmentGallery(
-                                attachments = item.attachmentIndices.map(message.attachments::get),
-                                maxWidth = maxBubbleWidth - 24.dp,
-                                modifier = Modifier.padding(vertical = 2.dp),
-                            )
-                            is AttachmentLayoutItem.Single -> {
-                                val index = item.attachmentIndex
-                                InboundAttachmentCard(
-                                    attachment = message.attachments[index],
-                                    onRetry = { onAttachmentRetry(message.id, index) },
-                                    onManualFetch = { onAttachmentManualFetch(message.id, index) },
+                // Image generation owns the bubble's progress slot. It replaces
+                // the generic first-token dots, remains mounted through the
+                // tool-complete → MEDIA marker handoff, then crossfades into the
+                // attachment renderer in this same Surface.
+                Crossfade(
+                    targetState = showImageGeneration,
+                    animationSpec = tween(durationMillis = 220),
+                    label = "imageGenerationToResult",
+                ) { generating ->
+                    if (generating) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        ImageGenerationPlaceholder()
+                    } else if (message.attachments.isNotEmpty()) {
+                        // Two or more loaded images collapse into one grid +
+                        // swipe-across gallery. Every other item stays on the
+                        // unified attachment path, retaining original indices.
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val attachmentItems = attachmentLayoutItems(message.attachments)
+                        attachmentItems.forEach { item ->
+                            when (item) {
+                                is AttachmentLayoutItem.Gallery -> AttachmentGallery(
+                                    attachments = item.attachmentIndices.map(message.attachments::get),
                                     maxWidth = maxBubbleWidth - 24.dp,
                                     modifier = Modifier.padding(vertical = 2.dp),
                                 )
+                                is AttachmentLayoutItem.Single -> {
+                                    val index = item.attachmentIndex
+                                    InboundAttachmentCard(
+                                        attachment = message.attachments[index],
+                                        onRetry = { onAttachmentRetry(message.id, index) },
+                                        onManualFetch = { onAttachmentManualFetch(message.id, index) },
+                                        maxWidth = maxBubbleWidth - 24.dp,
+                                        modifier = Modifier.padding(vertical = 2.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -514,7 +530,11 @@ fun MessageBubble(
                 // signal, so the pulsing dots stop (Messenger/Telegram drop the
                 // typing bubble the moment content appears) instead of throbbing
                 // under the text for the whole turn.
-                if (message.isStreaming && message.content.isBlank()) {
+                if (
+                    message.isStreaming &&
+                    message.content.isBlank() &&
+                    !showImageGeneration
+                ) {
                     // After a few seconds with no content yet, escalate the bare
                     // dots to a labeled "Still working…" so a slow first token
                     // never reads as a hang on the SSE / sessions paths.
