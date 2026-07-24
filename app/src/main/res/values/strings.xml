@@ -679,9 +679,9 @@
     <string name="settings_persistent_connection">Persistent connection</string>
     <string name="settings_persistent_connection_desc">Keeping your connection to Hermes open in the background</string>
     <string name="settings_connect_on_demand">Connect on demand only · saves battery</string>
-    <string name="settings_turn_complete_alerts">Turn-complete alerts</string>
-    <string name="settings_turn_complete_alerts_desc">Notify when a reply finishes while the app is in the background</string>
-    <string name="settings_turn_complete_alerts_off">No alert when a backgrounded reply finishes</string>
+    <string name="settings_turn_complete_alerts">Chat alerts</string>
+    <string name="settings_turn_complete_alerts_desc">Notify when Hermes needs input or finishes while the app is in the background</string>
+    <string name="settings_turn_complete_alerts_off">No alerts for background chat activity</string>
     <string name="settings_keep_connected_deep_sleep">Keep it connected in deep sleep</string>
     <string name="settings_keep_connected_battery_desc">Android can still pause the connection once the screen\'s been off a while (Doze). Allow unrestricted battery so Persistent connection keeps working in the background.</string>
     <string name="settings_allow_unrestricted_battery">Allow unrestricted battery</string>
@@ -711,8 +711,8 @@
     <string name="chat_settings_recent_prompt_chips_desc">Show your recent messages as tappable chips above the composer to send them again. Off by default.</string>
     <string name="chat_settings_keep_keyboard_open">Keep keyboard open on send</string>
     <string name="chat_settings_keep_keyboard_open_desc">Stay in the composer after sending. Turn off to dismiss the keyboard after each sent message.</string>
-    <string name="chat_settings_notify_when_finishes">Notify when Hermes finishes</string>
-    <string name="chat_settings_notify_when_finishes_desc">Post a notification when a reply completes while the app is in the background</string>
+    <string name="chat_settings_notify_when_finishes">Background chat alerts</string>
+    <string name="chat_settings_notify_when_finishes_desc">Notify when Hermes needs input or finishes while the app is in the background</string>
     <string name="chat_settings_share_phone_status">Share phone status with agent</string>
     <string name="chat_settings_share_phone_status_desc">Include a short system message about the app and phone on every chat turn</string>
     <string name="chat_settings_bridge_permissions">Bridge + permissions</string>

@@ -589,9 +589,9 @@
     <string name="settings_persistent_connection">Conexión persistente</string>
     <string name="settings_persistent_connection_desc">Mantener abierta su conexión a Hermes en segundo plano</string>
     <string name="settings_connect_on_demand">Conexión solo bajo demanda · ahorra batería</string>
-    <string name="settings_turn_complete_alerts">Alertas de turno completo</string>
-    <string name="settings_turn_complete_alerts_desc">Notificar cuando finaliza una respuesta mientras la aplicación está en segundo plano</string>
-    <string name="settings_turn_complete_alerts_off">No hay alerta cuando finaliza una respuesta en segundo plano</string>
+    <string name="settings_turn_complete_alerts">Alertas de chat</string>
+    <string name="settings_turn_complete_alerts_desc">Notificar cuando Hermes necesite información o termine en segundo plano</string>
+    <string name="settings_turn_complete_alerts_off">Sin alertas de actividad de chat en segundo plano</string>
     <string name="settings_keep_connected_deep_sleep">Mantenlo conectado mientras duermes profundamente</string>
     <string name="settings_keep_connected_battery_desc">Android todavía puede pausar la conexión una vez que la pantalla ha estado apagada por un tiempo (Doze). Permita la batería sin restricciones para que la conexión persistente siga funcionando en segundo plano.</string>
     <string name="settings_allow_unrestricted_battery">Permitir batería sin restricciones</string>
@@ -619,8 +619,8 @@
     <string name="chat_settings_recent_prompt_chips_desc">Muestre sus mensajes recientes como chips que se pueden tocar encima del redactor para enviarlos nuevamente. Desactivado de forma predeterminada.</string>
     <string name="chat_settings_keep_keyboard_open">Mantener el teclado abierto al enviar</string>
     <string name="chat_settings_keep_keyboard_open_desc">Permanece en el compositor después del envío. Desactívelo para descartar el teclado después de cada mensaje enviado.</string>
-    <string name="chat_settings_notify_when_finishes">Notificar cuando finalice Hermes</string>
-    <string name="chat_settings_notify_when_finishes_desc">Publicar una notificación cuando se complete una respuesta mientras la aplicación está en segundo plano</string>
+    <string name="chat_settings_notify_when_finishes">Alertas de chat en segundo plano</string>
+    <string name="chat_settings_notify_when_finishes_desc">Notificar cuando Hermes necesite información o termine en segundo plano</string>
     <string name="chat_settings_share_phone_status">Compartir el estado del teléfono con el agente</string>
     <string name="chat_settings_share_phone_status_desc">Incluya un breve mensaje del sistema sobre la aplicación y el teléfono en cada turno de chat.</string>
     <string name="chat_settings_bridge_permissions">Bridge + permisos</string>

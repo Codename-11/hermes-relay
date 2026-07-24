@@ -31,6 +31,15 @@ class GatewayEventMapper(
     var turnEnded: Boolean = false
         private set
 
+    internal val currentInteraction: GatewayAsk?
+        get() = pendingInteraction
+
+    internal fun restoreInteraction(ask: GatewayAsk) {
+        val duplicate = pendingInteraction?.sameRequestAs(ask) == true
+        pendingInteraction = ask
+        if (!duplicate) callbacks.onInteractionRequest(ask)
+    }
+
     private var sawMessageStart = false
     private var previousEventType: String? = null
     private var sawTextDelta = false
@@ -39,6 +48,7 @@ class GatewayEventMapper(
     private var syntheticToolCounter = 0
     private var providerWaitStatusActive = false
     private var compactionStatusActive = false
+    private var pendingInteraction: GatewayAsk? = null
 
     /**
      * `tool.complete` events match their `tool.start` by `tool_id`; when a
@@ -57,6 +67,30 @@ class GatewayEventMapper(
 
     fun onEvent(type: String, payload: JsonObject?) {
         if (turnEnded) return
+
+        interactionRequest(type, payload)?.let { ask ->
+            restoreInteraction(ask)
+            previousEventType = type
+            return
+        }
+        interactionExpiry(type, payload)?.let { expiry ->
+            val pending = pendingInteraction
+            if (pending != null && pending.matches(expiry)) {
+                pendingInteraction = null
+            }
+            callbacks.onInteractionExpired(expiry)
+            previousEventType = type
+            return
+        }
+        if (type in INTERACTION_RESUME_EVENTS) {
+            pendingInteraction?.let { ask ->
+                pendingInteraction = null
+                callbacks.onInteractionResolved(
+                    GatewayAskExpiry(kind = ask.kind, requestId = ask.requestId),
+                )
+            }
+        }
+
         when (type) {
             "reasoning.delta" -> {
                 val text = payload.string("text")
@@ -236,36 +270,6 @@ class GatewayEventMapper(
                 )
             }
 
-            "clarify.request" -> callbacks.onInteractionRequest(
-                GatewayAsk(
-                    kind = GatewayAsk.Kind.CLARIFY,
-                    requestId = payload.string("request_id"),
-                    text = payload.string("question") ?: "The agent needs clarification",
-                    choices = (payload?.get("choices") as? JsonArray)
-                        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                        ?.takeIf { it.isNotEmpty() },
-                    timeoutSeconds = CLARIFY_TIMEOUT_SECONDS,
-                ),
-            )
-
-            "approval.request" -> callbacks.onInteractionRequest(
-                GatewayAsk(
-                    kind = GatewayAsk.Kind.APPROVAL,
-                    // Upstream approvals correlate per-SESSION, never
-                    // per-request — a stray request_id must not be adopted.
-                    requestId = null,
-                    text = listOfNotNull(payload.string("command"), payload.string("description"))
-                        .joinToString(" — ")
-                        .ifBlank { "a command approval" },
-                    choices = payload.approvalChoices(),
-                    smartDenied = payload.boolean("smart_denied") == true,
-                    // Current Hermes omits timeout metadata. Keep the legacy
-                    // no-countdown behavior unless a future contract exposes
-                    // the effective per-request timeout explicitly.
-                    timeoutSeconds = payload.int("timeout_seconds") ?: 0,
-                ),
-            )
-
             "tool.output_risk" -> {
                 val toolId = payload.string("tool_id")
                 val risk = payload.string("risk")?.lowercase() ?: return
@@ -289,56 +293,6 @@ class GatewayEventMapper(
             // MoA activity proves auto-compaction has resumed even though
             // Android does not currently render these upstream events.
             "moa.reference", "moa.aggregating", "tool.progress" -> clearActivityStatuses()
-
-            "sudo.request" -> callbacks.onInteractionRequest(
-                GatewayAsk(
-                    kind = GatewayAsk.Kind.SUDO,
-                    requestId = payload.string("request_id"),
-                    // Payload carries request_id ONLY — no command to show.
-                    text = "Elevated permissions requested",
-                    timeoutSeconds = SUDO_TIMEOUT_SECONDS,
-                ),
-            )
-
-            "secret.request" -> callbacks.onInteractionRequest(
-                GatewayAsk(
-                    kind = GatewayAsk.Kind.SECRET,
-                    requestId = payload.string("request_id"),
-                    text = payload.string("prompt") ?: "The agent needs a secret value",
-                    envVar = payload.string("env_var"),
-                    timeoutSeconds = SECRET_TIMEOUT_SECONDS,
-                ),
-            )
-
-            "sudo.expire" -> callbacks.onInteractionExpired(
-                GatewayAskExpiry(
-                    kind = GatewayAsk.Kind.SUDO,
-                    requestId = payload.string("request_id"),
-                ),
-            )
-
-            "secret.expire" -> callbacks.onInteractionExpired(
-                GatewayAskExpiry(
-                    kind = GatewayAsk.Kind.SECRET,
-                    requestId = payload.string("request_id"),
-                ),
-            )
-
-            "clarify.expire" -> callbacks.onInteractionExpired(
-                GatewayAskExpiry(
-                    kind = GatewayAsk.Kind.CLARIFY,
-                    requestId = payload.string("request_id"),
-                ),
-            )
-
-            // Forward-compatible consumer for the proposed upstream approval
-            // expiry event. Approvals correlate by session, never request id.
-            "approval.expire" -> callbacks.onInteractionExpired(
-                GatewayAskExpiry(
-                    kind = GatewayAsk.Kind.APPROVAL,
-                    requestId = null,
-                ),
-            )
 
             "status.update" -> {
                 val text = payload.string("text")
@@ -376,21 +330,93 @@ class GatewayEventMapper(
         callbacks.onStatusClear(COMPACTION_STATUS_KIND)
     }
 
-    private fun JsonObject?.approvalChoices(): List<String>? =
-        (this?.get("choices") as? JsonArray)
-            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
-            ?.filter { it in APPROVAL_CHOICES }
-            ?.distinct()
-            ?.takeIf { it.isNotEmpty() }
-
-    private fun JsonObject?.boolean(key: String): Boolean? =
-        (this?.get(key) as? JsonPrimitive)?.booleanOrNull
-
     companion object {
         const val PROVIDER_WAIT_STATUS_KIND = "provider_wait"
         const val COMPACTION_STATUS_KIND = "compacting"
-        private val APPROVAL_CHOICES = setOf("once", "session", "always", "deny")
         private val OUTPUT_RISK_LEVELS = setOf("low", "medium", "high", "critical")
+        private val INTERACTION_RESUME_EVENTS = setOf(
+            "reasoning.delta",
+            "thinking.delta",
+            "reasoning.available",
+            "message.delta",
+            "message.interim",
+            "message.start",
+            "tool.generating",
+            "tool.start",
+            "tool.complete",
+            "message.complete",
+            "error",
+        )
+
+        fun interactionRequest(type: String, payload: JsonObject?): GatewayAsk? = when (type) {
+            "clarify.request" -> GatewayAsk(
+                kind = GatewayAsk.Kind.CLARIFY,
+                requestId = payload.string("request_id"),
+                text = payload.string("question") ?: "The agent needs clarification",
+                choices = (payload?.get("choices") as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                    ?.takeIf { it.isNotEmpty() },
+                timeoutSeconds = CLARIFY_TIMEOUT_SECONDS,
+            )
+
+            "approval.request" -> GatewayAsk(
+                kind = GatewayAsk.Kind.APPROVAL,
+                // Upstream approvals correlate per-SESSION, never
+                // per-request — a stray request_id must not be adopted.
+                requestId = null,
+                text = listOfNotNull(payload.string("command"), payload.string("description"))
+                    .joinToString(" — ")
+                    .ifBlank { "a command approval" },
+                choices = payload.approvalChoices(),
+                smartDenied = payload.boolean("smart_denied") == true,
+                timeoutSeconds = payload.int("timeout_seconds") ?: 0,
+            )
+
+            "sudo.request" -> GatewayAsk(
+                kind = GatewayAsk.Kind.SUDO,
+                requestId = payload.string("request_id"),
+                text = "Elevated permissions requested",
+                timeoutSeconds = SUDO_TIMEOUT_SECONDS,
+            )
+
+            "secret.request" -> GatewayAsk(
+                kind = GatewayAsk.Kind.SECRET,
+                requestId = payload.string("request_id"),
+                text = payload.string("prompt") ?: "The agent needs a secret value",
+                envVar = payload.string("env_var"),
+                timeoutSeconds = SECRET_TIMEOUT_SECONDS,
+            )
+
+            else -> null
+        }
+
+        fun interactionExpiry(type: String, payload: JsonObject?): GatewayAskExpiry? = when (type) {
+            "clarify.expire" -> GatewayAskExpiry(
+                kind = GatewayAsk.Kind.CLARIFY,
+                requestId = payload.string("request_id"),
+            )
+
+            "sudo.expire" -> GatewayAskExpiry(
+                kind = GatewayAsk.Kind.SUDO,
+                requestId = payload.string("request_id"),
+            )
+
+            "secret.expire" -> GatewayAskExpiry(
+                kind = GatewayAsk.Kind.SECRET,
+                requestId = payload.string("request_id"),
+            )
+
+            // Forward-compatible consumer for a future upstream approval
+            // expiry event. Approvals correlate by session, never request id.
+            "approval.expire" -> GatewayAskExpiry(
+                kind = GatewayAsk.Kind.APPROVAL,
+                requestId = null,
+            )
+
+            else -> null
+        }
+
+        fun isInteractionResumeEvent(type: String): Boolean = type in INTERACTION_RESUME_EVENTS
 
         /**
          * Hermes 2026-07-15 emits these operational wait lines through the
@@ -456,3 +482,20 @@ private fun JsonObject?.int(key: String): Int? =
 
 private fun JsonObject?.double(key: String): Double? =
     (this?.get(key) as? JsonPrimitive)?.doubleOrNull
+
+private fun JsonObject?.boolean(key: String): Boolean? =
+    (this?.get(key) as? JsonPrimitive)?.booleanOrNull
+
+private fun JsonObject?.approvalChoices(): List<String>? =
+    (this?.get("choices") as? JsonArray)
+        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
+        ?.filter { it in setOf("once", "session", "always", "deny") }
+        ?.distinct()
+        ?.takeIf { it.isNotEmpty() }
+
+private fun GatewayAsk.sameRequestAs(other: GatewayAsk): Boolean =
+    kind == other.kind && requestId == other.requestId
+
+private fun GatewayAsk.matches(expiry: GatewayAskExpiry): Boolean =
+    kind == expiry.kind &&
+        (kind == GatewayAsk.Kind.APPROVAL || requestId == expiry.requestId)

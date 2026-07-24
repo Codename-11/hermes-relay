@@ -1,5 +1,10 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -812,6 +817,20 @@ private fun QuickControlsCard(
 ) {
     val gatewayKeepAlive by connectionViewModel.gatewayKeepAlive.collectAsState()
     val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* Posting re-checks the grant. */ }
+    val requestNotificationPermission = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -844,7 +863,10 @@ private fun QuickControlsCard(
                     stringResource(R.string.settings_connect_on_demand)
                 },
                 checked = gatewayKeepAlive,
-                onCheckedChange = { connectionViewModel.setGatewayKeepAlive(it) },
+                onCheckedChange = { enabled ->
+                    connectionViewModel.setGatewayKeepAlive(enabled)
+                    if (enabled && notifyTurnComplete) requestNotificationPermission()
+                },
             )
             // Doze: even with the keep-alive service running, a specialUse FGS
             // still gets its network deferred in deep sleep unless the app is
@@ -863,7 +885,10 @@ private fun QuickControlsCard(
                     stringResource(R.string.settings_turn_complete_alerts_off)
                 },
                 checked = notifyTurnComplete,
-                onCheckedChange = { connectionViewModel.setNotifyTurnComplete(it) },
+                onCheckedChange = { enabled ->
+                    connectionViewModel.setNotifyTurnComplete(enabled)
+                    if (enabled) requestNotificationPermission()
+                },
             )
         }
     }

@@ -372,6 +372,7 @@ class GatewayChatClient(
     private data class BackgroundTurn(
         val storedSessionId: String,
         val profile: String?,
+        @Volatile var pendingAsk: GatewayAsk? = null,
     )
 
     /**
@@ -409,6 +410,11 @@ class GatewayChatClient(
     @Volatile
     private var unmatchedTurnCompleteListener:
         ((GatewayBackgroundTurnCompletion) -> Unit)? = null
+
+    /** Input requested or resolved on a deliberately detached turn. */
+    @Volatile
+    private var backgroundInteractionListener:
+        ((GatewayBackgroundInteractionEvent) -> Unit)? = null
 
     /**
      * Connection-level process listener. Unlike [GatewayTurnCallbacks], this is
@@ -591,10 +597,23 @@ class GatewayChatClient(
         val turn = activeTurn?.takeIf { !it.ended } ?: return false
         val liveId = liveSessionId ?: return false
         val storedId = storedSessionId ?: return false
-        backgroundTurns[liveId] = BackgroundTurn(
+        val backgroundTurn = BackgroundTurn(
             storedSessionId = storedId,
             profile = liveSessionProfile,
+            pendingAsk = turn.pendingInteraction,
         )
+        backgroundTurns[liveId] = backgroundTurn
+        backgroundTurn.pendingAsk?.let { ask ->
+            callbackDispatcher {
+                backgroundInteractionListener?.invoke(
+                    GatewayBackgroundInteractionEvent.Requested(
+                        storedSessionId = storedId,
+                        profile = backgroundTurn.profile,
+                        ask = ask,
+                    ),
+                )
+            }
+        }
         turn.detach()
         return true
     }
@@ -662,6 +681,12 @@ class GatewayChatClient(
         listener: ((GatewayBackgroundTurnCompletion) -> Unit)?,
     ) {
         unmatchedTurnCompleteListener = listener
+    }
+
+    fun setBackgroundInteractionListener(
+        listener: ((GatewayBackgroundInteractionEvent) -> Unit)?,
+    ) {
+        backgroundInteractionListener = listener
     }
 
     fun setProcessEventListener(listener: ((GatewayProcessEvent) -> Unit)?) {
@@ -854,6 +879,9 @@ class GatewayChatClient(
                     }
                 }
                 boundTurn.releaseDeferredEvents()
+                claimedBackground?.pendingAsk?.let { ask ->
+                    boundTurn.restoreInteraction(ask)
+                }
                 boundTurn.armWatchdog()
             } else if (queued != null) {
                 // A queued-only snapshot belongs to the NEXT turn. Never let
@@ -1381,6 +1409,7 @@ class GatewayChatClient(
         unsolicitedTurnProvider = null
         coldPrewarmSessionReadyListener = null
         unmatchedTurnCompleteListener = null
+        backgroundInteractionListener = null
         processEventListener = null
         closeSocket("client shutdown")
         backgroundCloseJob?.cancel()
@@ -1792,6 +1821,30 @@ class GatewayChatClient(
             return
         }
 
+        // read_terminal is a renderer query, not a user decision. Android has
+        // no xterm pane on the Gateway chat surface, so mirror upstream
+        // desktop's no-live-pane behavior and answer with empty text instead
+        // of blocking the agent for the server's 30-second timeout.
+        if (type == "terminal.read.request") {
+            val requestId = payload?.stringField("request_id")
+            val ownedSession = !eventSessionId.isNullOrBlank() &&
+                (eventSessionId == liveSessionId || backgroundTurns.containsKey(eventSessionId))
+            if (!requestId.isNullOrBlank() && ownedSession) {
+                scope.launch {
+                    rpc(
+                        "terminal.read.respond",
+                        buildJsonObject {
+                            put("request_id", requestId)
+                            put("text", "")
+                        },
+                    ).onFailure {
+                        Log.w(TAG, "terminal.read.respond failed: ${it.message}")
+                    }
+                }
+            }
+            return
+        }
+
         // A profile/session switch may leave an upstream turn running while a
         // different profile becomes visible. Its events must never paint the
         // new transcript, but the terminal event still needs to reconcile the
@@ -1799,6 +1852,47 @@ class GatewayChatClient(
         // switches back.
         val backgroundTurn = eventSessionId?.let(backgroundTurns::get)
         if (backgroundTurn != null) {
+            val interactionRequest = GatewayEventMapper.interactionRequest(type, payload)
+            if (interactionRequest != null) {
+                val previous = backgroundTurn.pendingAsk
+                backgroundTurn.pendingAsk = interactionRequest
+                if (previous?.kind != interactionRequest.kind ||
+                    previous.requestId != interactionRequest.requestId
+                ) {
+                    callbackDispatcher {
+                        backgroundInteractionListener?.invoke(
+                            GatewayBackgroundInteractionEvent.Requested(
+                                storedSessionId = backgroundTurn.storedSessionId,
+                                profile = backgroundTurn.profile,
+                                ask = interactionRequest,
+                            ),
+                        )
+                    }
+                }
+                return
+            }
+
+            val expiry = GatewayEventMapper.interactionExpiry(type, payload)
+            val pendingAsk = backgroundTurn.pendingAsk
+            val explicitlyExpired = expiry != null && pendingAsk != null &&
+                pendingAsk.kind == expiry.kind &&
+                (pendingAsk.kind == GatewayAsk.Kind.APPROVAL ||
+                    pendingAsk.requestId == expiry.requestId)
+            val turnResumed = pendingAsk != null &&
+                GatewayEventMapper.isInteractionResumeEvent(type)
+            if (explicitlyExpired || turnResumed) {
+                backgroundTurn.pendingAsk = null
+                callbackDispatcher {
+                    backgroundInteractionListener?.invoke(
+                        GatewayBackgroundInteractionEvent.Resolved(
+                            storedSessionId = backgroundTurn.storedSessionId,
+                            profile = backgroundTurn.profile,
+                            ask = pendingAsk,
+                        ),
+                    )
+                }
+            }
+
             if (type == "message.complete" || type == "error") {
                 backgroundTurns.remove(eventSessionId, backgroundTurn)
                 val expectedText = if (type == "message.complete") payload?.stringField("text") else null
@@ -2271,7 +2365,7 @@ class GatewayChatClient(
     private fun watchdogTimeoutFor(eventType: String): Long = when (eventType) {
         "clarify.request", "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
         "sudo.request" -> ASK_SUDO_TIMEOUT_MS
-        "approval.request", "terminal.read.request" -> ASK_UNBOUNDED_TIMEOUT_MS
+        "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
         else -> turnIdleTimeoutMs
     }
 
@@ -2281,6 +2375,11 @@ class GatewayChatClient(
         deferEvents: Boolean = false,
     ) : ActiveTurnHandle {
         private val mapper = GatewayEventMapper(callbacks, dedupeAdjacentMessageStarts)
+        val pendingInteraction: GatewayAsk?
+            get() = mapper.currentInteraction
+        fun restoreInteraction(ask: GatewayAsk) {
+            mapper.restoreInteraction(ask)
+        }
         private val deferredEventLock = Any()
         private val deferredEvents = mutableListOf<Pair<String, JsonObject?>>()
         private var eventsDeferred = deferEvents
@@ -2620,6 +2719,7 @@ class GatewayChatClient(
         onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
         onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
         onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
+        onInteractionResolved = { v -> callbackDispatcher { callbacks.onInteractionResolved(v) } },
         // MUST be wrapped like every other member: GatewayTurnCallbacks gives
         // onStatusUpdate a default no-op, so omitting it here silently swallows
         // EVERY gateway status line — the ❌ terminal-error lifecycle update

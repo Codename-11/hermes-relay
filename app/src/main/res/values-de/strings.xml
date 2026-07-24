@@ -662,9 +662,9 @@
     <string name="settings_persistent_connection">Dauerhafte Verbindung</string>
     <string name="settings_persistent_connection_desc">Verbindung zu Hermes im Hintergrund offen halten</string>
     <string name="settings_connect_on_demand">Nur bei Bedarf verbinden · spart Akku</string>
-    <string name="settings_turn_complete_alerts">Hinweise bei Abschluss</string>
-    <string name="settings_turn_complete_alerts_desc">Benachrichtigen, wenn eine Antwort abgeschlossen wird, während die App im Hintergrund ist</string>
-    <string name="settings_turn_complete_alerts_off">Kein Hinweis, wenn eine Antwort im Hintergrund abgeschlossen wird</string>
+    <string name="settings_turn_complete_alerts">Chat-Benachrichtigungen</string>
+    <string name="settings_turn_complete_alerts_desc">Benachrichtigen, wenn Hermes Eingaben benötigt oder im Hintergrund fertig wird</string>
+    <string name="settings_turn_complete_alerts_off">Keine Benachrichtigungen für Chat-Aktivität im Hintergrund</string>
     <string name="settings_keep_connected_deep_sleep">Im Tiefschlaf verbunden bleiben</string>
     <string name="settings_keep_connected_battery_desc">Android kann die Verbindung weiterhin pausieren, nachdem der Bildschirm eine Weile ausgeschaltet war (Doze). Erlaube uneingeschränkte Akkunutzung, damit die dauerhafte Verbindung im Hintergrund funktioniert.</string>
     <string name="settings_allow_unrestricted_battery">Uneingeschränkte Akkunutzung erlauben</string>
@@ -694,8 +694,8 @@
     <string name="chat_settings_recent_prompt_chips_desc">Letzte Nachrichten als antippbare Chips über dem Eingabefeld anzeigen, um sie erneut zu senden. Standardmäßig aus.</string>
     <string name="chat_settings_keep_keyboard_open">Tastatur nach dem Senden geöffnet lassen</string>
     <string name="chat_settings_keep_keyboard_open_desc">Nach dem Senden im Eingabefeld bleiben. Ausschalten, um die Tastatur nach jeder gesendeten Nachricht zu schließen.</string>
-    <string name="chat_settings_notify_when_finishes">Benachrichtigen, wenn Hermes fertig ist</string>
-    <string name="chat_settings_notify_when_finishes_desc">Benachrichtigung senden, wenn eine Antwort abgeschlossen wird, während die App im Hintergrund ist</string>
+    <string name="chat_settings_notify_when_finishes">Chat-Benachrichtigungen im Hintergrund</string>
+    <string name="chat_settings_notify_when_finishes_desc">Benachrichtigen, wenn Hermes Eingaben benötigt oder im Hintergrund fertig wird</string>
     <string name="chat_settings_share_phone_status">Smartphone-Status mit Agent teilen</string>
     <string name="chat_settings_share_phone_status_desc">Bei jedem Chatdurchlauf eine kurze Systemnachricht über App und Smartphone einfügen</string>
     <string name="chat_settings_bridge_permissions">Bridge + Berechtigungen</string>
