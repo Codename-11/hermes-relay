@@ -662,9 +662,9 @@
     <string name="settings_persistent_connection">持久连接</string>
     <string name="settings_persistent_connection_desc">在后台保持与 Hermes 的连接</string>
     <string name="settings_connect_on_demand">仅按需连接 · 省电</string>
-    <string name="settings_turn_complete_alerts">回合完成提醒</string>
-    <string name="settings_turn_complete_alerts_desc">应用在后台时回复完成则通知</string>
-    <string name="settings_turn_complete_alerts_off">后台回复完成时不提醒</string>
+    <string name="settings_turn_complete_alerts">聊天提醒</string>
+    <string name="settings_turn_complete_alerts_desc">Hermes 在后台需要输入或完成回复时通知</string>
+    <string name="settings_turn_complete_alerts_off">不提醒后台聊天活动</string>
     <string name="settings_keep_connected_deep_sleep">在深度睡眠中保持连接</string>
     <string name="settings_keep_connected_battery_desc">屏幕关闭一段时间后 Android 仍可能暂停连接（Doze）。允许不受限制的电池使用，让持久连接在后台继续工作。</string>
     <string name="settings_allow_unrestricted_battery">允许不受限制的电池</string>
@@ -694,8 +694,8 @@
     <string name="chat_settings_recent_prompt_chips_desc">在输入栏上方显示最近消息为可点击的标签以便重发。默认关闭。</string>
     <string name="chat_settings_keep_keyboard_open">发送时保持键盘打开</string>
     <string name="chat_settings_keep_keyboard_open_desc">发送后留在输入栏。关闭则在每条消息发送后收起键盘。</string>
-    <string name="chat_settings_notify_when_finishes">Hermes 完成时通知</string>
-    <string name="chat_settings_notify_when_finishes_desc">应用在后台时回复完成则发送通知</string>
+    <string name="chat_settings_notify_when_finishes">后台聊天提醒</string>
+    <string name="chat_settings_notify_when_finishes_desc">Hermes 在后台需要输入或完成回复时通知</string>
     <string name="chat_settings_share_phone_status">与代理分享手机状态</string>
     <string name="chat_settings_share_phone_status_desc">每轮聊天附带一条关于应用和手机的简短系统消息</string>
     <string name="chat_settings_bridge_permissions">Bridge + 权限</string>

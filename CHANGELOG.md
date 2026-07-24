@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android alerts when a background Gateway turn needs input.** Approval, clarification, elevated-permission, and secret requests post privacy-safe notifications that reopen the correct conversation, survive reconnect replay without duplicates, and clear when the request is answered or expires.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
 ## [Server 1.4.3] - 2026-07-22

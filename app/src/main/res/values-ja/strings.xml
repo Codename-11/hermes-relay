@@ -662,9 +662,9 @@
     <string name="settings_persistent_connection">永続的な接続</string>
     <string name="settings_persistent_connection_desc">Hermes への接続をバッ​​クグラウンドで開いたままにします</string>
     <string name="settings_connect_on_demand">オンデマンドのみに接続します · バッテリーを節約します</string>
-    <string name="settings_turn_complete_alerts">ターン完了アラート</string>
-    <string name="settings_turn_complete_alerts_desc">アプリがバックグラウンドで動作しているときに返信が完了したときに通知する</string>
-    <string name="settings_turn_complete_alerts_off">バックグラウンドでの返信が終了してもアラートは表示されません</string>
+    <string name="settings_turn_complete_alerts">チャット通知</string>
+    <string name="settings_turn_complete_alerts_desc">バックグラウンドで Hermes が入力を必要としたとき、または完了したときに通知します</string>
+    <string name="settings_turn_complete_alerts_off">バックグラウンドのチャット動作を通知しません</string>
     <string name="settings_keep_connected_deep_sleep">深い睡眠中も接続を維持する</string>
     <string name="settings_keep_connected_battery_desc">Android は、画面がしばらくオフになった後でも接続を一時停止できます (Doze)。永続的な接続がバックグラウンドで動作し続けるように、無制限のバッテリーを許可します。</string>
     <string name="settings_allow_unrestricted_battery">無制限のバッテリーを許可する</string>
@@ -694,8 +694,8 @@
     <string name="chat_settings_recent_prompt_chips_desc">最近のメッセージをコンポーザーの上にタップ可能なチップとして表示し、再送信します。デフォルトではオフです。</string>
     <string name="chat_settings_keep_keyboard_open">送信時にキーボードを開いたままにする</string>
     <string name="chat_settings_keep_keyboard_open_desc">送信後はコンポーザー内に留まります。メッセージを送信するたびにキーボードを閉じるには、オフにします。</string>
-    <string name="chat_settings_notify_when_finishes">Hermes が終了したら通知する</string>
-    <string name="chat_settings_notify_when_finishes_desc">アプリがバックグラウンドで動作中に返信が完了したときに通知を投稿する</string>
+    <string name="chat_settings_notify_when_finishes">バックグラウンドのチャット通知</string>
+    <string name="chat_settings_notify_when_finishes_desc">バックグラウンドで Hermes が入力を必要としたとき、または完了したときに通知します</string>
     <string name="chat_settings_share_phone_status">電話のステータスをエージェントと共有する</string>
     <string name="chat_settings_share_phone_status_desc">すべてのチャット ターンにアプリと電話に関する短いシステム メッセージを含めます</string>
     <string name="chat_settings_bridge_permissions">Bridge + 権限</string>

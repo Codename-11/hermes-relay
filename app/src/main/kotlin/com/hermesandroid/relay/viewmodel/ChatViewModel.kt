@@ -44,6 +44,7 @@ import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
 import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayAskExpiry
 import com.hermesandroid.relay.network.upstream.GatewayAskResponse
+import com.hermesandroid.relay.network.upstream.GatewayBackgroundInteractionEvent
 import com.hermesandroid.relay.network.upstream.GatewayBackgroundTurnCompletion
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayCompressResult
@@ -71,6 +72,7 @@ import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.models.SkillInfo
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
+import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.ui.components.ServerImageResult
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
@@ -1082,6 +1084,7 @@ class ChatViewModel : ViewModel() {
             previousClient?.setUnsolicitedTurnProvider(null)
             previousClient?.setColdPrewarmSessionReadyListener(null)
             previousClient?.setUnmatchedTurnCompleteListener(null)
+            previousClient?.setBackgroundInteractionListener(null)
         }
         gatewayClient = client
         if (changed) {
@@ -1142,6 +1145,28 @@ class ChatViewModel : ViewModel() {
                 storedSessionId = completion.storedSessionId,
                 expectedAssistantText = completion.expectedAssistantText,
             )
+        }
+        client?.setBackgroundInteractionListener { event ->
+            when (event) {
+                is GatewayBackgroundInteractionEvent.Requested -> {
+                    backgroundPendingInteractions[event.storedSessionId] =
+                        BackgroundPendingInteraction(event.profile, event.ask)
+                    maybeNotifyInteraction(event.storedSessionId, event.ask, event.profile)
+                }
+                is GatewayBackgroundInteractionEvent.Resolved -> {
+                    backgroundPendingInteractions.computeIfPresent(event.storedSessionId) { _, current ->
+                        if (current.profile == event.profile &&
+                            current.ask.kind == event.ask.kind &&
+                            current.ask.requestId == event.ask.requestId
+                        ) {
+                            null
+                        } else {
+                            current
+                        }
+                    }
+                    cancelInteractionNotification(event.storedSessionId, event.ask, event.profile)
+                }
+            }
         }
         // (Re)bind the session.info state sync to the live client so server-side
         // personality/model changes drive the UI. Cancelled when the client drops.
@@ -1368,6 +1393,9 @@ class ChatViewModel : ViewModel() {
             },
             onInteractionExpired = { expiry ->
                 if (acceptsEvent()) expirePendingAsk(expiry)
+            },
+            onInteractionResolved = { resolved ->
+                if (acceptsEvent()) resolvePendingAsk(resolved)
             },
             onStatusUpdate = { kind, text ->
                 if (acceptsEvent()) {
@@ -1628,6 +1656,13 @@ class ChatViewModel : ViewModel() {
      */
     private val _pendingAsk = MutableStateFlow<PendingAsk?>(null)
     val pendingAsk: StateFlow<PendingAsk?> = _pendingAsk.asStateFlow()
+    private data class BackgroundPendingInteraction(
+        val profile: String?,
+        val ask: GatewayAsk,
+    )
+
+    private val backgroundPendingInteractions =
+        ConcurrentHashMap<String, BackgroundPendingInteraction>()
 
     /** Ask cardKeys with a respond RPC in flight — blocks double-taps until it settles. */
     private val answeredAskIds = mutableSetOf<String>()
@@ -1718,11 +1753,17 @@ class ChatViewModel : ViewModel() {
     val openModelPicker: SharedFlow<Unit> = _openModelPicker.asSharedFlow()
 
     /**
-     * "Notify when Hermes finishes" setting — mirrored from
+     * Chat alerts setting — mirrored from
      * ConnectionViewModel's DataStore flow by RelayApp, same pattern as
-     * [appContextSettings]. Default ON matches the DataStore default.
+     * [appContextSettings]. It covers background turn completion and
+     * action-required Gateway interactions. Default ON matches the DataStore
+     * default and keeps the existing preference key backward-compatible.
      */
     var notifyOnTurnComplete: Boolean = true
+        set(value) {
+            field = value
+            if (!value) appContext?.let(InteractionRequestNotifier::cancelAll)
+        }
 
     /**
      * Edit-and-regenerate: 0-based USER ordinal armed by
@@ -2438,6 +2479,7 @@ class ChatViewModel : ViewModel() {
                 _pendingAttachments.value = emptyList()
                 _steerableTurn.value = false
                 _steerNotice.value = null
+                dismissPendingAskNotification()
                 _pendingAsk.value = null
                 _contextUsage.value = null
                 _contextWindow.value = null
@@ -2502,6 +2544,7 @@ class ChatViewModel : ViewModel() {
         _pendingAttachments.value = emptyList()
         _steerableTurn.value = false
         _steerNotice.value = null
+        dismissPendingAskNotification()
         _pendingAsk.value = null
         _contextUsage.value = null
         _contextWindow.value = null
@@ -2757,6 +2800,7 @@ class ChatViewModel : ViewModel() {
             handler.clearMessages()
             _contextUsage.value = null
             _contextWindow.value = null
+            dismissPendingAskNotification()
             _pendingAsk.value = null
             _yoloEnabled.value = null
             _fastEnabled.value = null
@@ -2795,6 +2839,7 @@ class ChatViewModel : ViewModel() {
                         handler.clearMessages()
                         _contextUsage.value = null
                         _contextWindow.value = null
+                        dismissPendingAskNotification()
                         _pendingAsk.value = null
                         _yoloEnabled.value = null
                         _fastEnabled.value = null
@@ -2839,6 +2884,7 @@ class ChatViewModel : ViewModel() {
         handler.clearMessages()
         _contextUsage.value = null
         _contextWindow.value = null
+        dismissPendingAskNotification()
         _pendingAsk.value = null
         onSessionChanged?.invoke(null)
     }
@@ -2900,6 +2946,7 @@ class ChatViewModel : ViewModel() {
         handler.clearMessages()
         _contextUsage.value = null
         _contextWindow.value = null
+        dismissPendingAskNotification()
         _pendingAsk.value = null
         _yoloEnabled.value = null
         _fastEnabled.value = null
@@ -3225,6 +3272,13 @@ class ChatViewModel : ViewModel() {
 
     // === Gateway interactive asks ===
 
+    private fun dismissPendingAskNotification() {
+        val pending = _pendingAsk.value ?: return
+        chatHandler?.currentSessionId?.value?.let {
+            cancelInteractionNotification(it, pending.ask)
+        }
+    }
+
     /**
      * Build the local ask card for a gateway interaction request and track
      * it as the pending ask. Card id (= cardKey) is the ask's `request_id`,
@@ -3237,6 +3291,19 @@ class ChatViewModel : ViewModel() {
         ask: GatewayAsk,
         restored: ChatTurnAskCheckpoint? = null,
     ) {
+        val sessionId = handler.currentSessionId.value
+        val existing = _pendingAsk.value
+        if (existing != null &&
+            existing.ask.kind == ask.kind &&
+            existing.ask.requestId == ask.requestId
+        ) {
+            sessionId?.let { maybeNotifyInteraction(it, existing.ask) }
+            return
+        }
+        existing?.let { pending ->
+            sessionId?.let { cancelInteractionNotification(it, pending.ask) }
+        }
+        sessionId?.let { backgroundPendingInteractions.remove(it) }
         val now = restored?.receivedAt ?: System.currentTimeMillis()
         val cardKey = restored?.cardKey ?: ask.requestId
             ?: "approval-${handler.currentSessionId.value ?: "session"}-$now"
@@ -3337,6 +3404,7 @@ class ChatViewModel : ViewModel() {
             receivedAt = now,
         )
         scheduleCheckpointWrite(immediate = true)
+        sessionId?.let { maybeNotifyInteraction(it, ask) }
     }
 
     /** Render only upstream-supported approval values; old servers retain Approve/Deny. */
@@ -3435,6 +3503,9 @@ class ChatViewModel : ViewModel() {
                     // must leave the card answerable for a retry.
                     handler.recordCardDispatch(pending.messageId, cardKey, stampValue)
                     if (_pendingAsk.value === pending) {
+                        handler.currentSessionId.value?.let {
+                            cancelInteractionNotification(it, pending.ask)
+                        }
                         _pendingAsk.value = null
                         scheduleCheckpointWrite(immediate = true)
                     }
@@ -3460,6 +3531,9 @@ class ChatViewModel : ViewModel() {
             val requestId = expiry.requestId?.takeIf { it.isNotBlank() } ?: return
             if (pending.ask.requestId != requestId) return
         }
+        chatHandler?.currentSessionId?.value?.let {
+            cancelInteractionNotification(it, pending.ask)
+        }
         _pendingAsk.value = null
         answeredAskIds.remove(pending.cardKey)
         scheduleCheckpointWrite(immediate = true)
@@ -3468,6 +3542,17 @@ class ChatViewModel : ViewModel() {
             pending.cardKey,
             HermesCardDispatch.EXPIRED_STAMP,
         )
+    }
+
+    private fun resolvePendingAsk(resolution: GatewayAskExpiry) {
+        val pending = _pendingAsk.value ?: return
+        if (pending.ask.kind != resolution.kind) return
+        if (resolution.kind != GatewayAsk.Kind.APPROVAL &&
+            pending.ask.requestId != resolution.requestId
+        ) {
+            return
+        }
+        clearPendingAsk(approvalStamp = "Resolved")
     }
 
     /**
@@ -3479,6 +3564,9 @@ class ChatViewModel : ViewModel() {
      */
     private fun clearPendingAsk(approvalStamp: String) {
         val pending = _pendingAsk.value ?: return
+        chatHandler?.currentSessionId?.value?.let {
+            cancelInteractionNotification(it, pending.ask)
+        }
         _pendingAsk.value = null
         scheduleCheckpointWrite(immediate = true)
         if (pending.ask.kind == GatewayAsk.Kind.APPROVAL) {
@@ -3768,6 +3856,31 @@ class ChatViewModel : ViewModel() {
 
     // === Turn-complete notification ===
 
+    private fun maybeNotifyInteraction(
+        sessionId: String,
+        ask: GatewayAsk,
+        profile: String? = sessionProfileNameProvider(),
+    ) {
+        val context = appContext ?: return
+        InteractionRequestNotifier.notify(
+            context = context,
+            sessionId = sessionId,
+            ask = ask,
+            profile = profile,
+            alertsEnabled = notifyOnTurnComplete,
+            appForeground = AppForegroundTracker.isForeground.value,
+        )
+    }
+
+    private fun cancelInteractionNotification(
+        sessionId: String,
+        ask: GatewayAsk,
+        profile: String? = sessionProfileNameProvider(),
+    ) {
+        val context = appContext ?: return
+        InteractionRequestNotifier.cancel(context, sessionId, ask, profile)
+    }
+
     /**
      * Post the one-shot "Hermes finished" notification when the turn ends
      * while the app is backgrounded. Never fires for cancelled streams
@@ -3806,7 +3919,25 @@ class ChatViewModel : ViewModel() {
         if (checkpointForegroundJob == null) {
             checkpointForegroundJob = viewModelScope.launch {
                 AppForegroundTracker.isForeground.collect { foreground ->
-                    if (!foreground) scheduleCheckpointWrite(immediate = true)
+                    val context = appContext
+                    if (foreground) {
+                        context?.let(InteractionRequestNotifier::cancelAll)
+                    } else {
+                        scheduleCheckpointWrite(immediate = true)
+                        val handler = chatHandler
+                        val sessionId = handler?.currentSessionId?.value
+                        val pending = _pendingAsk.value
+                        if (sessionId != null && pending != null) {
+                            maybeNotifyInteraction(sessionId, pending.ask)
+                        }
+                        backgroundPendingInteractions.forEach { (backgroundSessionId, pending) ->
+                            maybeNotifyInteraction(
+                                backgroundSessionId,
+                                pending.ask,
+                                pending.profile,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -4361,6 +4492,9 @@ class ChatViewModel : ViewModel() {
             },
             onInteractionExpired = { expiry ->
                 if (owns()) expirePendingAsk(expiry)
+            },
+            onInteractionResolved = { resolved ->
+                if (owns()) resolvePendingAsk(resolved)
             },
             onStatusUpdate = { kind, text ->
                 if (owns()) {
@@ -6381,6 +6515,9 @@ class ChatViewModel : ViewModel() {
                         onInteractionExpired = { expiry ->
                             expirePendingAsk(expiry)
                         },
+                        onInteractionResolved = { resolved ->
+                            resolvePendingAsk(resolved)
+                        },
                         onStatusUpdate = { kind, text ->
                             handler.setTurnStatus(text, kind)
                             // The server prefixes terminal failures with ❌ —
@@ -7039,6 +7176,8 @@ class ChatViewModel : ViewModel() {
         gatewayClient?.setUnsolicitedTurnProvider(null)
         gatewayClient?.setColdPrewarmSessionReadyListener(null)
         gatewayClient?.setUnmatchedTurnCompleteListener(null)
+        gatewayClient?.setBackgroundInteractionListener(null)
+        backgroundPendingInteractions.clear()
         gatewayHistoryReconcileJob?.cancel()
         gatewayHistoryReconcileJob = null
         backgroundProcessSessionJob?.cancel()

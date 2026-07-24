@@ -133,6 +133,25 @@ data class GatewayBackgroundTurnCompletion(
     val expectedAssistantText: String?,
 )
 
+/** Input lifecycle from a deliberately detached Gateway turn. */
+sealed interface GatewayBackgroundInteractionEvent {
+    val storedSessionId: String
+    val profile: String?
+    val ask: GatewayAsk
+
+    data class Requested(
+        override val storedSessionId: String,
+        override val profile: String?,
+        override val ask: GatewayAsk,
+    ) : GatewayBackgroundInteractionEvent
+
+    data class Resolved(
+        override val storedSessionId: String,
+        override val profile: String?,
+        override val ask: GatewayAsk,
+    ) : GatewayBackgroundInteractionEvent
+}
+
 /**
  * One server-side interactive ask. The agent thread upstream is BLOCKED
  * until the matching respond RPC arrives, the ask times out (resolves to ""
@@ -387,6 +406,8 @@ class GatewayTurnCallbacks(
     val onInteractionRequest: (GatewayAsk) -> Unit,
     /** Server declared a pending interaction expired; clear only the matching card. */
     val onInteractionExpired: (GatewayAskExpiry) -> Unit,
+    /** The turn resumed after a pending interaction was resolved elsewhere. */
+    val onInteractionResolved: (GatewayAskExpiry) -> Unit = { _ -> },
     /**
      * Gateway `status.update` lifecycle line — model fallback, retries, and
      * errors (often emoji-prefixed: 🔄 fallback, ⏳ retry, ❌ error). Default
