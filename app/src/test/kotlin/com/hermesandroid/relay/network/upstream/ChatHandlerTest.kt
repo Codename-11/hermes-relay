@@ -745,6 +745,62 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_skipsTypedHiddenDisplayRows() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "hidden-1",
+                    role = "user",
+                    content = JsonPrimitive("internal compaction handoff"),
+                    displayKind = "hidden",
+                ),
+                MessageItem(id = "visible-1", role = "user", content = JsonPrimitive("visible")),
+            ),
+        )
+
+        assertEquals(1, handler.messages.value.size)
+        assertEquals("visible", handler.messages.value.single().content)
+    }
+
+    @Test
+    fun loadMessageHistory_rendersTypedModelSwitchAsSystemTimelineRow() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "model-1",
+                    role = "user",
+                    content = JsonPrimitive("The model changed"),
+                    displayKind = "model_switch",
+                    displayMetadata = buildJsonObject { put("model", "gpt-5.6") },
+                ),
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals(MessageRole.SYSTEM, msg.role)
+        assertEquals("Model changed to gpt-5.6", msg.content)
+    }
+
+    @Test
+    fun loadMessageHistory_rendersTypedDelegationCompletionAsSystemTimelineRow() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "delegation-1",
+                    role = "user",
+                    content = JsonPrimitive("background task complete"),
+                    displayKind = "async_delegation_complete",
+                    displayMetadata = buildJsonObject { put("task_count", 2) },
+                ),
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals(MessageRole.SYSTEM, msg.role)
+        assertEquals("2 background tasks completed", msg.content)
+    }
+
+    @Test
     fun loadMessageHistory_skipsToolMessages() {
         val items = listOf(
             MessageItem(id = "1", role = "user", content = JsonPrimitive("Hello")),

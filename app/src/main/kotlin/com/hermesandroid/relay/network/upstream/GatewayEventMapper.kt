@@ -324,6 +324,13 @@ class GatewayEventMapper(
                 ),
             )
 
+            "clarify.expire" -> callbacks.onInteractionExpired(
+                GatewayAskExpiry(
+                    kind = GatewayAsk.Kind.CLARIFY,
+                    requestId = payload.string("request_id"),
+                ),
+            )
+
             // Forward-compatible consumer for the proposed upstream approval
             // expiry event. Approvals correlate by session, never request id.
             "approval.expire" -> callbacks.onInteractionExpired(

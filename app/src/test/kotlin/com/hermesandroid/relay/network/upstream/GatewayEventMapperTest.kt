@@ -682,18 +682,24 @@ class GatewayEventMapperTest {
     }
 
     @Test
-    fun `sudo secret and approval expiry events preserve correlation contract`() {
+    fun `sudo secret clarify and approval expiry events preserve correlation contract`() {
         val r = Recorder()
         val mapper = mapperWith(r)
         mapper.onEvent("sudo.expire", obj("""{"request_id":"r2"}"""))
         mapper.onEvent("secret.expire", obj("""{"request_id":"r3"}"""))
+        mapper.onEvent("clarify.expire", obj("""{"request_id":"r4"}"""))
         mapper.onEvent("approval.expire", obj("""{"request_id":"ignored"}"""))
 
         assertEquals(
-            listOf(GatewayAsk.Kind.SUDO, GatewayAsk.Kind.SECRET, GatewayAsk.Kind.APPROVAL),
+            listOf(
+                GatewayAsk.Kind.SUDO,
+                GatewayAsk.Kind.SECRET,
+                GatewayAsk.Kind.CLARIFY,
+                GatewayAsk.Kind.APPROVAL,
+            ),
             r.interactionExpiries.map { it.kind },
         )
-        assertEquals(listOf("r2", "r3", null), r.interactionExpiries.map { it.requestId })
+        assertEquals(listOf("r2", "r3", "r4", null), r.interactionExpiries.map { it.requestId })
     }
 
     // --- Forward compat ---
@@ -722,7 +728,7 @@ class GatewayEventMapperTest {
             "reasoning.delta", "thinking.delta", "message.delta", "message.interim", "message.start",
             "message.complete", "error", "clarify.request", "approval.request",
             "sudo.request", "secret.request", "reasoning.available",
-            "sudo.expire", "secret.expire", "approval.expire",
+            "sudo.expire", "secret.expire", "clarify.expire", "approval.expire",
             "tool.generating", "subagent.start", "subagent.thinking",
             "subagent.tool", "subagent.progress", "subagent.complete",
             "tool.output_risk", "moa.reference", "moa.aggregating",
