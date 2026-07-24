@@ -1,5 +1,16 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-23 — Bounded Android code-highlighting ranges
+
+Android Markdown code rendering now validates every syntax-highlighting span
+before applying it to Compose text. The bundled highlighting dependency can
+emit a reversed multiline-comment range when malformed or incomplete code
+contains a closing delimiter before its opening delimiter; the Markdown
+renderer previously passed that range directly to `AnnotatedString` and
+crashed. Both fenced and indented code use the guarded renderer, valid spans
+remain highlighted, and malformed ranges are clipped or ignored. Focused JVM
+coverage reproduces the dependency output and verifies the safe conversion.
+
 ## 2026-07-20 — Image generation placeholder during turns
 
 Android chat now specializes the generic tool lifecycle for active
