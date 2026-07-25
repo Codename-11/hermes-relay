@@ -4,12 +4,15 @@ import android.content.Context
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
+import com.hermesandroid.relay.network.upstream.DashboardBearerAuth
+import com.hermesandroid.relay.network.upstream.EncryptedNativeDashboardTokenStore
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.network.upstream.resolveStreamingEndpointPreference
+import com.hermesandroid.relay.network.upstream.trustedDashboardBearerAuthOrNull
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +81,8 @@ class UpstreamTransportController(
     /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
     private val dashboardCookieStores =
         ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
+    private val dashboardTokenStores =
+        ConcurrentHashMap<String, EncryptedNativeDashboardTokenStore>()
 
     /**
      * Cookie store for [connectionId] — ONE instance per connection,
@@ -107,6 +112,27 @@ class UpstreamTransportController(
         return dashboardCookieStoreFor(connectionId)
     }
 
+    private fun dashboardTokenStoreFor(connectionId: String): EncryptedNativeDashboardTokenStore {
+        val key = tokenStoreKeyProvider(connectionId)
+            ?: com.hermesandroid.relay.data.Connection.buildTokenStoreKey(connectionId)
+        return dashboardTokenStores.getOrPut(connectionId) {
+            EncryptedNativeDashboardTokenStore(context, key)
+        }
+    }
+
+    private fun bearerAuthForTrustedDashboard(
+        connectionId: String,
+        dashboardUrl: String,
+    ): DashboardBearerAuth? {
+        if (activeConnectionIdProvider() != connectionId) return null
+        val trustedDashboardUrl = dashboardUrlProvider() ?: return null
+        return trustedDashboardBearerAuthOrNull(
+            candidate = dashboardUrl,
+            trusted = trustedDashboardUrl,
+            tokenStoreProvider = { dashboardTokenStoreFor(connectionId) },
+        )
+    }
+
     // --- DashboardApiClient factory ----------------------------------------
 
     /**
@@ -120,6 +146,7 @@ class UpstreamTransportController(
             baseUrl = dashboardUrl,
             okHttpClient = DashboardApiClient.defaultClient(
                 cookieStore = dashboardCookieStoreFor(connectionId),
+                bearerAuth = bearerAuthForTrustedDashboard(connectionId, dashboardUrl),
             ),
         )
 
@@ -133,6 +160,9 @@ class UpstreamTransportController(
             baseUrl = dashboardUrl,
             okHttpClient = DashboardApiClient.defaultClient(
                 cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
+                bearerAuth = activeConnectionIdProvider()?.let {
+                    bearerAuthForTrustedDashboard(it, dashboardUrl)
+                },
             ),
         )
 
