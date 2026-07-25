@@ -158,6 +158,7 @@ data class DashboardCustomEndpointDraft(
     val name: String,
     val baseUrl: String,
     val model: String,
+    val models: List<String> = emptyList(),
     val apiKey: String? = null,
     val contextLength: Int? = null,
     val discoverModels: Boolean = true,
@@ -1136,11 +1137,23 @@ class DashboardApiClient(
                 put("name", draft.name)
                 put("base_url", draft.baseUrl)
                 put("model", draft.model)
+                draft.models
+                    .asSequence()
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+                    .distinct()
+                    .take(MAX_CUSTOM_ENDPOINT_MODELS)
+                    .map(::JsonPrimitive)
+                    .toList()
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { put("models", JsonArray(it)) }
                 draft.apiKey?.takeIf { it.isNotBlank() }?.let { put("api_key", it) }
                 draft.contextLength?.takeIf { it > 0 }?.let { put("context_length", it) }
                 put("discover_models", draft.discoverModels)
                 put("make_default", draft.makeDefault)
             }
+
+        private const val MAX_CUSTOM_ENDPOINT_MODELS = 256
 
         fun defaultClient(
             cookieStore: DashboardCookieStore = InMemoryDashboardCookieStore(),
