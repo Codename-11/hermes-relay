@@ -1,5 +1,18 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-25 — Immutable Android release dispatch repair
+
+Android approval now dispatches the current release workflow definition from
+`main`, while every release job explicitly checks out the immutable
+`android-v*` tag. Validation confirms the dispatched version resolves to that
+checked-out commit and accepts the repository's surface-qualified
+`[Android x.y.z]` changelog heading. Existing tags remain unchanged, and a
+workflow-only correction can resume a failed publication without rebuilding
+from a different application tree.
+
+Audited `.github/workflows/approve-release-android.yml`,
+`.github/workflows/release-android.yml`, `RELEASE.md`, and `DEVLOG.md`.
+
 ## 2026-07-25 — Android 1.5.0 final release reconciliation
 
 The final Android 1.5.0 release tree reconciles the accumulated Dashboard-first
