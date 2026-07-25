@@ -872,7 +872,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val isInsecureConnection: StateFlow<Boolean> = connectionManager.isInsecureConnection
 
     // --- API Server state ---
-    private val _apiServerUrl = MutableStateFlow(DEFAULT_API_URL)
+    // Blank is the unhydrated sentinel. Seeding this with the legacy localhost
+    // default made a discovered remote API candidate look explicitly configured
+    // during the first DataStore frame, briefly building an unauthenticated
+    // Sessions client before a Dashboard-only connection restored its saved
+    // blank URL.
+    private val _apiServerUrl = MutableStateFlow("")
     val apiServerUrl: StateFlow<String> = _apiServerUrl.asStateFlow()
 
     private val _apiServerReachable = MutableStateFlow(false)
@@ -1058,7 +1063,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         connectionManager.activeEndpoint,
     ) { savedUrl, endpoint ->
         resolveEffectiveApiServerUrl(savedUrl, endpoint)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_API_URL)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /**
      * Whether a chat turn is currently streaming — mirrored from

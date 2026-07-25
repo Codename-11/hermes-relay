@@ -80,8 +80,9 @@ enum class GatewayApprovalModeCapability {
  *
  * Manual picks pass through untouched (ChatViewModel handles per-turn
  * fallback when a "gateway" pick can't serve a send); "auto" prefers the
- * gateway only when the dashboard probe says [GatewayAvailability.Ready],
- * otherwise it falls back to the capability-preferred SSE endpoint.
+ * gateway while the dashboard probe is unresolved or ready. A capability-
+ * preferred SSE fallback is selected only after a definitive unavailable,
+ * unsupported, or sign-in-required verdict.
  */
 fun resolveStreamingEndpointPreference(
     preference: String,
@@ -89,7 +90,10 @@ fun resolveStreamingEndpointPreference(
     capabilities: ServerCapabilities,
 ): String = when (preference) {
     "sessions", "completions", "runs", "gateway" -> preference
-    else -> if (gateway == GatewayAvailability.Ready) {
+    else -> if (
+        gateway == GatewayAvailability.Ready ||
+        gateway == GatewayAvailability.Unknown
+    ) {
         "gateway"
     } else {
         capabilities.preferredChatEndpoint()
