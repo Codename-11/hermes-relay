@@ -74,9 +74,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -752,10 +756,29 @@ fun AgentInfoSheet(
         connectionViewModel.refreshDashboardProfiles()
     }
 
+    val passportScrollState = rememberScrollState()
+    val passportNestedScrollConnection = remember(passportScrollState) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                val isDownwardBodyDrag =
+                    source == NestedScrollSource.UserInput &&
+                        available.y > 0f &&
+                        passportScrollState.value == 0
+                return if (isDownwardBodyDrag) {
+                    Offset(x = 0f, y = available.y)
+                } else {
+                    Offset.Zero
+                }
+            }
+        }
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        sheetGesturesEnabled = false,
         dragHandle = {
             Box(
                 modifier = Modifier
@@ -769,8 +792,9 @@ fun AgentInfoSheet(
     ) {
         Column(
             modifier = Modifier
+                .nestedScroll(passportNestedScrollConnection)
                 .verticalScroll(
-                    state = rememberScrollState(),
+                    state = passportScrollState,
                     overscrollEffect = null,
                 )
                 .padding(horizontal = 20.dp, vertical = 4.dp)
@@ -1039,7 +1063,9 @@ fun AgentInfoSheet(
                         },
                 ) {
                     Row(
-                        modifier = Modifier.padding(vertical = 16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -1206,6 +1232,12 @@ private fun AgentPassportHeader(
                                     color = MaterialTheme.colorScheme.primary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
+                                )
+                                Icon(
+                                    imageVector = Icons.Filled.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
                         }
