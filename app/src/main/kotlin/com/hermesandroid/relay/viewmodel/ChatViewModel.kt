@@ -2401,6 +2401,9 @@ class ChatViewModel : ViewModel() {
             handler.onMediaBarePathRequested = { messageId, originalPath ->
                 onMediaBarePathRequested(messageId, originalPath)
             }
+            handler.onPersistedUserImageRequested = { messageId, originalPath ->
+                onPersistedUserImageRequested(messageId, originalPath)
+            }
         }
     }
 
@@ -6812,28 +6815,67 @@ class ChatViewModel : ViewModel() {
     }
 
     fun onMediaBarePathRequested(messageId: String, originalPath: String) {
+        onPathMediaRequested(
+            messageId = messageId,
+            originalPath = originalPath,
+            expectedRole = MessageRole.ASSISTANT,
+            unavailableMessage = "Media pipeline not ready",
+        )
+    }
+
+    /**
+     * Rehydrate a canonical upstream `@image:` reference on a persisted USER
+     * row. The handler admits only full-line, absolute image paths emitted by
+     * upstream. Fetching still requires a paired Relay session and goes through
+     * Relay's authenticated `/media/by-path` guard; vanilla connections receive
+     * a path-free unavailable attachment instead.
+     */
+    fun onPersistedUserImageRequested(messageId: String, originalPath: String) {
+        onPathMediaRequested(
+            messageId = messageId,
+            originalPath = originalPath,
+            expectedRole = MessageRole.USER,
+            unavailableMessage = "Image unavailable on this connection",
+        )
+    }
+
+    private fun onPathMediaRequested(
+        messageId: String,
+        originalPath: String,
+        expectedRole: MessageRole,
+        unavailableMessage: String,
+    ) {
         val handler = chatHandler ?: return
         val relay = relayHttpClient
         val repo = mediaSettingsRepo
         val cache = mediaCacheWriter
 
         val placeholder = Attachment(
-            contentType = "application/octet-stream",
+            contentType = if (expectedRole == MessageRole.USER) {
+                persistedImageContentType(originalPath)
+            } else {
+                "application/octet-stream"
+            },
             content = "",
             state = AttachmentState.LOADING,
             // Reuse relayToken as a generic inbound-fetch key. Paths always
             // start with `/`, real tokens never do — downstream helpers
             // that need to distinguish can check the prefix.
             relayToken = originalPath,
-            fileName = originalPath.substringAfterLast('/').ifBlank { null }
+            fileName = originalPath.substringAfterLast('/').substringAfterLast('\\').ifBlank { null }
         )
-        appendAttachmentToMessage(handler, messageId, placeholder)
+        appendAttachmentToMessage(handler, messageId, placeholder, expectedRole)
 
         if (relay == null || repo == null || cache == null) {
-            updateAttachmentByToken(handler, messageId, originalPath) { att ->
+            updateAttachmentByToken(
+                handler,
+                messageId,
+                originalPath,
+                expectedRole = expectedRole,
+            ) { att ->
                 att.copy(
                     state = AttachmentState.FAILED,
-                    errorMessage = "Media pipeline not ready"
+                    errorMessage = unavailableMessage
                 )
             }
             return
@@ -6852,11 +6894,30 @@ class ChatViewModel : ViewModel() {
                 return@launch
             }
 
-            performFetchWith(handler, messageId, originalPath, settings) {
+            performFetchWith(
+                handler,
+                messageId,
+                originalPath,
+                settings,
+                expectedRole = expectedRole,
+            ) {
                 relay.fetchMediaByPath(originalPath)
             }
         }
     }
+
+    private fun persistedImageContentType(path: String): String =
+        when (path.substringAfterLast('.').lowercase()) {
+            "avif" -> "image/avif"
+            "bmp" -> "image/bmp"
+            "gif" -> "image/gif"
+            "heic" -> "image/heic"
+            "heif" -> "image/heif"
+            "jpeg", "jpg" -> "image/jpeg"
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            else -> "image/*"
+        }
 
     /**
      * Core fetch routine. Takes a [fetch] lambda so it can serve both the
@@ -6873,6 +6934,7 @@ class ChatViewModel : ViewModel() {
         messageId: String,
         fetchKey: String,
         settings: MediaSettings,
+        expectedRole: MessageRole = MessageRole.ASSISTANT,
         fetch: suspend () -> Result<RelayHttpClient.FetchedMedia>,
     ) {
         val cache = mediaCacheWriter ?: return
@@ -6883,7 +6945,7 @@ class ChatViewModel : ViewModel() {
             onSuccess = { fetched ->
                 if (fetched.bytes.size > maxBytes) {
                     val sizeMb = fetched.bytes.size / (1024.0 * 1024.0)
-                    updateAttachmentByToken(handler, messageId, fetchKey) { att ->
+                    updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                         att.copy(
                             state = AttachmentState.FAILED,
                             errorMessage = "File too large (%.1f MB, max %d MB)".format(
@@ -6899,7 +6961,7 @@ class ChatViewModel : ViewModel() {
 
                 try {
                     val uri = cache.cache(fetched.bytes, fetched.contentType, fetched.fileName)
-                    updateAttachmentByToken(handler, messageId, fetchKey) { att ->
+                    updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                         att.copy(
                             state = AttachmentState.LOADED,
                             errorMessage = null,
@@ -6921,7 +6983,7 @@ class ChatViewModel : ViewModel() {
                     // URI, permission, …) for both the in-card text and the
                     // global snackbar — same event, two surfaces.
                     val human = classifyError(e, context = "media_fetch", ctx = appContext)
-                    updateAttachmentByToken(handler, messageId, fetchKey) { att ->
+                    updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                         att.copy(
                             state = AttachmentState.FAILED,
                             errorMessage = human.body
@@ -6932,7 +6994,7 @@ class ChatViewModel : ViewModel() {
             },
             onFailure = { err ->
                 val human = classifyError(err, context = "media_fetch", ctx = appContext)
-                updateAttachmentByToken(handler, messageId, fetchKey) { att ->
+                updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                     att.copy(
                         state = AttachmentState.FAILED,
                         errorMessage = human.body
@@ -6951,7 +7013,8 @@ class ChatViewModel : ViewModel() {
     private fun appendAttachmentToMessage(
         handler: ChatHandler,
         messageId: String,
-        attachment: Attachment
+        attachment: Attachment,
+        expectedRole: MessageRole = MessageRole.ASSISTANT,
     ) {
         // Direct StateFlow mutation via the handler's messages flow would be
         // cleaner, but ChatHandler exposes the flow as read-only. We piggyback
@@ -6961,7 +7024,7 @@ class ChatViewModel : ViewModel() {
         // pattern — except we can't, because _messages is private. Fall back
         // to a minimal helper added below.
         handler.mutateMessage(messageId) { msg ->
-            if (msg.role != MessageRole.ASSISTANT) msg
+            if (msg.role != expectedRole) msg
             else msg.copy(attachments = msg.attachments + attachment)
         }
     }
@@ -6975,10 +7038,11 @@ class ChatViewModel : ViewModel() {
         handler: ChatHandler,
         messageId: String,
         token: String,
-        transform: (Attachment) -> Attachment
+        expectedRole: MessageRole = MessageRole.ASSISTANT,
+        transform: (Attachment) -> Attachment,
     ) {
         handler.mutateMessage(messageId) { msg ->
-            if (msg.role != MessageRole.ASSISTANT) return@mutateMessage msg
+            if (msg.role != expectedRole) return@mutateMessage msg
             val idx = msg.attachments.indexOfFirst { it.relayToken == token }
             if (idx < 0) return@mutateMessage msg
             val updated = msg.attachments.toMutableList().also {

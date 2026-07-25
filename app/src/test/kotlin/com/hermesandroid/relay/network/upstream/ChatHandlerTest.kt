@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network.upstream
 
 import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
@@ -15,6 +16,8 @@ import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
@@ -847,6 +850,231 @@ class ChatHandlerTest {
         handler.loadMessageHistory(items)
 
         assertEquals("", handler.messages.value[0].content)
+    }
+
+    // --- loadMessageHistory: persisted user image references (HRUI-073) ---
+
+    @Test
+    fun loadMessageHistory_liftsCaptionFirstPersistedImageRef() {
+        val requested = mutableListOf<Pair<String, String>>()
+        handler.onPersistedUserImageRequested = { messageId, path ->
+            requested += messageId to path
+        }
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "image-user-1",
+                    role = "user",
+                    content = JsonPrimitive("What is this?\n@image:/tmp/cat.png"),
+                )
+            )
+        )
+
+        val message = handler.messages.value.single()
+        assertEquals("What is this?", message.content)
+        assertEquals(listOf("image-user-1" to "/tmp/cat.png"), requested)
+    }
+
+    @Test
+    fun loadMessageHistory_keepsImageOnlyTurnAndParsesQuotedSpacedPath() {
+        val requested = mutableListOf<String>()
+        handler.onPersistedUserImageRequested = { _, path -> requested += path }
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "image-user-2",
+                    role = "user",
+                    content = JsonPrimitive(
+                        "@image:`/tmp/Hermes composer images/holiday photo.webp`"
+                    ),
+                )
+            )
+        )
+
+        assertEquals("", handler.messages.value.single().content)
+        assertEquals(
+            listOf("/tmp/Hermes composer images/holiday photo.webp"),
+            requested,
+        )
+    }
+
+    @Test
+    fun loadMessageHistory_extractsMultipleRefsInOrder() {
+        val requested = mutableListOf<String>()
+        handler.onPersistedUserImageRequested = { _, path -> requested += path }
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "image-user-3",
+                    role = "user",
+                    content = JsonPrimitive(
+                        "Compare these\n@image:/tmp/a.png\n@image:\"/tmp/two images/b.jpg\""
+                    ),
+                )
+            )
+        )
+
+        assertEquals("Compare these", handler.messages.value.single().content)
+        assertEquals(listOf("/tmp/a.png", "/tmp/two images/b.jpg"), requested)
+    }
+
+    @Test
+    fun loadMessageHistory_extractsRefFromNativeVisionContentArray() {
+        val requested = mutableListOf<String>()
+        handler.onPersistedUserImageRequested = { _, path -> requested += path }
+        val nativeVisionContent = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("type", "text")
+                    put("text", "Describe this\n@image:/tmp/native.png")
+                }
+            )
+            add(
+                buildJsonObject {
+                    put("type", "image_url")
+                    put(
+                        "image_url",
+                        buildJsonObject { put("url", "data:image/png;base64,AAAA") },
+                    )
+                }
+            )
+        }
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "image-user-4", role = "user", content = nativeVisionContent))
+        )
+
+        assertEquals("Describe this", handler.messages.value.single().content)
+        assertEquals(listOf("/tmp/native.png"), requested)
+    }
+
+    @Test
+    fun loadMessageHistory_keepsMalformedUnknownAndInlineImageDirectivesAsText() {
+        val requested = mutableListOf<String>()
+        handler.onPersistedUserImageRequested = { _, path -> requested += path }
+        val content = listOf(
+            "@image:relative.png",
+            "@image:`/tmp/unclosed.png",
+            "@image:/etc/passwd",
+            "mention @image:/tmp/inline.png here",
+        ).joinToString("\n")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "image-user-5", role = "user", content = JsonPrimitive(content)))
+        )
+
+        assertEquals(content, handler.messages.value.single().content)
+        assertTrue(requested.isEmpty())
+    }
+
+    @Test
+    fun loadMessageHistory_canRenderPathFreeUnavailableImageState() {
+        handler.onPersistedUserImageRequested = { messageId, path ->
+            handler.mutateMessage(messageId) { message ->
+                message.copy(
+                    attachments = message.attachments + Attachment(
+                        contentType = "image/png",
+                        content = "",
+                        fileName = path.substringAfterLast('/'),
+                        state = AttachmentState.FAILED,
+                        errorMessage = "Image unavailable on this connection",
+                    )
+                )
+            }
+        }
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "image-user-6",
+                    role = "user",
+                    content = JsonPrimitive("@image:/tmp/deleted.png"),
+                )
+            )
+        )
+
+        val message = handler.messages.value.single()
+        assertEquals("", message.content)
+        assertEquals(1, message.attachments.size)
+        assertEquals(AttachmentState.FAILED, message.attachments.single().state)
+        assertEquals("deleted.png", message.attachments.single().fileName)
+        assertFalse(message.attachments.single().errorMessage.orEmpty().contains("/tmp/"))
+    }
+
+    @Test
+    fun loadMessageHistory_coldResumeDispatchesPersistedImageOnlyOnceAcrossReloads() {
+        var requestCount = 0
+        handler.onPersistedUserImageRequested = { messageId, path ->
+            requestCount++
+            handler.mutateMessage(messageId) { message ->
+                message.copy(
+                    attachments = message.attachments + Attachment(
+                        contentType = "image/png",
+                        content = "",
+                        fileName = "resume.png",
+                        state = AttachmentState.FAILED,
+                        errorMessage = "Image unavailable on this connection",
+                        relayToken = path,
+                    )
+                )
+            }
+        }
+        val history = listOf(
+            MessageItem(
+                id = "image-user-cold",
+                role = "user",
+                content = JsonPrimitive("@image:/tmp/resume.png"),
+            )
+        )
+
+        handler.loadMessageHistory(history)
+        handler.loadMessageHistory(history)
+
+        val message = handler.messages.value.single()
+        assertEquals(1, requestCount)
+        assertEquals(1, message.attachments.size)
+        assertEquals(AttachmentState.FAILED, message.attachments.single().state)
+    }
+
+    @Test
+    fun loadMessageHistory_immediateReloadCarriesLocalImageWithoutDuplicateFetch() {
+        handler.addUserMessage(
+            ChatMessage(
+                id = "optimistic-image",
+                role = MessageRole.USER,
+                content = "What is this?",
+                timestamp = 1L,
+                attachments = listOf(
+                    Attachment(
+                        contentType = "image/png",
+                        content = "base64-pixels",
+                        fileName = "cat.png",
+                    )
+                ),
+            )
+        )
+        var requestCount = 0
+        handler.onPersistedUserImageRequested = { _, _ -> requestCount++ }
+        val history = listOf(
+            MessageItem(
+                id = "server-image",
+                role = "user",
+                content = JsonPrimitive("What is this?\n@image:/tmp/cat.png"),
+            )
+        )
+
+        handler.loadMessageHistory(history)
+        handler.loadMessageHistory(history)
+
+        val message = handler.messages.value.single()
+        assertEquals("server-image", message.id)
+        assertEquals("What is this?", message.content)
+        assertEquals(1, message.attachments.size)
+        assertEquals("base64-pixels", message.attachments.single().content)
+        assertEquals(0, requestCount)
     }
 
     // --- loadMessageHistory: outbound attachment preservation (GAP 1) ---

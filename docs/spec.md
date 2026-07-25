@@ -556,6 +556,16 @@ MEDIA:hermes-relay://<url-safe-16-byte-token>
 
 **Fallback when relay isn't running:** the tool's `register_media()` call fails (connection refused / timeout / non-200) → tool logs a warning and returns the legacy bare-path form (`MEDIA:/tmp/...`). The phone's `onUnavailableMediaMarker` handler inserts a FAILED Attachment with `errorMessage = "Image unavailable — relay offline"`. Matches current behavior; placeholder is tidier than raw marker text.
 
+Persisted USER history may also contain upstream-owned `@image:<absolute-path>`
+directive lines. Android recognizes only bounded, full-line image directives
+(including upstream's backtick/single-quote/double-quote path wrapping), removes
+recognized host paths from visible text, and reconstructs at most eight
+attachments. A paired Relay may resolve those paths through its authenticated
+media route; a vanilla or unavailable route renders a path-free failed
+attachment. Inline, relative, malformed, non-image, and unknown directives stay
+as text and never trigger a fetch. Client-local outbound attachments win during
+the immediate post-send reload, preventing a duplicate fetch/gallery entry.
+
 **Known gap — session replay across relay restarts:** the `MediaRegistry` is in-memory. Restarting the relay invalidates all tokens. A user scrolling back into a session from yesterday sees FAILED placeholders for any now-stale token. Phone-side persistent cache (indexed by token or content hash) is the planned fix; filed as a DEVLOG follow-up.
 
 **Known gap — auto-fetch threshold slider isn't enforced today.** The Settings → Inbound media → auto-fetch threshold knob is persisted but the fetch path currently only checks the cellular toggle + the hard max cap. Forward-compatibility placeholder; real enforcement needs a HEAD preflight or post-hoc byte rejection.
