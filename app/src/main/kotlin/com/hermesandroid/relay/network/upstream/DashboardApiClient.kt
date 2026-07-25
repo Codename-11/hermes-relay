@@ -50,6 +50,7 @@ data class DashboardStatus(
     val authRequired: Boolean,
     val authProviders: List<String> = emptyList(),
     val authProviderDetails: List<DashboardAuthProvider> = emptyList(),
+    @SerialName("auth_flows") val authFlows: List<String> = emptyList(),
     val version: String? = null,
     val message: String? = null,
     @SerialName("nous_session_valid") val nousSessionValid: String? = null,
@@ -1144,15 +1145,22 @@ class DashboardApiClient(
 
         fun defaultClient(
             cookieStore: DashboardCookieStore = InMemoryDashboardCookieStore(),
-        ): OkHttpClient = OkHttpClient.Builder()
-            .cookieJar(DashboardCookieJar(cookieStore))
-            .connectTimeout(10, TimeUnit.SECONDS)
-            // Skills-hub search fans out server-side with a 30s overall
-            // timeout; keep the read window above it so a slow-but-successful
-            // search doesn't die client-side at the edge.
-            .readTimeout(45, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .build()
+            bearerAuth: DashboardBearerAuth? = null,
+        ): OkHttpClient {
+            val builder = OkHttpClient.Builder()
+                .cookieJar(DashboardCookieJar(cookieStore))
+                .connectTimeout(10, TimeUnit.SECONDS)
+                // Skills-hub search fans out server-side with a 30s overall
+                // timeout; keep the read window above it so a slow-but-successful
+                // search doesn't die client-side at the edge.
+                .readTimeout(45, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+            bearerAuth?.let {
+                builder.addInterceptor(it)
+                builder.authenticator(it)
+            }
+            return builder.build()
+        }
 
         fun parseStatus(root: JsonObject): DashboardStatus {
             val authObject = root["auth"] as? JsonObject
@@ -1180,6 +1188,9 @@ class DashboardApiClient(
                     ?: false,
                 authProviders = providers.map { it.name },
                 authProviderDetails = providers,
+                authFlows = (root["auth_flows"] as? JsonArray).orEmpty().mapNotNull {
+                    (it as? JsonPrimitive)?.contentOrNull
+                },
                 version = root.stringField("version"),
                 message = root.stringField("message") ?: root.stringField("detail"),
                 nousSessionValid = root.stringField("nous_session_valid"),

@@ -6,6 +6,25 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Active — Complete Android native dashboard sign-in
+
+The Android upstream client has the secure native-auth lower layer for gateways
+that advertise `native_pkce`: S256/state generation, strict `127.0.0.1`
+callback validation, encrypted per-connection bearer/refresh-token storage,
+token rotation, authenticated REST calls, and WebSocket ticket minting. Older
+gateways remain compatible with the existing cookie flow.
+
+The remaining product gate is the Android lifecycle owner for the ephemeral
+loopback listener and system-browser launch. It must bind only
+`127.0.0.1` on an OS-assigned port, keep the verifier/state in the sign-in
+coroutine only, close on callback/cancel/timeout, and then hand the callback
+directly to `NativeDashboardAuthClient`. Once that owner is device-tested, both
+dashboard sign-in entry points can select it when `/api/status.auth_flows`
+contains `native_pkce` and retain the WebView only as the identified
+old-gateway fallback.
+
+---
+
 ## Active — Remove temporary GitHub Pages docs redirects
 
 PR #210 moved current source and production documentation to

@@ -4,6 +4,8 @@ import android.content.Context
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
+import com.hermesandroid.relay.network.upstream.DashboardBearerAuth
+import com.hermesandroid.relay.network.upstream.EncryptedNativeDashboardTokenStore
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -78,6 +80,8 @@ class UpstreamTransportController(
     /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
     private val dashboardCookieStores =
         ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
+    private val dashboardTokenStores =
+        ConcurrentHashMap<String, EncryptedNativeDashboardTokenStore>()
 
     /**
      * Cookie store for [connectionId] — ONE instance per connection,
@@ -107,6 +111,14 @@ class UpstreamTransportController(
         return dashboardCookieStoreFor(connectionId)
     }
 
+    private fun dashboardTokenStoreFor(connectionId: String): EncryptedNativeDashboardTokenStore {
+        val key = tokenStoreKeyProvider(connectionId)
+            ?: com.hermesandroid.relay.data.Connection.buildTokenStoreKey(connectionId)
+        return dashboardTokenStores.getOrPut(connectionId) {
+            EncryptedNativeDashboardTokenStore(context, key)
+        }
+    }
+
     // --- DashboardApiClient factory ----------------------------------------
 
     /**
@@ -120,6 +132,10 @@ class UpstreamTransportController(
             baseUrl = dashboardUrl,
             okHttpClient = DashboardApiClient.defaultClient(
                 cookieStore = dashboardCookieStoreFor(connectionId),
+                bearerAuth = DashboardBearerAuth(
+                    dashboardUrl,
+                    dashboardTokenStoreFor(connectionId),
+                ),
             ),
         )
 
@@ -133,6 +149,9 @@ class UpstreamTransportController(
             baseUrl = dashboardUrl,
             okHttpClient = DashboardApiClient.defaultClient(
                 cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
+                bearerAuth = activeConnectionIdProvider()?.let {
+                    DashboardBearerAuth(dashboardUrl, dashboardTokenStoreFor(it))
+                },
             ),
         )
 
