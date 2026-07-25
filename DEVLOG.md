@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-24 — Realtime background-task delivery continuity
+
+Chat stream completion now preserves an otherwise empty assistant row when it
+owns a promoted background task. This keeps the task identity available after
+the provider's initial spoken handoff, so later progress, completion, and
+forced-summary events update and settle the initiating row even when a newer
+persistent Voice command has started. Existing empty-response cleanup remains
+unchanged for assistant rows without background work.
+
 ## 2026-07-23 — Android user-CA trust for self-hosted Hermes
 
 The shared Android network security configuration now accepts CA certificates
