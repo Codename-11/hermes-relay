@@ -1388,6 +1388,9 @@ class ChatViewModel : ViewModel() {
             onSubagentEvent = { event ->
                 if (acceptsEvent()) handler.onSubagentEvent(messageId, event)
             },
+            onMoaReference = { event ->
+                if (acceptsEvent()) handler.onMoaReference(messageId, event)
+            },
             onInteractionRequest = { ask ->
                 if (acceptsEvent()) presentInteractionAsk(handler, ask)
             },
@@ -4487,6 +4490,9 @@ class ChatViewModel : ViewModel() {
                     scheduleCheckpointWrite(immediate = true)
                 }
             },
+            onMoaReference = { event ->
+                if (owns()) handler.onMoaReference(messageId, event)
+            },
             onInteractionRequest = { ask ->
                 if (owns()) presentInteractionAsk(handler, ask)
             },
@@ -6508,6 +6514,11 @@ class ChatViewModel : ViewModel() {
                             streamDeltas.flushNow()
                             handler.onSubagentEvent(currentMessageId, event)
                             scheduleCheckpointWrite(immediate = true)
+                        },
+                        onMoaReference = { event ->
+                            ensurePostInterimMessage()
+                            streamDeltas.flushNow()
+                            handler.onMoaReference(currentMessageId, event)
                         },
                         onInteractionRequest = { ask ->
                             presentInteractionAsk(handler, ask)

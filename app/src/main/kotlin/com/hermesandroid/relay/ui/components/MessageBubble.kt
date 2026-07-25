@@ -297,6 +297,26 @@ fun MessageBubble(
             )
         }
 
+        if (!isUser && !isSystem && showThinking) {
+            message.moaReferences.forEach { reference ->
+                ThinkingBlock(
+                    thinkingContent = reference.text,
+                    isStreaming = false,
+                    headerText = buildString {
+                        append("Advisor ")
+                        append(reference.index)
+                        reference.count?.let { append("/").append(it) }
+                        append(" · ")
+                        append(reference.label)
+                    },
+                    accessibilityLabel = "Mixture of Agents advisor response",
+                    modifier = Modifier
+                        .widthIn(max = maxBubbleWidth)
+                        .padding(bottom = 4.dp),
+                )
+            }
+        }
+
         // Message bubble.
         //
         // Action bubbles (voice/phone origin) wrap the existing Surface in

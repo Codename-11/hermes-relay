@@ -142,6 +142,19 @@ data class ChatMessage(
      * through `copy`, while [id] remains the authoritative lookup/wire id.
      */
     val uiKey: String = id,
+    /**
+     * Successful Mixture-of-Agents advisor responses surfaced during the live
+     * turn. These are presentation-only: checkpoint/history serializers omit
+     * them, so they never become transcript state.
+     */
+    val moaReferences: List<MoaReference> = emptyList(),
+)
+
+data class MoaReference(
+    val index: Int,
+    val count: Int?,
+    val label: String,
+    val text: String,
 )
 
 /** One Chat-visible identity for a promoted/durable realtime Hermes run. */

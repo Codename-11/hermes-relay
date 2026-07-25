@@ -1759,6 +1759,57 @@ class ChatHandlerTest {
         assertEquals("Running terminal", handler.turnStatus.value)
     }
 
+    @Test
+    fun onMoaReference_retainsArrivalOrderAndDeduplicatesTransientReferenceBlocks() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(2, 2, "advisor-b", "Second"),
+        )
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(1, 2, "advisor-a", "First"),
+        )
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(1, 2, "advisor-a", "First"),
+        )
+
+        val references = handler.messages.value.single().moaReferences
+        assertEquals(listOf(2, 1), references.map { it.index })
+        assertEquals(listOf("Second", "First"), references.map { it.text })
+    }
+
+    @Test
+    fun loadMessageHistory_doesNotPersistMoaReferenceBlocks() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live",
+                role = MessageRole.ASSISTANT,
+                content = "Answer",
+                timestamp = 1L,
+                moaReferences = listOf(
+                    com.hermesandroid.relay.data.MoaReference(1, 1, "advisor", "Transient"),
+                ),
+            ),
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "assistant-live", role = "assistant", content = JsonPrimitive("Answer"))),
+        )
+
+        assertTrue(handler.messages.value.single().moaReferences.isEmpty())
+    }
+
     // --- Helper ---
 
     private fun createUserMessage(id: String, content: String) = ChatMessage(

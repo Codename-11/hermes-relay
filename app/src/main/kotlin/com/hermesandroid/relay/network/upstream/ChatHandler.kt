@@ -10,11 +10,11 @@ import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.MoaReference
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
-import com.hermesandroid.relay.network.upstream.GatewaySubagentEvent
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -43,6 +43,7 @@ class ChatHandler {
 
         /** Maximum number of messages kept in memory per session. Oldest are trimmed. */
         internal const val MAX_MESSAGES = 500
+        private const val MAX_MOA_REFERENCES = 32
 
         private fun timestampToMillis(timestamp: Double?): Long {
             val value = timestamp ?: return 0L
@@ -1345,6 +1346,9 @@ class ChatHandler {
                     } else {
                         prior.badges
                     },
+                    // MoA advisor blocks are a live-turn presentation surface,
+                    // never durable transcript enrichment.
+                    moaReferences = emptyList(),
                 )
             } else {
                 // INSERT — a server message with no local row yet. Built from
@@ -2592,6 +2596,37 @@ class ChatHandler {
     }
 
     // --- Gateway subagent lanes ---
+
+    fun onMoaReference(messageId: String, event: GatewayMoaReference) {
+        _messages.update { messages ->
+            val targetIndex = messages.indexOfLast {
+                it.id == messageId && it.role == MessageRole.ASSISTANT
+            }
+            if (targetIndex < 0) return@update messages
+            _isStreaming.value = true
+
+            val message = messages[targetIndex]
+            val nextIndex = event.index ?: ((message.moaReferences.maxOfOrNull { it.index } ?: 0) + 1)
+            val reference = MoaReference(
+                index = nextIndex,
+                count = event.count,
+                label = event.label,
+                text = event.text,
+            )
+            val duplicate = message.moaReferences.any {
+                it.label == event.label && it.text == event.text
+            }
+            if (duplicate || message.moaReferences.size >= MAX_MOA_REFERENCES) {
+                messages
+            } else {
+                messages.toMutableList().also {
+                    it[targetIndex] = message.copy(
+                        moaReferences = message.moaReferences + reference,
+                    )
+                }
+            }
+        }
+    }
 
     /**
      * Lane labels by task index, captured from `subagent.start` (goal
