@@ -610,8 +610,12 @@ git push origin dev
 Then open **Actions → Approve Android Release**, choose **Run workflow**, select
 `main`, and enter the version. Starting the workflow is the release approval. It
 verifies that `main` has the exact preflighted tree and creates the
-`android-v<version>` tag. Manual stable tags are still guarded by the same
-preflight proof in the tag workflow.
+`android-v<version>` tag. Because tags created with `GITHUB_TOKEN` do not trigger
+another workflow, approval dispatches the current release workflow definition
+from `main`; every release job explicitly checks out and verifies the immutable
+`android-v<version>` tag. This lets release-workflow fixes apply without moving
+an existing tag or changing its artifact tree. Manual stable tags are still
+guarded by the same preflight proof in the tag workflow.
 
 The tag-triggered `.github/workflows/release-android.yml` rebuilds and scans the
 artifacts, changes the existing Play Production draft to `completed` (submitting
