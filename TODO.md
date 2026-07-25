@@ -78,6 +78,13 @@ intentionally remain outside that code batch:
   public model-options payload identifies excluded and disabled providers.
   `include_unconfigured=1` currently re-adds indistinguishable setup rows, so
   empty models are not authoritative evidence that a provider should be hidden.
+- Keep gateway `model.options` profile scoping blocked until the supported
+  upstream RPC accepts an explicit `profile` and documents that the returned
+  provider inventory was built inside that profile's runtime scope. Android
+  now keys picker results to its active profile context and rejects late
+  responses after a profile switch, but it deliberately does not send an
+  invented `profile` parameter. API-server fallback can use the separate,
+  authenticated `/p/<profile>/api/model/options` surface when multiplexed.
 - Expand the desktop upstream-baseline workflow into a live mock-provider E2E
   once the harness can boot a credential-free upstream gateway deterministically.
   The initial `ci-desktop-upstream-baseline` gate only checks a clean vanilla

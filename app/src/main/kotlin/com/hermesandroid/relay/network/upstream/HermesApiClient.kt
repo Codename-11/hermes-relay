@@ -77,6 +77,10 @@ data class ServerCapabilities(
     val portable: Boolean,
     /** `/health` — basic reachability. */
     val healthy: Boolean,
+    /** Authenticated provider/model inventory at `/api/model/options`. */
+    val modelOptions: Boolean = false,
+    /** Backend-acknowledged per-session model lock. */
+    val sessionModelLock: Boolean = false,
 ) {
     /** Resolve `streamingEndpoint = "auto"` to the best concrete choice. */
     fun preferredChatEndpoint(): String = when {
@@ -100,6 +104,8 @@ data class ServerCapabilities(
             runs = false,
             portable = false,
             healthy = false,
+            modelOptions = false,
+            sessionModelLock = false,
         )
     }
 }
@@ -139,6 +145,8 @@ internal fun parseCapabilitiesBody(json: Json, body: String): ServerCapabilities
             feature("chat_completions") ||
             endpoint("chat_completions"),
         healthy = true,
+        modelOptions = feature("model_options") || endpoint("model_options"),
+        sessionModelLock = feature("session_model_lock") || endpoint("session_model_lock"),
     )
 }
 
@@ -188,6 +196,98 @@ data class ApiModelOption(
     /** Secondary picker copy for a configured route alias. */
     val routeDetail: String?
         get() = root?.takeIf { it.isNotBlank() && it != id }?.let { "Routes to $it" }
+}
+
+/** Authenticated provider/model inventory advertised by `/api/model/options`. */
+data class ApiProviderModelOptions(
+    val providers: List<GatewayModelProvider>,
+    val currentModel: String,
+    val currentProvider: String,
+)
+
+internal fun parseApiProviderModelOptionsBody(
+    json: Json,
+    body: String,
+): ApiProviderModelOptions? {
+    val root = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull()
+        ?: return null
+    val rows = root["providers"] as? JsonArray ?: return null
+    val providers = rows.mapNotNull { element ->
+        val obj = element as? JsonObject ?: return@mapNotNull null
+        val slug = (obj["slug"] as? JsonPrimitive)?.contentOrNull
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        GatewayModelProvider(
+            name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: slug,
+            slug = slug,
+            models = (obj["models"] as? JsonArray).orEmpty()
+                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+            isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            warning = (obj["warning"] as? JsonPrimitive)?.contentOrNull,
+            authenticated = (obj["authenticated"] as? JsonPrimitive)?.booleanOrNull ?: true,
+            unavailableModels = (obj["unavailable_models"] as? JsonArray).orEmpty()
+                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+            freeTier = (obj["free_tier"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            totalModels = (obj["total_models"] as? JsonPrimitive)?.contentOrNull
+                ?.toIntOrNull() ?: 0,
+        )
+    }
+    return ApiProviderModelOptions(
+        providers = providers,
+        currentModel = (root["model"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+        currentProvider = (root["provider"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+    )
+}
+
+enum class ApiModelRoutingErrorCode {
+    INVENTORY_UNAVAILABLE,
+    PROVIDER_NOT_AUTHENTICATED,
+    MODEL_NOT_AVAILABLE,
+    MODEL_NOT_AVAILABLE_ON_PLAN,
+    LOCK_CAPABILITY_INCOMPLETE,
+    LOCK_REJECTED,
+    LOCK_ACK_MISMATCH,
+    LEGACY_PROVIDER_UNSUPPORTED,
+}
+
+class ApiModelRoutingException(
+    val code: ApiModelRoutingErrorCode,
+    message: String,
+) : IOException(message)
+
+sealed interface ApiModelSelectionAck {
+    data object ServerDefault : ApiModelSelectionAck
+    data class Locked(
+        val sessionId: String,
+        val model: String,
+        val provider: String?,
+    ) : ApiModelSelectionAck
+    data class LegacyModelHint(val model: String) : ApiModelSelectionAck
+}
+
+internal fun sessionTurnModelHint(
+    acknowledgement: ApiModelSelectionAck,
+    requestedModel: String?,
+): String? =
+    if (acknowledgement is ApiModelSelectionAck.Locked) null else requestedModel
+
+internal data class ParsedApiModelLockAck(
+    val sessionId: String?,
+    val model: String?,
+    val provider: String?,
+    val state: String?,
+)
+
+internal fun parseApiModelLockAck(json: Json, body: String): ParsedApiModelLockAck? {
+    val root = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull()
+        ?: return null
+    val runtime = root["runtime"] as? JsonObject ?: return null
+    val requested = runtime["requested"] as? JsonObject
+    return ParsedApiModelLockAck(
+        sessionId = (root["session_id"] as? JsonPrimitive)?.contentOrNull,
+        model = (requested?.get("model") as? JsonPrimitive)?.contentOrNull,
+        provider = (requested?.get("provider") as? JsonPrimitive)?.contentOrNull,
+        state = (runtime["model_lock"] as? JsonPrimitive)?.contentOrNull,
+    )
 }
 
 internal fun parseModelOptionsBody(json: Json, body: String): List<ApiModelOption>? {
@@ -315,6 +415,8 @@ class HermesApiClient(
         isLenient = true
     }
 ) {
+    @Volatile
+    private var lastCapabilities: ServerCapabilities? = null
     private val baseUrl: String = baseUrl.trimEnd('/')
 
     companion object {
@@ -633,6 +735,186 @@ class HermesApiClient(
 
     /** Compatibility view for callers that only need request ids. */
     suspend fun getModels(): List<String> = getModelOptions().map { it.id }
+
+    /** Provider-aware picker inventory; never falls back to unauthenticated local guesses. */
+    suspend fun getProviderModelOptions(
+        refresh: Boolean = false,
+    ): Result<ApiProviderModelOptions> = withContext(Dispatchers.IO) {
+        try {
+            val suffix = if (refresh) "?refresh=true" else ""
+            val request = authRequest("$baseUrl/api/model/options$suffix").get().build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        ApiModelRoutingException(
+                            ApiModelRoutingErrorCode.INVENTORY_UNAVAILABLE,
+                            "Model inventory unavailable (HTTP ${response.code}).",
+                        ),
+                    )
+                }
+                val parsed = parseApiProviderModelOptionsBody(json, response.body.string())
+                    ?: return@withContext Result.failure(
+                        ApiModelRoutingException(
+                            ApiModelRoutingErrorCode.INVENTORY_UNAVAILABLE,
+                            "Model inventory returned an invalid response.",
+                        ),
+                    )
+                Result.success(parsed)
+            }
+        } catch (e: Exception) {
+            Result.failure(
+                if (e is ApiModelRoutingException) e else {
+                    ApiModelRoutingException(
+                        ApiModelRoutingErrorCode.INVENTORY_UNAVAILABLE,
+                        "Model inventory could not be loaded.",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * Validate and, on capable servers, persist a model/provider lock before a
+     * session turn is submitted. This never writes global config.
+     */
+    suspend fun acknowledgeSessionModelSelection(
+        sessionId: String,
+        model: String?,
+        provider: String?,
+    ): Result<ApiModelSelectionAck> = withContext(Dispatchers.IO) {
+        val selectedModel = AgentDisplay.requestModelName(model)
+            ?: return@withContext Result.success(ApiModelSelectionAck.ServerDefault)
+        val selectedProvider = provider?.trim()?.takeIf { it.isNotEmpty() }
+        val capabilities = lastCapabilities ?: probeCapabilities()
+
+        if (capabilities.sessionModelLock || capabilities.modelOptions) {
+            if (!capabilities.sessionModelLock || !capabilities.modelOptions) {
+                return@withContext Result.failure(
+                    ApiModelRoutingException(
+                        ApiModelRoutingErrorCode.LOCK_CAPABILITY_INCOMPLETE,
+                        "Server advertises an incomplete model-routing contract.",
+                    ),
+                )
+            }
+            val inventory = getProviderModelOptions().getOrElse {
+                return@withContext Result.failure(it)
+            }
+            val providerRow = when {
+                selectedProvider != null ->
+                    inventory.providers.firstOrNull { it.slug == selectedProvider }
+                else ->
+                    inventory.providers.singleOrNull { selectedModel in it.models }
+                        ?: inventory.providers.firstOrNull {
+                            it.isCurrent && selectedModel in it.models
+                        }
+            } ?: return@withContext Result.failure(
+                ApiModelRoutingException(
+                    ApiModelRoutingErrorCode.MODEL_NOT_AVAILABLE,
+                    "The selected model is not in the API server's authenticated inventory.",
+                ),
+            )
+            if (!providerRow.authenticated) {
+                return@withContext Result.failure(
+                    ApiModelRoutingException(
+                        ApiModelRoutingErrorCode.PROVIDER_NOT_AUTHENTICATED,
+                        "The selected provider is not authenticated on this profile.",
+                    ),
+                )
+            }
+            if (selectedModel !in providerRow.models) {
+                return@withContext Result.failure(
+                    ApiModelRoutingException(
+                        ApiModelRoutingErrorCode.MODEL_NOT_AVAILABLE,
+                        "The selected model is not available from ${providerRow.name}.",
+                    ),
+                )
+            }
+            if (selectedModel in providerRow.unavailableModels) {
+                return@withContext Result.failure(
+                    ApiModelRoutingException(
+                        ApiModelRoutingErrorCode.MODEL_NOT_AVAILABLE_ON_PLAN,
+                        "The selected model is not available on the authenticated account.",
+                    ),
+                )
+            }
+
+            val body = kotlinx.serialization.json.buildJsonObject {
+                put("model", selectedModel)
+                put("provider", providerRow.slug)
+            }
+            try {
+                val request = authRequest("$baseUrl/api/sessions/$sessionId/model")
+                    .post(json.encodeToString(JsonObject.serializer(), body).toRequestBody(JSON_MEDIA))
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    val responseBody = response.body.string()
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            ApiModelRoutingException(
+                                ApiModelRoutingErrorCode.LOCK_REJECTED,
+                                streamHttpFailureMessage(
+                                    response.code,
+                                    response.message,
+                                    response.header("Retry-After"),
+                                    responseBody,
+                                    json,
+                                ),
+                            ),
+                        )
+                    }
+                    val ack = parseApiModelLockAck(json, responseBody)
+                    if (
+                        ack?.sessionId != sessionId ||
+                        ack?.model != selectedModel ||
+                        ack?.provider != providerRow.slug ||
+                        ack?.state != "accepted"
+                    ) {
+                        return@withContext Result.failure(
+                            ApiModelRoutingException(
+                                ApiModelRoutingErrorCode.LOCK_ACK_MISMATCH,
+                                "Server did not acknowledge the requested model lock.",
+                            ),
+                        )
+                    }
+                    Result.success(
+                        ApiModelSelectionAck.Locked(
+                            sessionId = sessionId,
+                            model = selectedModel,
+                            provider = providerRow.slug,
+                        ),
+                    )
+                }
+            } catch (e: Exception) {
+                Result.failure(
+                    if (e is ApiModelRoutingException) e else {
+                        ApiModelRoutingException(
+                            ApiModelRoutingErrorCode.LOCK_REJECTED,
+                            "Model lock request failed before the message was sent.",
+                        )
+                    },
+                )
+            }
+        } else {
+            if (selectedProvider != null) {
+                return@withContext Result.failure(
+                    ApiModelRoutingException(
+                        ApiModelRoutingErrorCode.LEGACY_PROVIDER_UNSUPPORTED,
+                        "This Hermes version cannot safely preserve a provider selection on API fallback.",
+                    ),
+                )
+            }
+            val advertised = getModelOptions().map { it.id }
+            if (selectedModel !in advertised) {
+                return@withContext Result.failure(
+                    ApiModelRoutingException(
+                        ApiModelRoutingErrorCode.MODEL_NOT_AVAILABLE,
+                        "This Hermes version did not advertise the selected model for API fallback.",
+                    ),
+                )
+            }
+            Result.success(ApiModelSelectionAck.LegacyModelHint(selectedModel))
+        }
+    }
 
     // --- Server personalities ---
 
@@ -1530,7 +1812,10 @@ class HermesApiClient(
         } catch (_: Exception) {
             false
         }
-        if (!healthy) return@withContext ServerCapabilities.DISCONNECTED
+        if (!healthy) {
+            lastCapabilities = ServerCapabilities.DISCONNECTED
+            return@withContext ServerCapabilities.DISCONNECTED
+        }
 
         val advertisedCapabilities = try {
             val req = authRequest("$baseUrl/v1/capabilities").get().build()
@@ -1544,7 +1829,10 @@ class HermesApiClient(
         } catch (_: Exception) {
             null
         }
-        if (advertisedCapabilities != null) return@withContext advertisedCapabilities
+        if (advertisedCapabilities != null) {
+            lastCapabilities = advertisedCapabilities
+            return@withContext advertisedCapabilities
+        }
 
         // Reusable HEAD probe — returns true if the route is registered
         // (any status except 404 + network errors). Already inside the
@@ -1589,7 +1877,7 @@ class HermesApiClient(
             runs = runs,
             portable = portable,
             healthy = true,
-        )
+        ).also { lastCapabilities = it }
     }
 
     // --- Lifecycle ---
