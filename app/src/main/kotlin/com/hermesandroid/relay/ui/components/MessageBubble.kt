@@ -300,7 +300,11 @@ fun MessageBubble(
         if (!isUser && !isSystem && showThinking) {
             message.moaReferences.forEach { reference ->
                 ThinkingBlock(
-                    thinkingContent = reference.text,
+                    thinkingContent = if (reference.available) {
+                        reference.text
+                    } else {
+                        "Advisor unavailable."
+                    },
                     isStreaming = false,
                     headerText = buildString {
                         append("Advisor ")

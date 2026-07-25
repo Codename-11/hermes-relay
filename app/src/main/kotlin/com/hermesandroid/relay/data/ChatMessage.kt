@@ -143,9 +143,10 @@ data class ChatMessage(
      */
     val uiKey: String = id,
     /**
-     * Successful Mixture-of-Agents advisor responses surfaced during the live
-     * turn. These are presentation-only: checkpoint/history serializers omit
-     * them, so they never become transcript state.
+     * Mixture-of-Agents advisor responses surfaced during the live turn.
+     * Unavailable advisors retain only neutral state, never their raw failure
+     * body. A sanitized bounded copy may enter the local in-flight checkpoint,
+     * but server history never owns these presentation blocks.
      */
     val moaReferences: List<MoaReference> = emptyList(),
 )
@@ -155,6 +156,7 @@ data class MoaReference(
     val count: Int?,
     val label: String,
     val text: String,
+    val available: Boolean = true,
 )
 
 /** One Chat-visible identity for a promoted/durable realtime Hermes run. */

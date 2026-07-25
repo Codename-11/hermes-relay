@@ -763,7 +763,7 @@ class GatewayEventMapperTest {
     }
 
     @Test
-    fun `moa references retain safe blocks and suppress failure sentinels`() {
+    fun `moa references retain safe blocks and neutralize failure sentinels`() {
         val r = Recorder()
         val mapper = mapperWith(r)
 
@@ -781,9 +781,32 @@ class GatewayEventMapperTest {
         )
 
         assertEquals(
-            listOf(GatewayMoaReference(2, 3, "advisor-b", "Useful second opinion")),
+            listOf(
+                GatewayMoaReference(2, 3, "advisor-b", "Useful second opinion"),
+                GatewayMoaReference(1, 3, "advisor-a", "", available = false),
+                GatewayMoaReference(3, 3, "advisor-c", "", available = false),
+            ),
             r.moaReferences,
         )
+        assertTrue(r.moaReferences.filterNot { it.available }.all { it.text.isEmpty() })
+    }
+
+    @Test
+    fun `all failed moa references surface only neutral unavailable state`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":1,"count":2,"label":"advisor-a","text":"[failed: secret detail]"}"""),
+        )
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":2,"count":2,"label":"advisor-b","text":"[skipped: recursive preset]"}"""),
+        )
+
+        assertEquals(listOf(1, 2), r.moaReferences.mapNotNull { it.index })
+        assertTrue(r.moaReferences.all { !it.available && it.text.isEmpty() })
     }
 
     @Test

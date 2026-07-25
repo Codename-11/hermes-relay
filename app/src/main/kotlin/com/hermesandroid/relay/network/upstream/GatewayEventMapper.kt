@@ -294,7 +294,8 @@ class GatewayEventMapper(
             "moa.reference" -> {
                 clearProviderWaitAndCompaction()
                 val text = payload.string("text")?.trim().orEmpty()
-                if (text.isNotEmpty() && !isFailedMoaReference(text)) {
+                if (text.isNotEmpty()) {
+                    val available = !isFailedMoaReference(text)
                     callbacks.onMoaReference(
                         GatewayMoaReference(
                             index = payload.int("index")?.takeIf { it > 0 },
@@ -302,7 +303,8 @@ class GatewayEventMapper(
                                 ?.takeIf { it > 0 },
                             label = payload.string("label")?.trim()?.take(MAX_MOA_LABEL_CHARS).orEmpty()
                                 .ifBlank { "Advisor" },
-                            text = text.take(MAX_MOA_REFERENCE_CHARS),
+                            text = if (available) text.take(MAX_MOA_REFERENCE_CHARS) else "",
+                            available = available,
                         ),
                     )
                 }

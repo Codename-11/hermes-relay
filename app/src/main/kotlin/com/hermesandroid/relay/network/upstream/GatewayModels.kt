@@ -315,6 +315,7 @@ data class GatewayMoaReference(
     val count: Int?,
     val label: String,
     val text: String,
+    val available: Boolean = true,
 )
 
 /** Result of the gateway `model.options` RPC. */

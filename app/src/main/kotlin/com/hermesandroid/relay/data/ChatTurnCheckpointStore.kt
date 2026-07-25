@@ -66,6 +66,17 @@ data class ChatTurnAssistantCheckpoint(
     val cardDispatches: List<HermesCardDispatch> = emptyList(),
     val toolCalls: List<ChatTurnToolCheckpoint> = emptyList(),
     val backgroundTask: ChatTurnBackgroundTaskCheckpoint? = null,
+    /** Sanitized, bounded live-only MoA presentation state; never server transcript data. */
+    val moaReferences: List<ChatTurnMoaReferenceCheckpoint> = emptyList(),
+)
+
+@Serializable
+data class ChatTurnMoaReferenceCheckpoint(
+    val index: Int,
+    val count: Int? = null,
+    val label: String,
+    val text: String = "",
+    val available: Boolean = true,
 )
 
 @Serializable
