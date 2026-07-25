@@ -51,6 +51,18 @@
     <string name="onboarding_realtime_label">Tempo real</string>
     <string name="onboarding_realtime_description">Agente de voz em tempo real nativo do provedor e provedores de voz específicos para cada perfil.</string>
     <string name="onboarding_review_permissions">Revisar permissões</string>
+    <string name="onboarding_finish_setup_title">Concluir configuração</string>
+    <string name="onboarding_finish_setup_description">Sua conexão com o Hermes está pronta. Escolha agora o que este telefone pode fazer ou altere depois nas Configurações.</string>
+    <string name="onboarding_chat_manage_ready">Pronto — nenhuma permissão do telefone é necessária.</string>
+    <string name="onboarding_chat_alerts">Alertas do chat</string>
+    <string name="onboarding_chat_alerts_description">Permita notificações do Android para que os alertas ativados cheguem em segundo plano.</string>
+    <string name="onboarding_chat_alerts_ready">As notificações estão ativadas para este app.</string>
+    <string name="onboarding_optional_features">Recursos opcionais</string>
+    <string name="onboarding_optional_features_description">Câmera, microfone, assistente de notificações e ferramentas disponíveis do dispositivo ficam desativados até você escolhê-los.</string>
+    <string name="onboarding_review_optional_permissions">Revisar permissões opcionais</string>
+    <string name="onboarding_enable_chat_alerts">Ativar alertas do chat</string>
+    <string name="onboarding_not_now">Agora não</string>
+    <string name="onboarding_finish">Concluir configuração</string>
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">Conversa por voz ao vivo</string>
     <string name="chat_input_add_attachment">Adicionar anexo</string>

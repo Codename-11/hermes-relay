@@ -8,11 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Image generation stays visible when upstream tool progress is hidden.** A paired Relay can expose read-only image-tool activity from Hermes session state so Android shows and completes its existing generation animation during Standard Gateway turns; native Gateway lifecycle events remain authoritative and Relay remains optional.
+- **Android onboarding finishes with a permission setup step.** After connecting, users can enable background chat alerts with one deliberate Android prompt, review optional feature permissions individually, or continue immediately without granting phone access.
+- **Image generation stays visible when upstream tool progress is hidden.** A paired Relay can expose read-only image-tool activity from Hermes session state so Android shows and completes its existing generation animation during Standard Gateway turns; the image canvas replaces generic streaming progress and crossfades into the result within one stable assistant bubble. Native Gateway lifecycle events remain authoritative and Relay remains optional.
 
 ### Fixed
 
 - **Android alerts when a background Gateway turn needs input.** Approval, clarification, elevated-permission, and secret requests post privacy-safe notifications that reopen the correct conversation, survive reconnect replay without duplicates, and clear when the request is answered or expires.
+- **Promoted voice tasks keep their Chat row through background delivery.** Completing the provider's initial spoken handoff no longer removes an otherwise empty assistant bubble that still owns a running background task.
+- **Android accepts deliberately installed private certificate authorities.** Google Play and sideload builds now use Android's user CA store alongside system roots for self-hosted HTTPS/WSS connections while preserving certificate-chain, hostname, and Relay pin verification.
+- **Malformed code blocks no longer crash Android Markdown rendering.** Syntax highlighting now bounds dependency-provided spans before applying them, preserving valid highlighting while safely ignoring reversed or out-of-bounds ranges.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
 ## [Server 1.4.3] - 2026-07-22

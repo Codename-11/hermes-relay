@@ -40,6 +40,67 @@ class ImageGenerationPlaceholderTest {
     }
 
     @Test
+    fun `image progress owns the bubble until a media result arrives`() {
+        val active = ToolCall(
+            id = "image-1",
+            name = "image_generate",
+            args = null,
+            result = null,
+            success = null,
+        )
+        val completed = active.copy(isComplete = true, success = true)
+
+        assertTrue(
+            shouldShowImageGenerationPlaceholder(
+                toolCalls = listOf(active),
+                isStreaming = true,
+                hasMediaResult = false,
+            )
+        )
+        assertTrue(
+            shouldShowImageGenerationPlaceholder(
+                toolCalls = listOf(completed),
+                isStreaming = true,
+                hasMediaResult = false,
+            )
+        )
+        assertFalse(
+            shouldShowImageGenerationPlaceholder(
+                toolCalls = listOf(completed),
+                isStreaming = true,
+                hasMediaResult = true,
+            )
+        )
+    }
+
+    @Test
+    fun `completed or failed turn cannot leave a stale image canvas`() {
+        val completed = ToolCall(
+            id = "image-1",
+            name = "image_generate",
+            args = null,
+            result = null,
+            success = true,
+            isComplete = true,
+        )
+
+        assertFalse(
+            shouldShowImageGenerationPlaceholder(
+                toolCalls = listOf(completed),
+                isStreaming = false,
+                hasMediaResult = false,
+            )
+        )
+        assertFalse(
+            shouldShowImageGenerationPlaceholder(
+                toolCalls = listOf(completed.copy(success = false)),
+                isStreaming = true,
+                hasMediaResult = false,
+            )
+        )
+    }
+
+    @Test
     fun `diffusion field changes across the animation cycle`() {
         val noisy = diffusionSignal(column = 12, row = 8, time = 0.25f, denoise = diffusionDenoise(0.08f))
         val resolved = diffusionSignal(column = 12, row = 8, time = 3.5f, denoise = diffusionDenoise(0.62f))

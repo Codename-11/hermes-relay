@@ -56,6 +56,18 @@
     <string name="onboarding_realtime_label">Echtzeit</string>
     <string name="onboarding_realtime_description">Anbietereigener Echtzeit-Sprachagent und profilbezogene Sprachanbieter.</string>
     <string name="onboarding_review_permissions">Berechtigungen prüfen</string>
+    <string name="onboarding_finish_setup_title">Einrichtung abschließen</string>
+    <string name="onboarding_finish_setup_description">Deine Hermes-Verbindung ist bereit. Wähle jetzt aus, was dieses Telefon tun darf, oder ändere es später in den Einstellungen.</string>
+    <string name="onboarding_chat_manage_ready">Bereit — keine Telefonberechtigung erforderlich.</string>
+    <string name="onboarding_chat_alerts">Chat-Benachrichtigungen</string>
+    <string name="onboarding_chat_alerts_description">Erlaube Android-Benachrichtigungen, damit aktivierte Hinweise dich im Hintergrund erreichen.</string>
+    <string name="onboarding_chat_alerts_ready">Benachrichtigungen sind für diese App aktiviert.</string>
+    <string name="onboarding_optional_features">Optionale Funktionen</string>
+    <string name="onboarding_optional_features_description">Kamera, Mikrofon, Benachrichtigungsbegleiter und verfügbare Gerätewerkzeuge bleiben aus, bis du sie auswählst.</string>
+    <string name="onboarding_review_optional_permissions">Optionale Berechtigungen prüfen</string>
+    <string name="onboarding_enable_chat_alerts">Chat-Benachrichtigungen aktivieren</string>
+    <string name="onboarding_not_now">Jetzt nicht</string>
+    <string name="onboarding_finish">Einrichtung abschließen</string>
 
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">Live-Sprachgespräch</string>

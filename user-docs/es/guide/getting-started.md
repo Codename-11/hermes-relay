@@ -54,7 +54,8 @@ La clave de API es independiente y no inicia sesión en el dashboard.
 2. Busca Hermes en la LAN, introduce la URL del Dashboard/Gateway o escanea un QR; los QR API-first antiguos siguen siendo compatibles.
 3. Inicia sesión en el dashboard cuando se solicite.
 4. Pulsa **Connect** y comprueba **Chat · Ready**.
-5. Añade API fallback, Relay o rutas remotas después desde **Advanced** si lo necesitas.
+5. En **Finalizar configuración**, activa las notificaciones de Android si quieres alertas de chat en segundo plano. La cámara, el micrófono y las demás funciones siguen siendo opcionales y se configuran una a una; pulsa **Ahora no** para continuar directamente.
+6. Añade API fallback, Relay o rutas remotas después desde **Advanced** si lo necesitas.
 
 Puedes añadir y probar una dirección Dashboard de Tailscale como
 `http://100.x.y.z:9119`, o una dirección `.ts.net` publicada por separado, sin configurar el servidor API ni una clave API.

@@ -176,7 +176,6 @@ import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
-import com.hermesandroid.relay.ui.components.ImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
@@ -2380,20 +2379,22 @@ fun ChatScreen(
                                 // the null group renders exactly as before.
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
                                 laneGroups[null]?.forEach { toolCall ->
+                                    // Image generation renders inside MessageBubble
+                                    // so the progress canvas and final media share
+                                    // one stable Surface and transition in place.
+                                    if (toolCall.showsImageGenerationPlaceholder()) {
+                                        return@forEach
+                                    }
                                     if (!toolCall.isVisibleForToolDisplay(toolDisplay)) {
                                         return@forEach
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    if (toolCall.showsImageGenerationPlaceholder()) {
-                                        ImageGenerationPlaceholder()
-                                    } else {
-                                        when (toolDisplay) {
-                                            "compact" -> CompactToolCall(toolCall = toolCall)
-                                            else -> ToolProgressCard(
-                                                toolCall = toolCall,
-                                                messageTimestamp = message.timestamp,
-                                            )
-                                        }
+                                    when (toolDisplay) {
+                                        "compact" -> CompactToolCall(toolCall = toolCall)
+                                        else -> ToolProgressCard(
+                                            toolCall = toolCall,
+                                            messageTimestamp = message.timestamp,
+                                        )
                                     }
                                 }
                                 if (toolDisplay != "off") {

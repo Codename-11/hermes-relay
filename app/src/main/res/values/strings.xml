@@ -56,6 +56,18 @@
     <string name="onboarding_realtime_label">Realtime</string>
     <string name="onboarding_realtime_description">Provider-native realtime voice agent and profile-aware voice providers.</string>
     <string name="onboarding_review_permissions">Review permissions</string>
+    <string name="onboarding_finish_setup_title">Finish setup</string>
+    <string name="onboarding_finish_setup_description">Your Hermes connection is ready. Choose what this phone can do now, or change it later in Settings.</string>
+    <string name="onboarding_chat_manage_ready">Ready — no phone permission needed.</string>
+    <string name="onboarding_chat_alerts">Chat alerts</string>
+    <string name="onboarding_chat_alerts_description">Allow Android notifications so enabled alerts can reach you in the background.</string>
+    <string name="onboarding_chat_alerts_ready">Notifications are enabled for this app.</string>
+    <string name="onboarding_optional_features">Optional features</string>
+    <string name="onboarding_optional_features_description">Camera, microphone, notification companion, and available device tools stay off until you choose them.</string>
+    <string name="onboarding_review_optional_permissions">Review optional permissions</string>
+    <string name="onboarding_enable_chat_alerts">Enable chat alerts</string>
+    <string name="onboarding_not_now">Not now</string>
+    <string name="onboarding_finish">Finish setup</string>
 
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">Live voice conversation</string>

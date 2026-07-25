@@ -56,6 +56,18 @@
     <string name="onboarding_realtime_label">实时语音</string>
     <string name="onboarding_realtime_description">提供商原生的实时语音代理，以及按配置文件区分的语音提供商。</string>
     <string name="onboarding_review_permissions">查看权限</string>
+    <string name="onboarding_finish_setup_title">完成设置</string>
+    <string name="onboarding_finish_setup_description">Hermes 连接已就绪。现在选择这部手机可以使用的功能，或稍后在设置中更改。</string>
+    <string name="onboarding_chat_manage_ready">已就绪 — 无需手机权限。</string>
+    <string name="onboarding_chat_alerts">聊天提醒</string>
+    <string name="onboarding_chat_alerts_description">允许 Android 通知，以便已启用的提醒可在后台送达。</string>
+    <string name="onboarding_chat_alerts_ready">此应用的通知已启用。</string>
+    <string name="onboarding_optional_features">可选功能</string>
+    <string name="onboarding_optional_features_description">相机、麦克风、通知助手和可用的设备工具会保持关闭，直到你主动选择。</string>
+    <string name="onboarding_review_optional_permissions">查看可选权限</string>
+    <string name="onboarding_enable_chat_alerts">启用聊天提醒</string>
+    <string name="onboarding_not_now">暂不</string>
+    <string name="onboarding_finish">完成设置</string>
 
     <!-- 聊天输入栏 -->
     <string name="chat_input_live_voice_hint">实时语音对话</string>
