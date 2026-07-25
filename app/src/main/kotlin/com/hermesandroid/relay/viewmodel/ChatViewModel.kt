@@ -3164,10 +3164,16 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun sendVoiceMessage(text: String, interfaceContextPrompt: String) {
-        if (text.isBlank()) return
+    fun sendVoiceMessage(text: String, interfaceContextPrompt: String): String? {
+        if (text.isBlank()) return null
+        val existingUserKeys = messages.value.asSequence()
+            .filter { it.role == MessageRole.USER }
+            .mapTo(mutableSetOf()) { it.uiKey }
         nextInterfaceContextPrompt = interfaceContextPrompt.takeIf { it.isNotBlank() }
         sendMessage(text)
+        return messages.value.lastOrNull {
+            it.role == MessageRole.USER && it.uiKey !in existingUserKeys
+        }?.uiKey
     }
 
     /**

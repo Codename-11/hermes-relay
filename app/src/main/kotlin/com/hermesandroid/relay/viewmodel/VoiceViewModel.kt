@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -98,6 +99,104 @@ private enum class StandardSpeechStreamState {
 
 internal fun shouldFallbackStandardSpeech(outcome: VoiceSpeechStreamOutcome): Boolean =
     !outcome.audioStarted && outcome.status != VoiceSpeechStreamStatus.Stopped
+
+internal data class AssistantSpeechDelta(
+    val message: ChatMessage,
+    val text: String,
+    val startsNewBubble: Boolean,
+)
+
+internal data class AssistantSpeechBatch(
+    val deltas: List<AssistantSpeechDelta>,
+    val assistantMessages: List<ChatMessage>,
+    val aggregateText: String,
+    val hasTurnAssistant: Boolean,
+)
+
+/**
+ * Per-voice-turn cursor over every assistant bubble created after the user
+ * submits the turn. Tool-using Hermes runs may finalize an interim assistant
+ * bubble and then append a second bubble with the actual answer; tracking only
+ * the last bubble drops one of those segments.
+ *
+ * Existing stable UI keys are fenced at construction so StateFlow replay and
+ * later history reconciliation cannot narrate an older session after adopting
+ * a server message ID. Content rewrites are adopted silently unless they
+ * preserve the exact prior prefix: only genuine suffix growth is speech.
+ */
+internal class AssistantSpeechCursor(
+    baselineMessages: List<ChatMessage>,
+) {
+    private val baselineAssistantKeys = baselineMessages.asSequence()
+        .filter { it.role == MessageRole.ASSISTANT }
+        .mapTo(mutableSetOf()) { it.uiKey }
+    private val observedContent = mutableMapOf<String, String>()
+
+    fun poll(messages: List<ChatMessage>): AssistantSpeechBatch {
+        val turnAssistants = messages.filter {
+            it.role == MessageRole.ASSISTANT && it.uiKey !in baselineAssistantKeys
+        }
+        val deltas = buildList {
+            turnAssistants.forEach { message ->
+                val key = message.uiKey
+                val firstObservation = key !in observedContent
+                val hasPriorBubbleSpeech = observedContent.values.any { it.isNotEmpty() }
+                val previous = observedContent[key].orEmpty()
+                val current = message.content
+                if (current.length > previous.length && current.startsWith(previous)) {
+                    add(
+                        AssistantSpeechDelta(
+                            message = message,
+                            text = current.substring(previous.length),
+                            startsNewBubble = firstObservation && hasPriorBubbleSpeech,
+                        ),
+                    )
+                }
+                observedContent[key] = current
+            }
+        }
+        return AssistantSpeechBatch(
+            deltas = deltas,
+            assistantMessages = turnAssistants,
+            aggregateText = turnAssistants
+                .map { it.content.trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString("\n\n"),
+            hasTurnAssistant = turnAssistants.isNotEmpty(),
+        )
+    }
+}
+
+/**
+ * Binds one voice request to its chat session. Existing-session turns are
+ * fixed immediately. A brand-new chat starts with no session id, so the first
+ * server id is accepted only while the locally submitted user row is still in
+ * that session's message list; switching to another existing session while
+ * creation is pending therefore fails closed.
+ */
+internal class VoiceTurnSessionFence(initialSessionId: String?) {
+    private var boundSessionId: String? = initialSessionId
+    private val startedWithoutSession = initialSessionId == null
+    private var submittedUserUiKey: String? = null
+
+    fun bindSubmittedUser(uiKey: String?) {
+        submittedUserUiKey = uiKey
+    }
+
+    fun accepts(sessionId: String?, messages: List<ChatMessage>): Boolean {
+        boundSessionId?.let { return sessionId == it }
+        if (!startedWithoutSession) return false
+        if (sessionId == null) return true
+
+        val userKey = submittedUserUiKey ?: return false
+        val ownsSubmittedTurn = messages.any {
+            it.role == MessageRole.USER && it.uiKey == userKey
+        }
+        if (!ownsSubmittedTurn) return false
+        boundSessionId = sessionId
+        return true
+    }
+}
 
 internal fun realtimeTranscriptState(micCaptureActive: Boolean): VoiceState =
     if (micCaptureActive) VoiceState.Listening else VoiceState.Transcribing
@@ -372,7 +471,7 @@ data class VoiceStats(
  * ### Sentence-boundary streaming TTS
  * The SSE stream emits text one token at a time, but TTS wants whole
  * sentences to sound natural. We observe [ChatViewModel.messages],
- * extract deltas from the currently-streaming assistant message, and
+ * extract deltas from every assistant message created by the active run, and
  * feed each completed sentence into a bounded [ttsQueue]. A dedicated
  * consumer coroutine pulls from the queue, synthesizes each sentence,
  * and plays them back-to-back via [VoicePlayer.awaitCompletion].
@@ -380,10 +479,9 @@ data class VoiceStats(
  * ### Integration note (V2a → V2b cleanup)
  * This first version uses the public [ChatViewModel.messages] StateFlow
  * to observe streaming deltas rather than adding a `// VOICE HOOK`
- * callback inside ChatViewModel. It's clean but depends on the
- * "last message with isStreaming=true" invariant — if ChatViewModel
- * ever streams multiple assistant messages concurrently this will need
- * a dedicated per-turn flow. See `DEVLOG.md` and V2b ticket.
+ * callback inside ChatViewModel. A per-turn cursor fences pre-existing
+ * history and follows all assistant bubbles until ChatViewModel reports
+ * that the complete Hermes run has ended.
  */
 class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -672,8 +770,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Tracks which assistant-message IDs have already been consumed so
      *  we don't re-process older turns when the history list updates. */
-    private var lastObservedMessageId: String? = null
-    private var lastObservedContentLength: Int = 0
+    private var assistantSpeechCursor: AssistantSpeechCursor? = null
+    private var voiceTurnSessionFence: VoiceTurnSessionFence? = null
     private var sentenceBuffer: StringBuilder = StringBuilder()
     private val realtimeSpeechCoalescer = BalancedRealtimeTtsCoalescer()
     private val brokeredToolSpeechKeys = mutableSetOf<String>()
@@ -775,15 +873,6 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var voiceOutputProfileName: String? = null
     private var ttsChunksThisResponse: Int = 0
     private var lastTtsChunkFinishedAtMs: Long = 0L
-
-    /**
-     * Assistant-message-id that already existed BEFORE the current turn's
-     * [chatVm.sendMessage] call. The stream observer ignores any emission
-     * whose `lastAssistant.id` equals this, so StateFlow's initial replay
-     * of the previous turn's response doesn't get spoken as a reply to
-     * the current voice input.
-     */
-    private var ignoreAssistantId: String? = null
 
     /** MP3 files produced by synthesize — trimmed to [TTS_CACHE_CAP]. */
     private val ttsFileHistory = ArrayDeque<File>()
@@ -1737,8 +1826,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         sentenceBuffer = StringBuilder()
         resetRealtimeSpeechCoalescer()
         pendingRawDelta = StringBuilder()
-        lastObservedMessageId = null
-        lastObservedContentLength = 0
+        assistantSpeechCursor = null
+        voiceTurnSessionFence = null
         streamComplete = false
         currentTurnPcm = ByteArray(0)
         resetBrokeredToolSpeechState()
@@ -2144,8 +2233,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         sentenceBuffer = StringBuilder()
         resetRealtimeSpeechCoalescer()
         pendingRawDelta = StringBuilder()
-        lastObservedMessageId = null
-        lastObservedContentLength = 0
+        assistantSpeechCursor = null
+        voiceTurnSessionFence = null
         streamComplete = false
         currentTurnPcm = ByteArray(0)
         resetBrokeredToolSpeechState()
@@ -3061,8 +3150,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Reset sentence buffering state for the new turn.
         sentenceBuffer = StringBuilder()
         pendingRawDelta = StringBuilder()
-        lastObservedMessageId = null
-        lastObservedContentLength = 0
+        assistantSpeechCursor = AssistantSpeechCursor(chatVm.messages.value)
+        voiceTurnSessionFence = VoiceTurnSessionFence(chatVm.currentSessionId.value)
         streamComplete = false
         idleFlushJob?.cancel()
         idleFlushJob = null
@@ -3073,14 +3162,6 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         resumeWatchdog?.cancel(); resumeWatchdog = null
         clearSpokenChunksState()
 
-        // Capture the id of the assistant message that currently sits at
-        // the end of history. StateFlow.collect replays the current value
-        // to new subscribers, so without this guard the observer would
-        // treat the previous turn's full response as one giant delta for
-        // the new turn and TTS the wrong answer.
-        ignoreAssistantId = chatVm.messages.value
-            .lastOrNull { it.role == MessageRole.ASSISTANT }?.id
-
         prepareStandardSpeechStream()
 
         // Kick off streaming observer BEFORE sending the message so we don't
@@ -3089,7 +3170,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         // Route the transcribed text through the normal chat pipeline.
         // This will create a user message + kick off the SSE stream.
-        chatVm.sendVoiceMessage(userText, STABLE_VOICE_INTERFACE_CONTEXT)
+        val submittedUserUiKey =
+            chatVm.sendVoiceMessage(userText, STABLE_VOICE_INTERFACE_CONTEXT)
+        voiceTurnSessionFence?.bindSubmittedUser(submittedUserUiKey)
     }
 
     private suspend fun runVoiceRelayPreflight(engineLabel: String): Boolean {
@@ -3147,8 +3230,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         sentenceBuffer = StringBuilder()
         pendingRawDelta = StringBuilder()
-        lastObservedMessageId = null
-        lastObservedContentLength = 0
+        assistantSpeechCursor = null
+        voiceTurnSessionFence = null
         streamComplete = false
         idleFlushJob?.cancel()
         idleFlushJob = null
@@ -4223,64 +4306,62 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Observe [ChatViewModel.messages]. When the last assistant message
-     * grows (isStreaming=true), diff the content against our last snapshot,
-     * push the new delta into [sentenceBuffer], and flush completed
-     * sentences into [ttsQueue]. On isStreaming=false, flush the remaining
-     * buffer and end the turn.
+     * Observe every assistant bubble created by the active Hermes run. A tool
+     * turn can finalize one bubble while the run is still active and later
+     * append the final answer in another bubble, so completion is keyed to
+     * [ChatViewModel.isStreaming], not an individual message flag.
      */
     private fun startStreamObserver(chatVm: ChatViewModel) {
         streamObserverJob?.cancel()
-        streamObserverJob = viewModelScope.launch {
-            chatVm.messages.collect { messages ->
-                val lastAssistant = messages.lastOrNull {
-                    it.role == MessageRole.ASSISTANT
-                } ?: return@collect
-
-                // Skip the assistant message that existed BEFORE the current
-                // turn's sendMessage. Without this, StateFlow's replay of the
-                // current list (containing the PREVIOUS turn's response) gets
-                // treated as a delta and the agent voices the old answer.
-                if (lastAssistant.id == ignoreAssistantId) return@collect
-
-                val msgId = lastAssistant.id
-                if (lastObservedMessageId == null) {
-                    lastObservedMessageId = msgId
-                    lastObservedContentLength = 0
-                } else if (lastObservedMessageId != msgId) {
-                    // A new assistant turn appeared — flush whatever's left
-                    // from the previous one, then switch tracking.
-                    if (!finishStandardSpeechStream()) flushRemainingBuffer()
-                    resetBrokeredToolSpeechState()
-                    lastObservedMessageId = msgId
-                    lastObservedContentLength = 0
-                }
-
-                observeHermesToolLoopForSpeech(lastAssistant)
-
-                val content = lastAssistant.content
-                if (content.length > lastObservedContentLength) {
-                    val delta = content.substring(lastObservedContentLength)
-                    lastObservedContentLength = content.length
-                    onStreamDelta(delta, content)
-                }
-
-                if (!lastAssistant.isStreaming && lastObservedContentLength > 0) {
-                    // Stream ended — mark complete so the chunker stops
-                    // holding short trailing sentences, cancel the idle
-                    // timer (we know exactly when the stream is done), and
-                    // flush any trailing buffer.
-                    streamComplete = true
-                    idleFlushJob?.cancel()
-                    idleFlushJob = null
-                    if (!finishStandardSpeechStream()) flushRemainingBuffer()
-                    // Speaking state will naturally end when TTS queue drains.
-                    // We can't easily wait here without blocking the collector;
-                    // the TTS consumer transitions back to Idle.
-                    streamObserverJob?.cancel()
-                    scheduleAgentAudioCompletionCheck()
-                }
+        val cursor = assistantSpeechCursor ?: AssistantSpeechCursor(chatVm.messages.value).also {
+            assistantSpeechCursor = it
+        }
+        val sessionFence = voiceTurnSessionFence
+            ?: VoiceTurnSessionFence(chatVm.currentSessionId.value).also {
+                voiceTurnSessionFence = it
             }
+        streamObserverJob = viewModelScope.launch {
+            combine(
+                chatVm.messages,
+                chatVm.isStreaming,
+                chatVm.currentSessionId,
+            ) { messages, runActive, sessionId -> Triple(messages, runActive, sessionId) }
+                .collect { (messages, runActive, sessionId) ->
+                    if (!sessionFence.accepts(sessionId, messages)) {
+                        cancelStandardSpeechStream("chat session changed")
+                        streamObserverJob?.cancel()
+                        return@collect
+                    }
+
+                    val batch = cursor.poll(messages)
+                    batch.deltas.forEach { update ->
+                        if (update.startsNewBubble) {
+                            beginAssistantSpeechBubble()
+                        }
+                        onStreamDelta(update.text, batch.aggregateText)
+                    }
+                    // Tool state can change without text growth.
+                    batch.assistantMessages.forEach(::observeHermesToolLoopForSpeech)
+
+                    if (!runActive && batch.hasTurnAssistant) {
+                        streamComplete = true
+                        idleFlushJob?.cancel()
+                        idleFlushJob = null
+                        if (!finishStandardSpeechStream()) flushRemainingBuffer()
+                        streamObserverJob?.cancel()
+                        scheduleAgentAudioCompletionCheck()
+                    }
+                }
+        }
+    }
+
+    private fun beginAssistantSpeechBubble() {
+        idleFlushJob?.cancel()
+        idleFlushJob = null
+        if (standardSpeechStreamOwnsReply()) {
+            offerStandardSpeechText("\n\n")
+        } else {
+            flushRemainingBuffer()
         }
     }
 

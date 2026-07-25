@@ -977,7 +977,16 @@ The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `Voi
 - Observes the same state the chat UI observes — no divergence risk.
 - Transcribed user text routes through the existing `chatVm.sendMessage(text)` path, so voice utterances appear as normal user messages in chat history. Load the session on another device and you see the transcript.
 
-**Trade-off documented in a KDoc comment:** relies on the "last `isStreaming=true` message is the current turn" invariant. If `ChatViewModel` ever streams multiple assistant messages concurrently (multi-agent hand-off, for example) this needs a dedicated per-turn flow. Flagged for Phase 3+ review.
+**Follow-up (2026-07-25):** the observer no longer relies on a single
+`isStreaming=true` assistant message. A per-turn cursor follows every new
+assistant bubble until the run-level `ChatViewModel.isStreaming` state ends,
+so tool handoffs and the final answer are narrated in order. The cursor fences
+the pre-turn stable UI identities and submitted user-turn/session identity,
+and only speaks strict content suffix growth, preventing StateFlow/history
+reconciliation or a pending-new-chat session switch from replaying old or
+rewritten text. Each newly observed assistant bubble also inserts a speech
+boundary, so an interim fragment without punctuation cannot run into the final
+answer.
 
 ### Alternatives explicitly rejected
 
