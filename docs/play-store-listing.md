@@ -172,7 +172,7 @@ No data collection or sharing to declare: no telemetry, ads, or third-party anal
 ### Sensitive / runtime permissions in the Play build
 
 - `RECORD_AUDIO` — Voice mode, requested at use.
-- `POST_NOTIFICATIONS` — turn-complete + keep-alive notifications, requested on API 33+.
+- `POST_NOTIFICATIONS` — chat input, turn-complete, and keep-alive notifications, requested on API 33+.
 - `CAMERA` — QR pairing / attachments, requested at use.
 - Notification listener (companion) — user-enabled in system settings.
 

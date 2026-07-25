@@ -23,6 +23,21 @@ forced-summary events update and settle the initiating row even when a newer
 persistent Voice command has started. Existing empty-response cleanup remains
 unchanged for assistant rows without background work.
 
+## 2026-07-23 — Background interaction notifications
+
+Android Gateway chat now treats approval, clarification, elevated-permission,
+and secret requests as actionable background events. Privacy-safe notifications
+use stable per-session identities, reopen the exact conversation, replace
+replayed requests, and clear on answer, expiry, or resumed turn activity.
+Detached active turns retain and replay their pending interaction when the
+conversation is reopened.
+
+The audit classified `terminal.read.request` as renderer plumbing rather than a
+user decision. Android now answers it with the upstream no-terminal empty
+response instead of showing an interaction or waiting for the server timeout.
+The shared main manifest continues to provide notification and persistent
+connection support to both Google Play and sideload builds.
+
 ## 2026-07-23 — Android user-CA trust for self-hosted Hermes
 
 The shared Android network security configuration now accepts CA certificates

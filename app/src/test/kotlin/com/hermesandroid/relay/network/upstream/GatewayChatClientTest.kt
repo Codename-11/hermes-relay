@@ -420,6 +420,7 @@ class GatewayChatClientTest {
         val sessionIds = ConcurrentLinkedQueue<String>()
         val errors = ConcurrentLinkedQueue<String>()
         val interactions = ConcurrentLinkedQueue<GatewayAsk>()
+        val interactionResolutions = ConcurrentLinkedQueue<GatewayAskExpiry>()
         val toolStarts = ConcurrentLinkedQueue<Pair<String, String>>()
         val toolDone = ConcurrentLinkedQueue<Pair<String, String?>>()
 
@@ -448,6 +449,7 @@ class GatewayChatClientTest {
             onSubagentEvent = { subagentEvents += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { },
+            onInteractionResolved = { interactionResolutions += it },
             onStatusUpdate = { _, _ -> },
             onStatusClear = { },
         )
@@ -2232,6 +2234,94 @@ class GatewayChatClientTest {
         assertTrue(resumed.completeLatch.await(5, TimeUnit.SECONDS))
         assertEquals(listOf(" finished"), resumed.textDeltas.toList())
         assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun `detached interaction is retained and replayed when exact session reopens`() {
+        val original = Recorder()
+        val backgroundEvents = ConcurrentLinkedQueue<GatewayBackgroundInteractionEvent>()
+        client.setBackgroundInteractionListener(backgroundEvents::add)
+        client.sessionProfileProvider = { "work" }
+        client.sendTurn(null, "long task", null, original.callbacks) {
+            original.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        assertTrue(client.backgroundActiveTurn())
+
+        serverWs.send(
+            harness.eventFrame(
+                "approval.request",
+                buildJsonObject { put("command", "redacted command") },
+                "live-1",
+            ),
+        )
+        repeat(50) {
+            if (backgroundEvents.isNotEmpty()) return@repeat
+            Thread.sleep(20)
+        }
+        val requested = backgroundEvents.single() as GatewayBackgroundInteractionEvent.Requested
+        assertEquals("20260612_120000_abc123", requested.storedSessionId)
+        assertEquals("work", requested.profile)
+        assertEquals(GatewayAsk.Kind.APPROVAL, requested.ask.kind)
+
+        harness.recoveryRunning = true
+        val resumed = Recorder()
+        runBlocking {
+            client.recoverTurn(
+                storedId = "20260612_120000_abc123",
+                preferredLiveId = "live-1",
+                callbacks = resumed.callbacks,
+            ).getOrThrow()
+        }
+        repeat(50) {
+            if (resumed.interactions.isNotEmpty()) return@repeat
+            Thread.sleep(20)
+        }
+        assertEquals(GatewayAsk.Kind.APPROVAL, resumed.interactions.single().kind)
+
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "continued") },
+                "live-1",
+            ),
+        )
+        repeat(50) {
+            if (resumed.interactionResolutions.isNotEmpty()) return@repeat
+            Thread.sleep(20)
+        }
+        assertEquals(
+            GatewayAskExpiry(GatewayAsk.Kind.APPROVAL, null),
+            resumed.interactionResolutions.single(),
+        )
+    }
+
+    @Test
+    fun `terminal read request is answered empty without user interaction`() {
+        val recorder = Recorder()
+        client.sendTurn(null, "inspect terminal", null, recorder.callbacks) {
+            recorder.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        serverWs.send(
+            harness.eventFrame(
+                "terminal.read.request",
+                buildJsonObject {
+                    put("request_id", "terminal-1")
+                    put("start", 0)
+                    put("count", 20)
+                },
+                "live-1",
+            ),
+        )
+
+        val response = harness.awaitRpc("terminal.read.respond")
+        assertEquals(JsonPrimitive("terminal-1"), response["request_id"])
+        assertEquals(JsonPrimitive(""), response["text"])
+        assertTrue(recorder.interactions.isEmpty())
     }
 
     @Test

@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android alerts when a background Gateway turn needs input.** Approval, clarification, elevated-permission, and secret requests post privacy-safe notifications that reopen the correct conversation, survive reconnect replay without duplicates, and clear when the request is answered or expires.
 - **Promoted voice tasks keep their Chat row through background delivery.** Completing the provider's initial spoken handoff no longer removes an otherwise empty assistant bubble that still owns a running background task.
 - **Android accepts deliberately installed private certificate authorities.** Google Play and sideload builds now use Android's user CA store alongside system roots for self-hosted HTTPS/WSS connections while preserving certificate-chain, hostname, and Relay pin verification.
 - **Malformed code blocks no longer crash Android Markdown rendering.** Syntax highlighting now bounds dependency-provided spans before applying them, preserving valid highlighting while safely ignoring reversed or out-of-bounds ranges.

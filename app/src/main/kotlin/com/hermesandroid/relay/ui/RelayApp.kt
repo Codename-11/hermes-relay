@@ -274,13 +274,29 @@ sealed class Screen(
     // NavHost, and the NavigationBarItem click must navigate via [route]()
     // so no unresolved `{openAgentSheet}` leaks into the destination.
     data object Chat : Screen(
-        "chat?openAgentSheet={openAgentSheet}",
+        "chat?openAgentSheet={openAgentSheet}&sessionId={sessionId}&profile={profile}",
         "Chat",
         Icons.AutoMirrored.Filled.Chat,
     ) {
         const val ARG_OPEN_AGENT_SHEET: String = "openAgentSheet"
-        fun route(openAgentSheet: Boolean = false): String =
-            if (openAgentSheet) "chat?openAgentSheet=true" else "chat"
+        const val ARG_SESSION_ID: String = "sessionId"
+        const val ARG_PROFILE: String = "profile"
+        fun route(
+            openAgentSheet: Boolean = false,
+            sessionId: String? = null,
+            profile: String? = null,
+        ): String {
+            val params = buildList {
+                if (openAgentSheet) add("$ARG_OPEN_AGENT_SHEET=true")
+                sessionId?.takeIf { it.isNotBlank() }?.let {
+                    add("$ARG_SESSION_ID=${android.net.Uri.encode(it)}")
+                }
+                profile?.takeIf { it.isNotBlank() }?.let {
+                    add("$ARG_PROFILE=${android.net.Uri.encode(it)}")
+                }
+            }
+            return if (params.isEmpty()) "chat" else "chat?${params.joinToString("&")}"
+        }
     }
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
@@ -1825,6 +1841,16 @@ fun RelayApp() {
                             type = NavType.BoolType
                             defaultValue = false
                         },
+                        navArgument(Screen.Chat.ARG_SESSION_ID) {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
+                        navArgument(Screen.Chat.ARG_PROFILE) {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
                     ),
                 ) { backStackEntry ->
                     // Responsive bubble width based on screen width. The "Blend"
@@ -1849,6 +1875,48 @@ fun RelayApp() {
                     // sheet.
                     val openAgentSheetArg = backStackEntry.arguments
                         ?.getBoolean(Screen.Chat.ARG_OPEN_AGENT_SHEET, false) == true
+                    val requestedSessionId = backStackEntry.arguments
+                        ?.getString(Screen.Chat.ARG_SESSION_ID)
+                        ?.takeIf { it.isNotBlank() }
+                    val requestedProfileRoute = backStackEntry.arguments
+                        ?.getString(Screen.Chat.ARG_PROFILE)
+                        ?.takeIf { it.isNotBlank() }
+                    LaunchedEffect(
+                        requestedSessionId,
+                        requestedProfileRoute,
+                        profileSelectionSettled,
+                        effectiveSessionProfileName,
+                        agentProfiles,
+                    ) {
+                        val sessionId = requestedSessionId ?: return@LaunchedEffect
+                        if (requestedProfileRoute != null) {
+                            val targetProfile = requestedProfileRoute.takeUnless {
+                                it == com.hermesandroid.relay.notifications
+                                    .InteractionRequestNotifier.DEFAULT_PROFILE_ROUTE_VALUE
+                            }
+                            if (!profileSelectionSettled) return@LaunchedEffect
+                            if (effectiveSessionProfileName != targetProfile) {
+                                val selection = targetProfile?.let { name ->
+                                    agentProfiles.firstOrNull { it.name == name }
+                                }
+                                if (targetProfile == null || selection != null) {
+                                    connectionViewModel.selectProfile(selection)
+                                }
+                                return@LaunchedEffect
+                            }
+                            chatViewModel.switchProfileContext(
+                                contextKey = AgentDisplay.profileContextKey(
+                                    connectionId = activeConnectionId,
+                                    profileName = targetProfile,
+                                ),
+                                sessionId = sessionId,
+                            )
+                        } else if (chatViewModel.currentSessionId.value != sessionId) {
+                            chatViewModel.switchSession(sessionId)
+                        }
+                        backStackEntry.arguments?.putString(Screen.Chat.ARG_SESSION_ID, null)
+                        backStackEntry.arguments?.putString(Screen.Chat.ARG_PROFILE, null)
+                    }
 
                     val screenChatLabel = stringResource(R.string.screen_chat_label)
 

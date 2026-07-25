@@ -20,6 +20,7 @@ import com.hermesandroid.relay.bridge.BridgeForegroundService
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
+import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.NavRouteRequest
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -142,6 +143,10 @@ class MainActivity : AppCompatActivity() {
         // Returning to the app clears the one-slot "Hermes finished
         // responding" notification — the chat surface is the answer.
         TurnCompleteNotifier.cancel(this)
+        // Action-required notifications are durable across process death.
+        // Once the authenticated chat surface is visible it owns presentation;
+        // unresolved asks are re-posted if the app returns to the background.
+        InteractionRequestNotifier.cancelAll(this)
         // v0.4.1 — register this activity as the host for
         // KeyguardManager.requestDismissKeyguard. Cleared in onPause so
         // we don't leak the Activity past its lifecycle. The unattended-

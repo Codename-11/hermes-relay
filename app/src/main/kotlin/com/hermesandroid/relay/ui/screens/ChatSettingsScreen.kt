@@ -443,7 +443,7 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
-                    // Turn-complete notification toggle. First enable on
+                    // Background chat-alert toggle. First enable on
                     // API 33+ runs the POST_NOTIFICATIONS request (the
                     // BridgeScreen master-toggle precedent); if the user
                     // denies, the notifier silently no-ops at post time.

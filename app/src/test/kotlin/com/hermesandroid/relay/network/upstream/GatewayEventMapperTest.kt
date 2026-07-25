@@ -28,6 +28,7 @@ class GatewayEventMapperTest {
         val subagentEvents = mutableListOf<GatewaySubagentEvent>()
         val interactions = mutableListOf<GatewayAsk>()
         val interactionExpiries = mutableListOf<GatewayAskExpiry>()
+        val interactionResolutions = mutableListOf<GatewayAskExpiry>()
         val statusUpdates = mutableListOf<Pair<String?, String>>()
         val statusClears = mutableListOf<String>()
         val sessionIds = mutableListOf<String>()
@@ -58,6 +59,7 @@ class GatewayEventMapperTest {
             onSubagentEvent = { subagentEvents += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { interactionExpiries += it },
+            onInteractionResolved = { interactionResolutions += it },
             onStatusUpdate = { kind, text -> statusUpdates += kind to text },
             onStatusClear = { statusClears += it },
         )
@@ -682,24 +684,52 @@ class GatewayEventMapperTest {
     }
 
     @Test
-    fun `sudo secret clarify and approval expiry events preserve correlation contract`() {
+    fun `interaction expiry events preserve correlation contract`() {
         val r = Recorder()
         val mapper = mapperWith(r)
+        mapper.onEvent("clarify.expire", obj("""{"request_id":"r1"}"""))
         mapper.onEvent("sudo.expire", obj("""{"request_id":"r2"}"""))
         mapper.onEvent("secret.expire", obj("""{"request_id":"r3"}"""))
-        mapper.onEvent("clarify.expire", obj("""{"request_id":"r4"}"""))
         mapper.onEvent("approval.expire", obj("""{"request_id":"ignored"}"""))
 
         assertEquals(
             listOf(
+                GatewayAsk.Kind.CLARIFY,
                 GatewayAsk.Kind.SUDO,
                 GatewayAsk.Kind.SECRET,
-                GatewayAsk.Kind.CLARIFY,
                 GatewayAsk.Kind.APPROVAL,
             ),
             r.interactionExpiries.map { it.kind },
         )
-        assertEquals(listOf("r2", "r3", "r4", null), r.interactionExpiries.map { it.requestId })
+        assertEquals(listOf("r1", "r2", "r3", null), r.interactionExpiries.map { it.requestId })
+    }
+
+    @Test
+    fun `replayed request is deduplicated and resumed turn resolves it`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        val request = obj("""{"request_id":"r1","question":"Choose","choices":["A","B"]}""")
+
+        mapper.onEvent("clarify.request", request)
+        mapper.onEvent("clarify.request", request)
+        mapper.onEvent("message.delta", obj("""{"text":"Continuing"}"""))
+
+        assertEquals(1, r.interactions.size)
+        assertEquals(
+            GatewayAskExpiry(GatewayAsk.Kind.CLARIFY, "r1"),
+            r.interactionResolutions.single(),
+        )
+    }
+
+    @Test
+    fun `terminal read request is renderer plumbing not an actionable interaction`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "terminal.read.request",
+            obj("""{"request_id":"terminal-1","start":0,"count":20}"""),
+        )
+
+        assertTrue(r.interactions.isEmpty())
     }
 
     // --- Forward compat ---
@@ -728,7 +758,7 @@ class GatewayEventMapperTest {
             "reasoning.delta", "thinking.delta", "message.delta", "message.interim", "message.start",
             "message.complete", "error", "clarify.request", "approval.request",
             "sudo.request", "secret.request", "reasoning.available",
-            "sudo.expire", "secret.expire", "clarify.expire", "approval.expire",
+            "clarify.expire", "sudo.expire", "secret.expire", "approval.expire",
             "tool.generating", "subagent.start", "subagent.thinking",
             "subagent.tool", "subagent.progress", "subagent.complete",
             "tool.output_risk", "moa.reference", "moa.aggregating",

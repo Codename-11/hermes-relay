@@ -127,12 +127,19 @@ around 75% and **red** near 90%, with a `· NN% ctx` readout in the header
 subtitle as you get close to the limit — a quiet heads-up to wrap up or
 `/compress` before the model starts dropping the earliest messages.
 
-## Turn-complete notifications
+## Chat alerts
 
-Long task running while you switch away? If you leave the app mid-reply,
-Hermes-Relay posts a **"Hermes replies"** notification when the turn finishes, so
-you can jump back in. Toggle it under **Settings → Chat → Notify when Hermes
-finishes** (it asks for notification permission the first time).
+If you leave the app during a Gateway turn, Hermes-Relay alerts you when Hermes
+needs an approval, clarification, elevated-permission response, or secret, and
+again when the turn finishes. An action-required alert opens the exact
+conversation and request. Replayed events replace the existing alert, and the
+alert clears after you respond, the request expires, or the turn resumes.
+
+Notification text never includes the command, question, secret prompt, or
+environment-variable name. Those details stay inside the authenticated chat
+surface, including on the lock screen. Toggle this behavior under **Settings →
+Quick Controls → Chat alerts**; Android asks for notification permission the
+first time.
 
 ## Smooth auto-scroll
 
@@ -246,3 +253,8 @@ setups it also keeps device control and notification mirroring reachable. Tap
 **Turn off** on the notification, or flip the toggle, to stop. This uses more
 battery; swiping the app away from recents also ends it. It's the same approach
 apps like Home Assistant use to stay connected.
+
+Chat alerts do not require Persistent connection while an already-running turn
+is attached, but Android may stop an idle background app later. Enable
+Persistent connection when approval and other action-required alerts must
+remain reachable during long idle or Doze periods.
