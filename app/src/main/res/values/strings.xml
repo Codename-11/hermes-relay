@@ -2691,6 +2691,23 @@
     <string name="attachment_unmute">Unmute</string>
     <string name="attachment_mute">Mute</string>
     <string name="attachment_title">Attachment</string>
+    <plurals name="attachment_group_count">
+        <item quantity="one">%1$d attachment</item>
+        <item quantity="other">%1$d attachments</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">Collapse attachments</string>
+    <string name="attachment_group_expand">Expand attachments</string>
+    <string name="attachment_group_collapsed">Collapsed</string>
+    <string name="attachment_group_expanded">Expanded</string>
+    <string name="attachment_type_image">Image</string>
+    <string name="attachment_type_video">Video</string>
+    <string name="attachment_type_audio">Audio</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">Text</string>
+    <string name="attachment_type_file">File</string>
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay closed unexpectedly</string>
