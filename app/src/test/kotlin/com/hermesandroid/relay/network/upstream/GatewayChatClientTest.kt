@@ -2192,7 +2192,8 @@ class GatewayChatClientTest {
                 recorder.callbacks,
             ).getOrThrow()
         }
-        val ack = harness.awaitSuppressedAck("session.resume")
+        val ack = harness.awaitPendingAck()
+        assertEquals("session.resume", ack.method)
         val liveId = (harness.recoveryResult("stored-42")
             .getValue("session_id") as JsonPrimitive).content
         ack.ws.send(harness.eventFrame("message.start", null, liveId))
@@ -2234,7 +2235,8 @@ class GatewayChatClientTest {
                 recorder.callbacks,
             ).getOrThrow()
         }
-        val ack = harness.awaitSuppressedAck("session.resume")
+        val ack = harness.awaitPendingAck()
+        assertEquals("session.resume", ack.method)
         val liveId = (harness.recoveryResult("stored-42")
             .getValue("session_id") as JsonPrimitive).content
         ack.ws.send(harness.eventFrame("message.start", null, liveId))
