@@ -230,6 +230,8 @@ class HermesApiClientTest {
                     "run_events_sse": true,
                     "session_resources": true,
                     "session_chat_streaming": true,
+                    "model_options": true,
+                    "session_model_lock": true,
                     "skills_api": true
                 },
                 "endpoints": {
@@ -237,6 +239,8 @@ class HermesApiClientTest {
                     "run_events": {"method": "GET", "path": "/v1/runs/{run_id}/events"},
                     "sessions": {"method": "GET", "path": "/api/sessions"},
                     "session_chat_stream": {"method": "POST", "path": "/api/sessions/{session_id}/chat/stream"},
+                    "model_options": {"method": "GET", "path": "/api/model/options"},
+                    "session_model_lock": {"method": "POST", "path": "/api/sessions/{session_id}/model"},
                     "skills": {"method": "GET", "path": "/v1/skills"},
                     "toolsets": {"method": "GET", "path": "/v1/toolsets"}
                 }
@@ -249,7 +253,135 @@ class HermesApiClientTest {
         assertEquals(true, capabilities?.sessionsChatStream)
         assertEquals(true, capabilities?.portable)
         assertEquals(true, capabilities?.runs)
+        assertEquals(true, capabilities?.modelOptions)
+        assertEquals(true, capabilities?.sessionModelLock)
         assertEquals("sessions", capabilities?.preferredChatEndpoint())
+    }
+
+    @Test
+    fun providerModelOptions_preserveAuthenticatedAndUnavailableInventory() {
+        val parsed = parseApiProviderModelOptionsBody(
+            Json { ignoreUnknownKeys = true },
+            """
+            {
+              "model": "grok-4.3",
+              "provider": "xai",
+              "providers": [
+                {
+                  "slug": "xai",
+                  "name": "xAI",
+                  "authenticated": true,
+                  "is_current": true,
+                  "models": ["grok-4.3", "grok-4.2"],
+                  "unavailable_models": ["grok-4.2"],
+                  "free_tier": true,
+                  "total_models": 2
+                },
+                {
+                  "slug": "anthropic",
+                  "name": "Anthropic",
+                  "authenticated": false,
+                  "models": ["claude-opus-4-6"]
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("grok-4.3", parsed?.currentModel)
+        assertEquals("xai", parsed?.currentProvider)
+        assertEquals(listOf("grok-4.3", "grok-4.2"), parsed?.providers?.first()?.models)
+        assertEquals(listOf("grok-4.2"), parsed?.providers?.first()?.unavailableModels)
+        assertTrue(parsed?.providers?.first()?.authenticated == true)
+        assertFalse(parsed?.providers?.last()?.authenticated == true)
+    }
+
+    @Test
+    fun providerModelOptions_requireProviderEnvelope() {
+        assertNull(parseApiProviderModelOptionsBody(Json, """{"data":[]}"""))
+        assertNull(parseApiProviderModelOptionsBody(Json, "not-json"))
+    }
+
+    @Test
+    fun modelLockAck_requiresExplicitRequestedRouteAndAcceptedState() {
+        val ack = parseApiModelLockAck(
+            Json,
+            """
+            {
+              "object": "hermes.session.model_lock",
+              "session_id": "session-1",
+              "runtime": {
+                "requested": {"model": "grok-4.3", "provider": "xai"},
+                "effective": {"model": "grok-4.3", "provider": "xai"},
+                "model_lock": "accepted"
+              }
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("session-1", ack?.sessionId)
+        assertEquals("grok-4.3", ack?.model)
+        assertEquals("xai", ack?.provider)
+        assertEquals("accepted", ack?.state)
+        assertEquals("grok-4.3", ack?.effectiveModel)
+        assertEquals("xai", ack?.effectiveProvider)
+        assertNull(parseApiModelLockAck(Json, """{"session_id":"session-1"}"""))
+    }
+
+    @Test
+    fun modelOptionsWithoutSessionLockUsesLegacyHintContract() {
+        val capabilities = ServerCapabilities(
+            sessionsApi = true,
+            sessionsChatStream = true,
+            runs = false,
+            portable = true,
+            healthy = true,
+            modelOptions = true,
+            sessionModelLock = false,
+        )
+
+        assertEquals(ApiModelRoutingStrategy.LEGACY_HINT, apiModelRoutingStrategy(capabilities))
+    }
+
+    @Test
+    fun terminalRuntimeMustConfirmExactEffectiveRoute() {
+        val expected = ApiModelSelectionAck.Locked(
+            sessionId = "session-1",
+            model = "fast-route",
+            provider = "openai",
+            effectiveModel = "gpt-5-mini",
+            effectiveProvider = "openai",
+        )
+        val confirmed = Json.parseToJsonElement(
+            """{"model_lock":"confirmed","effective":{"model":"gpt-5-mini","provider":"openai"}}""",
+        ) as kotlinx.serialization.json.JsonObject
+        val wrongProvider = Json.parseToJsonElement(
+            """{"model_lock":"confirmed","effective":{"model":"gpt-5-mini","provider":"azure"}}""",
+        ) as kotlinx.serialization.json.JsonObject
+        val merelyAccepted = Json.parseToJsonElement(
+            """{"model_lock":"accepted","effective":{"model":"gpt-5-mini","provider":"openai"}}""",
+        ) as kotlinx.serialization.json.JsonObject
+
+        assertTrue(confirmedRuntimeMatches(confirmed, expected))
+        assertFalse(confirmedRuntimeMatches(wrongProvider, expected))
+        assertFalse(confirmedRuntimeMatches(merelyAccepted, expected))
+    }
+
+    @Test
+    fun confirmedLockOmitsTurnModelWhileLegacyFallbackKeepsHint() {
+        assertNull(
+            sessionTurnModelHint(
+                ApiModelSelectionAck.Locked("session-1", "grok-4.3", "xai"),
+                "grok-4.3",
+            ),
+        )
+        assertEquals(
+            "fast-route",
+            sessionTurnModelHint(
+                ApiModelSelectionAck.LegacyModelHint("fast-route"),
+                "fast-route",
+            ),
+        )
     }
 
     @Test

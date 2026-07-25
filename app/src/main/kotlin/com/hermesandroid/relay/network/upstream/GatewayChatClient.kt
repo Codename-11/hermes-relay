@@ -164,6 +164,7 @@ class GatewayChatClient(
         private const val CONNECT_ATTEMPTS = 2
         private const val INBOUND_BIND_TIMEOUT_MS = 2_000L
         private const val CANCELLED_TURN_SUBMIT_WAIT_MS = 2_000L
+        private const val MAX_RECOVERY_BUFFERED_EVENTS = 256
 
         /** Distinct socket-loss (flap) events per turn we'll try to recover from. */
         private const val MAX_TURN_REJOINS = 4
@@ -284,6 +285,14 @@ class GatewayChatClient(
     private val _serverYolo = MutableStateFlow<Boolean?>(null)
     val serverYolo: StateFlow<Boolean?> = _serverYolo.asStateFlow()
 
+    private val _serverApprovalMode = MutableStateFlow<GatewayApprovalMode?>(null)
+    val serverApprovalMode: StateFlow<GatewayApprovalMode?> = _serverApprovalMode.asStateFlow()
+
+    private val _approvalModeCapability =
+        MutableStateFlow(GatewayApprovalModeCapability.Unknown)
+    val approvalModeCapability: StateFlow<GatewayApprovalModeCapability> =
+        _approvalModeCapability.asStateFlow()
+
     private val _serverFast = MutableStateFlow<Boolean?>(null)
     val serverFast: StateFlow<Boolean?> = _serverFast.asStateFlow()
 
@@ -361,6 +370,15 @@ class GatewayChatClient(
 
     @Volatile
     private var activeTurn: GatewayTurn? = null
+
+    private data class RecoveryEvent(
+        val sessionId: String,
+        val type: String,
+        val payload: JsonObject?,
+    )
+
+    private val recoveryEventLock = Any()
+    private var recoveryEvents: MutableList<RecoveryEvent>? = null
 
     /**
      * Turns deliberately detached when the user switches profile/session.
@@ -820,24 +838,33 @@ class GatewayChatClient(
             }
 
             if (response == null) {
-                response = rpc(
-                    "session.resume",
-                    buildJsonObject {
-                        put("session_id", storedId)
-                        put("cols", DEFAULT_COLS)
-                        put("source", sessionSource)
-                        requestedProfile?.let { put("profile", it) }
-                    },
-                ).getOrElse { error ->
-                    preferredLiveId?.let { liveId ->
-                        claimedBackground?.let { backgroundTurns.putIfAbsent(liveId, it) }
+                synchronized(recoveryEventLock) {
+                    recoveryEvents = mutableListOf()
+                }
+                response = try {
+                    rpc(
+                        "session.resume",
+                        buildJsonObject {
+                            put("session_id", storedId)
+                            put("cols", DEFAULT_COLS)
+                            put("source", sessionSource)
+                            requestedProfile?.let { put("profile", it) }
+                        },
+                    ).getOrElse { error ->
+                        preferredLiveId?.let { liveId ->
+                            claimedBackground?.let { backgroundTurns.putIfAbsent(liveId, it) }
+                        }
+                        throw error
                     }
+                } catch (error: Throwable) {
+                    synchronized(recoveryEventLock) { recoveryEvents = null }
                     throw error
                 }
             }
 
             val recoveredLiveId = response.stringField("session_id")
                 ?: run {
+                    synchronized(recoveryEventLock) { recoveryEvents = null }
                     if (!preferredLiveId.isNullOrBlank()) {
                         claimedBackground?.let { backgroundTurns.putIfAbsent(preferredLiveId, it) }
                     }
@@ -854,6 +881,9 @@ class GatewayChatClient(
                     user = value.stringField("user").orEmpty(),
                     assistant = value.stringField("assistant").orEmpty(),
                     streaming = value.booleanField("streaming") == true,
+                    status = value.stringField("status"),
+                    error = value.stringField("error"),
+                    recoverable = value.booleanField("recoverable") == true,
                 )
             }
             val queued = (response["queued"] as? JsonObject)?.let { value ->
@@ -862,8 +892,20 @@ class GatewayChatClient(
                     ?.let(::GatewayQueuedTurn)
             }
             val running = response.booleanField("running") == true || inflight?.streaming == true
+            val autoContinue = (response["auto_continue"] as? JsonObject)?.let { value ->
+                val attempt = value.stringField("attempt")?.toIntOrNull()
+                    ?: (value["attempt"] as? JsonPrimitive)?.intOrNull
+                if (attempt != null && attempt > 0) {
+                    GatewayAutoContinue(
+                        attempt = attempt,
+                        interruptedAt = value.stringField("interrupted_at")?.toDoubleOrNull(),
+                    )
+                } else {
+                    null
+                }
+            }
 
-            if (running) {
+            if (running || autoContinue != null) {
                 if (boundTurn == null || boundTurn.ended) {
                     boundTurn = GatewayTurn(
                         callbacks = dispatchOn(callbacks),
@@ -873,6 +915,13 @@ class GatewayChatClient(
                         activeTurn = turn
                     }
                 }
+                val buffered = synchronized(recoveryEventLock) {
+                    recoveryEvents
+                        ?.filter { it.sessionId == recoveredLiveId }
+                        .orEmpty()
+                        .also { recoveryEvents = null }
+                }
+                buffered.forEach { event -> boundTurn?.onEvent(event.type, event.payload) }
                 queued?.let { queuedTurn ->
                     queuedTurnProvider?.invoke(queuedTurn)?.let { registration ->
                         boundTurn.installQueuedSuccessor(registration)
@@ -884,6 +933,7 @@ class GatewayChatClient(
                 }
                 boundTurn.armWatchdog()
             } else if (queued != null) {
+                synchronized(recoveryEventLock) { recoveryEvents = null }
                 // A queued-only snapshot belongs to the NEXT turn. Never let
                 // its events flow through the completed checkpoint's mapper.
                 val priorBoundTurn = boundTurn
@@ -914,6 +964,7 @@ class GatewayChatClient(
                     priorBoundTurn?.detach()
                 }
             } else {
+                synchronized(recoveryEventLock) { recoveryEvents = null }
                 if (boundTurn != null) {
                     if (activeTurn === boundTurn) activeTurn = null
                     boundTurn.discardDeferredEvents()
@@ -929,6 +980,7 @@ class GatewayChatClient(
                 status = response.stringField("status"),
                 inflight = inflight,
                 queued = queued,
+                autoContinue = autoContinue,
                 handle = (if (boundTurn?.ended == true) activeTurn else boundTurn)
                     ?.takeUnless { it.ended },
             )
@@ -1378,6 +1430,84 @@ class GatewayChatClient(
     }
 
     /**
+     * Read the profile-persisted approval policy added in gateway contract v3.
+     * Older gateways either reject the key or return no recognized value; both
+     * downgrade this optional control without affecting chat or per-session YOLO.
+     */
+    suspend fun getApprovalMode(): Result<GatewayApprovalMode> {
+        if (_approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported) {
+            return Result.failure(approvalModeUnsupported())
+        }
+        if (currentSessionProfile() != null) {
+            return Result.failure(approvalModeRequiresLaunchProfile())
+        }
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val response = rpc(
+            "config.get",
+            buildJsonObject { put("key", "approvals.mode") },
+        )
+        response.exceptionOrNull()?.let { error ->
+            if (error.isApprovalModeUnsupported()) {
+                _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+            }
+            return Result.failure(error)
+        }
+        val mode = GatewayApprovalMode.fromWire(response.getOrThrow().stringField("value"))
+            ?: run {
+                _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+                return Result.failure(approvalModeUnsupported())
+            }
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+        _serverApprovalMode.value = mode
+        return Result.success(mode)
+    }
+
+    /** Persist the selected approval policy for the active gateway profile. */
+    suspend fun setApprovalMode(mode: GatewayApprovalMode): Result<GatewayApprovalMode> {
+        if (_approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported) {
+            return Result.failure(approvalModeUnsupported())
+        }
+        if (currentSessionProfile() != null) {
+            return Result.failure(approvalModeRequiresLaunchProfile())
+        }
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val response = rpc(
+            "config.set",
+            buildJsonObject {
+                put("key", "approvals.mode")
+                put("value", mode.wireValue)
+            },
+        )
+        response.exceptionOrNull()?.let { error ->
+            if (error.isApprovalModeUnsupported()) {
+                _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+            }
+            return Result.failure(error)
+        }
+        val authoritative =
+            GatewayApprovalMode.fromWire(response.getOrThrow().stringField("value"))
+                ?: run {
+                    _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+                    return Result.failure(approvalModeUnsupported())
+                }
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+        _serverApprovalMode.value = authoritative
+        return Result.success(authoritative)
+    }
+
+    /**
      * Toggle fast mode (priority service tier) via `config.set {key:"fast"}` —
      * desktop parity (`value` "fast"/"normal", session-scoped). Capability-gated
      * upstream: enabling fails (error 4002) when the current model has no fast
@@ -1452,6 +1582,7 @@ class GatewayChatClient(
     private suspend fun connectOnce() {
         val connectStart = System.nanoTime()
         _processCapability.value = GatewayProcessCapability.Unknown
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
             throw GatewayConnectAttemptException("ws-ticket mint failed: ${e.message}")
@@ -1541,6 +1672,14 @@ class GatewayChatClient(
      * session can paint its real model up front rather than waiting for a turn.
      */
     private fun applySessionInfo(info: JsonObject) {
+        val contract = (info["desktop_contract"] as? JsonPrimitive)?.intOrNull
+        if (contract != null && contract < 3) {
+            _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+        }
+        GatewayApprovalMode.fromWire(info.stringField("approval_mode"))?.let { mode ->
+            _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+            _serverApprovalMode.value = mode
+        }
         if (info.containsKey("personality")) {
             _serverPersonality.value =
                 (info.stringField("personality") ?: "").ifBlank { "none" }
@@ -1845,6 +1984,25 @@ class GatewayChatClient(
             return
         }
 
+        // A cold session.resume may schedule auto-continue before its RPC
+        // response reaches Android. The recovery buffer is an ownership gate,
+        // not an observational copy: an event is either claimed here for
+        // replay or routed live below, never both. The resume response drains
+        // and closes the gate under this same lock, so later frames route live.
+        // Already-owned sibling sessions retain their background routing.
+        val claimedByRecovery = !eventSessionId.isNullOrBlank() &&
+            !backgroundTurns.containsKey(eventSessionId) &&
+            synchronized(recoveryEventLock) {
+                recoveryEvents?.let { buffered ->
+                    if (buffered.size >= MAX_RECOVERY_BUFFERED_EVENTS) {
+                        buffered.removeAt(0)
+                    }
+                    buffered += RecoveryEvent(eventSessionId, type, payload)
+                    true
+                } ?: false
+            }
+        if (claimedByRecovery) return
+
         // A profile/session switch may leave an upstream turn running while a
         // different profile becomes visible. Its events must never paint the
         // new transcript, but the terminal event still needs to reconcile the
@@ -1916,7 +2074,7 @@ class GatewayChatClient(
         // `/personality`, desktop, or TUI change keeps the app in sync. Falls
         // through to the turn dispatch below so an in-flight turn still sees it.
         if (type == "session.info" &&
-            (eventSessionId == null || liveSessionId == null || eventSessionId == liveSessionId)
+            (eventSessionId == null || eventSessionId == liveSessionId)
         ) {
             // Connection-level session info (model / provider / effort / persona /
             // yolo / fast / usage) — shared with the session.resume result via
@@ -2046,6 +2204,7 @@ class GatewayChatClient(
         attachMethodForSocket = null
         commandsCatalogCache = null
         _processCapability.value = GatewayProcessCapability.Unknown
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
@@ -2224,6 +2383,7 @@ class GatewayChatClient(
         attachMethodForSocket = null
         commandsCatalogCache = null
         _processCapability.value = GatewayProcessCapability.Unknown
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
     }
 
@@ -2705,6 +2865,9 @@ class GatewayChatClient(
         onInterimMessage = { text, alreadyStreamed ->
             callbackDispatcher { callbacks.onInterimMessage(text, alreadyStreamed) }
         },
+        onInterimReconciled = { text ->
+            callbackDispatcher { callbacks.onInterimReconciled(text) }
+        },
         onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
         onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },
         onToolCallDone = { a, b -> callbackDispatcher { callbacks.onToolCallDone(a, b) } },
@@ -2717,6 +2880,7 @@ class GatewayChatClient(
         onError = { v -> callbackDispatcher { callbacks.onError(v) } },
         onToolGenerating = { v -> callbackDispatcher { callbacks.onToolGenerating(v) } },
         onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
+        onMoaReference = { v -> callbackDispatcher { callbacks.onMoaReference(v) } },
         onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
         onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
         onInteractionResolved = { v -> callbackDispatcher { callbacks.onInteractionResolved(v) } },
@@ -2797,6 +2961,29 @@ private fun Throwable?.isMethodNotFound(): Boolean {
     return msg.contains("method not found", ignoreCase = true) ||
         msg.contains("unknown method", ignoreCase = true)
 }
+
+private fun Throwable?.isApprovalModeUnsupported(): Boolean {
+    val rpcError = this as? GatewayRpcException ?: return false
+    val message = rpcError.message.orEmpty()
+    return rpcError.code == JSONRPC_METHOD_NOT_FOUND ||
+        rpcError.code == 4002 ||
+        message.contains("approval mode", ignoreCase = true) &&
+        (
+            message.contains("unknown", ignoreCase = true) ||
+                message.contains("unsupported", ignoreCase = true)
+        )
+}
+
+private fun approvalModeUnsupported(): GatewayRpcException =
+    GatewayRpcException(
+        "profile approval modes are not supported by this gateway",
+        JSONRPC_METHOD_NOT_FOUND,
+    )
+
+private fun approvalModeRequiresLaunchProfile(): GatewayRpcException =
+    GatewayRpcException(
+        "profile approval mode is read-only for multiplexed non-launch profiles",
+    )
 
 private fun JsonObject.stringField(key: String): String? =
     (get(key) as? JsonPrimitive)?.contentOrNull

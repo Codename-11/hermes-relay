@@ -2586,6 +2586,23 @@
     <string name="attachment_unmute">Ton an</string>
     <string name="attachment_mute">Stummschalten</string>
     <string name="attachment_title">Anhang</string>
+    <plurals name="attachment_group_count">
+        <item quantity="one">%1$d Anhang</item>
+        <item quantity="other">%1$d Anhänge</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">Anhänge einklappen</string>
+    <string name="attachment_group_expand">Anhänge ausklappen</string>
+    <string name="attachment_group_collapsed">Eingeklappt</string>
+    <string name="attachment_group_expanded">Ausgeklappt</string>
+    <string name="attachment_type_image">Bild</string>
+    <string name="attachment_type_video">Video</string>
+    <string name="attachment_type_audio">Audio</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">Text</string>
+    <string name="attachment_type_file">Datei</string>
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay wurde unerwartet beendet</string>

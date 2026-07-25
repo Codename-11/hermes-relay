@@ -10,11 +10,11 @@ import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.MoaReference
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
-import com.hermesandroid.relay.network.upstream.GatewaySubagentEvent
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -43,6 +43,9 @@ class ChatHandler {
 
         /** Maximum number of messages kept in memory per session. Oldest are trimmed. */
         internal const val MAX_MESSAGES = 500
+        private const val MAX_MOA_REFERENCES = 32
+        private const val MAX_MOA_LABEL_CHARS = 120
+        private const val MAX_MOA_REFERENCE_CHARS = 16_000
 
         private fun timestampToMillis(timestamp: Double?): Long {
             val value = timestamp ?: return 0L
@@ -154,6 +157,15 @@ class ChatHandler {
      * "File not found", etc).
      */
     var onMediaBarePathRequested: (messageId: String, originalPath: String) -> Unit = { _, _ -> }
+
+    /**
+     * Fired for a canonical `@image:<path>` directive found on a persisted
+     * USER history row. This is intentionally separate from free-form
+     * assistant `MEDIA:` parsing: only the bounded upstream directive parser
+     * can reach this callback.
+     */
+    var onPersistedUserImageRequested: (messageId: String, originalPath: String) -> Unit =
+        { _, _ -> }
 
     /**
      * Buffer for incomplete lines during streaming. Tool annotations are line-oriented
@@ -509,6 +521,42 @@ class ChatHandler {
                     message
                 }
             }
+        }
+    }
+
+    /**
+     * Collapse a provisional post-interim segment back into its sealed
+     * assistant bubble when the terminal text proves they are one response.
+     * Tool/card state accumulated after the interim remains attached.
+     */
+    fun reconcileInterimMessage(
+        interimMessageId: String,
+        currentMessageId: String,
+        content: String,
+    ) {
+        _messages.update { messages ->
+            val interim = messages.firstOrNull { it.id == interimMessageId } ?: return@update messages
+            val current = messages.firstOrNull { it.id == currentMessageId }
+            val mergedTools = (interim.toolCalls + current?.toolCalls.orEmpty())
+                .distinctBy { it.id ?: "${it.name}:${it.startedAt}" }
+            val merged = interim.copy(
+                content = content,
+                isStreaming = true,
+                toolCalls = mergedTools,
+                thinkingContent = current?.thinkingContent
+                    ?.takeIf { it.isNotBlank() }
+                    ?: interim.thinkingContent,
+                isThinkingStreaming = current?.isThinkingStreaming
+                    ?: interim.isThinkingStreaming,
+                badges = (interim.badges + current?.badges.orEmpty()).distinct(),
+                cards = (interim.cards + current?.cards.orEmpty()).distinct(),
+                cardDispatches = (interim.cardDispatches + current?.cardDispatches.orEmpty())
+                    .distinctBy { "${it.cardKey}:${it.actionValue}:${it.timestamp}" },
+                backgroundTask = current?.backgroundTask ?: interim.backgroundTask,
+            )
+            messages
+                .filterNot { it.id == currentMessageId && currentMessageId != interimMessageId }
+                .map { if (it.id == interimMessageId) merged else it }
         }
     }
 
@@ -973,6 +1021,27 @@ class ChatHandler {
                 startedAt = task.startedAt,
             )
         }
+        val checkpointMoaReferences = assistant.moaReferences
+            .filter { it.index in 1..MAX_MOA_REFERENCES }
+            .distinctBy { it.index }
+            .sortedBy { it.index }
+            .take(MAX_MOA_REFERENCES)
+            .map { reference ->
+                MoaReference(
+                    index = reference.index,
+                    count = reference.count,
+                    label = reference.label.take(MAX_MOA_LABEL_CHARS),
+                    text = if (reference.available) {
+                        reference.text.take(MAX_MOA_REFERENCE_CHARS)
+                    } else {
+                        ""
+                    },
+                    available = reference.available,
+                )
+            }
+        val restoredMoaReferences = currentAssistant?.moaReferences
+            ?.takeIf { it.isNotEmpty() }
+            ?: checkpointMoaReferences
         val restoredAssistant = ChatMessage(
             id = assistant.id,
             role = MessageRole.ASSISTANT,
@@ -996,6 +1065,7 @@ class ChatHandler {
             cardDispatches = currentAssistant?.cardDispatches?.takeIf { it.isNotEmpty() }
                 ?: assistant.cardDispatches,
             backgroundTask = currentAssistant?.backgroundTask ?: restoredBackgroundTask,
+            moaReferences = restoredMoaReferences,
         )
 
         activeAgentName = restoredAssistant.agentName ?: activeAgentName
@@ -1158,6 +1228,7 @@ class ChatHandler {
         // the wholesale `_messages.value = ...` assignment so the ViewModel's
         // mutateMessage lookups find the newly-loaded messages.
         val pendingMediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
+        val pendingPersistedUserImages = mutableListOf<Pair<String, String>>()
 
         // Reconcile optimistic (client-UUID) live ids to their server ids BEFORE
         // building the carry map, so the id-keyed delta-merge updates rows in
@@ -1212,7 +1283,8 @@ class ChatHandler {
             if (displayKind == "hidden") return@mapNotNull null
             val role = when {
                 displayKind == "model_switch" ||
-                    displayKind == "async_delegation_complete" -> MessageRole.SYSTEM
+                    displayKind == "async_delegation_complete" ||
+                    displayKind == "auto_continue" -> MessageRole.SYSTEM
                 item.role == "user" -> MessageRole.USER
                 item.role == "assistant" -> MessageRole.ASSISTANT
                 item.role == "system" ->
@@ -1250,12 +1322,18 @@ class ChatHandler {
             val messageId = item.id ?: java.util.UUID.randomUUID().toString()
             val rawContent = rawServerContent
 
+            val persistedImages = if (role == MessageRole.USER && rawContent.isNotEmpty()) {
+                PersistedImageReferenceParser.parse(rawContent)
+            } else {
+                PersistedImageReferences(rawContent, emptyList())
+            }
+
             // Run the media marker parser on assistant content; strip matched
             // lines and queue hits for post-assignment dispatch.
-            val afterMedia = if (role == MessageRole.ASSISTANT && rawContent.isNotEmpty()) {
-                extractMediaMarkersFromContent(messageId, rawContent, pendingMediaHits)
+            val afterMedia = if (role == MessageRole.ASSISTANT && persistedImages.cleanedText.isNotEmpty()) {
+                extractMediaMarkersFromContent(messageId, persistedImages.cleanedText, pendingMediaHits)
             } else {
-                rawContent
+                persistedImages.cleanedText
             }
 
             // Cards are synchronous (no async fetch) so we attach them
@@ -1293,12 +1371,28 @@ class ChatHandler {
             // content-keyed queue. Inbound attachments are intentionally
             // excluded — they come back via the marker re-dispatch.
             val carriedAttachments = run {
-                val byId = prior?.attachments.orEmpty().filter { it.relayToken == null }
+                val persistedImagePaths = persistedImages.paths.toHashSet()
+                val byId = prior?.attachments.orEmpty().filter { attachment ->
+                    attachment.relayToken == null ||
+                        (
+                            role == MessageRole.USER &&
+                                attachment.relayToken in persistedImagePaths
+                            )
+                }
                 when {
                     byId.isNotEmpty() -> byId
                     role == MessageRole.USER ->
                         priorOutboundByContent[cleanedContent]?.removeFirstOrNull().orEmpty()
                     else -> emptyList()
+                }
+            }
+            if (
+                role == MessageRole.USER &&
+                carriedAttachments.isEmpty() &&
+                persistedImages.paths.isNotEmpty()
+            ) {
+                persistedImages.paths.forEach { path ->
+                    pendingPersistedUserImages += messageId to path
                 }
             }
             // Server reasoning is authoritative when present; absent, keep the
@@ -1345,6 +1439,10 @@ class ChatHandler {
                     } else {
                         prior.badges
                     },
+                    // Keep sanitized advisor state while reconciling a still-live
+                    // row, but clear it once completion made history authoritative.
+                    // The server transcript never becomes the source of these blocks.
+                    moaReferences = if (prior.isStreaming) prior.moaReferences else emptyList(),
                 )
             } else {
                 // INSERT — a server message with no local row yet. Built from
@@ -1437,6 +1535,9 @@ class ChatHandler {
                 }
             }
         }
+        for ((messageId, path) in pendingPersistedUserImages) {
+            onPersistedUserImageRequested(messageId, path)
+        }
     }
 
     /** One adoptable server row during id reconciliation. `taken` enforces consume-once. */
@@ -1505,7 +1606,7 @@ class ChatHandler {
     private fun renderedRoleOf(item: MessageItem): MessageRole? =
         when (item.displayKind?.trim()?.lowercase()) {
             "hidden" -> null
-            "model_switch", "async_delegation_complete" -> MessageRole.SYSTEM
+            "model_switch", "async_delegation_complete", "auto_continue" -> MessageRole.SYSTEM
             else -> when (item.role) {
                 "user" -> MessageRole.USER
                 "assistant" -> MessageRole.ASSISTANT
@@ -1539,6 +1640,7 @@ class ChatHandler {
                     else -> "$count background tasks completed"
                 }
             }
+            "auto_continue" -> "Continued after an interrupted turn"
             else -> null
         }
 
@@ -1565,6 +1667,7 @@ class ChatHandler {
             val t = line.trim()
             if (t.isEmpty()) continue
             if (mediaRelayRegex.containsMatchIn(t) || mediaBarePathRegex.containsMatchIn(t)) continue
+            if (PersistedImageReferenceParser.parse(t).paths.isNotEmpty()) continue
             if (cardMarkerRegex.containsMatchIn(t)) continue
             if (sb.isNotEmpty()) sb.append('\n')
             sb.append(t)
@@ -1753,6 +1856,7 @@ class ChatHandler {
                 // SessionItem; the other ChatSession() call sites are local optimistic
                 // rows (default source). (ADR 12 — Threads surface, slice 1.)
                 source = item.source,
+                hasModelConfig = item.hasModelConfig,
             )
         }.sortedByDescending { it.activityTimestamp }
         // Preserve the active session's optimistic row when the server list
@@ -2592,6 +2696,44 @@ class ChatHandler {
     }
 
     // --- Gateway subagent lanes ---
+
+    fun onMoaReference(messageId: String, event: GatewayMoaReference) {
+        _messages.update { messages ->
+            val targetIndex = messages.indexOfLast {
+                it.id == messageId && it.role == MessageRole.ASSISTANT
+            }
+            if (targetIndex < 0) return@update messages
+            _isStreaming.value = true
+
+            val message = messages[targetIndex]
+            val nextIndex = event.index ?: ((message.moaReferences.maxOfOrNull { it.index } ?: 0) + 1)
+            if (nextIndex !in 1..MAX_MOA_REFERENCES) return@update messages
+            val reference = MoaReference(
+                index = nextIndex,
+                count = event.count,
+                label = event.label.take(MAX_MOA_LABEL_CHARS),
+                text = if (event.available) event.text.take(MAX_MOA_REFERENCE_CHARS) else "",
+                available = event.available,
+            )
+            val existingAtIndex = message.moaReferences.firstOrNull { it.index == nextIndex }
+            val exactReplay = existingAtIndex == reference
+            val base = if (nextIndex == 1 && !exactReplay) {
+                emptyList()
+            } else {
+                message.moaReferences
+            }
+            if (exactReplay) {
+                messages
+            } else {
+                val upserted = (base.filterNot { it.index == nextIndex } + reference)
+                    .sortedBy(MoaReference::index)
+                    .take(MAX_MOA_REFERENCES)
+                messages.toMutableList().also {
+                    it[targetIndex] = message.copy(moaReferences = upserted)
+                }
+            }
+        }
+    }
 
     /**
      * Lane labels by task index, captured from `subagent.start` (goal

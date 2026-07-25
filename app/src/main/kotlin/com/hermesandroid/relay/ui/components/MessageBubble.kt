@@ -297,6 +297,30 @@ fun MessageBubble(
             )
         }
 
+        if (!isUser && !isSystem && showThinking) {
+            message.moaReferences.forEach { reference ->
+                ThinkingBlock(
+                    thinkingContent = if (reference.available) {
+                        reference.text
+                    } else {
+                        "Advisor unavailable."
+                    },
+                    isStreaming = false,
+                    headerText = buildString {
+                        append("Advisor ")
+                        append(reference.index)
+                        reference.count?.let { append("/").append(it) }
+                        append(" · ")
+                        append(reference.label)
+                    },
+                    accessibilityLabel = "Mixture of Agents advisor response",
+                    modifier = Modifier
+                        .widthIn(max = maxBubbleWidth)
+                        .padding(bottom = 4.dp),
+                )
+            }
+        }
+
         // Message bubble.
         //
         // Action bubbles (voice/phone origin) wrap the existing Surface in
@@ -498,27 +522,32 @@ fun MessageBubble(
                         Spacer(modifier = Modifier.height(4.dp))
                         ImageGenerationPlaceholder()
                     } else if (message.attachments.isNotEmpty()) {
-                        // Two or more loaded images collapse into one grid +
-                        // swipe-across gallery. Every other item stays on the
-                        // unified attachment path, retaining original indices.
                         Spacer(modifier = Modifier.height(4.dp))
-                        val attachmentItems = attachmentLayoutItems(message.attachments)
-                        attachmentItems.forEach { item ->
-                            when (item) {
-                                is AttachmentLayoutItem.Gallery -> AttachmentGallery(
-                                    attachments = item.attachmentIndices.map(message.attachments::get),
-                                    maxWidth = maxBubbleWidth - 24.dp,
-                                    modifier = Modifier.padding(vertical = 2.dp),
-                                )
-                                is AttachmentLayoutItem.Single -> {
-                                    val index = item.attachmentIndex
-                                    InboundAttachmentCard(
-                                        attachment = message.attachments[index],
-                                        onRetry = { onAttachmentRetry(message.id, index) },
-                                        onManualFetch = { onAttachmentManualFetch(message.id, index) },
+                        CollapsibleAttachmentGroup(
+                            messageKey = message.uiKey,
+                            attachments = message.attachments,
+                        ) {
+                            // Two or more loaded images collapse into one grid +
+                            // swipe-across gallery. Every other item stays on the
+                            // unified attachment path, retaining original indices.
+                            val attachmentItems = attachmentLayoutItems(message.attachments)
+                            attachmentItems.forEach { item ->
+                                when (item) {
+                                    is AttachmentLayoutItem.Gallery -> AttachmentGallery(
+                                        attachments = item.attachmentIndices.map(message.attachments::get),
                                         maxWidth = maxBubbleWidth - 24.dp,
                                         modifier = Modifier.padding(vertical = 2.dp),
                                     )
+                                    is AttachmentLayoutItem.Single -> {
+                                        val index = item.attachmentIndex
+                                        InboundAttachmentCard(
+                                            attachment = message.attachments[index],
+                                            onRetry = { onAttachmentRetry(message.id, index) },
+                                            onManualFetch = { onAttachmentManualFetch(message.id, index) },
+                                            maxWidth = maxBubbleWidth - 24.dp,
+                                            modifier = Modifier.padding(vertical = 2.dp),
+                                        )
+                                    }
                                 }
                             }
                         }

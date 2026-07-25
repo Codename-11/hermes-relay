@@ -50,6 +50,29 @@ enum class GatewayConnectionState {
     Ready,
 }
 
+/** Profile-persisted approval policy introduced by upstream gateway contract v3. */
+enum class GatewayApprovalMode(val wireValue: String) {
+    Manual("manual"),
+    Smart("smart"),
+    Off("off");
+
+    companion object {
+        fun fromWire(value: String?): GatewayApprovalMode? = when (value?.trim()?.lowercase()) {
+            "manual" -> Manual
+            "smart" -> Smart
+            "off" -> Off
+            else -> null
+        }
+    }
+}
+
+/** Whether this gateway exposes the contract-v3 profile approval-mode RPCs. */
+enum class GatewayApprovalModeCapability {
+    Unknown,
+    Supported,
+    Unsupported,
+}
+
 /**
  * Streaming-endpoint resolution with the gateway tier — pure so the matrix
  * is unit-testable without an AndroidViewModel. ConnectionViewModel
@@ -95,11 +118,20 @@ data class GatewayInflightTurn(
     val user: String,
     val assistant: String,
     val streaming: Boolean,
+    val status: String? = null,
+    val error: String? = null,
+    val recoverable: Boolean = false,
 )
 
 /** A next-turn prompt accepted by upstream while the current turn was busy. */
 data class GatewayQueuedTurn(
     val user: String,
+)
+
+/** A fresh crash marker caused `session.resume` to schedule one continuation. */
+data class GatewayAutoContinue(
+    val attempt: Int,
+    val interruptedAt: Double?,
 )
 
 /** Optional project identity attached to newer upstream session metadata. */
@@ -120,10 +152,11 @@ data class GatewaySessionRecovery(
     val queued: GatewayQueuedTurn?,
     /** Non-null only when subsequent turn events are bound to [GatewayTurnCallbacks]. */
     val handle: ActiveTurnHandle?,
+    val autoContinue: GatewayAutoContinue? = null,
 ) {
     /** Whether upstream still owes this client live turn events. */
     val hasPendingWork: Boolean
-        get() = running || queued != null
+        get() = running || queued != null || autoContinue != null
 }
 
 /** A detached sibling turn reached its terminal event on the shared Gateway socket. */
@@ -310,12 +343,29 @@ data class GatewayModelProvider(
     val totalModels: Int = 0,
 )
 
+data class GatewayMoaReference(
+    val index: Int?,
+    val count: Int?,
+    val label: String,
+    val text: String,
+    val available: Boolean = true,
+)
+
 /** Result of the gateway `model.options` RPC. */
 data class GatewayModelOptions(
     val providers: List<GatewayModelProvider>,
     val currentModel: String,
     val currentProvider: String,
 )
+
+/** Reject provider catalogs that completed after a profile/context switch. */
+internal fun isCurrentModelOptionsResponse(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    requestProfileKey: String,
+    currentProfileKey: String,
+): Boolean =
+    requestGeneration == currentGeneration && requestProfileKey == currentProfileKey
 
 /**
  * The explicit in-chat overrides to bind onto a gateway `session.create` as the
@@ -374,6 +424,12 @@ class GatewayTurnCallbacks(
      * sealing the current assistant segment.
      */
     val onInterimMessage: (text: String, alreadyStreamed: Boolean) -> Unit = { _, _ -> },
+    /**
+     * The terminal text is equal/prefix-related to the sealed interim, so the
+     * existing segment should be replaced in place instead of opening a second
+     * assistant bubble.
+     */
+    val onInterimReconciled: (text: String) -> Unit = { _ -> },
     val onThinkingDelta: (String) -> Unit,
     val onToolCallStart: (toolCallId: String, toolName: String) -> Unit,
     val onToolCallDone: (toolCallId: String, resultPreview: String?) -> Unit,
@@ -398,6 +454,8 @@ class GatewayTurnCallbacks(
     val onToolGenerating: (toolName: String?) -> Unit,
     /** `subagent.*` lifecycle on the parent session — feeds the subagent lanes. */
     val onSubagentEvent: (GatewaySubagentEvent) -> Unit,
+    /** Successful MoA advisor output for a transient labelled reference block. */
+    val onMoaReference: (GatewayMoaReference) -> Unit,
     /**
      * Server-side interactive ask (clarify/approval/sudo/secret) that blocks
      * the turn until answered via the matching respond RPC or the turn is

@@ -19,6 +19,7 @@ class GatewayEventMapperTest {
     private class Recorder {
         val textDeltas = mutableListOf<String>()
         val interimMessages = mutableListOf<Pair<String, Boolean>>()
+        val reconciledInterims = mutableListOf<String>()
         val thinkingDeltas = mutableListOf<String>()
         val toolStarts = mutableListOf<Pair<String, String>>()
         val toolDones = mutableListOf<Pair<String, String?>>()
@@ -26,6 +27,7 @@ class GatewayEventMapperTest {
         val toolOutputRisks = mutableListOf<GatewayToolOutputRisk>()
         val toolGenerating = mutableListOf<String?>()
         val subagentEvents = mutableListOf<GatewaySubagentEvent>()
+        val moaReferences = mutableListOf<GatewayMoaReference>()
         val interactions = mutableListOf<GatewayAsk>()
         val interactionExpiries = mutableListOf<GatewayAskExpiry>()
         val interactionResolutions = mutableListOf<GatewayAskExpiry>()
@@ -45,6 +47,7 @@ class GatewayEventMapperTest {
             onStart = { starts++ },
             onTextDelta = { textDeltas += it },
             onInterimMessage = { text, alreadyStreamed -> interimMessages += text to alreadyStreamed },
+            onInterimReconciled = { text -> reconciledInterims += text },
             onThinkingDelta = { thinkingDeltas += it },
             onToolCallStart = { id, name -> toolStarts += id to name },
             onToolCallDone = { id, preview -> toolDones += id to preview },
@@ -57,6 +60,7 @@ class GatewayEventMapperTest {
             onError = { errors += it },
             onToolGenerating = { toolGenerating += it },
             onSubagentEvent = { subagentEvents += it },
+            onMoaReference = { moaReferences += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { interactionExpiries += it },
             onInteractionResolved = { interactionResolutions += it },
@@ -228,6 +232,93 @@ class GatewayEventMapperTest {
 
         assertEquals(listOf("candidate answer" to false), r.interimMessages)
         assertEquals(listOf("final answer"), r.textDeltas)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `non-previewed complete equal to interim reconciles one bubble`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer"}"""),
+        )
+
+        assertEquals(listOf("candidate answer"), r.reconciledInterims)
+        assertTrue(r.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `non-previewed complete extending interim replaces it with full final`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer"}"""),
+        )
+
+        assertEquals(listOf("candidate answer"), r.reconciledInterims)
+        assertTrue(r.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `non-previewed truncated final replaces longer interim`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate"}"""),
+        )
+
+        assertEquals(listOf("candidate"), r.reconciledInterims)
+        assertTrue(r.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `terminal error complete preserves partial and reports failed status`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.complete",
+            obj(
+                """{"text":"partial answer","status":"error","error":"provider failed","partial":true,"recoverable":true}""",
+            ),
+        )
+
+        assertEquals(listOf("partial answer"), r.textDeltas)
+        assertEquals(listOf("error" to "provider failed"), r.statusUpdates)
+        assertEquals(1, r.completes)
+        assertTrue(mapper.turnEnded)
+    }
+
+    @Test
+    fun `terminal error complete without text renders error fallback`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"status":"error","error":"agent build failed","recoverable":true}"""),
+        )
+
+        assertEquals(listOf("Error: agent build failed"), r.textDeltas)
+        assertEquals(listOf("error" to "agent build failed"), r.statusUpdates)
         assertEquals(1, r.completes)
     }
 
@@ -732,6 +823,91 @@ class GatewayEventMapperTest {
         assertTrue(r.interactions.isEmpty())
     }
 
+    @Test
+    fun `moa progress uses one transient slot and transitions to aggregating`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent("moa.progress", obj("""{"refs_done":2,"refs_total":3,"label":"advisor-b"}"""))
+        mapper.onEvent("moa.phase", obj("""{"phase":"aggregator","refs_done":3,"refs_total":3}"""))
+
+        assertEquals(
+            listOf(
+                GatewayEventMapper.MOA_STATUS_KIND to "MoA: 2/3 advisors complete",
+                GatewayEventMapper.MOA_STATUS_KIND to "MoA: aggregating…",
+            ),
+            r.statusUpdates,
+        )
+    }
+
+    @Test
+    fun `legacy moa aggregating maps to the same transient phase`() {
+        val r = Recorder()
+        mapperWith(r).onEvent("moa.aggregating", obj("""{"aggregator":"local:aggregate"}"""))
+
+        assertEquals(
+            GatewayEventMapper.MOA_STATUS_KIND to "MoA: aggregating…",
+            r.statusUpdates.single(),
+        )
+    }
+
+    @Test
+    fun `moa references retain safe blocks and neutralize failure sentinels`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":2,"count":3,"label":"advisor-b","text":"Useful second opinion"}"""),
+        )
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":1,"count":3,"label":"advisor-a","text":" [failed: private provider detail]"}"""),
+        )
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":3,"count":3,"label":"advisor-c","text":"[skipped: interrupted by user]"}"""),
+        )
+
+        assertEquals(
+            listOf(
+                GatewayMoaReference(2, 3, "advisor-b", "Useful second opinion"),
+                GatewayMoaReference(1, 3, "advisor-a", "", available = false),
+                GatewayMoaReference(3, 3, "advisor-c", "", available = false),
+            ),
+            r.moaReferences,
+        )
+        assertTrue(r.moaReferences.filterNot { it.available }.all { it.text.isEmpty() })
+    }
+
+    @Test
+    fun `all failed moa references surface only neutral unavailable state`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":1,"count":2,"label":"advisor-a","text":"[failed: secret detail]"}"""),
+        )
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":2,"count":2,"label":"advisor-b","text":"[skipped: recursive preset]"}"""),
+        )
+
+        assertEquals(listOf(1, 2), r.moaReferences.mapNotNull { it.index })
+        assertTrue(r.moaReferences.all { !it.available && it.text.isEmpty() })
+    }
+
+    @Test
+    fun `message output clears active moa status`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent("moa.progress", obj("""{"refs_done":1,"refs_total":2}"""))
+        mapper.onEvent("message.delta", obj("""{"text":"Final answer"}"""))
+
+        assertEquals(listOf(GatewayEventMapper.MOA_STATUS_KIND), r.statusClears)
+    }
+
     // --- Forward compat ---
 
     @Test
@@ -761,7 +937,7 @@ class GatewayEventMapperTest {
             "clarify.expire", "sudo.expire", "secret.expire", "approval.expire",
             "tool.generating", "subagent.start", "subagent.thinking",
             "subagent.tool", "subagent.progress", "subagent.complete",
-            "tool.output_risk", "moa.reference", "moa.aggregating",
+            "tool.output_risk", "moa.reference", "moa.progress", "moa.phase", "moa.aggregating",
         ).forEach { type ->
             // message.complete/error end the turn; use a fresh mapper for each
             mapperWith(Recorder()).onEvent(type, null)

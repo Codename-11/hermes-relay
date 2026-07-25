@@ -202,6 +202,8 @@
     <string name="conn_label_session">Session</string>
     <string name="conn_label_route">Route</string>
     <string name="conn_label_status">Status</string>
+    <string name="dashboard_component_connected">connected</string>
+    <string name="dashboard_component_server_errors_5m">server errors / 5m</string>
     <string name="conn_label_connect">Connect</string>
     <string name="conn_label_connections">Connections</string>
     <string name="conn_detail_add_connection">Add a Vanilla Hermes API/dashboard connection</string>
@@ -2462,7 +2464,19 @@
     <string name="conn_info_yes">Yes</string>
     <string name="conn_info_yes_hidden">Yes (hidden)</string>
     <string name="conn_info_yolo_mode_desc">Bypass approval prompts for tool calls.</string>
+    <string name="conn_info_yolo_mode_desc_ephemeral">Bypass approval prompts for this chat only. Resets when the session changes.</string>
+    <string name="conn_info_yolo_mode_profile_off">Profile approvals are Off, so this chat already bypasses prompts. Choose Manual or Smart before using the per-chat override.</string>
     <string name="conn_info_yolo_mode_title">YOLO mode</string>
+    <string name="conn_info_approval_mode_title">Profile approval mode</string>
+    <string name="conn_info_approval_mode_desc">Persistent policy for this Hermes profile. Applies across chats and devices.</string>
+    <string name="conn_info_approval_mode_unsupported">Update Hermes to choose a profile approval mode. Per-chat YOLO remains available.</string>
+    <string name="conn_info_approval_mode_profile_read_only">Read-only for this multiplexed profile. Its current mode appears after the profile session starts; changing it requires upstream profile-scoped config RPCs.</string>
+    <string name="conn_info_approval_mode_manual">Manual</string>
+    <string name="conn_info_approval_mode_manual_desc">Ask before every protected tool call.</string>
+    <string name="conn_info_approval_mode_smart">Smart</string>
+    <string name="conn_info_approval_mode_smart_desc">Ask only when Hermes detects elevated risk.</string>
+    <string name="conn_info_approval_mode_off">Off</string>
+    <string name="conn_info_approval_mode_off_desc">Persistently bypass approvals for this profile.</string>
 
     <!-- EndpointsCard -->
 
@@ -2691,6 +2705,23 @@
     <string name="attachment_unmute">Unmute</string>
     <string name="attachment_mute">Mute</string>
     <string name="attachment_title">Attachment</string>
+    <plurals name="attachment_group_count">
+        <item quantity="one">%1$d attachment</item>
+        <item quantity="other">%1$d attachments</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">Collapse attachments</string>
+    <string name="attachment_group_expand">Expand attachments</string>
+    <string name="attachment_group_collapsed">Collapsed</string>
+    <string name="attachment_group_expanded">Expanded</string>
+    <string name="attachment_type_image">Image</string>
+    <string name="attachment_type_video">Video</string>
+    <string name="attachment_type_audio">Audio</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">Text</string>
+    <string name="attachment_type_file">File</string>
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay closed unexpectedly</string>

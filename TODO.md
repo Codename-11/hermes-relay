@@ -6,6 +6,25 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Active — Complete Android native dashboard sign-in
+
+The Android upstream client has the secure native-auth lower layer for gateways
+that advertise `native_pkce`: S256/state generation, strict `127.0.0.1`
+callback validation, encrypted per-connection bearer/refresh-token storage,
+token rotation, authenticated REST calls, and WebSocket ticket minting. Older
+gateways remain compatible with the existing cookie flow.
+
+The remaining product gate is the Android lifecycle owner for the ephemeral
+loopback listener and system-browser launch. It must bind only
+`127.0.0.1` on an OS-assigned port, keep the verifier/state in the sign-in
+coroutine only, close on callback/cancel/timeout, and then hand the callback
+directly to `NativeDashboardAuthClient`. Once that owner is device-tested, both
+dashboard sign-in entry points can select it when `/api/status.auth_flows`
+contains `native_pkce` and retain the WebView only as the identified
+old-gateway fallback.
+
+---
+
 ## Active — Remove temporary GitHub Pages docs redirects
 
 PR #210 moved current source and production documentation to
@@ -78,6 +97,19 @@ intentionally remain outside that code batch:
   public model-options payload identifies excluded and disabled providers.
   `include_unconfigured=1` currently re-adds indistinguishable setup rows, so
   empty models are not authoritative evidence that a provider should be hidden.
+- Keep persistent approval-mode writes for multiplexed non-launch profiles
+  read-only until upstream `config.get` / `config.set` bind an explicit
+  `profile` to that profile's `HERMES_HOME`. Gateway contract v3 currently
+  accepts `approvals.mode` but resolves it against the gateway process home;
+  Android may reconcile a selected profile's `session.info.approval_mode`, but
+  must not claim a profile-scoped write that upstream ignores.
+- Keep gateway `model.options` profile scoping blocked until the supported
+  upstream RPC accepts an explicit `profile` and documents that the returned
+  provider inventory was built inside that profile's runtime scope. Android
+  now keys picker results to its active profile context and rejects late
+  responses after a profile switch, but it deliberately does not send an
+  invented `profile` parameter. API-server fallback can use the separate,
+  authenticated `/p/<profile>/api/model/options` surface when multiplexed.
 - Expand the desktop upstream-baseline workflow into a live mock-provider E2E
   once the harness can boot a credential-free upstream gateway deterministically.
   The initial `ci-desktop-upstream-baseline` gate only checks a clean vanilla
@@ -1170,6 +1202,7 @@ Follow-ups:
 
 ## Attachments (shipped 2026-06-18 — `docs/plans/2026-06-18-attachment-experience.md`)
 
+- **Collapsible message groups (shipped 2026-07-25).** Android wraps rendered galleries and generic/LOADING/FAILED cards in a localized, accessible attachment disclosure. It defaults open, remembers the user's fold state by stable message identity, and leaves a compact count/name/type summary available to restore all attachment actions.
 - **B3 — download progress + cancel.** Inbound fetch is un-cancelable; the previews work scaffolded an indeterminate bar + nullable `onCancel`. Live wiring needs the fetch-path owner (`ChatViewModel`/`Attachment`) to expose determinate progress (Content-Length) + a cancel hook.
 - **C5 — agent-side sensitivity config gate.** `RELAY_MEDIA_SENSITIVITY_HINTS` (env or per-profile) instructing the agent to annotate sensitive media via the prompt-builder. Transport (relay `X-Media-Sensitive` header + client blur) already ships; the agent isn't asked to set the bit yet.
 - **Relay thumbnails (D6).** Server-side thumbnail generation to avoid full-size download for cards/galleries. Needs an image lib (Pillow not currently a dep) — evaluate before adding.
