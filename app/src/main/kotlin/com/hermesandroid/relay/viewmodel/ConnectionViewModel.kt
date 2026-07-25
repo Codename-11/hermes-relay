@@ -405,6 +405,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Animation
         private val KEY_ANIMATION_ENABLED = booleanPreferencesKey("animation_enabled")
         private val KEY_ANIMATION_BEHIND_CHAT = booleanPreferencesKey("animation_behind_chat")
+        private val KEY_IMAGE_GENERATION_STYLE = stringPreferencesKey("image_generation_style")
         private val KEY_CHAT_RECENT_PROMPTS = booleanPreferencesKey("chat_recent_prompts")
 
         // Chat scroll behavior
@@ -1772,6 +1773,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         .map { it[KEY_ANIMATION_BEHIND_CHAT] ?: true }
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    val imageGenerationStyle: StateFlow<String> = application.relayDataStore.data
+        .map { it[KEY_IMAGE_GENERATION_STYLE] ?: "rotate" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "rotate")
+
     fun setAnimationEnabled(enabled: Boolean) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
@@ -1800,6 +1805,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_ANIMATION_BEHIND_CHAT] = enabled
+            }
+        }
+    }
+
+    fun setImageGenerationStyle(value: String) {
+        val normalized = value.takeIf {
+            it in setOf("rotate", "grid", "sphere", "nodes")
+        } ?: "rotate"
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_IMAGE_GENERATION_STYLE] = normalized
             }
         }
     }

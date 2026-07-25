@@ -1,6 +1,5 @@
 package com.hermesandroid.relay.ui.components
 
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -139,6 +138,8 @@ fun MessageBubble(
      * happening.
      */
     recoveringAnswer: Boolean = false,
+    imageGenerationStylePreference: String = "rotate",
+    imageGenerationRotationIndex: Int = 0,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -211,6 +212,23 @@ fun MessageBubble(
         isStreaming = message.isStreaming,
         hasMediaResult = message.attachments.isNotEmpty() || inlineImages.isNotEmpty(),
     )
+    val hasImageGenerationCall = remember(message.toolCalls) {
+        message.toolCalls.any {
+            it.name.trim().lowercase() == "image_generate"
+        }
+    }
+    val imageGenerationStartMillis = remember(message.toolCalls) {
+        imageGenerationStartedAt(message.toolCalls)
+    }
+    val imageGenerationVisualStyle = remember(
+        imageGenerationStylePreference,
+        imageGenerationRotationIndex,
+    ) {
+        resolveImageGenerationVisualStyle(
+            preference = imageGenerationStylePreference,
+            rotationIndex = imageGenerationRotationIndex,
+        )
+    }
 
     // Provide the sensitive-media blur mode to the attachment / inline-image
     // renderers below, sourced as locally as possible (here, not threaded
@@ -509,19 +527,49 @@ fun MessageBubble(
                     }
                 }
 
-                // Image generation owns the bubble's progress slot. It replaces
-                // the generic first-token dots, remains mounted through the
-                // tool-complete → MEDIA marker handoff, then crossfades into the
-                // attachment renderer in this same Surface.
-                Crossfade(
-                    targetState = showImageGeneration,
-                    animationSpec = tween(durationMillis = 220),
-                    label = "imageGenerationToResult",
-                ) { generating ->
-                    if (generating) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        ImageGenerationPlaceholder()
-                    } else if (message.attachments.isNotEmpty()) {
+                // Image generation owns the bubble's progress slot. Keep the
+                // selected progress treatment mounted under the real result,
+                // then reveal the same collapsible attachment surface without
+                // rebuilding the surrounding message bubble.
+                if (hasImageGenerationCall) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    ImageGenerationResultTransition(
+                        generating = showImageGeneration,
+                        startedAtMillis = imageGenerationStartMillis,
+                        visualStyle = imageGenerationVisualStyle,
+                    ) {
+                        if (message.attachments.isNotEmpty()) {
+                            CollapsibleAttachmentGroup(
+                                messageKey = message.uiKey,
+                                attachments = message.attachments,
+                            ) {
+                                val attachmentItems = attachmentLayoutItems(message.attachments)
+                                attachmentItems.forEach { item ->
+                                    when (item) {
+                                        is AttachmentLayoutItem.Gallery -> AttachmentGallery(
+                                            attachments = item.attachmentIndices.map(message.attachments::get),
+                                            maxWidth = maxBubbleWidth - 24.dp,
+                                            modifier = Modifier.padding(vertical = 2.dp),
+                                        )
+                                        is AttachmentLayoutItem.Single -> {
+                                            val index = item.attachmentIndex
+                                            InboundAttachmentCard(
+                                                attachment = message.attachments[index],
+                                                onRetry = { onAttachmentRetry(message.id, index) },
+                                                onManualFetch = { onAttachmentManualFetch(message.id, index) },
+                                                maxWidth = maxBubbleWidth - 24.dp,
+                                                modifier = Modifier.padding(vertical = 2.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (message.attachments.isNotEmpty()) {
+                        // Two or more loaded images collapse into one grid +
+                        // swipe-across gallery. Every other item stays on the
+                        // unified attachment path, retaining original indices.
                         Spacer(modifier = Modifier.height(4.dp))
                         CollapsibleAttachmentGroup(
                             messageKey = message.uiKey,
@@ -551,7 +599,6 @@ fun MessageBubble(
                                 }
                             }
                         }
-                    }
                 }
 
                 // Streaming indicator — only while awaiting the first token. Once

@@ -73,6 +73,7 @@ fun DeveloperSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
     onNavigateToRealtimeVoice: () -> Unit = {},
+    onNavigateToImageGenerationLab: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -371,6 +372,47 @@ fun DeveloperSettingsScreen(
                     }
 
                     HorizontalDivider()
+
+                    if (FeatureFlags.isDevBuild) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Science,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.tertiary,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.dev_settings_image_generation_lab),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
+                                Text(
+                                    text = stringResource(R.string.dev_settings_image_generation_lab_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(onClick = onNavigateToImageGenerationLab) {
+                                Icon(
+                                    imageVector = Icons.Filled.Science,
+                                    contentDescription = stringResource(
+                                        R.string.dev_settings_open_image_generation_lab_cd
+                                    ),
+                                )
+                            }
+                        }
+
+                        HorizontalDivider()
+                    }
 
                     // Lock developer options
                     Row(

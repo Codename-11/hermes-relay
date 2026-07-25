@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -28,12 +29,17 @@ class ImageGenerationPlaceholderUiTest {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             MaterialTheme {
-                ImageGenerationPlaceholder(Modifier.padding(16.dp))
+                ImageGenerationPlaceholder(
+                    modifier = Modifier.padding(16.dp),
+                    phaseOverride = 0.5f,
+                    elapsedOverrideMillis = 12_400,
+                )
             }
         }
 
         compose.mainClock.advanceTimeBy(2_400)
         compose.onNodeWithContentDescription("Rendering image").assertExists()
+        compose.onNodeWithText("12.4s").assertExists()
         compose.onRoot().captureRoboImage("build/verification-shots/image-generation-placeholder.png")
     }
 }

@@ -5,5 +5,9 @@
             android:name="com.hermesandroid.relay.ui.screens.VoiceSettingsDesignQaActivity"
             android:exported="true"
             android:screenOrientation="portrait" />
+        <activity
+            android:name="com.hermesandroid.relay.ui.screens.ImageGenerationDesignQaActivity"
+            android:exported="true"
+            android:screenOrientation="portrait" />
     </application>
 </manifest>
