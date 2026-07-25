@@ -71,6 +71,7 @@ import com.hermesandroid.relay.network.upstream.DashboardStatus
 import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.shared.EndpointResolver
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayKeepAliveService
@@ -623,7 +624,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         context = application,
         activeConnectionIdProvider = { connectionStore.activeConnectionId.value },
         dashboardUrlProvider = { activeDashboardUrl() },
-        gatewayKeepAliveProvider = { gatewayKeepAlive.value },
+        gatewayKeepAliveProvider = {
+            gatewayKeepAlive.value || ActiveTurnKeepAliveRegistry.snapshot.value.required
+        },
         // Lets the dashboard cookie store ride the connection's token keyset
         // (one keyset build instead of two on cold start).
         tokenStoreKeyProvider = { cid ->
@@ -1671,17 +1674,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     init {
-        // Drive the keep-alive: flip the active client's no-background-close
-        // flag and start/stop the foreground service. Both flavors — the
+        // Drive the keep-alive from either the user's always-on preference or
+        // work the user already started. Active-turn leases are session scoped,
+        // so sibling turns release independently. Both flavors — the
         // GatewayKeepAliveService is declared in the main manifest (Play permits
         // this Home-Assistant-class persistent-connection use case). Mirrors
         // BridgeViewModel's masterToggle → BridgeForegroundService driver.
         viewModelScope.launch {
-            gatewayKeepAlive.collect { enabled ->
-                upstreamTransport.applyGatewayKeepAlive(enabled)
+            combine(gatewayKeepAlive, ActiveTurnKeepAliveRegistry.snapshot) { persistent, turns ->
+                persistent to turns
+            }.distinctUntilChanged().collect { (persistent, turns) ->
+                upstreamTransport.applyGatewayKeepAlive(persistent || turns.required)
                 val ctx = getApplication<Application>()
-                if (enabled) runCatching { GatewayKeepAliveService.start(ctx) }
-                else runCatching { GatewayKeepAliveService.stop(ctx) }
+                runCatching { GatewayKeepAliveService.update(ctx, persistent, turns) }
             }
         }
     }

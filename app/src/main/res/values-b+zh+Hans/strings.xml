@@ -672,8 +672,8 @@
     <string name="settings_profile_lock_desc">将应用固定到一个代理配置文件</string>
     <string name="settings_quick_controls">快捷控制</string>
     <string name="settings_persistent_connection">持久连接</string>
-    <string name="settings_persistent_connection_desc">在后台保持与 Hermes 的连接</string>
-    <string name="settings_connect_on_demand">仅按需连接 · 省电</string>
+    <string name="settings_persistent_connection_desc">即使没有聊天运行也保持连接</string>
+    <string name="settings_connect_on_demand">活跃聊天会自动保持连接 · 空闲时关闭连接以节省电量</string>
     <string name="settings_turn_complete_alerts">聊天提醒</string>
     <string name="settings_turn_complete_alerts_desc">Hermes 在后台需要输入或完成回复时通知</string>
     <string name="settings_turn_complete_alerts_off">不提醒后台聊天活动</string>
