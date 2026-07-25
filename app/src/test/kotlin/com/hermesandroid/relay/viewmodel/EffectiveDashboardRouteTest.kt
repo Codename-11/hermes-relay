@@ -10,6 +10,31 @@ import org.junit.Test
 class EffectiveDashboardRouteTest {
 
     @Test
+    fun `discovered API route stays dormant when fallback is not configured`() {
+        val tailscale = EndpointCandidate(
+            role = "tailscale",
+            priority = 1,
+            api = ApiEndpoint("100.71.8.56", 8642),
+        )
+
+        assertEquals("", resolveEffectiveApiServerUrl("", tailscale))
+    }
+
+    @Test
+    fun `selected API route wins after fallback is configured`() {
+        val tailscale = EndpointCandidate(
+            role = "tailscale",
+            priority = 1,
+            api = ApiEndpoint("100.71.8.56", 8642),
+        )
+
+        assertEquals(
+            "http://100.71.8.56:8642",
+            resolveEffectiveApiServerUrl("http://192.168.1.20:8642", tailscale),
+        )
+    }
+
+    @Test
     fun `selected route dashboard wins over explicit primary dashboard`() {
         val connection = connection(
             dashboardUrl = "http://192.168.1.20:9119",
