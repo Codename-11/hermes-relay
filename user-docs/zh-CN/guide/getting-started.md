@@ -49,7 +49,8 @@ Dashboard 登录使用 Cookie 和短期 Gateway ticket。API 密钥与其独立�
 2. 搜索局域网中的 Hermes、输入 Dashboard/Gateway URL，或扫描设置二维码；旧版 API-first 二维码仍兼容。
 3. 按提示登录 Dashboard。
 4. 点击 **Connect** 并确认显示 **Chat · Ready**。
-5. 如有需要，稍后在 **Advanced** 中添加 API fallback、Relay 或远程路由。
+5. 在 **完成设置** 中，如需后台聊天提醒，请启用 Android 通知。相机、麦克风和其他功能仍为可选，并可逐项设置；选择 **暂不** 可直接继续。
+6. 如有需要，稍后在 **Advanced** 中添加 API fallback、Relay 或远程路由。
 
 可以添加并测试 `http://100.x.y.z:9119` 这样的 Tailscale Dashboard 地址，或单独发布的 `.ts.net` 地址；无需配置 API 服务器或 API 密钥。
 

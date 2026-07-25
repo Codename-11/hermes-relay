@@ -55,7 +55,8 @@ API-Schlüssel ist davon getrennt und kein Dashboard-Login.
 2. Suche Hermes im LAN, trage die Dashboard/Gateway-URL ein oder scanne einen Einrichtungs-QR; ältere API-first-QRs bleiben kompatibel.
 3. Melde dich bei Aufforderung am Dashboard an.
 4. Tippe auf **Connect** und prüfe **Chat · Ready**.
-5. Füge API-Fallback, Relay oder weitere Remote-Routen bei Bedarf später unter **Advanced** hinzu.
+5. Aktiviere unter **Einrichtung abschließen** Android-Benachrichtigungen, wenn du Chat-Hinweise im Hintergrund erhalten möchtest. Kamera, Mikrofon und weitere Funktionen bleiben optional und werden einzeln eingerichtet; mit **Jetzt nicht** kannst du direkt fortfahren.
+6. Füge API-Fallback, Relay oder weitere Remote-Routen bei Bedarf später unter **Advanced** hinzu.
 
 Eine Tailscale-Dashboard-Adresse wie `http://100.x.y.z:9119` oder eine separat
 veröffentlichte `.ts.net`-Adresse kann ohne API-Server oder API-Schlüssel als Route hinzugefügt und geprüft werden.

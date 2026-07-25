@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Android onboarding finishes with a permission setup step.** After connecting, users can enable background chat alerts with one deliberate Android prompt, review optional feature permissions individually, or continue immediately without granting phone access.
 - **Image generation stays visible when upstream tool progress is hidden.** A paired Relay can expose read-only image-tool activity from Hermes session state so Android shows and completes its existing generation animation during Standard Gateway turns; the image canvas replaces generic streaming progress and crossfades into the result within one stable assistant bubble. Native Gateway lifecycle events remain authoritative and Relay remains optional.
 
 ### Fixed
