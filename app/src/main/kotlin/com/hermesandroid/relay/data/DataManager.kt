@@ -255,9 +255,11 @@ class DataManager(
     suspend fun writeBackupToUri(uri: Uri, backup: String): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                    outputStream.write(backup.toByteArray(Charsets.UTF_8))
-                    outputStream.flush()
+                val outputStream = context.contentResolver.openOutputStream(uri)
+                    ?: return@withContext false
+                outputStream.use {
+                    it.write(backup.toByteArray(Charsets.UTF_8))
+                    it.flush()
                 }
                 true
             } catch (e: Exception) {
@@ -288,9 +290,10 @@ class DataManager(
      * - Clear DataStore preferences
      * - Clear EncryptedSharedPreferences (auth tokens)
      * - Clear any cached data
-     * Does NOT clear the onboarding flag (that's separate via [resetOnboarding]).
+     * Preserves the onboarding flag. Use [resetOnboarding] when the next launch
+     * should show onboarding again.
      */
-    suspend fun resetAppData() {
+    suspend fun resetAppData(): Boolean =
         try {
             // Preserve onboarding state before clearing
             val onboarding = isOnboardingCompleted()
@@ -320,10 +323,11 @@ class DataManager(
             }
 
             Log.d(TAG, "App data reset complete")
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to reset app data", e)
+            false
         }
-    }
 
     private suspend fun deleteSensitivePreferenceFiles() {
         withContext(Dispatchers.IO) {
@@ -384,16 +388,17 @@ class DataManager(
      * Reset only the onboarding completion flag.
      * Next app launch will show onboarding again.
      */
-    suspend fun resetOnboarding() {
+    suspend fun resetOnboarding(): Boolean =
         try {
             context.relayDataStore.edit { preferences ->
                 preferences.remove(KEY_ONBOARDING_COMPLETED)
             }
             Log.d(TAG, "Onboarding flag reset")
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to reset onboarding flag", e)
+            false
         }
-    }
 
     /**
      * Check if onboarding has been completed.
@@ -412,13 +417,14 @@ class DataManager(
     /**
      * Mark onboarding as completed.
      */
-    suspend fun setOnboardingCompleted(completed: Boolean) {
+    suspend fun setOnboardingCompleted(completed: Boolean): Boolean =
         try {
             context.relayDataStore.edit { preferences ->
                 preferences[KEY_ONBOARDING_COMPLETED] = completed
             }
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to set onboarding completed", e)
+            false
         }
-    }
 }
