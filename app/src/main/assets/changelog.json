@@ -2,28 +2,35 @@
  "versions": [
   {
    "version": "1.5.0",
-   "title": "Voice that keeps pace",
-   "date": "2026-07-22",
+   "title": "Hermes, always in reach",
+   "date": "2026-07-25",
    "sections": [
     {
-     "header": "A clearer voice studio",
+     "header": "One secure Hermes connection",
      "bullets": [
-      "Standard and Realtime paths now organize provider, model, and voice choices in focused cards with upstream-aware discovery and descriptions.",
-      "Preview voices inline with loading feedback and a lighter waveform, then expand and scroll the voice browser without leaving the page."
+      "Connect through secure Dashboard sign-in while Chat, sessions, Manage, and Standard Voice follow the same active route.",
+      "Switch profiles and control personality, model, reasoning, approvals, and processing speed from the new Agent Passport."
      ]
     },
     {
-     "header": "Natural streaming speech",
+     "header": "Active work stays reachable",
      "bullets": [
-      "Standard Hermes replies begin speaking completed segments while the rest of the answer is still being generated.",
-      "Starting new audio stops the prior preview or reply, and leaving voice mode stops playback."
+      "Multiple user-started chats remain active in the background until every session settles.",
+      "Approval, question, elevated-permission, and secure-response alerts reopen the correct conversation."
      ]
     },
     {
-     "header": "More upstream-aware controls",
+     "header": "Richer chat and voice",
      "bullets": [
-      "Manage and diagnostics consume Gateway health and compatibility details while keeping Standard Hermes usable without Relay.",
-      "Chat now shows one-turn model choices, queued recovery, project labels, interim events, and image-generation progress."
+      "Attachments, image generation, model routing, recovery, advisor progress, and upstream events are clearer and more reliable.",
+      "Browse and preview Standard and Realtime voices, and hear Standard replies begin speaking as completed segments arrive."
+     ]
+    },
+    {
+     "header": "Setup without surprises",
+     "bullets": [
+      "Onboarding explains optional notification, camera, microphone, companion, and device permissions without blocking standard chat.",
+      "Tailscale, QR, and remote routes now move all Hermes surfaces together and recover the original session after connection loss."
      ]
     }
    ]

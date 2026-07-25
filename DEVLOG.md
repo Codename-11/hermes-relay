@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-25 — Android 1.5.0 final release reconciliation
+
+The final Android 1.5.0 release tree reconciles the accumulated Dashboard-first
+connection, Gateway recovery, background delivery, Agent Passport, onboarding,
+voice, attachment, image-generation, security, localization, and Developer
+Options work into one public release narrative. Android remains version 1.5.0
+with monotonic versionCode 33 because that prepared version was not previously
+tagged or uploaded to production.
+
+Release notes, the in-app What's New assets, localized Play release notes, and
+the Play listing reference now describe the final tree rather than the earlier
+voice-focused candidate. The release train is gated by the exact-tree private
+Play preflight before the `dev` to `main` release merge and public tag.
+
 ## 2026-07-25 — Active-turn retention and actionable interaction alerts
 
 Android now promotes user-started chat work to foreground execution until every

@@ -1,5 +1,6 @@
-v1.5.0 - Voice that keeps pace
+v1.5.0 - Hermes, always in reach
 
-* Browse Standard and Realtime providers, models, and voices in a cleaner layout with inline previews.
-* Hear Standard Hermes replies as completed speech segments arrive; starting new audio stops the prior playback.
-* Use richer Gateway-aware Manage, diagnostics, model selection, recovery, and generation status.
+* Connect through secure Dashboard sign-in and switch profiles from the new Agent Passport.
+* Keep multiple background chats active and reopen the right session from approval or question alerts.
+* Follow richer attachments, image generation, model routing, Gateway recovery, and streaming voice.
+* Finish setup with clear, optional permission guidance that never blocks standard chat.
