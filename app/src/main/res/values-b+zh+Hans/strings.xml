@@ -2583,6 +2583,22 @@
     <string name="attachment_unmute">取消静音</string>
     <string name="attachment_mute">静音</string>
     <string name="attachment_title">附件</string>
+    <plurals name="attachment_group_count">
+        <item quantity="other">%1$d 个附件</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">收起附件</string>
+    <string name="attachment_group_expand">展开附件</string>
+    <string name="attachment_group_collapsed">已收起</string>
+    <string name="attachment_group_expanded">已展开</string>
+    <string name="attachment_type_image">图片</string>
+    <string name="attachment_type_video">视频</string>
+    <string name="attachment_type_audio">音频</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">文本</string>
+    <string name="attachment_type_file">文件</string>
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay 意外关闭</string>

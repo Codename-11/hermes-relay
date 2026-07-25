@@ -4,12 +4,18 @@ import android.content.Context
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
+import com.hermesandroid.relay.network.upstream.DashboardBearerAuth
+import com.hermesandroid.relay.network.upstream.EncryptedNativeDashboardTokenStore
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
+import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
+import com.hermesandroid.relay.network.upstream.clearNativeDashboardTokens
+import com.hermesandroid.relay.network.upstream.isNativeDashboardTransportEligible
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.network.upstream.resolveStreamingEndpointPreference
+import com.hermesandroid.relay.network.upstream.trustedDashboardBearerAuthOrNull
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +84,10 @@ class UpstreamTransportController(
     /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
     private val dashboardCookieStores =
         ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
+    private val dashboardTokenStores =
+        ConcurrentHashMap<String, EncryptedNativeDashboardTokenStore>()
+    private var dashboardHttpClientCache:
+        Triple<String, String, okhttp3.OkHttpClient>? = null
 
     /**
      * Cookie store for [connectionId] — ONE instance per connection,
@@ -107,6 +117,28 @@ class UpstreamTransportController(
         return dashboardCookieStoreFor(connectionId)
     }
 
+    private fun dashboardTokenStoreFor(connectionId: String): EncryptedNativeDashboardTokenStore {
+        val key = tokenStoreKeyProvider(connectionId)
+            ?: com.hermesandroid.relay.data.Connection.buildTokenStoreKey(connectionId)
+        return dashboardTokenStores.getOrPut(connectionId) {
+            EncryptedNativeDashboardTokenStore(context, key)
+        }
+    }
+
+    private fun bearerAuthForTrustedDashboard(
+        connectionId: String,
+        dashboardUrl: String,
+    ): DashboardBearerAuth? {
+        if (activeConnectionIdProvider() != connectionId) return null
+        if (!isNativeDashboardTransportEligible(dashboardUrl)) return null
+        val trustedDashboardUrl = dashboardUrlProvider() ?: return null
+        return trustedDashboardBearerAuthOrNull(
+            candidate = dashboardUrl,
+            trusted = trustedDashboardUrl,
+            tokenStoreProvider = { dashboardTokenStoreFor(connectionId) },
+        )
+    }
+
     // --- DashboardApiClient factory ----------------------------------------
 
     /**
@@ -120,6 +152,7 @@ class UpstreamTransportController(
             baseUrl = dashboardUrl,
             okHttpClient = DashboardApiClient.defaultClient(
                 cookieStore = dashboardCookieStoreFor(connectionId),
+                bearerAuth = bearerAuthForTrustedDashboard(connectionId, dashboardUrl),
             ),
         )
 
@@ -133,8 +166,79 @@ class UpstreamTransportController(
             baseUrl = dashboardUrl,
             okHttpClient = DashboardApiClient.defaultClient(
                 cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
+                bearerAuth = activeConnectionIdProvider()?.let {
+                    bearerAuthForTrustedDashboard(it, dashboardUrl)
+                },
             ),
         )
+
+    /**
+     * Native PKCE client for the active connection's exact trusted dashboard
+     * base. Setup probes and stale routes never receive the encrypted bearer
+     * store.
+     */
+    fun nativeDashboardAuthClientForActive(dashboardUrl: String): NativeDashboardAuthClient? {
+        val connectionId = activeConnectionIdProvider() ?: return null
+        val trustedDashboardUrl = dashboardUrlProvider() ?: return null
+        if (!isNativeDashboardTransportEligible(dashboardUrl)) {
+            return null
+        }
+        if (!com.hermesandroid.relay.network.upstream.sameDashboardBase(
+                candidate = dashboardUrl,
+                trusted = trustedDashboardUrl,
+            )
+        ) {
+            return null
+        }
+        return NativeDashboardAuthClient(
+            baseUrl = dashboardUrl,
+            tokenStore = dashboardTokenStoreFor(connectionId),
+        )
+    }
+
+    /** Exact-origin authenticated HTTP client for non-REST dashboard consumers such as voice. */
+    @Synchronized
+    fun dashboardHttpClientForActive(dashboardUrl: String): okhttp3.OkHttpClient {
+        val connectionId = activeConnectionIdProvider() ?: "unassociated"
+        dashboardHttpClientCache?.let { (cachedConnection, cachedUrl, client) ->
+            if (cachedConnection == connectionId && cachedUrl == dashboardUrl) return client
+            disposeDashboardHttpClient(client)
+            dashboardHttpClientCache = null
+        }
+        return DashboardApiClient.defaultClient(
+            cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
+            bearerAuth = activeConnectionIdProvider()?.let { activeId ->
+                bearerAuthForTrustedDashboard(activeId, dashboardUrl)
+            },
+        ).also { dashboardHttpClientCache = Triple(connectionId, dashboardUrl, it) }
+    }
+
+    @Synchronized
+    fun clearDashboardAuthentication(connectionId: String) {
+        dashboardCookieStoreFor(connectionId).clear()
+        clearNativeDashboardTokens(dashboardTokenStoreFor(connectionId))
+        dashboardHttpClientCache
+            ?.takeIf { it.first == connectionId }
+            ?.third
+            ?.let(::disposeDashboardHttpClient)
+        if (dashboardHttpClientCache?.first == connectionId) {
+            dashboardHttpClientCache = null
+        }
+        gatewayClientCache
+            ?.takeIf { it.first == connectionId }
+            ?.third
+            ?.shutdown()
+        if (gatewayClientCache?.first == connectionId) {
+            gatewayClientCache = null
+        }
+    }
+
+    private fun disposeDashboardHttpClient(client: okhttp3.OkHttpClient) {
+        client.dispatcher.cancelAll()
+        client.connectionPool.evictAll()
+        runCatching { client.cache?.close() }
+        client.dispatcher.executorService.shutdown()
+    }
 
     // --- Gateway availability ----------------------------------------------
 
@@ -226,6 +330,8 @@ class UpstreamTransportController(
         synchronized(this) {
             gatewayClientCache?.third?.shutdown()
             gatewayClientCache = null
+            dashboardHttpClientCache?.third?.let(::disposeDashboardHttpClient)
+            dashboardHttpClientCache = null
         }
     }
 

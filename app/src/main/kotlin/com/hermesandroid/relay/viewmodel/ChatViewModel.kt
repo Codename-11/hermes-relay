@@ -19,6 +19,7 @@ import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
 import com.hermesandroid.relay.data.ChatTurnBackgroundTaskCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpointStore
+import com.hermesandroid.relay.data.ChatTurnMoaReferenceCheckpoint
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.DataStoreChatTurnCheckpointStore
@@ -45,13 +46,17 @@ import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayAskExpiry
 import com.hermesandroid.relay.network.upstream.GatewayAskResponse
+import com.hermesandroid.relay.network.upstream.GatewayApprovalMode
+import com.hermesandroid.relay.network.upstream.GatewayApprovalModeCapability
 import com.hermesandroid.relay.network.upstream.GatewayBackgroundInteractionEvent
 import com.hermesandroid.relay.network.upstream.GatewayBackgroundTurnCompletion
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayCompressResult
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
+import com.hermesandroid.relay.network.upstream.GatewayEventMapper
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
+import com.hermesandroid.relay.network.upstream.GatewayModelOptions
 import com.hermesandroid.relay.network.upstream.GatewayProcess
 import com.hermesandroid.relay.network.upstream.GatewayProcessCapability
 import com.hermesandroid.relay.network.upstream.GatewayProcessEvent
@@ -59,8 +64,13 @@ import com.hermesandroid.relay.network.upstream.GatewaySessionModel
 import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
-import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.ApiModelOption
+import com.hermesandroid.relay.network.upstream.ApiModelRoutingErrorCode
+import com.hermesandroid.relay.network.upstream.ApiModelRoutingException
+import com.hermesandroid.relay.network.upstream.ApiModelSelectionAck
+import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.upstream.isCurrentModelOptionsResponse
+import com.hermesandroid.relay.network.upstream.sessionTurnModelHint
 import com.hermesandroid.relay.network.relay.ProactiveMessage
 import com.hermesandroid.relay.network.relay.RelayHttpClient
 import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
@@ -291,6 +301,9 @@ class ChatViewModel : ViewModel() {
         private const val CHECKPOINT_WRITE_INTERVAL_MS = 750L
         private const val MAX_CHECKPOINT_TEXT_CHARS = 200_000
         private const val MAX_CHECKPOINT_TOOL_RESULT_CHARS = 20_000
+        private const val MAX_CHECKPOINT_MOA_REFERENCES = 32
+        private const val MAX_CHECKPOINT_MOA_LABEL_CHARS = 120
+        private const val MAX_CHECKPOINT_MOA_TEXT_CHARS = 16_000
 
         /**
          * One-line capability nudge appended to the SSE `system_message` when a
@@ -504,6 +517,27 @@ class ChatViewModel : ViewModel() {
      */
     private val _modelProviders = MutableStateFlow<List<GatewayModelProvider>>(emptyList())
     val modelProviders: StateFlow<List<GatewayModelProvider>> = _modelProviders.asStateFlow()
+    private val modelOptionsGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    private val modelOptionsByProfile = mutableMapOf<String, GatewayModelOptions>()
+
+    private fun modelOptionsProfileKey(): String {
+        val connectionProfile = activeProfileContextKey ?: "__unbound__"
+        val session = chatHandler?.currentSessionId?.value ?: "__draft__"
+        return "$connectionProfile::$session"
+    }
+
+    private fun activateModelOptionsProfile(profileKey: String) {
+        modelOptionsGeneration.incrementAndGet()
+        val cached = modelOptionsByProfile[profileKey]
+        _modelProviders.value = cached?.providers.orEmpty()
+        _gatewayCurrentModel.value = cached?.currentModel.orEmpty()
+        _gatewayCurrentProvider.value = cached?.currentProvider.orEmpty()
+        _apiModelOptions.value = emptyList()
+        _availableModels.value = cached?.providers
+            ?.flatMap { it.models }
+            ?.distinct()
+            .orEmpty()
+    }
 
     /** True only during an explicit user-requested dynamic model catalog refresh. */
     private val _modelOptionsRefreshing = MutableStateFlow(false)
@@ -535,6 +569,33 @@ class ChatViewModel : ViewModel() {
     private val _yoloEnabled = MutableStateFlow<Boolean?>(null)
     val yoloEnabled: StateFlow<Boolean?> = _yoloEnabled.asStateFlow()
 
+    /** Profile-persisted upstream approval policy; distinct from ephemeral session YOLO. */
+    private val _approvalMode = MutableStateFlow<GatewayApprovalMode?>(null)
+    val approvalMode: StateFlow<GatewayApprovalMode?> = _approvalMode.asStateFlow()
+
+    private val _approvalModeCapability =
+        MutableStateFlow(GatewayApprovalModeCapability.Unknown)
+    val approvalModeCapability: StateFlow<GatewayApprovalModeCapability> =
+        _approvalModeCapability.asStateFlow()
+
+    private val _approvalModeWritable = MutableStateFlow(false)
+    val approvalModeWritable: StateFlow<Boolean> = _approvalModeWritable.asStateFlow()
+
+    private val _approvalModeReadOnlyForProfile = MutableStateFlow(false)
+    val approvalModeReadOnlyForProfile: StateFlow<Boolean> =
+        _approvalModeReadOnlyForProfile.asStateFlow()
+
+    /** Invalidates stale get/set completions after profile, session, or connection changes. */
+    private val approvalModeRevision = AtomicLong(0)
+
+    private fun resetApprovalModeState() {
+        approvalModeRevision.incrementAndGet()
+        _approvalMode.value = null
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
+        _approvalModeWritable.value = false
+        _approvalModeReadOnlyForProfile.value = false
+    }
+
     /** Fast-mode (priority tier) state for the active gateway session; null = unknown. */
     private val _fastEnabled = MutableStateFlow<Boolean?>(null)
     val fastEnabled: StateFlow<Boolean?> = _fastEnabled.asStateFlow()
@@ -565,9 +626,21 @@ class ChatViewModel : ViewModel() {
         }
         if (refresh && _modelOptionsRefreshing.value) return
         if (refresh) _modelOptionsRefreshing.value = true
+        val generation = modelOptionsGeneration.incrementAndGet()
+        val profileKey = modelOptionsProfileKey()
         viewModelScope.launch {
             gateway.modelOptions(refresh = refresh).fold(
                 onSuccess = {
+                    if (!isCurrentModelOptionsResponse(
+                            generation,
+                            modelOptionsGeneration.get(),
+                            profileKey,
+                            modelOptionsProfileKey(),
+                        )
+                    ) {
+                        return@fold
+                    }
+                    modelOptionsByProfile[profileKey] = it
                     _modelProviders.value = it.providers
                     _gatewayCurrentModel.value = it.currentModel
                     _gatewayCurrentProvider.value = it.currentProvider
@@ -607,6 +680,95 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    /** Probe and reconcile the active profile's persistent approval policy. */
+    fun refreshApprovalMode() {
+        val gateway = gatewayClient ?: run {
+            _approvalMode.value = null
+            _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
+            return
+        }
+        val launchProfileOwned = sessionProfileNameProvider() == null
+        _approvalModeWritable.value = launchProfileOwned
+        _approvalModeReadOnlyForProfile.value = !launchProfileOwned
+        if (!launchProfileOwned) {
+            // session.info remains authoritative for the selected multiplexed
+            // profile. Current upstream config RPCs do not bind params.profile,
+            // so probing here would read the launch profile instead.
+            return
+        }
+        val revision = approvalModeRevision.incrementAndGet()
+        val contextKey = activeProfileContextKey
+        viewModelScope.launch {
+            gateway.getApprovalMode().fold(
+                onSuccess = { mode ->
+                    if (
+                        gatewayClient === gateway &&
+                        activeProfileContextKey == contextKey &&
+                        approvalModeRevision.get() == revision
+                    ) {
+                        _approvalMode.value = mode
+                        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+                    }
+                },
+                onFailure = {
+                    if (
+                        gatewayClient === gateway &&
+                        activeProfileContextKey == contextKey &&
+                        approvalModeRevision.get() == revision
+                    ) {
+                        _approvalModeCapability.value = gateway.approvalModeCapability.value
+                        if (_approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported) {
+                            _approvalMode.value = null
+                        }
+                    }
+                },
+            )
+        }
+    }
+
+    /**
+     * Persist a profile approval policy. This is deliberately separate from
+     * [setYolo], which remains an ephemeral override for only the current chat.
+     */
+    fun setApprovalMode(mode: GatewayApprovalMode) {
+        val gateway = gatewayClient ?: return
+        if (
+            !_approvalModeWritable.value ||
+            _approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported
+        ) return
+        val previous = _approvalMode.value
+        val revision = approvalModeRevision.incrementAndGet()
+        val contextKey = activeProfileContextKey
+        _approvalMode.value = mode
+        viewModelScope.launch {
+            gateway.setApprovalMode(mode).fold(
+                onSuccess = { authoritative ->
+                    if (
+                        gatewayClient === gateway &&
+                        activeProfileContextKey == contextKey &&
+                        approvalModeRevision.get() == revision
+                    ) {
+                        _approvalMode.value = authoritative
+                        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+                    }
+                },
+                onFailure = { error ->
+                    if (
+                        gatewayClient === gateway &&
+                        activeProfileContextKey == contextKey &&
+                        approvalModeRevision.get() == revision
+                    ) {
+                        _approvalMode.value = previous
+                        _approvalModeCapability.value = gateway.approvalModeCapability.value
+                        chatHandler?.addSystemNotice(
+                            "Couldn't update profile approval mode: ${error.message ?: "gateway error"}",
+                        )
+                    }
+                },
+            )
+        }
+    }
+
     /**
      * User's explicit model pick from the in-chat picker, or null = "use the
      * profile's model / server default". Wins over the profile model on SSE
@@ -626,13 +788,67 @@ class ChatViewModel : ViewModel() {
      * model override is cleared.
      */
     private val _selectedProviderOverride = MutableStateFlow<String?>(null)
+    private val apiSessionModelLocks = mutableMapOf<String, ApiModelSelectionAck.Locked>()
 
     fun fetchModels() {
         val client = apiClient ?: return
+        val generation = modelOptionsGeneration.incrementAndGet()
+        val profileKey = modelOptionsProfileKey()
         viewModelScope.launch {
-            val options = client.getModelOptions()
-            _apiModelOptions.value = options
-            _availableModels.value = options.map { it.id }
+            val providerResult = client.getProviderModelOptions()
+            val providerInventory = providerResult.getOrNull()
+            if (!isCurrentModelOptionsResponse(
+                    generation,
+                    modelOptionsGeneration.get(),
+                    profileKey,
+                    modelOptionsProfileKey(),
+                )
+            ) {
+                return@launch
+            }
+            if (providerInventory != null) {
+                val aliases = client.getModelOptions()
+                val options = GatewayModelOptions(
+                    providers = providerInventory.providers,
+                    currentModel = providerInventory.currentModel,
+                    currentProvider = providerInventory.currentProvider,
+                )
+                modelOptionsByProfile[profileKey] = options
+                _modelProviders.value = options.providers
+                _gatewayCurrentModel.value = options.currentModel
+                _gatewayCurrentProvider.value = options.currentProvider
+                // Keep OpenAI route aliases visible alongside authenticated
+                // provider inventory. An alias remains the request id while
+                // its root is used only to validate the provider route.
+                _apiModelOptions.value = aliases
+                _availableModels.value =
+                    (options.providers.flatMap { it.models } + aliases.map { it.id }).distinct()
+            } else {
+                val failure = providerResult.exceptionOrNull()
+                if (
+                    failure !is ApiModelRoutingException ||
+                    failure.code != ApiModelRoutingErrorCode.INVENTORY_UNSUPPORTED
+                ) {
+                    _transientNotice.tryEmit(
+                        failure?.message ?: "Model inventory could not be loaded.",
+                    )
+                    return@launch
+                }
+                // Confirmed older API servers expose only OpenAI-compatible aliases.
+                val options = client.getModelOptions()
+                if (!isCurrentModelOptionsResponse(
+                        generation,
+                        modelOptionsGeneration.get(),
+                        profileKey,
+                        modelOptionsProfileKey(),
+                    )
+                ) {
+                    return@launch
+                }
+                _modelProviders.value = emptyList()
+                _apiModelOptions.value = options
+                _availableModels.value = options.map { it.id }
+            }
         }
     }
 
@@ -645,6 +861,18 @@ class ChatViewModel : ViewModel() {
      * default.
      */
     fun selectModel(model: String?, provider: String? = null) {
+        if (model.isNullOrBlank() && streamingEndpoint != "gateway") {
+            val sessionId = chatHandler?.currentSessionId?.value
+            val locked = sessionId?.let(apiSessionModelLocks::get)
+            if (locked != null) {
+                _selectedModelOverride.value = locked.model
+                _selectedProviderOverride.value = locked.provider
+                _transientNotice.tryEmit(
+                    "This session is locked to ${locked.model}. Start a new chat to use Server default.",
+                )
+                return
+            }
+        }
         _selectedModelOverride.value = AgentDisplay.requestModelName(model)
         // Keep the provider paired with the model pick so a fresh chat's
         // session.create can bind both (gateway needs the provider to resolve
@@ -958,6 +1186,7 @@ class ChatViewModel : ViewModel() {
         // the first turn.
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        resetApprovalModeState()
         pendingYolo = null
         // Reset the reasoning chip to UNKNOWN rather than optimistically fetching
         // it: a sessionless config.get right after clearSession reads the
@@ -976,6 +1205,10 @@ class ChatViewModel : ViewModel() {
         // the new profile's sessions and the picker pill would disagree with
         // what the agent actually runs. The next session.create then binds the
         // profile's own model.
+        modelOptionsGeneration.incrementAndGet()
+        _modelProviders.value = emptyList()
+        _apiModelOptions.value = emptyList()
+        _availableModels.value = emptyList()
         _selectedModelOverride.value = null
         _selectedProviderOverride.value = null
         // Optimistically seed the picker "current" from the profile's own model
@@ -1103,6 +1336,7 @@ class ChatViewModel : ViewModel() {
         }
         gatewayClient = client
         if (changed) {
+            resetApprovalModeState()
             gatewayProcessSource = client?.let(::GatewayChatProcessSource)
             gatewayProcessController.bind(
                 newSource = gatewayProcessSource,
@@ -1216,6 +1450,7 @@ class ChatViewModel : ViewModel() {
                 fetchServerCommands(client)
                 refreshModelOptions()
                 refreshReasoningSettings()
+                refreshApprovalMode()
                 // Seed the active personality over the already-ready socket so the
                 // picker reflects server truth without waiting for the first turn.
                 seedServerPersonality(client)
@@ -1367,8 +1602,16 @@ class ChatViewModel : ViewModel() {
                     ?.content
                     ?.takeIf { it.isNotBlank() }
                 if (canWriteTranscript) {
-                    finalizeTurnSideEffects(handler, messageId)
-                    AppAnalytics.onStreamComplete(inputTokens, outputTokens)
+                    val failed = handler.messages.value
+                        .lastOrNull { it.id == messageId }
+                        ?.badges
+                        ?.contains("Error") == true
+                    if (failed) {
+                        finalizeFailedTurnSideEffects(handler, messageId)
+                    } else {
+                        finalizeTurnSideEffects(handler, messageId)
+                        AppAnalytics.onStreamComplete(inputTokens, outputTokens)
+                    }
                     scheduleGatewayHistoryReconcile(
                         storedSessionId = storedSessionId,
                         expectedAssistantText = expectedText,
@@ -1414,6 +1657,9 @@ class ChatViewModel : ViewModel() {
             onSubagentEvent = { event ->
                 if (acceptsEvent()) handler.onSubagentEvent(messageId, event)
             },
+            onMoaReference = { event ->
+                if (acceptsEvent()) handler.onMoaReference(messageId, event)
+            },
             onInteractionRequest = { ask ->
                 if (acceptsEvent()) presentInteractionAsk(handler, ask)
             },
@@ -1426,7 +1672,11 @@ class ChatViewModel : ViewModel() {
             onStatusUpdate = { kind, text ->
                 if (acceptsEvent()) {
                     handler.setTurnStatus(text, kind)
-                    if (text.trimStart().startsWith("❌")) handler.markError(messageId)
+                    if (kind == GatewayEventMapper.ERROR_STATUS_KIND ||
+                        text.trimStart().startsWith("❌")
+                    ) {
+                        handler.markError(messageId)
+                    }
                 }
             },
             onStatusClear = { kind ->
@@ -2104,6 +2354,27 @@ class ChatViewModel : ViewModel() {
                 }
             }
             launch {
+                client.approvalModeCapability.collect { capability ->
+                    if (gatewayClient !== client) return@collect
+                    _approvalModeCapability.value = capability
+                    if (capability == GatewayApprovalModeCapability.Unsupported) {
+                        approvalModeRevision.incrementAndGet()
+                        _approvalMode.value = null
+                    }
+                }
+            }
+            launch {
+                client.serverApprovalMode.collect { mode ->
+                    if (gatewayClient !== client || mode == null) return@collect
+                    approvalModeRevision.incrementAndGet()
+                    _approvalMode.value = mode
+                    _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+                    val launchProfileOwned = sessionProfileNameProvider() == null
+                    _approvalModeWritable.value = launchProfileOwned
+                    _approvalModeReadOnlyForProfile.value = !launchProfileOwned
+                }
+            }
+            launch {
                 client.serverFast.collect { value ->
                     if (gatewayClient !== client || value == null) return@collect
                     if (_fastEnabled.value != value) _fastEnabled.value = value
@@ -2427,6 +2698,9 @@ class ChatViewModel : ViewModel() {
             handler.onMediaBarePathRequested = { messageId, originalPath ->
                 onMediaBarePathRequested(messageId, originalPath)
             }
+            handler.onPersistedUserImageRequested = { messageId, originalPath ->
+                onPersistedUserImageRequested(messageId, originalPath)
+            }
         }
     }
 
@@ -2511,6 +2785,7 @@ class ChatViewModel : ViewModel() {
                 _contextWindow.value = null
                 _yoloEnabled.value = null
                 _fastEnabled.value = null
+                resetApprovalModeState()
                 pendingYolo = null
                 // Effort + personality belong to the old connection's agent —
                 // reset to unknown/default so neither a stale chip nor a stale
@@ -2549,6 +2824,7 @@ class ChatViewModel : ViewModel() {
             sessionId != null &&
             handler.currentSessionId.value == sessionId
         ) {
+            activateModelOptionsProfile(contextKey)
             activeProfileContextKey = contextKey
             activeTurnCheckpointSeed?.contextKey = contextKey
             scheduleCheckpointWrite(immediate = true)
@@ -2565,6 +2841,7 @@ class ChatViewModel : ViewModel() {
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
         _isLoadingSessions.value = false
+        activateModelOptionsProfile(contextKey)
         activeProfileContextKey = contextKey
         _queuedMessages.value = emptyList()
         _pendingAttachments.value = emptyList()
@@ -2576,6 +2853,7 @@ class ChatViewModel : ViewModel() {
         _contextWindow.value = null
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        resetApprovalModeState()
         pendingYolo = null
         // SSE profile switch: reset the reasoning chip to unknown (a sessionless
         // config.get reads the wrong profile's effort) and the personality to
@@ -2709,6 +2987,9 @@ class ChatViewModel : ViewModel() {
 
     /** Clear server-owned catalogs before a different connection starts loading. */
     fun resetConnectionCatalogs() {
+        modelOptionsGeneration.incrementAndGet()
+        modelOptionsByProfile.clear()
+        apiSessionModelLocks.clear()
         _availableSkills.value = emptyList()
         _personalityNames.value = emptyList()
         _defaultPersonality.value = ""
@@ -2830,6 +3111,7 @@ class ChatViewModel : ViewModel() {
             _pendingAsk.value = null
             _yoloEnabled.value = null
             _fastEnabled.value = null
+            approvalModeRevision.incrementAndGet()
             pendingYolo = null
             onSessionChanged?.invoke(null)
             AppAnalytics.onSessionCreated()
@@ -2869,6 +3151,7 @@ class ChatViewModel : ViewModel() {
                         _pendingAsk.value = null
                         _yoloEnabled.value = null
                         _fastEnabled.value = null
+                        approvalModeRevision.incrementAndGet()
                         // Drop any YOLO stashed for the previous draft so it
                         // can't apply to this fresh chat's session.
                         pendingYolo = null
@@ -2968,6 +3251,18 @@ class ChatViewModel : ViewModel() {
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
+        if (streamingEndpoint != "gateway") {
+            val session = handler.sessions.value.firstOrNull { it.sessionId == sessionId }
+            if (session?.hasModelConfig == true && !session.model.isNullOrBlank()) {
+                _selectedModelOverride.value = session.model
+                _selectedProviderOverride.value = _modelProviders.value
+                    .singleOrNull { session.model in it.models }
+                    ?.slug
+            } else {
+                _selectedModelOverride.value = null
+                _selectedProviderOverride.value = null
+            }
+        }
         selectBackgroundProcessSession(sessionId)
         handler.clearMessages()
         _contextUsage.value = null
@@ -2976,6 +3271,7 @@ class ChatViewModel : ViewModel() {
         _pendingAsk.value = null
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        approvalModeRevision.incrementAndGet()
         // The switched-to session owns its own YOLO state (session.info
         // reconciles) — drop any pick stashed for a different draft.
         pendingYolo = null
@@ -3190,10 +3486,16 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun sendVoiceMessage(text: String, interfaceContextPrompt: String) {
-        if (text.isBlank()) return
+    fun sendVoiceMessage(text: String, interfaceContextPrompt: String): String? {
+        if (text.isBlank()) return null
+        val existingUserKeys = messages.value.asSequence()
+            .filter { it.role == MessageRole.USER }
+            .mapTo(mutableSetOf()) { it.uiKey }
         nextInterfaceContextPrompt = interfaceContextPrompt.takeIf { it.isNotBlank() }
         sendMessage(text)
+        return messages.value.lastOrNull {
+            it.role == MessageRole.USER && it.uiKey !in existingUserKeys
+        }?.uiKey
     }
 
     /**
@@ -4116,6 +4418,21 @@ class ChatViewModel : ViewModel() {
                 badges = assistant.badges,
                 cards = assistant.cards,
                 cardDispatches = assistant.cardDispatches,
+                moaReferences = assistant.moaReferences
+                    .take(MAX_CHECKPOINT_MOA_REFERENCES)
+                    .map { reference ->
+                        ChatTurnMoaReferenceCheckpoint(
+                            index = reference.index,
+                            count = reference.count,
+                            label = reference.label.take(MAX_CHECKPOINT_MOA_LABEL_CHARS),
+                            text = if (reference.available) {
+                                reference.text.take(MAX_CHECKPOINT_MOA_TEXT_CHARS)
+                            } else {
+                                ""
+                            },
+                            available = reference.available,
+                        )
+                    },
                 toolCalls = assistant.toolCalls.map { tool ->
                     ChatTurnToolCheckpoint(
                         id = tool.id,
@@ -4385,17 +4702,38 @@ class ChatViewModel : ViewModel() {
                 recovery?.handle?.detach()
                 return true
             }
+            val retainedFailure = recovery?.inflight?.takeIf {
+                !recovery.running &&
+                    (it.status == GatewayEventMapper.ERROR_STATUS_KIND || !it.error.isNullOrBlank())
+            }
+            if (retainedFailure != null) {
+                val visibleText = retainedFailure.assistant.ifBlank {
+                    "Error: ${retainedFailure.error ?: "Turn failed"}"
+                }
+                handler.restoreInFlightTurn(
+                    checkpoint = checkpoint,
+                    upstreamAssistantText = visibleText,
+                )
+                finalizeFailedTurnSideEffects(handler, checkpoint.assistant.id)
+                refreshSessions()
+                scheduleTitleReconcile(sessionId)
+                drainQueue()
+                gatewayProcessController.sessionReady(sessionId)
+                return true
+            }
             if (recovery?.hasPendingWork == true && recovery.handle != null) {
                 activeStream = recovery.handle
                 activeStreamIsGateway = true
                 activeTurnCheckpointSeed?.liveSessionId = recovery.liveSessionId
-                if (recovery.running) {
+                if (recovery.running || recovery.autoContinue != null) {
                     handler.restoreInFlightTurn(
                         checkpoint = checkpoint,
                         upstreamAssistantText = recovery.inflight?.assistant,
                     )
                     handler.setTurnStatus(
-                        if (recovery.queued != null) {
+                        if (recovery.autoContinue != null) {
+                            "Resuming interrupted turn…"
+                        } else if (recovery.queued != null) {
                             "Reconnected — Hermes is working · queued: “${queuedPromptPreview(recovery.queued.user)}”"
                         } else {
                             checkpoint.turnStatus?.takeIf { it.isNotBlank() }
@@ -4446,6 +4784,12 @@ class ChatViewModel : ViewModel() {
             onTextDelta = { delta ->
                 if (owns()) handler.onTextDelta(messageId, delta)
             },
+            onInterimReconciled = { text ->
+                if (owns()) {
+                    handler.replaceMessageContent(messageId, text)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
             onThinkingDelta = { delta ->
                 if (owns()) handler.onThinkingDelta(messageId, delta)
             },
@@ -4483,7 +4827,16 @@ class ChatViewModel : ViewModel() {
             onReconcileRequired = { },
             onComplete = {
                 if (owns()) {
-                    finalizeTurnSideEffects(handler, messageId)
+                    cancelAnswerRecovery(settleUi = false)
+                    val failed = handler.messages.value
+                        .lastOrNull { it.id == messageId }
+                        ?.badges
+                        ?.contains("Error") == true
+                    if (failed) {
+                        finalizeFailedTurnSideEffects(handler, messageId)
+                    } else {
+                        finalizeTurnSideEffects(handler, messageId)
+                    }
                     if (!queuedSuccessorPending.get()) {
                         val expectedSessionId = checkpoint.sessionId
                         viewModelScope.launch {
@@ -4540,6 +4893,9 @@ class ChatViewModel : ViewModel() {
                     scheduleCheckpointWrite(immediate = true)
                 }
             },
+            onMoaReference = { event ->
+                if (owns()) handler.onMoaReference(messageId, event)
+            },
             onInteractionRequest = { ask ->
                 if (owns()) presentInteractionAsk(handler, ask)
             },
@@ -4552,7 +4908,11 @@ class ChatViewModel : ViewModel() {
             onStatusUpdate = { kind, text ->
                 if (owns()) {
                     handler.setTurnStatus(text, kind)
-                    if (text.trimStart().startsWith("❌")) handler.markError(messageId)
+                    if (kind == GatewayEventMapper.ERROR_STATUS_KIND ||
+                        text.trimStart().startsWith("❌")
+                    ) {
+                        handler.markError(messageId)
+                    }
                 }
             },
             onStatusClear = { kind ->
@@ -4664,6 +5024,18 @@ class ChatViewModel : ViewModel() {
         // /return_to_hermes dispatch's respond()). See BridgeRunTracker
         // KDoc for the full contract.
         com.hermesandroid.relay.bridge.BridgeRunTracker.notifyRunCompleted()
+    }
+
+    /** Settle a terminal server failure without success analytics or notification side effects. */
+    private fun finalizeFailedTurnSideEffects(handler: ChatHandler, messageId: String) {
+        handler.onStreamComplete(messageId)
+        handler.markError(messageId)
+        clearTurnCheckpoint()
+        activeStream = null
+        _steerableTurn.value = false
+        _steerNotice.value = null
+        clearPendingAsk(approvalStamp = "Resolved")
+        AppAnalytics.onStreamError()
     }
 
     /**
@@ -5879,6 +6251,7 @@ class ChatViewModel : ViewModel() {
         // but updates when the server sends message.started with its own ID.
         var currentMessageId = assistantMessageId
         var gatewayInterimSealedCurrentMessage = false
+        var gatewayInterimMessageId: String? = null
 
         // The SSE endpoint this turn actually dispatched on (null on a gateway
         // dispatch) — set by dispatchSse below. onErrorCb keys the dropped-
@@ -5977,7 +6350,17 @@ class ChatViewModel : ViewModel() {
                 handler.onTextDelta(currentMessageId, text)
             }
             handler.onTurnComplete(currentMessageId)
+            gatewayInterimMessageId = currentMessageId
             gatewayInterimSealedCurrentMessage = true
+            scheduleCheckpointWrite(immediate = true)
+        }
+        val onInterimReconciledCb = { text: String ->
+            streamDeltas.flushNow()
+            val interimId = gatewayInterimMessageId ?: currentMessageId
+            handler.reconcileInterimMessage(interimId, currentMessageId, text)
+            currentMessageId = interimId
+            gatewayInterimSealedCurrentMessage = false
+            updateTurnCheckpointAssistantId(interimId)
             scheduleCheckpointWrite(immediate = true)
         }
         val observedImageToolStates = mutableMapOf<String, String>()
@@ -6070,8 +6453,16 @@ class ChatViewModel : ViewModel() {
             cancelAnswerRecovery(settleUi = false)
             val completedTransport = dispatchedSseEndpoint
                 ?: if (activeStreamIsGateway) "gateway" else streamingEndpoint
-            finalizeTurnSideEffects(handler, currentMessageId)
-            AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
+            val turnErrored = handler.messages.value
+                .lastOrNull { it.id == currentMessageId }
+                ?.badges
+                ?.contains("Error") == true
+            if (turnErrored) {
+                finalizeFailedTurnSideEffects(handler, currentMessageId)
+            } else {
+                finalizeTurnSideEffects(handler, currentMessageId)
+                AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
+            }
 
             // Command catalog rides the now-live socket after the first real
             // gateway turn — never a cold /api/ws open at composition.
@@ -6085,6 +6476,7 @@ class ChatViewModel : ViewModel() {
             }
             if (streamingEndpoint == "gateway") {
                 refreshReasoningSettings()
+                refreshApprovalMode()
             }
 
             // Sessions SSE does not stream every persisted message boundary, so it
@@ -6101,9 +6493,6 @@ class ChatViewModel : ViewModel() {
             // message stays, the assistant error vanishes — the disappearing-reply
             // regression). Skip the message reconcile for errored turns — keep the
             // local error visible — but still refresh the drawer + drain the queue.
-            val turnErrored = handler.messages.value
-                .lastOrNull { it.id == currentMessageId }
-                ?.badges?.contains("Error") == true
             if (sid != null && (completedTransport == "sessions" || completedTransport == "gateway")) {
                 viewModelScope.launch {
                     if (!turnErrored && shouldReloadHistoryAfterSuccessfulTurn(
@@ -6264,6 +6653,25 @@ class ChatViewModel : ViewModel() {
                 clearTurnCheckpoint()
             }
         }
+        val onPreflightErrorCb = { error: Throwable ->
+            val errorMsg = error.message
+                ?: "Model routing could not be confirmed before sending."
+            stopImageActivityBridge()
+            flushAndReleaseStreamDeltas()
+            // The chat POST never started, so server history cannot contain
+            // this turn. Preserve the composed rows and make the user bubble
+            // explicitly retryable instead of reconciling it away.
+            handler.updateDeliveryStatus(userMessageId, MessageDeliveryStatus.FAILED)
+            AppAnalytics.onStreamError()
+            handler.onStreamError(errorMsg)
+            emitError(error, context = "send_message")
+            activeStream = null
+            _queuedMessages.value = emptyList()
+            _steerableTurn.value = false
+            _steerNotice.value = null
+            clearPendingAsk(approvalStamp = "deny")
+            clearTurnCheckpoint()
+        }
 
         // === v0.4.1 voice-intent + v0.7.x card-dispatch session sync ===
         // Synthesize OpenAI-format `assistant` (with tool_calls) + `tool`
@@ -6321,6 +6729,9 @@ class ChatViewModel : ViewModel() {
                 else -> selectedProfile?.model?.takeIf { it.isNotBlank() }
             },
         )
+        val providerOverride: String? = _selectedProviderOverride.value
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && modelOverride != null }
         val profileName: String? = if (useIsolatedProfileApi) {
             null
         } else {
@@ -6357,11 +6768,12 @@ class ChatViewModel : ViewModel() {
                 onErrorCb("Gateway unavailable and no API fallback is configured.")
                 return null
             }
-            dispatchedSseEndpoint = endpoint
-            updateTurnCheckpointTransport(endpoint)
-            warnIfAttachmentsDropped(endpoint)
             return when (endpoint) {
-            "runs" -> sseClient.sendRunStream(
+            "runs" -> {
+                dispatchedSseEndpoint = endpoint
+                updateTurnCheckpointTransport(endpoint)
+                warnIfAttachmentsDropped(endpoint)
+                sseClient.sendRunStream(
                     message = message,
                     systemMessage = systemMsg,
                     attachments = attachments,
@@ -6384,7 +6796,12 @@ class ChatViewModel : ViewModel() {
                     modelOverride = modelOverride,
                     profileName = profileName,
                 ).asTurnHandle()
-            "completions" -> sseClient.sendChatCompletionsStream(
+            }
+            "completions" -> {
+                dispatchedSseEndpoint = endpoint
+                updateTurnCheckpointTransport(endpoint)
+                warnIfAttachmentsDropped(endpoint)
+                sseClient.sendChatCompletionsStream(
                     message = message,
                     systemMessage = systemMsg,
                     attachments = attachments,
@@ -6403,26 +6820,64 @@ class ChatViewModel : ViewModel() {
                     modelOverride = modelOverride,
                     profileName = profileName,
                 ).asTurnHandle()
-            else -> sseClient.sendChatStream(
-                    sessionId = sessionId,
-                    message = message,
-                    systemMessage = systemMsg,
-                    attachments = attachments,
-                    voiceIntentMessages = voiceIntentMessages,
-                    onSessionId = { /* already set */ },
-                    onMessageStarted = onMessageStartedCb,
-                    onTextDelta = onTextDeltaCb,
-                    onThinkingDelta = onThinkingDeltaCb,
-                    onToolCallStart = onToolCallStartCb,
-                    onToolCallDone = onToolCallDoneCb,
-                    onToolCallFailed = onToolCallFailedCb,
-                    onTurnComplete = onTurnCompleteCb,
-                    onComplete = onCompleteCb,
-                    onUsage = onUsageCb,
-                    onError = onErrorCb,
-                    modelOverride = modelOverride,
-                    profileName = profileName,
-                ).asTurnHandle()
+            }
+            else -> {
+                var delegated: ActiveTurnHandle? = null
+                val preflight = viewModelScope.launch {
+                    val acknowledged = sseClient.acknowledgeSessionModelSelection(
+                        sessionId = sessionId,
+                        model = modelOverride,
+                        provider = providerOverride,
+                    )
+                    acknowledged.fold(
+                        onSuccess = { acknowledgement ->
+                            // A current server reuses the persisted lock only
+                            // when the chat body omits model/provider. Sending
+                            // the model again would downgrade it to an ordinary
+                            // one-turn override and bypass the acknowledged
+                            // provider route. Legacy servers still need their
+                            // model hint in the turn body.
+                            val sessionModelOverride =
+                                sessionTurnModelHint(acknowledgement, modelOverride)
+                            if (acknowledgement is ApiModelSelectionAck.Locked) {
+                                apiSessionModelLocks[sessionId] = acknowledgement
+                            }
+                            dispatchedSseEndpoint = endpoint
+                            updateTurnCheckpointTransport(endpoint)
+                            warnIfAttachmentsDropped(endpoint)
+                            delegated = sseClient.sendChatStream(
+                                sessionId = sessionId,
+                                message = message,
+                                systemMessage = systemMsg,
+                                attachments = attachments,
+                                voiceIntentMessages = voiceIntentMessages,
+                                onSessionId = { /* already set */ },
+                                onMessageStarted = onMessageStartedCb,
+                                onTextDelta = onTextDeltaCb,
+                                onThinkingDelta = onThinkingDeltaCb,
+                                onToolCallStart = onToolCallStartCb,
+                                onToolCallDone = onToolCallDoneCb,
+                                onToolCallFailed = onToolCallFailedCb,
+                                onTurnComplete = onTurnCompleteCb,
+                                onComplete = onCompleteCb,
+                                onUsage = onUsageCb,
+                                onError = onErrorCb,
+                                modelOverride = sessionModelOverride,
+                                profileName = profileName,
+                                expectedModelLock =
+                                    acknowledgement as? ApiModelSelectionAck.Locked,
+                            ).asTurnHandle()
+                        },
+                        onFailure = { error ->
+                            onPreflightErrorCb(error)
+                        },
+                    )
+                }
+                ActiveTurnHandle {
+                    preflight.cancel()
+                    delegated?.cancel()
+                }
+            }
             }
         }
 
@@ -6443,13 +6898,11 @@ class ChatViewModel : ViewModel() {
         // (set only by sendVoiceMessage) onto SSE. resolveSseFallback picks the
         // best available SSE route.
         //
-        // Synthetic sync messages (voice intents / card dispatches / provider-
-        // answered realtime turns) have the same gateway limitation — prompt.submit
-        // can't carry them — but on a gateway-primary phone "leave them for the
-        // next SSE turn" means *never*: the default transport is the gateway, so
-        // unsynced traces would defer forever and the agent never learns what
-        // happened in realtime voice. Drain them by forcing this one turn onto
-        // the sessions SSE route, but ONLY when that is strictly safe:
+        // Synthetic voice-intent and provider-answered realtime traces have the
+        // same gateway limitation — prompt.submit can't carry them — but on a
+        // gateway-primary phone "leave them for the next SSE turn" means *never*.
+        // Drain those voice-only traces by forcing this one turn onto the sessions
+        // SSE route, but ONLY when that is strictly safe:
         //  - an existing session id + the sessions fallback route (a stateless
         //    completions/runs detour would drop THIS turn from the transcript
         //    to save a trace — worse than deferring), and
@@ -6458,16 +6911,21 @@ class ChatViewModel : ViewModel() {
         //    can't see — the sessions POST would 404 and fail the user's turn).
         // Cost when it fires: one turn without live gateway thinking. The synced
         // traces persist server-side, so this happens at most once per batch.
+        //
+        // Rich-card actions are different: the action itself is the current user
+        // turn. Keep it on the selected Gateway and defer its optional synthetic
+        // audit trace until a naturally selected SSE turn. A card must never
+        // activate or depend on the optional API fallback.
         val sseDrainEndpoint = resolveSseFallback(handler)
-        val forceSseForTraceDrain =
+        val forceSseForVoiceTraceDrain =
             client != null &&
-            voiceIntentMessages != null &&
+            (hasVoiceIntents || hasRealtimeTurns) &&
                 streamingEndpoint == "gateway" &&
                 profileName == null &&
                 sseDrainEndpoint == "sessions"
         val effectiveEndpoint =
             if (client != null &&
-                (interfaceContextPrompt != null || forceSseForTraceDrain) &&
+                (interfaceContextPrompt != null || forceSseForVoiceTraceDrain) &&
                 streamingEndpoint == "gateway"
             ) {
                 sseDrainEndpoint
@@ -6533,6 +6991,7 @@ class ChatViewModel : ViewModel() {
                         onStart = { },
                         onTextDelta = onTextDeltaCb,
                         onInterimMessage = onInterimMessageCb,
+                        onInterimReconciled = onInterimReconciledCb,
                         onThinkingDelta = onThinkingDeltaCb,
                         onToolCallStart = onToolCallStartCb,
                         onToolCallDone = onToolCallDoneCb,
@@ -6562,6 +7021,11 @@ class ChatViewModel : ViewModel() {
                             handler.onSubagentEvent(currentMessageId, event)
                             scheduleCheckpointWrite(immediate = true)
                         },
+                        onMoaReference = { event ->
+                            ensurePostInterimMessage()
+                            streamDeltas.flushNow()
+                            handler.onMoaReference(currentMessageId, event)
+                        },
                         onInteractionRequest = { ask ->
                             presentInteractionAsk(handler, ask)
                         },
@@ -6576,7 +7040,9 @@ class ChatViewModel : ViewModel() {
                             // The server prefixes terminal failures with ❌ —
                             // stamp the turn so a failed reply doesn't read as
                             // a normal answer.
-                            if (text.trimStart().startsWith("❌")) {
+                            if (kind == GatewayEventMapper.ERROR_STATUS_KIND ||
+                                text.trimStart().startsWith("❌")
+                            ) {
                                 handler.markError(currentMessageId)
                             }
                         },
@@ -6865,28 +7331,67 @@ class ChatViewModel : ViewModel() {
     }
 
     fun onMediaBarePathRequested(messageId: String, originalPath: String) {
+        onPathMediaRequested(
+            messageId = messageId,
+            originalPath = originalPath,
+            expectedRole = MessageRole.ASSISTANT,
+            unavailableMessage = "Media pipeline not ready",
+        )
+    }
+
+    /**
+     * Rehydrate a canonical upstream `@image:` reference on a persisted USER
+     * row. The handler admits only full-line, absolute image paths emitted by
+     * upstream. Fetching still requires a paired Relay session and goes through
+     * Relay's authenticated `/media/by-path` guard; vanilla connections receive
+     * a path-free unavailable attachment instead.
+     */
+    fun onPersistedUserImageRequested(messageId: String, originalPath: String) {
+        onPathMediaRequested(
+            messageId = messageId,
+            originalPath = originalPath,
+            expectedRole = MessageRole.USER,
+            unavailableMessage = "Image unavailable on this connection",
+        )
+    }
+
+    private fun onPathMediaRequested(
+        messageId: String,
+        originalPath: String,
+        expectedRole: MessageRole,
+        unavailableMessage: String,
+    ) {
         val handler = chatHandler ?: return
         val relay = relayHttpClient
         val repo = mediaSettingsRepo
         val cache = mediaCacheWriter
 
         val placeholder = Attachment(
-            contentType = "application/octet-stream",
+            contentType = if (expectedRole == MessageRole.USER) {
+                persistedImageContentType(originalPath)
+            } else {
+                "application/octet-stream"
+            },
             content = "",
             state = AttachmentState.LOADING,
             // Reuse relayToken as a generic inbound-fetch key. Paths always
             // start with `/`, real tokens never do — downstream helpers
             // that need to distinguish can check the prefix.
             relayToken = originalPath,
-            fileName = originalPath.substringAfterLast('/').ifBlank { null }
+            fileName = originalPath.substringAfterLast('/').substringAfterLast('\\').ifBlank { null }
         )
-        appendAttachmentToMessage(handler, messageId, placeholder)
+        appendAttachmentToMessage(handler, messageId, placeholder, expectedRole)
 
         if (relay == null || repo == null || cache == null) {
-            updateAttachmentByToken(handler, messageId, originalPath) { att ->
+            updateAttachmentByToken(
+                handler,
+                messageId,
+                originalPath,
+                expectedRole = expectedRole,
+            ) { att ->
                 att.copy(
                     state = AttachmentState.FAILED,
-                    errorMessage = "Media pipeline not ready"
+                    errorMessage = unavailableMessage
                 )
             }
             return
@@ -6905,11 +7410,30 @@ class ChatViewModel : ViewModel() {
                 return@launch
             }
 
-            performFetchWith(handler, messageId, originalPath, settings) {
+            performFetchWith(
+                handler,
+                messageId,
+                originalPath,
+                settings,
+                expectedRole = expectedRole,
+            ) {
                 relay.fetchMediaByPath(originalPath)
             }
         }
     }
+
+    private fun persistedImageContentType(path: String): String =
+        when (path.substringAfterLast('.').lowercase()) {
+            "avif" -> "image/avif"
+            "bmp" -> "image/bmp"
+            "gif" -> "image/gif"
+            "heic" -> "image/heic"
+            "heif" -> "image/heif"
+            "jpeg", "jpg" -> "image/jpeg"
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            else -> "image/*"
+        }
 
     /**
      * Core fetch routine. Takes a [fetch] lambda so it can serve both the
@@ -6926,6 +7450,7 @@ class ChatViewModel : ViewModel() {
         messageId: String,
         fetchKey: String,
         settings: MediaSettings,
+        expectedRole: MessageRole = MessageRole.ASSISTANT,
         fetch: suspend () -> Result<RelayHttpClient.FetchedMedia>,
     ) {
         val cache = mediaCacheWriter ?: return
@@ -6936,7 +7461,7 @@ class ChatViewModel : ViewModel() {
             onSuccess = { fetched ->
                 if (fetched.bytes.size > maxBytes) {
                     val sizeMb = fetched.bytes.size / (1024.0 * 1024.0)
-                    updateAttachmentByToken(handler, messageId, fetchKey) { att ->
+                    updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                         att.copy(
                             state = AttachmentState.FAILED,
                             errorMessage = "File too large (%.1f MB, max %d MB)".format(
@@ -6952,7 +7477,7 @@ class ChatViewModel : ViewModel() {
 
                 try {
                     val uri = cache.cache(fetched.bytes, fetched.contentType, fetched.fileName)
-                    updateAttachmentByToken(handler, messageId, fetchKey) { att ->
+                    updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                         att.copy(
                             state = AttachmentState.LOADED,
                             errorMessage = null,
@@ -6974,7 +7499,7 @@ class ChatViewModel : ViewModel() {
                     // URI, permission, …) for both the in-card text and the
                     // global snackbar — same event, two surfaces.
                     val human = classifyError(e, context = "media_fetch", ctx = appContext)
-                    updateAttachmentByToken(handler, messageId, fetchKey) { att ->
+                    updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                         att.copy(
                             state = AttachmentState.FAILED,
                             errorMessage = human.body
@@ -6985,7 +7510,7 @@ class ChatViewModel : ViewModel() {
             },
             onFailure = { err ->
                 val human = classifyError(err, context = "media_fetch", ctx = appContext)
-                updateAttachmentByToken(handler, messageId, fetchKey) { att ->
+                updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                     att.copy(
                         state = AttachmentState.FAILED,
                         errorMessage = human.body
@@ -7004,7 +7529,8 @@ class ChatViewModel : ViewModel() {
     private fun appendAttachmentToMessage(
         handler: ChatHandler,
         messageId: String,
-        attachment: Attachment
+        attachment: Attachment,
+        expectedRole: MessageRole = MessageRole.ASSISTANT,
     ) {
         // Direct StateFlow mutation via the handler's messages flow would be
         // cleaner, but ChatHandler exposes the flow as read-only. We piggyback
@@ -7014,7 +7540,7 @@ class ChatViewModel : ViewModel() {
         // pattern — except we can't, because _messages is private. Fall back
         // to a minimal helper added below.
         handler.mutateMessage(messageId) { msg ->
-            if (msg.role != MessageRole.ASSISTANT) msg
+            if (msg.role != expectedRole) msg
             else msg.copy(attachments = msg.attachments + attachment)
         }
     }
@@ -7028,10 +7554,11 @@ class ChatViewModel : ViewModel() {
         handler: ChatHandler,
         messageId: String,
         token: String,
-        transform: (Attachment) -> Attachment
+        expectedRole: MessageRole = MessageRole.ASSISTANT,
+        transform: (Attachment) -> Attachment,
     ) {
         handler.mutateMessage(messageId) { msg ->
-            if (msg.role != MessageRole.ASSISTANT) return@mutateMessage msg
+            if (msg.role != expectedRole) return@mutateMessage msg
             val idx = msg.attachments.indexOfFirst { it.relayToken == token }
             if (idx < 0) return@mutateMessage msg
             val updated = msg.attachments.toMutableList().also {

@@ -2465,6 +2465,23 @@
     <string name="attachment_unmute">Ativar som</string>
     <string name="attachment_mute">Silenciar</string>
     <string name="attachment_title">Anexo</string>
+    <plurals name="attachment_group_count">
+        <item quantity="one">%1$d anexo</item>
+        <item quantity="other">%1$d anexos</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">Recolher anexos</string>
+    <string name="attachment_group_expand">Expandir anexos</string>
+    <string name="attachment_group_collapsed">Recolhido</string>
+    <string name="attachment_group_expanded">Expandido</string>
+    <string name="attachment_type_image">Imagem</string>
+    <string name="attachment_type_video">Vídeo</string>
+    <string name="attachment_type_audio">Áudio</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">Texto</string>
+    <string name="attachment_type_file">Arquivo</string>
     <!-- CrashReportDialog -->
     <string name="crash_title">O Hermes-Relay fechou inesperadamente</string>
     <string name="crash_body">A última sessão falhou. Enviar este relatório ajuda a corrigir o problema mais rápido.</string>

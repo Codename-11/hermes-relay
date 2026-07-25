@@ -63,6 +63,9 @@ class GatewayClientHarness(
 
     @Volatile
     var recoveryInflightStreaming: Boolean? = null
+    var recoveryInflightError: String? = null
+    var recoveryInflightRecoverable: Boolean = false
+    var recoveryAutoContinueAttempt: Int? = null
 
     @Volatile
     var recoveryQueuedUser: String? = null
@@ -92,6 +95,12 @@ class GatewayClientHarness(
 
     @Volatile
     var reasoningDisplay = "hide"
+
+    @Volatile
+    var approvalMode = "smart"
+
+    /** Config keys rejected with the older-gateway unknown-key response. */
+    val unsupportedConfigKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     @Volatile
     var askResponseStatus = "ok"
@@ -136,6 +145,23 @@ class GatewayClientHarness(
                         put("error", buildJsonObject {
                             put("code", -32601)
                             put("message", "Method not found: $method")
+                        })
+                    }.toString(),
+                )
+                return
+            }
+            val configKey = (params["key"] as? JsonPrimitive)?.contentOrNull
+            if (
+                (method == "config.get" || method == "config.set") &&
+                configKey in unsupportedConfigKeys
+            ) {
+                webSocket.send(
+                    buildJsonObject {
+                        put("jsonrpc", "2.0")
+                        put("id", id.toLong())
+                        put("error", buildJsonObject {
+                            put("code", 4002)
+                            put("message", "unknown config key: $configKey")
                         })
                     }.toString(),
                 )
@@ -250,6 +276,7 @@ class GatewayClientHarness(
                         put("value", reasoningEffort)
                         put("display", reasoningDisplay)
                     }
+                    "approvals.mode" -> buildJsonObject { put("value", approvalMode) }
                     else -> JsonObject(emptyMap())
                 }
                 "config.set" -> when ((params["key"] as? JsonPrimitive)?.contentOrNull) {
@@ -267,6 +294,14 @@ class GatewayClientHarness(
                     "fast" -> buildJsonObject {
                         put("key", "fast")
                         put("value", (params["value"] as? JsonPrimitive)?.contentOrNull ?: "normal")
+                    }
+                    "approvals.mode" -> {
+                        approvalMode =
+                            (params["value"] as? JsonPrimitive)?.contentOrNull ?: approvalMode
+                        buildJsonObject {
+                            put("key", "approvals.mode")
+                            put("value", approvalMode)
+                        }
                     }
                     else -> JsonObject(emptyMap())
                 }
@@ -299,15 +334,26 @@ class GatewayClientHarness(
             put("info", buildJsonObject { put("project", project) })
         }
         val inflightStreaming = recoveryInflightStreaming ?: recoveryRunning
-        if (recoveryRunning || recoveryInflightStreaming != null) {
+        if (recoveryRunning || recoveryInflightStreaming != null || recoveryInflightError != null) {
             put("inflight", buildJsonObject {
                 put("user", "research this")
                 put("assistant", recoveryAssistant)
                 put("streaming", inflightStreaming)
+                recoveryInflightError?.let { error ->
+                    put("status", "error")
+                    put("error", error)
+                    put("recoverable", recoveryInflightRecoverable)
+                }
             })
         }
         recoveryQueuedUser?.let { user ->
             put("queued", buildJsonObject { put("user", user) })
+        }
+        recoveryAutoContinueAttempt?.let { attempt ->
+            put("auto_continue", buildJsonObject {
+                put("attempt", attempt)
+                put("interrupted_at", 1_700_000_000.0)
+            })
         }
     }
 
@@ -427,6 +473,7 @@ class GatewayChatClientTest {
         // ConcurrentLinkedQueue rejects nulls — unnamed generating events store "".
         val toolGenerating = ConcurrentLinkedQueue<String>()
         val subagentEvents = ConcurrentLinkedQueue<GatewaySubagentEvent>()
+        val moaReferences = ConcurrentLinkedQueue<GatewayMoaReference>()
         val usages = ConcurrentLinkedQueue<UsageInfo>()
         val reconcileRequests = AtomicInteger(0)
         val completeLatch = CountDownLatch(1)
@@ -447,6 +494,7 @@ class GatewayChatClientTest {
             onError = { errors += it; completeLatch.countDown() },
             onToolGenerating = { toolGenerating += it ?: "" },
             onSubagentEvent = { subagentEvents += it },
+            onMoaReference = { moaReferences += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { },
             onInteractionResolved = { interactionResolutions += it },
@@ -489,6 +537,14 @@ class GatewayChatClientTest {
         client.shutdown()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         client = buildClient(rpcTimeoutMs, promptSubmitTimeoutMs, turnIdleTimeoutMs)
+    }
+
+    private fun waitUntil(timeoutMs: Long = 2_000L, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
+        }
+        assertTrue("condition did not settle within ${timeoutMs}ms", condition())
     }
 
     @Before
@@ -1643,6 +1699,146 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `approval mode get and set use profile config without session yolo scope`() {
+        harness.approvalMode = "smart"
+
+        val fetched = runBlocking { client.getApprovalMode() }
+        val updated = runBlocking { client.setApprovalMode(GatewayApprovalMode.Off) }
+
+        assertEquals(GatewayApprovalMode.Smart, fetched.getOrThrow())
+        assertEquals(GatewayApprovalMode.Off, updated.getOrThrow())
+        assertEquals(
+            GatewayApprovalModeCapability.Supported,
+            client.approvalModeCapability.value,
+        )
+        assertEquals(GatewayApprovalMode.Off, client.serverApprovalMode.value)
+        val getRpc = harness.awaitRpc("config.get")
+        assertEquals("approvals.mode", (getRpc["key"] as? JsonPrimitive)?.contentOrNull)
+        val setRpc = harness.awaitRpc("config.set")
+        assertEquals("approvals.mode", (setRpc["key"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("off", (setRpc["value"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse(setRpc.containsKey("scope"))
+        assertFalse(setRpc.containsKey("session_id"))
+    }
+
+    @Test
+    fun `session info reconciles known approval modes and ignores unknown values`() {
+        val recorder = Recorder()
+        client.sendTurn("stored-1", "hi", null, recorder.callbacks) {
+            recorder.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        serverWs.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject {
+                    put("approval_mode", "manual")
+                    put("desktop_contract", 3)
+                },
+                "live-resumed",
+            ),
+        )
+        waitUntil { client.serverApprovalMode.value == GatewayApprovalMode.Manual }
+        assertEquals(GatewayApprovalModeCapability.Supported, client.approvalModeCapability.value)
+
+        serverWs.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject { put("approval_mode", "future-mode") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(30)
+        assertEquals(GatewayApprovalMode.Manual, client.serverApprovalMode.value)
+
+        serverWs.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject { put("desktop_contract", 2) },
+                "live-resumed",
+            ),
+        )
+        waitUntil {
+            client.approvalModeCapability.value ==
+                GatewayApprovalModeCapability.Unsupported
+        }
+        assertEquals(GatewayApprovalMode.Manual, client.serverApprovalMode.value)
+    }
+
+    @Test
+    fun `older gateway rejection disables only approval mode capability`() {
+        harness.unsupportedConfigKeys += "approvals.mode"
+
+        val first = runBlocking { client.getApprovalMode() }
+        val configGetsAfterFirst = harness.rpcLog.count { (method, _) -> method == "config.get" }
+        val second = runBlocking { client.getApprovalMode() }
+
+        assertTrue(first.isFailure)
+        assertTrue(second.isFailure)
+        assertEquals(
+            GatewayApprovalModeCapability.Unsupported,
+            client.approvalModeCapability.value,
+        )
+        assertEquals(
+            configGetsAfterFirst,
+            harness.rpcLog.count { (method, _) -> method == "config.get" },
+        )
+    }
+
+    @Test
+    fun `multiplexed profile approval mode is read only until upstream scopes config rpc`() {
+        client.sessionProfileProvider = { "work" }
+
+        val fetched = runBlocking { client.getApprovalMode() }
+        val updated = runBlocking { client.setApprovalMode(GatewayApprovalMode.Manual) }
+
+        assertTrue(fetched.isFailure)
+        assertTrue(updated.isFailure)
+        assertTrue(
+            fetched.exceptionOrNull()?.message.orEmpty().contains("read-only"),
+        )
+        assertEquals(
+            0,
+            harness.rpcLog.count { (method, _) ->
+                method == "config.get" || method == "config.set"
+            },
+        )
+        assertEquals(
+            GatewayApprovalModeCapability.Unknown,
+            client.approvalModeCapability.value,
+        )
+    }
+
+    @Test
+    fun `stale session info cannot overwrite approval mode after session clear`() {
+        harness.approvalMode = "smart"
+        assertEquals(GatewayApprovalMode.Smart, runBlocking { client.getApprovalMode() }.getOrThrow())
+
+        val recorder = Recorder()
+        client.sendTurn("stored-1", "hi", null, recorder.callbacks) {
+            recorder.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+        client.clearSession()
+
+        serverWs.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject { put("approval_mode", "off") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(30)
+
+        assertEquals(GatewayApprovalMode.Smart, client.serverApprovalMode.value)
+    }
+
+    @Test
     fun `reasoning settings update targets live session when present`() {
         val r = Recorder()
         client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }
@@ -1958,6 +2154,110 @@ class GatewayChatClientTest {
         assertNull(recovery.queued)
         assertNotNull(recovery.handle)
         recovery.handle!!.detach()
+    }
+
+    @Test
+    fun `recoverTurn exposes retained terminal failure without live handle`() {
+        harness.recoveryInflightStreaming = false
+        harness.recoveryAssistant = "partial answer"
+        harness.recoveryInflightError = "provider failed"
+        harness.recoveryInflightRecoverable = true
+
+        val recovery = runBlocking {
+            client.recoverTurn(
+                "stored-42",
+                null,
+                Recorder().callbacks,
+            ).getOrThrow()
+        }
+
+        assertFalse(recovery.running)
+        assertFalse(recovery.hasPendingWork)
+        assertEquals("error", recovery.inflight?.status)
+        assertEquals("provider failed", recovery.inflight?.error)
+        assertTrue(recovery.inflight?.recoverable == true)
+        assertNull(recovery.handle)
+    }
+
+    @Test
+    fun `auto continue buffers message start racing resume acknowledgement`() {
+        runBlocking {
+            harness.recoveryAutoContinueAttempt = 1
+            harness.suppressAckMethods += "session.resume"
+            val recorder = Recorder()
+
+            val pending = async(Dispatchers.IO) {
+                client.recoverTurn(
+                    "stored-42",
+                    null,
+                    recorder.callbacks,
+                ).getOrThrow()
+            }
+            val ack = harness.awaitPendingAck()
+            assertEquals("session.resume", ack.method)
+            val liveId = (harness.recoveryResult("stored-42")
+                .getValue("session_id") as JsonPrimitive).content
+            ack.ws.send(harness.eventFrame("message.start", null, liveId))
+            ack.ws.send(
+                harness.eventFrame(
+                    "message.delta",
+                    buildJsonObject { put("text", "continued answer") },
+                    liveId,
+                ),
+            )
+            harness.releaseAck(ack, harness.recoveryResult(liveId))
+
+            val recovery = pending.await()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (recorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
+            assertEquals(1, recovery.autoContinue?.attempt)
+            assertTrue(recovery.hasPendingWork)
+            assertEquals(listOf("continued answer"), recorder.textDeltas.toList())
+            recovery.handle?.detach()
+        }
+    }
+
+    @Test
+    fun `resume race delivers auto continue events through exactly one owner`() {
+        runBlocking {
+            // Keep the recovered live id warm so the early message.start could be
+            // accepted by normal unsolicited routing while session.resume is also
+            // buffering it. Recovery must exclusively claim the frame instead.
+            assertTrue(client.prewarmAwait("stored-42"))
+            harness.recoveryAutoContinueAttempt = 1
+            harness.suppressAckMethods += "session.resume"
+            val recorder = Recorder()
+            client.setUnsolicitedTurnProvider {
+                GatewayInboundTurnRegistration(recorder.callbacks) { true }
+            }
+
+            val pending = async(Dispatchers.IO) {
+                client.recoverTurn(
+                    "stored-42",
+                    null,
+                    recorder.callbacks,
+                ).getOrThrow()
+            }
+            val ack = harness.awaitPendingAck()
+            assertEquals("session.resume", ack.method)
+            val liveId = (harness.recoveryResult("stored-42")
+                .getValue("session_id") as JsonPrimitive).content
+            ack.ws.send(harness.eventFrame("message.start", null, liveId))
+            ack.ws.send(
+                harness.eventFrame(
+                    "message.delta",
+                    buildJsonObject { put("text", "continued once") },
+                    liveId,
+                ),
+            )
+            harness.releaseAck(ack, harness.recoveryResult(liveId))
+
+            val recovery = pending.await()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (recorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
+            assertEquals(listOf("continued once"), recorder.textDeltas.toList())
+            recovery.handle?.detach()
+        }
     }
 
     @Test

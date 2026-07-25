@@ -977,7 +977,16 @@ The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `Voi
 - Observes the same state the chat UI observes — no divergence risk.
 - Transcribed user text routes through the existing `chatVm.sendMessage(text)` path, so voice utterances appear as normal user messages in chat history. Load the session on another device and you see the transcript.
 
-**Trade-off documented in a KDoc comment:** relies on the "last `isStreaming=true` message is the current turn" invariant. If `ChatViewModel` ever streams multiple assistant messages concurrently (multi-agent hand-off, for example) this needs a dedicated per-turn flow. Flagged for Phase 3+ review.
+**Follow-up (2026-07-25):** the observer no longer relies on a single
+`isStreaming=true` assistant message. A per-turn cursor follows every new
+assistant bubble until the run-level `ChatViewModel.isStreaming` state ends,
+so tool handoffs and the final answer are narrated in order. The cursor fences
+the pre-turn stable UI identities and submitted user-turn/session identity,
+and only speaks strict content suffix growth, preventing StateFlow/history
+reconciliation or a pending-new-chat session switch from replaying old or
+rewritten text. Each newly observed assistant bubble also inserts a speech
+boundary, so an interim fragment without punctuation cannot run into the final
+answer.
 
 ### Alternatives explicitly rejected
 
@@ -2120,6 +2129,9 @@ stable identity independent of endpoint URLs.
 - **Routing is automatic.** Chat prefers Dashboard/Gateway and falls back to the
   API server only when configured and usable. Users choose a transport only in
   advanced diagnostics or compatibility settings, not during normal setup.
+  Endpoint discovery may advertise a conventional API route, but does not enable
+  that optional fallback unless the connection has persisted API configuration;
+  cold-start state remains unconfigured until that persisted value is hydrated.
 
 **Product flow.** Normal onboarding asks for one Hermes address, discovers the
 Dashboard/Gateway, authenticates through its supported provider, and finishes
@@ -2149,3 +2161,41 @@ An API endpoint or Relay can be added later without recreating the connection.
 - `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/GatewayChatClient.kt`
 - `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/HermesApiClient.kt`
 - `docs/upstream-surface-matrix.md`
+
+---
+
+## ADR 39 — Android dashboard redirect auth uses native PKCE
+
+**Status:** Accepted (2026-07-25).
+
+**Context.** Android originally completed redirect-provider dashboard sign-in
+inside a WebView and imported cookies. Current upstream Gateway can advertise a
+native authorization-code flow with PKCE, bearer refresh, and WebSocket ticket
+support. That contract allows the provider to use the user's browser session
+without exposing browser cookies to the app.
+
+**Decision.** When `/api/status.auth_flows` contains `native_pkce`, Android uses
+an AndroidX Custom Tab and a lifecycle-owned callback bound to literal
+`127.0.0.1` on an OS-assigned port. The selected provider, S256 challenge,
+redirect URI, and CSRF state are sent to upstream. Verifier/state remain only
+in the sign-in coroutine; callback input is bounded and state-validated before
+errors or codes are accepted. Tokens are encrypted per connection and attached
+only to the exact trusted dashboard base. Native bearer exchange requires
+HTTPS, except literal loopback development. Missing capability selects the
+legacy cookie/WebView flow; native failures do not silently downgrade.
+
+All dashboard consumers share the same authenticated client policy: Gateway
+chat and tickets, Manage and cold prewarm, standard voice, and voice config.
+Local sign-out clears cookies and native tokens and closes the cached Gateway
+socket.
+
+**Consequences.**
+
+- Redirect-provider sign-in remains in the app task while using the system
+  browser's provider session and security posture.
+- Process death or cancellation discards the ephemeral authorization and simply
+  requires a new attempt.
+- Plain-LAN HTTP dashboards must be upgraded to HTTPS before native bearer auth
+  is offered.
+- Older upstream versions remain usable through the explicitly identified
+  WebView compatibility path.

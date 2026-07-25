@@ -2342,6 +2342,23 @@
     <string name="attachment_unmute">Dejar de silenciar</string>
     <string name="attachment_mute">Silenciar</string>
     <string name="attachment_title">Adjunto</string>
+    <plurals name="attachment_group_count">
+        <item quantity="one">%1$d archivo adjunto</item>
+        <item quantity="other">%1$d archivos adjuntos</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">Contraer archivos adjuntos</string>
+    <string name="attachment_group_expand">Expandir archivos adjuntos</string>
+    <string name="attachment_group_collapsed">Contraído</string>
+    <string name="attachment_group_expanded">Expandido</string>
+    <string name="attachment_type_image">Imagen</string>
+    <string name="attachment_type_video">Vídeo</string>
+    <string name="attachment_type_audio">Audio</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">Texto</string>
+    <string name="attachment_type_file">Archivo</string>
     <string name="crash_title">Hermes-Relay cerró inesperadamente</string>
     <string name="crash_body">La última sesión fracasó. Enviar este informe ayuda a solucionarlo más rápido.</string>
     <string name="crash_dismiss">Descartar</string>

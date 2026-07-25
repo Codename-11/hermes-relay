@@ -663,9 +663,24 @@ fun ChatScreen(
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
+    val imageGenerationStyle by connectionViewModel.imageGenerationStyle.collectAsState()
     val thinkingIndicatorStyle by connectionViewModel.thinkingIndicatorStyle.collectAsState()
     val thinkingMatrixPattern by connectionViewModel.thinkingMatrixPattern.collectAsState()
     val thinkingMatrixColor by connectionViewModel.thinkingMatrixColor.collectAsState()
+    val imageGenerationOrdinals = remember(messages) {
+        var nextOrdinal = 0
+        buildMap {
+            messages.forEach { message ->
+                val generationCount = message.toolCalls.count {
+                    it.name.trim().equals("image_generate", ignoreCase = true)
+                }
+                if (generationCount > 0) {
+                    put(message.uiKey, nextOrdinal + generationCount - 1)
+                    nextOrdinal += generationCount
+                }
+            }
+        }
+    }
     var ambientMode by remember { mutableStateOf(false) } // clean text-flow mode, hides chat
     // Clean-mode discoverability hint: a persistent pill shown ONLY on the
     // empty / new-chat view (no messages) — it teaches the long-press entry
@@ -2284,6 +2299,9 @@ fun ChatScreen(
                                     isLastInGroup = isLastInGroup,
                                     retainStreamingLayout = retainLiveLayout,
                                     recoveringAnswer = recoveringAnswer,
+                                    imageGenerationStylePreference = imageGenerationStyle,
+                                    imageGenerationRotationIndex =
+                                        imageGenerationOrdinals[message.uiKey] ?: 0,
                                     onAttachmentRetry = { msgId, idx ->
                                         chatViewModel.manualFetchAttachment(msgId, idx)
                                     },
@@ -2835,6 +2853,18 @@ fun ChatScreen(
                                         ),
                                     )
                                 }
+                            }
+                            val providerModelIds = modelProviders.flatMap { it.models }.toSet()
+                            sseModelOptions.filter { it.id !in providerModelIds }.forEach { model ->
+                                add(
+                                    ChatInputPickerOption(
+                                        label = AgentDisplay.displayModelName(model.id) ?: model.id,
+                                        value = model.id,
+                                        group = "Routes",
+                                        secondary = model.routeDetail,
+                                        selected = selectedModelOverride == model.id,
+                                    ),
+                                )
                             }
                         } else {
                             sseModelOptions.forEach { model ->

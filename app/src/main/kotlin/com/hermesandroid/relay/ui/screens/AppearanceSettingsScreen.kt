@@ -460,6 +460,7 @@ fun AppearanceSettingsScreen(
             ) {
                 val animEnabled by connectionViewModel.animationEnabled.collectAsState()
                 val animBehindChat by connectionViewModel.animationBehindChat.collectAsState()
+                val imageGenerationStyle by connectionViewModel.imageGenerationStyle.collectAsState()
 
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -525,6 +526,48 @@ fun AppearanceSettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+
+                    HorizontalDivider()
+
+                    Text(
+                        text = stringResource(R.string.appearance_image_generation_style),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = stringResource(R.string.appearance_image_generation_style_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    val imageStyleOptions = listOf(
+                        "rotate" to stringResource(R.string.appearance_image_generation_rotate),
+                        "grid" to stringResource(R.string.appearance_image_generation_grid),
+                        "sphere" to stringResource(R.string.appearance_image_generation_sphere),
+                        "nodes" to stringResource(R.string.appearance_image_generation_nodes),
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        imageStyleOptions.forEach { (id, label) ->
+                            FilterChip(
+                                selected = imageGenerationStyle == id,
+                                onClick = { connectionViewModel.setImageGenerationStyle(id) },
+                                label = { Text(label) },
+                                leadingIcon = if (imageGenerationStyle == id) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Filled.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
                     }
                 }
             }

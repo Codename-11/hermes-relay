@@ -12,6 +12,7 @@ if "%1"=="install" goto install
 if "%1"=="run" goto run
 if "%1"=="test" goto test
 if "%1"=="lint" goto lint
+if "%1"=="prepush" goto prepush
 if "%1"=="clean" goto clean
 if "%1"=="devices" goto devices
 if "%1"=="version" goto version
@@ -77,6 +78,11 @@ echo Running lint...
 call gradlew.bat lint
 goto end
 
+:prepush
+echo Running Android pre-push checks...
+python scripts\android-prepush.py
+goto end
+
 :clean
 echo Cleaning build...
 call gradlew.bat clean
@@ -126,6 +132,7 @@ echo   install    Build + install to connected device
 echo   run        Build + install + launch + logcat
 echo   test       Run unit tests
 echo   lint       Run lint checks
+echo   prepush    Run Android repository checks, lint, and focused CI tests
 echo   clean      Clean build outputs
 echo   devices    List connected devices
 echo   version    Show current version from libs.versions.toml

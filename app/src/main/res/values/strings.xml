@@ -202,6 +202,8 @@
     <string name="conn_label_session">Session</string>
     <string name="conn_label_route">Route</string>
     <string name="conn_label_status">Status</string>
+    <string name="dashboard_component_connected">connected</string>
+    <string name="dashboard_component_server_errors_5m">server errors / 5m</string>
     <string name="conn_label_connect">Connect</string>
     <string name="conn_label_connections">Connections</string>
     <string name="conn_detail_add_connection">Add a Vanilla Hermes API/dashboard connection</string>
@@ -1223,6 +1225,12 @@
     <string name="appearance_font">Font</string>
     <string name="appearance_font_desc">Sets the typeface across the whole app. Code and timestamps stay monospaced.</string>
     <string name="appearance_animation">Animation</string>
+    <string name="appearance_image_generation_style">Image generation</string>
+    <string name="appearance_image_generation_style_desc">Rotate through all three progress animations, or keep one style for every generation.</string>
+    <string name="appearance_image_generation_rotate">Rotate</string>
+    <string name="appearance_image_generation_grid">Grid</string>
+    <string name="appearance_image_generation_sphere">Sphere</string>
+    <string name="appearance_image_generation_nodes">Nodes</string>
     <string name="appearance_ascii_sphere">ASCII sphere</string>
     <string name="appearance_ascii_sphere_desc">Show animated sphere on empty chat screen and ambient mode</string>
     <string name="appearance_behind_messages">Behind messages</string>
@@ -1284,6 +1292,9 @@
     <string name="dev_settings_realtime_voice_lab">Realtime voice lab</string>
     <string name="dev_settings_realtime_voice_lab_desc">Open the provider websocket testbench for dev builds</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">Open realtime voice lab</string>
+    <string name="dev_settings_image_generation_lab">Image generation lab</string>
+    <string name="dev_settings_image_generation_lab_desc">Preview generation loops and the final image reveal</string>
+    <string name="dev_settings_open_image_generation_lab_cd">Open image generation lab</string>
     <string name="dev_settings_lock_dev_options">Lock developer options</string>
     <string name="dev_settings_lock_dev_options_desc">Hide this section and disable experimental features</string>
     <string name="dev_settings_locked_toast">Developer options locked</string>
@@ -1850,6 +1861,10 @@
     <string name="dashboard_oauth_verifying">Verifying dashboard session…</string>
     <string name="dashboard_oauth_not_accepted">Sign-in was not accepted yet. Finish the dashboard flow to continue.</string>
     <string name="dashboard_oauth_verify_failed">Dashboard sign-in verification failed</string>
+    <string name="dashboard_native_signin_opening">Complete sign-in in your browser, then return here.</string>
+    <string name="dashboard_native_signin_cancelled">Browser sign-in cancelled.</string>
+    <string name="dashboard_native_signin_requires_https">Secure browser sign-in requires an HTTPS dashboard address.</string>
+    <string name="dashboard_native_signin_unavailable">Secure browser sign-in is unavailable for this connection. Refresh the connection and try again.</string>
     <string name="dashboard_close_signin">Close sign-in</string>
 
     <!-- Error body -->
@@ -2462,7 +2477,19 @@
     <string name="conn_info_yes">Yes</string>
     <string name="conn_info_yes_hidden">Yes (hidden)</string>
     <string name="conn_info_yolo_mode_desc">Bypass approval prompts for tool calls.</string>
+    <string name="conn_info_yolo_mode_desc_ephemeral">Bypass approval prompts for this chat only. Resets when the session changes.</string>
+    <string name="conn_info_yolo_mode_profile_off">Profile approvals are Off, so this chat already bypasses prompts. Choose Manual or Smart before using the per-chat override.</string>
     <string name="conn_info_yolo_mode_title">YOLO mode</string>
+    <string name="conn_info_approval_mode_title">Profile approval mode</string>
+    <string name="conn_info_approval_mode_desc">Persistent policy for this Hermes profile. Applies across chats and devices.</string>
+    <string name="conn_info_approval_mode_unsupported">Update Hermes to choose a profile approval mode. Per-chat YOLO remains available.</string>
+    <string name="conn_info_approval_mode_profile_read_only">Read-only for this multiplexed profile. Its current mode appears after the profile session starts; changing it requires upstream profile-scoped config RPCs.</string>
+    <string name="conn_info_approval_mode_manual">Manual</string>
+    <string name="conn_info_approval_mode_manual_desc">Ask before every protected tool call.</string>
+    <string name="conn_info_approval_mode_smart">Smart</string>
+    <string name="conn_info_approval_mode_smart_desc">Ask only when Hermes detects elevated risk.</string>
+    <string name="conn_info_approval_mode_off">Off</string>
+    <string name="conn_info_approval_mode_off_desc">Persistently bypass approvals for this profile.</string>
 
     <!-- EndpointsCard -->
 
@@ -2691,6 +2718,23 @@
     <string name="attachment_unmute">Unmute</string>
     <string name="attachment_mute">Mute</string>
     <string name="attachment_title">Attachment</string>
+    <plurals name="attachment_group_count">
+        <item quantity="one">%1$d attachment</item>
+        <item quantity="other">%1$d attachments</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">Collapse attachments</string>
+    <string name="attachment_group_expand">Expand attachments</string>
+    <string name="attachment_group_collapsed">Collapsed</string>
+    <string name="attachment_group_expanded">Expanded</string>
+    <string name="attachment_type_image">Image</string>
+    <string name="attachment_type_video">Video</string>
+    <string name="attachment_type_audio">Audio</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">Text</string>
+    <string name="attachment_type_file">File</string>
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay closed unexpectedly</string>

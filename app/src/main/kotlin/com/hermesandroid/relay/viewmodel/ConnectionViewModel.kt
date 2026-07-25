@@ -68,6 +68,7 @@ import com.hermesandroid.relay.network.upstream.mirrorDashboardSessionCookies
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
 import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.shared.EndpointResolver
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
@@ -215,6 +216,19 @@ internal fun resolveEffectiveDashboardUrl(
         ?.let(Connection::deriveDefaultDashboardUrl)
         ?.let { return it }
     return connection.resolvedDashboardUrl
+}
+
+/**
+ * Resolve the runtime API route only after the optional fallback was explicitly
+ * configured. Discovery may attach a conventional same-host API candidate to a
+ * Dashboard route, but that candidate alone must not enable API traffic.
+ */
+internal fun resolveEffectiveApiServerUrl(
+    savedUrl: String,
+    endpoint: EndpointCandidate?,
+): String {
+    if (savedUrl.isBlank()) return ""
+    return endpoint?.api?.url?.takeIf { it.isNotBlank() } ?: savedUrl
 }
 
 /**
@@ -391,6 +405,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Animation
         private val KEY_ANIMATION_ENABLED = booleanPreferencesKey("animation_enabled")
         private val KEY_ANIMATION_BEHIND_CHAT = booleanPreferencesKey("animation_behind_chat")
+        private val KEY_IMAGE_GENERATION_STYLE = stringPreferencesKey("image_generation_style")
         private val KEY_CHAT_RECENT_PROMPTS = booleanPreferencesKey("chat_recent_prompts")
 
         // Chat scroll behavior
@@ -778,7 +793,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     )
 
     private fun effectiveApiServerUrlSnapshot(): String =
-        connectionManager.activeEndpoint.value?.api?.url ?: _apiServerUrl.value
+        resolveEffectiveApiServerUrl(
+            savedUrl = _apiServerUrl.value,
+            endpoint = connectionManager.activeEndpoint.value,
+        )
 
     private fun effectiveRelayUrlSnapshot(): String =
         connectionManager.activeEndpoint.value?.relay?.url ?: autoRelayUrlSnapshot()
@@ -854,7 +872,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val isInsecureConnection: StateFlow<Boolean> = connectionManager.isInsecureConnection
 
     // --- API Server state ---
-    private val _apiServerUrl = MutableStateFlow(DEFAULT_API_URL)
+    // Blank is the unhydrated sentinel. Seeding this with the legacy localhost
+    // default made a discovered remote API candidate look explicitly configured
+    // during the first DataStore frame, briefly building an unauthenticated
+    // Sessions client before a Dashboard-only connection restored its saved
+    // blank URL.
+    private val _apiServerUrl = MutableStateFlow("")
     val apiServerUrl: StateFlow<String> = _apiServerUrl.asStateFlow()
 
     private val _apiServerReachable = MutableStateFlow(false)
@@ -961,6 +984,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun activeDashboardCookieStore(): DashboardCookieStore? =
         upstreamTransport.activeDashboardCookieStore()
 
+    /** Trusted active-connection clients used by the shared dashboard sign-in route. */
+    fun dashboardClientForActive(dashboardUrl: String): DashboardApiClient =
+        upstreamTransport.dashboardClientForActive(dashboardUrl)
+
+    fun nativeDashboardAuthClientForActive(dashboardUrl: String): NativeDashboardAuthClient? =
+        upstreamTransport.nativeDashboardAuthClientForActive(dashboardUrl)
+
+    fun dashboardHttpClientForActive(dashboardUrl: String): okhttp3.OkHttpClient =
+        upstreamTransport.dashboardHttpClientForActive(dashboardUrl)
+
     /** Authenticated Dashboard config for dashboard-primary feature catalogs. */
     suspend fun loadActiveDashboardConfig(): Result<JsonObject>? {
         val connectionId = connectionStore.activeConnectionId.value ?: return null
@@ -1020,17 +1053,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val relayUrl: StateFlow<String> = _relayUrl.asStateFlow()
 
     /**
-     * Runtime route for chat/API traffic. The persisted API URL remains the
-     * connection's base config; a resolver-selected endpoint temporarily wins
-     * so paired devices can roam between LAN, Tailscale, and operator VPN
-     * routes without rewriting stored settings.
+     * Runtime route for chat/API traffic. Once API fallback is explicitly
+     * configured, a resolver-selected endpoint temporarily wins so paired
+     * devices can roam without rewriting stored settings. Discovery alone
+     * never enables the optional API surface.
      */
     val effectiveApiServerUrl: StateFlow<String> = combine(
         _apiServerUrl,
         connectionManager.activeEndpoint,
     ) { savedUrl, endpoint ->
-        endpoint?.api?.url ?: savedUrl
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_API_URL)
+        resolveEffectiveApiServerUrl(savedUrl, endpoint)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /**
      * Whether a chat turn is currently streaming — mirrored from
@@ -1745,6 +1778,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         .map { it[KEY_ANIMATION_BEHIND_CHAT] ?: true }
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    val imageGenerationStyle: StateFlow<String> = application.relayDataStore.data
+        .map { it[KEY_IMAGE_GENERATION_STYLE] ?: "rotate" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "rotate")
+
     fun setAnimationEnabled(enabled: Boolean) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
@@ -1773,6 +1810,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_ANIMATION_BEHIND_CHAT] = enabled
+            }
+        }
+    }
+
+    fun setImageGenerationStyle(value: String) {
+        val normalized = value.takeIf {
+            it in setOf("rotate", "grid", "sphere", "nodes")
+        } ?: "rotate"
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_IMAGE_GENERATION_STYLE] = normalized
             }
         }
     }
@@ -4927,7 +4975,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val active = connectionStore.connections.value.firstOrNull { it.id == connectionId }
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                dashboardCookieStoreFor(connectionId).clear()
+                upstreamTransport.clearDashboardAuthentication(connectionId)
             }
             connectionStore.setDashboardStatus(
                 connectionId = connectionId,

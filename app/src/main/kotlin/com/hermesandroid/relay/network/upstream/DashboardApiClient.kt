@@ -50,6 +50,7 @@ data class DashboardStatus(
     val authRequired: Boolean,
     val authProviders: List<String> = emptyList(),
     val authProviderDetails: List<DashboardAuthProvider> = emptyList(),
+    @SerialName("auth_flows") val authFlows: List<String> = emptyList(),
     val version: String? = null,
     val message: String? = null,
     @SerialName("nous_session_valid") val nousSessionValid: String? = null,
@@ -158,6 +159,7 @@ data class DashboardCustomEndpointDraft(
     val name: String,
     val baseUrl: String,
     val model: String,
+    val models: List<String> = emptyList(),
     val apiKey: String? = null,
     val contextLength: Int? = null,
     val discoverModels: Boolean = true,
@@ -1136,23 +1138,42 @@ class DashboardApiClient(
                 put("name", draft.name)
                 put("base_url", draft.baseUrl)
                 put("model", draft.model)
+                draft.models
+                    .asSequence()
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+                    .distinct()
+                    .take(MAX_CUSTOM_ENDPOINT_MODELS)
+                    .map(::JsonPrimitive)
+                    .toList()
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { put("models", JsonArray(it)) }
                 draft.apiKey?.takeIf { it.isNotBlank() }?.let { put("api_key", it) }
                 draft.contextLength?.takeIf { it > 0 }?.let { put("context_length", it) }
                 put("discover_models", draft.discoverModels)
                 put("make_default", draft.makeDefault)
             }
 
+        private const val MAX_CUSTOM_ENDPOINT_MODELS = 256
+
         fun defaultClient(
             cookieStore: DashboardCookieStore = InMemoryDashboardCookieStore(),
-        ): OkHttpClient = OkHttpClient.Builder()
-            .cookieJar(DashboardCookieJar(cookieStore))
-            .connectTimeout(10, TimeUnit.SECONDS)
-            // Skills-hub search fans out server-side with a 30s overall
-            // timeout; keep the read window above it so a slow-but-successful
-            // search doesn't die client-side at the edge.
-            .readTimeout(45, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .build()
+            bearerAuth: DashboardBearerAuth? = null,
+        ): OkHttpClient {
+            val builder = OkHttpClient.Builder()
+                .cookieJar(DashboardCookieJar(cookieStore))
+                .connectTimeout(10, TimeUnit.SECONDS)
+                // Skills-hub search fans out server-side with a 30s overall
+                // timeout; keep the read window above it so a slow-but-successful
+                // search doesn't die client-side at the edge.
+                .readTimeout(45, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+            bearerAuth?.let {
+                builder.addInterceptor(it)
+                builder.authenticator(it)
+            }
+            return builder.build()
+        }
 
         fun parseStatus(root: JsonObject): DashboardStatus {
             val authObject = root["auth"] as? JsonObject
@@ -1180,6 +1201,9 @@ class DashboardApiClient(
                     ?: false,
                 authProviders = providers.map { it.name },
                 authProviderDetails = providers,
+                authFlows = (root["auth_flows"] as? JsonArray).orEmpty().mapNotNull {
+                    (it as? JsonPrimitive)?.contentOrNull
+                },
                 version = root.stringField("version"),
                 message = root.stringField("message") ?: root.stringField("detail"),
                 nousSessionValid = root.stringField("nous_session_valid"),
@@ -1337,6 +1361,35 @@ class DashboardApiClient(
             }
     }
 }
+
+/**
+ * Bearer credentials are scoped to the exact saved dashboard base, including
+ * reverse-proxy path prefix. A same-host or arbitrary Add Connection probe is
+ * not sufficient authority to receive the active connection's token.
+ */
+fun sameDashboardBase(candidate: String, trusted: String): Boolean {
+    val candidateUrl = candidate.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
+    val trustedUrl = trusted.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
+    return candidateUrl.scheme == trustedUrl.scheme &&
+        candidateUrl.host == trustedUrl.host &&
+        candidateUrl.port == trustedUrl.port &&
+        candidateUrl.encodedPath.trimEnd('/') == trustedUrl.encodedPath.trimEnd('/') &&
+        candidateUrl.query == null &&
+        trustedUrl.query == null
+}
+
+fun trustedDashboardBearerAuthOrNull(
+    candidate: String,
+    trusted: String,
+    tokenStoreProvider: () -> NativeDashboardTokenStore,
+): DashboardBearerAuth? =
+    if (isNativeDashboardTransportEligible(candidate) &&
+        sameDashboardBase(candidate, trusted)
+    ) {
+        DashboardBearerAuth(candidate, tokenStoreProvider())
+    } else {
+        null
+    }
 
 interface DashboardCookieStore {
     fun load(): List<StoredDashboardCookie>

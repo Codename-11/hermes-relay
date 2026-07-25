@@ -126,6 +126,20 @@ class ChatTurnCheckpointStoreTest {
                     startedAt = 1_002L,
                 ),
             ),
+            moaReferences = listOf(
+                ChatTurnMoaReferenceCheckpoint(
+                    index = 1,
+                    count = 2,
+                    label = "advisor-a",
+                    text = "Safe advice",
+                ),
+                ChatTurnMoaReferenceCheckpoint(
+                    index = 2,
+                    count = 2,
+                    label = "advisor-b",
+                    available = false,
+                ),
+            ),
             backgroundTask = ChatTurnBackgroundTaskCheckpoint(
                 id = "run-1",
                 title = "Research",

@@ -3,10 +3,17 @@ package com.hermesandroid.relay.ui.components
 import com.hermesandroid.relay.data.ToolCall
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImageGenerationPlaceholderTest {
+
+    @Test
+    fun `duration label is stable and clamps negative elapsed time`() {
+        assertEquals("12.4s", formatGenerationDuration(12_440))
+        assertEquals("0.0s", formatGenerationDuration(-100))
+    }
 
     @Test
     fun `active image generation uses diffusion placeholder`() {
@@ -118,5 +125,48 @@ class ImageGenerationPlaceholderTest {
 
         assertTrue(early < resolved)
         assertTrue(reset < resolved)
+    }
+
+    @Test
+    fun `rubiks sphere animates exactly one outer slice at a time`() {
+        (0..100).forEach { frame ->
+            val angles = rubiksSliceAngles(frame / 100f)
+            val activeSlices = listOf(angles.topY, angles.frontZ, angles.rightX)
+                .count { kotlin.math.abs(it) > 0.0001f }
+
+            assertTrue("overlapping slices at frame $frame", activeSlices <= 1)
+        }
+    }
+
+    @Test
+    fun `rotate preference cycles all image generation styles`() {
+        assertEquals(
+            ImageGenerationVisualStyle.LatentGrid,
+            resolveImageGenerationVisualStyle("rotate", 0),
+        )
+        assertEquals(
+            ImageGenerationVisualStyle.ParticleOrb,
+            resolveImageGenerationVisualStyle("rotate", 1),
+        )
+        assertEquals(
+            ImageGenerationVisualStyle.Constellation,
+            resolveImageGenerationVisualStyle("rotate", 2),
+        )
+        assertEquals(
+            ImageGenerationVisualStyle.LatentGrid,
+            resolveImageGenerationVisualStyle("rotate", 3),
+        )
+    }
+
+    @Test
+    fun `pinned image generation preference ignores rotation index`() {
+        assertEquals(
+            ImageGenerationVisualStyle.ParticleOrb,
+            resolveImageGenerationVisualStyle("sphere", 99),
+        )
+        assertEquals(
+            ImageGenerationVisualStyle.Constellation,
+            resolveImageGenerationVisualStyle("nodes", 0),
+        )
     }
 }

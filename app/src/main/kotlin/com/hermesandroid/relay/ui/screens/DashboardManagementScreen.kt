@@ -107,6 +107,7 @@ import com.hermesandroid.relay.network.upstream.McpOAuthFlowCoordinator
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardAuthProvider
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
+import com.hermesandroid.relay.network.upstream.DashboardComponentHealthRollup
 import com.hermesandroid.relay.network.upstream.DashboardStatus
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
@@ -464,15 +465,8 @@ fun DashboardManagementScreen(
                 )
         }
     }
-    val clientFactory = remember(dashboardUrl, cookieStoreFactory) {
-        {
-            DashboardApiClient(
-                baseUrl = dashboardUrl,
-                okHttpClient = DashboardApiClient.defaultClient(
-                    cookieStore = cookieStoreFactory(),
-                ),
-            )
-        }
+    val clientFactory = remember(dashboardUrl, connectionViewModel) {
+        { connectionViewModel.dashboardClientForActive(dashboardUrl) }
     }
 
     suspend fun loadDashboardSection(
@@ -1548,6 +1542,41 @@ private fun ManageOverviewBody(
                 )
             }
         }
+        status?.componentHealth
+            ?.takeIf { it.supported }
+            ?.let { health ->
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            RelaySectionCaption(
+                                title = stringResource(R.string.dashboard_metric_dashboard),
+                                meta = health.overall?.replaceFirstChar(Char::uppercase)
+                                    ?: stringResource(R.string.conn_label_status),
+                            )
+                            dashboardComponentHealthLines(
+                                health = health,
+                                connectedLabel = stringResource(R.string.dashboard_component_connected),
+                                serverErrorsLabel = stringResource(R.string.dashboard_component_server_errors_5m),
+                            ).forEach { line ->
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         val signInStatus = status
         if (signInStatus?.authRequired == true && authenticated != true) {
             item {
@@ -1916,7 +1945,7 @@ private suspend fun fetchDashboardSectionStateWith(
  * start lands on an already-populated Manage tab.
  */
 internal suspend fun prewarmDashboardManage(
-    cookieStore: DashboardCookieStore,
+    clientFactory: () -> DashboardApiClient,
     connectionId: String,
     dashboardUrl: String,
     effectiveProfileName: String? = null,
@@ -1945,12 +1974,7 @@ internal suspend fun prewarmDashboardManage(
     // encrypted cookie store per section: 8 Keystore keyset builds, each
     // holding Tink's process-global lock for seconds on StrongBox devices,
     // which starved main-thread keystore users and froze the UI at startup.
-    val client = withContext(Dispatchers.IO) {
-        DashboardApiClient(
-            baseUrl = dashboardUrl,
-            okHttpClient = DashboardApiClient.defaultClient(cookieStore = cookieStore),
-        )
-    }
+    val client = withContext(Dispatchers.IO) { clientFactory() }
     try {
         val preamble = try {
             fetchDashboardPreamble(client)
@@ -2598,6 +2622,7 @@ private fun DashboardOAuthSignInDialog(
     dashboardUrl: String,
     provider: DashboardAuthProvider,
     cookieStoreFactory: () -> DashboardCookieStore,
+    clientFactory: () -> DashboardApiClient,
     onDismiss: () -> Unit,
     onAuthenticated: (DashboardAuthSession) -> Unit,
     onError: (String) -> Unit,
@@ -2634,16 +2659,7 @@ private fun DashboardOAuthSignInDialog(
         statusText = context.getString(R.string.dashboard_oauth_verifying)
         scope.launch {
             try {
-                val session = withDashboardClient(
-                    clientFactory = {
-                        DashboardApiClient(
-                            baseUrl = dashboardUrl,
-                            okHttpClient = DashboardApiClient.defaultClient(
-                                cookieStore = cookieStoreFactory(),
-                            ),
-                        )
-                    },
-                ) { client ->
+                val session = withDashboardClient(clientFactory = clientFactory) { client ->
                     client.currentSession().getOrNull()
                 }
                 if (session?.authenticated == true) {
@@ -3466,6 +3482,7 @@ private fun CustomEndpointDialog(
     var discoverModels by remember(existing) {
         mutableStateOf(existing?.meta?.contains("discover=off") != true)
     }
+    var validatedModels by remember(existing) { mutableStateOf(emptyList<String>()) }
     var busy by remember(existing) { mutableStateOf(false) }
     var message by remember(existing) { mutableStateOf<String?>(null) }
 
@@ -3474,6 +3491,7 @@ private fun CustomEndpointDialog(
         name = name.trim(),
         baseUrl = baseUrl.trim(),
         model = model.trim(),
+        models = validatedModels,
         apiKey = apiKey.takeIf { it.isNotBlank() },
         contextLength = contextLength.toIntOrNull(),
         discoverModels = discoverModels,
@@ -3488,8 +3506,24 @@ private fun CustomEndpointDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.dashboard_custom_endpoint_name)) }, enabled = !busy)
-                OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text(stringResource(R.string.dashboard_custom_endpoint_url)) }, enabled = !busy)
-                OutlinedTextField(model, { model = it }, label = { Text(stringResource(R.string.dashboard_custom_endpoint_model)) }, enabled = !busy)
+                OutlinedTextField(
+                    baseUrl,
+                    {
+                        baseUrl = it
+                        validatedModels = emptyList()
+                    },
+                    label = { Text(stringResource(R.string.dashboard_custom_endpoint_url)) },
+                    enabled = !busy,
+                )
+                OutlinedTextField(
+                    model,
+                    {
+                        model = it
+                        validatedModels = emptyList()
+                    },
+                    label = { Text(stringResource(R.string.dashboard_custom_endpoint_model)) },
+                    enabled = !busy,
+                )
                 OutlinedTextField(
                     apiKey,
                     { apiKey = it },
@@ -3518,6 +3552,11 @@ private fun CustomEndpointDialog(
                             busy = false
                             message = result.fold(
                                 onSuccess = { validation ->
+                                    validatedModels = validation.models
+                                        .map(String::trim)
+                                        .filter(String::isNotBlank)
+                                        .distinct()
+                                        .take(256)
                                     validation.message.ifBlank {
                                         context.getString(R.string.dashboard_custom_endpoint_valid, validation.models.size)
                                     }
@@ -3836,6 +3875,23 @@ internal fun summarizeCustomEndpoints(root: JsonElement): List<DashboardSummaryI
             ),
         )
     } ?: emptyList()
+
+internal fun dashboardComponentHealthLines(
+    health: DashboardComponentHealthRollup,
+    connectedLabel: String = "connected",
+    serverErrorsLabel: String = "server errors / 5m",
+): List<String> = health.components.map { component ->
+    buildList {
+        add("${component.name}: ${component.status}")
+        component.message?.takeIf(String::isNotBlank)?.let(::add)
+        if (component.configured != null || component.connected != null) {
+            add("${component.connected ?: 0}/${component.configured ?: 0} $connectedLabel")
+        }
+        component.unhandled5xxCount5m
+            ?.takeIf { it > 0 }
+            ?.let { add("$it $serverErrorsLabel") }
+    }.joinToString(" · ")
+}
 
 private fun summarizeRoot(root: JsonElement): String {
     return when (root) {

@@ -86,6 +86,8 @@ import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.upstream.ChatMode
+import com.hermesandroid.relay.network.upstream.GatewayApprovalMode
+import com.hermesandroid.relay.network.upstream.GatewayApprovalModeCapability
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.UiMessageBus
@@ -676,6 +678,11 @@ fun AgentInfoSheet(
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
+    val approvalMode by chatViewModel.approvalMode.collectAsState()
+    val approvalModeCapability by chatViewModel.approvalModeCapability.collectAsState()
+    val approvalModeWritable by chatViewModel.approvalModeWritable.collectAsState()
+    val approvalModeReadOnlyForProfile by
+        chatViewModel.approvalModeReadOnlyForProfile.collectAsState()
     val fastEnabled by chatViewModel.fastEnabled.collectAsState()
     // YOLO / Fast are gateway-only. This says whether the gateway is present (or
     // still being probed) so we can SHOW those controls — present-but-loading
@@ -688,6 +695,7 @@ fun AgentInfoSheet(
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
     LaunchedEffect(Unit) { chatViewModel.refreshModelOptions() }
+    LaunchedEffect(Unit) { chatViewModel.refreshApprovalMode() }
     // Re-pull server-supplied personalities (list + default + active) on open so
     // a server-side change shows without an app reload.
     LaunchedEffect(Unit) { chatViewModel.refreshPersonalities() }
@@ -803,7 +811,6 @@ fun AgentInfoSheet(
     val switchedToProfileSoulToast = stringResource(R.string.conn_info_switched_to_profile_soul)
     val personalityClearedToast = stringResource(R.string.conn_info_personality_cleared)
     val personalityToast = stringResource(R.string.conn_info_personality)
-    val usingServerDefaultModelToast = stringResource(R.string.conn_info_using_server_default_model)
     val modelToast = stringResource(R.string.conn_info_model)
     val switchedToConnectionToast = stringResource(R.string.conn_info_switched_to_connection)
     val copyPairingCodeDesc = stringResource(R.string.conn_info_copy_pairing_code)
@@ -1327,7 +1334,6 @@ fun AgentInfoSheet(
                         onSelect = {
                             if (selectedModelOverride != null) {
                                 chatViewModel.selectModel(null)
-                                toast(usingServerDefaultModelToast)
                             }
                         },
                     )
@@ -1365,6 +1371,21 @@ fun AgentInfoSheet(
                                 }
                             }
                         }
+                        val providerModelIds = modelProviders.flatMap { it.models }.toSet()
+                        sseModelOptions.filter { it.id !in providerModelIds }.forEach { model ->
+                            ProfileRadioRow(
+                                primary = AgentDisplay.displayModelName(model.id) ?: model.id,
+                                secondary = model.routeDetail,
+                                selected = selectedModelOverride == model.id,
+                                enabled = !isStreaming,
+                                onSelect = {
+                                    if (selectedModelOverride != model.id) {
+                                        chatViewModel.selectApiModel(model.id)
+                                        toast(modelToast.format(model.id))
+                                    }
+                                },
+                            )
+                        }
                     } else {
                         sseModelOptions.forEach { model ->
                             ProfileRadioRow(
@@ -1396,8 +1417,25 @@ fun AgentInfoSheet(
                 val gatewayUnavailableApiServer = stringResource(R.string.conn_info_gateway_unavailable_api_server)
                 val gatewayUnavailableSignIn = stringResource(R.string.conn_info_gateway_unavailable_sign_in)
                 val safetySpeedTitle = stringResource(R.string.conn_info_safety_speed_title)
+                val approvalModeTitle = stringResource(R.string.conn_info_approval_mode_title)
+                val approvalModeDesc = stringResource(R.string.conn_info_approval_mode_desc)
+                val approvalModeUnsupported =
+                    stringResource(R.string.conn_info_approval_mode_unsupported)
+                val approvalModeProfileReadOnly =
+                    stringResource(R.string.conn_info_approval_mode_profile_read_only)
+                val approvalManual = stringResource(R.string.conn_info_approval_mode_manual)
+                val approvalManualDesc =
+                    stringResource(R.string.conn_info_approval_mode_manual_desc)
+                val approvalSmart = stringResource(R.string.conn_info_approval_mode_smart)
+                val approvalSmartDesc =
+                    stringResource(R.string.conn_info_approval_mode_smart_desc)
+                val approvalOff = stringResource(R.string.conn_info_approval_mode_off)
+                val approvalOffDesc =
+                    stringResource(R.string.conn_info_approval_mode_off_desc)
                 val yoloModeTitle = stringResource(R.string.conn_info_yolo_mode_title)
-                val yoloModeDesc = stringResource(R.string.conn_info_yolo_mode_desc)
+                val yoloModeDesc = stringResource(R.string.conn_info_yolo_mode_desc_ephemeral)
+                val yoloModeProfileOff =
+                    stringResource(R.string.conn_info_yolo_mode_profile_off)
                 val approvalsOff = stringResource(R.string.conn_info_approvals_off)
                 val fastModeTitle = stringResource(R.string.conn_info_fast_mode_title)
                 val fastModeDesc = stringResource(R.string.conn_info_fast_mode_desc)
@@ -1426,6 +1464,78 @@ fun AgentInfoSheet(
                         )
                     }
 
+                    Text(approvalModeTitle, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = approvalModeDesc,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (approvalModeReadOnlyForProfile) {
+                        Text(
+                            text = approvalModeProfileReadOnly,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
+                    when (approvalModeCapability) {
+                        GatewayApprovalModeCapability.Unknown -> {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                Text(
+                                    text = stringResource(R.string.conn_info_checking),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        GatewayApprovalModeCapability.Unsupported -> {
+                            Text(
+                                text = approvalModeUnsupported,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        GatewayApprovalModeCapability.Supported -> {
+                            listOf(
+                                Triple(
+                                    GatewayApprovalMode.Manual,
+                                    approvalManual,
+                                    approvalManualDesc,
+                                ),
+                                Triple(
+                                    GatewayApprovalMode.Smart,
+                                    approvalSmart,
+                                    approvalSmartDesc,
+                                ),
+                                Triple(
+                                    GatewayApprovalMode.Off,
+                                    approvalOff,
+                                    approvalOffDesc,
+                                ),
+                            ).forEach { (mode, label, description) ->
+                                ProfileRadioRow(
+                                    primary = label,
+                                    secondary = description,
+                                    selected = approvalMode == mode,
+                                    enabled =
+                                        gatewayControlsAvailable &&
+                                            approvalModeWritable &&
+                                            !isStreaming,
+                                    onSelect = {
+                                        if (approvalMode != mode) {
+                                            chatViewModel.setApprovalMode(mode)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+
                     // YOLO — bypasses command approvals. On-state is loud.
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1435,7 +1545,11 @@ fun AgentInfoSheet(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(yoloModeTitle, style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                text = yoloModeDesc,
+                                text = if (approvalMode == GatewayApprovalMode.Off) {
+                                    yoloModeProfileOff
+                                } else {
+                                    yoloModeDesc
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (yoloEnabled == true) {
                                     MaterialTheme.colorScheme.error
@@ -1448,7 +1562,7 @@ fun AgentInfoSheet(
                             available = gatewayControlsAvailable,
                             gatewayReady = gatewayReady,
                             value = yoloEnabled,
-                            enabled = !isStreaming,
+                            enabled = !isStreaming && approvalMode != GatewayApprovalMode.Off,
                             label = "agentSheetYolo",
                             onChange = { chatViewModel.setYolo(it) },
                         )
