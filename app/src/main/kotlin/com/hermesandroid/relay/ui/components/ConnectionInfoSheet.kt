@@ -811,7 +811,6 @@ fun AgentInfoSheet(
     val switchedToProfileSoulToast = stringResource(R.string.conn_info_switched_to_profile_soul)
     val personalityClearedToast = stringResource(R.string.conn_info_personality_cleared)
     val personalityToast = stringResource(R.string.conn_info_personality)
-    val usingServerDefaultModelToast = stringResource(R.string.conn_info_using_server_default_model)
     val modelToast = stringResource(R.string.conn_info_model)
     val switchedToConnectionToast = stringResource(R.string.conn_info_switched_to_connection)
     val copyPairingCodeDesc = stringResource(R.string.conn_info_copy_pairing_code)
@@ -1335,7 +1334,6 @@ fun AgentInfoSheet(
                         onSelect = {
                             if (selectedModelOverride != null) {
                                 chatViewModel.selectModel(null)
-                                toast(usingServerDefaultModelToast)
                             }
                         },
                     )
@@ -1372,6 +1370,21 @@ fun AgentInfoSheet(
                                     )
                                 }
                             }
+                        }
+                        val providerModelIds = modelProviders.flatMap { it.models }.toSet()
+                        sseModelOptions.filter { it.id !in providerModelIds }.forEach { model ->
+                            ProfileRadioRow(
+                                primary = AgentDisplay.displayModelName(model.id) ?: model.id,
+                                secondary = model.routeDetail,
+                                selected = selectedModelOverride == model.id,
+                                enabled = !isStreaming,
+                                onSelect = {
+                                    if (selectedModelOverride != model.id) {
+                                        chatViewModel.selectApiModel(model.id)
+                                        toast(modelToast.format(model.id))
+                                    }
+                                },
+                            )
                         }
                     } else {
                         sseModelOptions.forEach { model ->

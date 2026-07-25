@@ -103,6 +103,13 @@ intentionally remain outside that code batch:
   accepts `approvals.mode` but resolves it against the gateway process home;
   Android may reconcile a selected profile's `session.info.approval_mode`, but
   must not claim a profile-scoped write that upstream ignores.
+- Keep gateway `model.options` profile scoping blocked until the supported
+  upstream RPC accepts an explicit `profile` and documents that the returned
+  provider inventory was built inside that profile's runtime scope. Android
+  now keys picker results to its active profile context and rejects late
+  responses after a profile switch, but it deliberately does not send an
+  invented `profile` parameter. API-server fallback can use the separate,
+  authenticated `/p/<profile>/api/model/options` surface when multiplexed.
 - Expand the desktop upstream-baseline workflow into a live mock-provider E2E
   once the harness can boot a credential-free upstream gateway deterministically.
   The initial `ci-desktop-upstream-baseline` gate only checks a clean vanilla

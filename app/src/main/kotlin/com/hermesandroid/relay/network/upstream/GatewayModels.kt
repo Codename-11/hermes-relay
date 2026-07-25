@@ -358,6 +358,15 @@ data class GatewayModelOptions(
     val currentProvider: String,
 )
 
+/** Reject provider catalogs that completed after a profile/context switch. */
+internal fun isCurrentModelOptionsResponse(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    requestProfileKey: String,
+    currentProfileKey: String,
+): Boolean =
+    requestGeneration == currentGeneration && requestProfileKey == currentProfileKey
+
 /**
  * The explicit in-chat overrides to bind onto a gateway `session.create` as the
  * new session's PER-SESSION overrides. Matches the upstream desktop client,

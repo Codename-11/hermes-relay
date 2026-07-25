@@ -1856,6 +1856,7 @@ class ChatHandler {
                 // SessionItem; the other ChatSession() call sites are local optimistic
                 // rows (default source). (ADR 12 — Threads surface, slice 1.)
                 source = item.source,
+                hasModelConfig = item.hasModelConfig,
             )
         }.sortedByDescending { it.activityTimestamp }
         // Preserve the active session's optimistic row when the server list

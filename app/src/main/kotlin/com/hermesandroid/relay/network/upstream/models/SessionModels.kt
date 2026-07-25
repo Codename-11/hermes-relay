@@ -163,7 +163,8 @@ data class SessionItem(
     @SerialName("message_count") val messageCount: Int? = null,
     @SerialName("tool_call_count") val toolCallCount: Int? = null,
     @SerialName("input_tokens") val inputTokens: Int? = null,
-    @SerialName("output_tokens") val outputTokens: Int? = null
+    @SerialName("output_tokens") val outputTokens: Int? = null,
+    @SerialName("has_model_config") val hasModelConfig: Boolean = false,
 ) {
     val resolvedLastActivity: Double?
         get() = lastActive ?: lastActivity ?: lastActivityAt ?: updatedAt
@@ -391,7 +392,9 @@ data class HermesSseEvent(
     @SerialName("thinking_delta") val thinkingDelta: String? = null,
     val text: String? = null,              // /v1/runs reasoning.available text
     // Usage/token fields (on assistant.completed / run.completed)
-    val usage: UsageInfo? = null
+    val usage: UsageInfo? = null,
+    // Native session routing proof on run.started and terminal events.
+    val runtime: JsonObject? = null,
 ) {
     /** Resolve the event type from whichever field is populated. */
     val resolvedType: String?
