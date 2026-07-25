@@ -1290,7 +1290,7 @@
     <string name="dev_settings_relay_features">Relay features</string>
     <string name="dev_settings_relay_features_desc">Show Relay Server and Pairing settings for Bridge/Terminal development</string>
     <string name="dev_settings_realtime_voice_lab">Realtime voice lab</string>
-    <string name="dev_settings_realtime_voice_lab_desc">Open the provider websocket testbench for dev builds</string>
+    <string name="dev_settings_realtime_voice_lab_desc">Inspect realtime voice setup and run a focused microphone test</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">Open realtime voice lab</string>
     <string name="dev_settings_image_generation_lab">Image generation lab</string>
     <string name="dev_settings_image_generation_lab_desc">Preview generation loops and the final image reveal</string>
@@ -1324,6 +1324,7 @@
     <string name="dev_settings_export_failed">Export failed</string>
     <string name="dev_settings_imported">Settings imported</string>
     <string name="dev_settings_import_failed">Import failed — invalid file</string>
+    <string name="dev_settings_reset_failed">Reset failed</string>
     <string name="dev_settings_export_sensitive_backup_title">Export sensitive backup?</string>
     <string name="dev_settings_export_sensitive_backup_body">This backup includes saved connections, API keys, relay session tokens, device IDs, and dashboard cookies. Anyone with the file may be able to access your Hermes server.</string>
     <string name="dev_settings_export_action">Export</string>
@@ -2357,6 +2358,19 @@
     <string name="conn_info_confirms_on_next_message">Confirms on next message</string>
     <string name="conn_info_connect">Connect</string>
     <string name="conn_info_connected">Connected</string>
+    <string name="conn_info_active_configuration">Active configuration</string>
+    <string name="conn_info_inherited">Inherited</string>
+    <string name="conn_info_bypassed">Bypassed</string>
+    <string name="conn_info_customize_identity">Customize identity</string>
+    <string name="conn_info_agent_passport">Agent Passport</string>
+    <string name="conn_info_chat_override">Chat override</string>
+    <string name="conn_info_fast_tier">Fast tier</string>
+    <string name="conn_info_fast">Fast</string>
+    <string name="conn_info_context">Context</string>
+    <string name="conn_info_profile_already_bypasses">Approvals already bypassed by profile.</string>
+    <string name="conn_info_start_new_chat">Start new chat</string>
+    <string name="conn_info_approval_mode_short_desc">Choose how approvals are enforced.</string>
+    <string name="conn_info_approval_policy">Approval policy</string>
     <string name="conn_info_connecting">Connecting…</string>
     <string name="conn_info_connection">Connection</string>
     <string name="conn_info_connection_state">Connection state</string>

@@ -206,10 +206,16 @@ fun AboutScreen(
                                 val remaining = 7 - versionTapCount
                                 when {
                                     remaining <= 0 -> {
-                                        scope.launch { FeatureFlags.unlockDevOptions(context) }
-                                        Toast.makeText(context, devUnlockedMsg, Toast.LENGTH_SHORT).show()
                                         versionTapCount = 0
-                                        onUnlockDeveloperOptions()
+                                        scope.launch {
+                                            FeatureFlags.unlockDevOptions(context)
+                                            Toast.makeText(
+                                                context,
+                                                devUnlockedMsg,
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                            onUnlockDeveloperOptions()
+                                        }
                                     }
                                     remaining <= 3 -> {
                                         val tapsMsg = context.getString(R.string.about_taps_to_unlock, remaining)

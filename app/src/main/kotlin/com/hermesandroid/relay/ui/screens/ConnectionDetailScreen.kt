@@ -54,7 +54,6 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.capabilities
-import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.ActiveCardAdvancedSection
 import com.hermesandroid.relay.ui.components.ActiveCardFeaturesSection
 import com.hermesandroid.relay.ui.components.ActiveCardRoutesSection
@@ -110,9 +109,6 @@ fun ConnectionDetailScreen(
     val connections by connectionViewModel.connections.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
-    val relayEnabled by FeatureFlags.relayEnabled(context)
-        .collectAsState(initial = FeatureFlags.isDevBuild)
-
     val connection = connections.firstOrNull { it.id == connectionId }
     // Connection was removed (e.g. via the overflow menu) — leave the screen.
     LaunchedEffect(connection == null) {
@@ -275,7 +271,6 @@ fun ConnectionDetailScreen(
                                 connectionViewModel = connectionViewModel,
                                 connection = connection,
                                 relayUiState = relayUiState,
-                                relayEnabled = relayEnabled,
                                 onReconnect = onReconnect,
                                 onRepair = { onRepair(connectionId) },
                                 onOpenApiInfo = { showApiInfoSheet = true },
@@ -303,7 +298,6 @@ fun ConnectionDetailScreen(
 
                     DetailTab.Advanced -> ActiveCardAdvancedSection(
                         connectionViewModel = connectionViewModel,
-                        relayEnabled = relayEnabled,
                         isDarkTheme = isDarkTheme,
                         onPairRelay = { onRepair(connectionId) },
                         onInsecureAckRequested = { showInsecureAckDialog = true },
@@ -423,7 +417,6 @@ private fun ActiveOverview(
     connectionViewModel: ConnectionViewModel,
     connection: Connection,
     relayUiState: RelayUiState,
-    relayEnabled: Boolean,
     onReconnect: () -> Unit,
     onRepair: () -> Unit,
     onOpenApiInfo: () -> Unit,
@@ -498,7 +491,6 @@ private fun ActiveOverview(
 
     ActiveCardFeaturesSection(
         connectionViewModel = connectionViewModel,
-        relayEnabled = relayEnabled,
         onOpenApiInfo = onOpenApiInfo,
         onOpenDashboard = onOpenDashboard,
         onOpenRelayInfo = onOpenRelayInfo,

@@ -1,27 +1,30 @@
-# Voice Settings design QA
+# Agent Passport design QA
 
 Status: **passed**
 
 ## Compared
 
-- Source: `voice-audit/mockup-04-recommended-hybrid.png`
-- Implementation: `voice-audit/implementation-03-provider-preview-refined.png`
-- Viewport: Android `Medium_Phone`, 1080 x 2400 px (about 390 dp wide), font scale 1.0
-- State: Output tab, xAI Grok TTS, Eve selected and actively previewing
+- Source: `C:\Users\Bailey\.codex\generated_images\019f6640-e6dc-7c33-8aca-a1610e2a19f0\call_JzVlJKlG8KWTJRo2xup7oTlq.png`
+- Implementation: `C:\Users\Bailey\.codex\visualizations\2026\07\25\agent-drawer-audit\passport-qa-final.png`
+- Source size: 852 x 1846 px
+- Device viewport: Android, 1080 x 2340 px, font scale 1.0
+- State: Agent tab, Victor pinned profile, disconnected gateway
 
 ## Resolved findings
 
-- **P2 - Group boundaries were too weak.** Provider, model/voice, and language/quality surfaces now use the product's rounded Material cards with outline-token borders and a subtle surface-variant fill.
-- **P2 - Preview state was too tall.** The existing voice waveform now accepts a caller-provided height; inline preview uses a compact 28 dp waveform while the full voice overlay keeps its 56 dp default.
-- **P2 - Long catalogs displaced the core controls.** The selected/recommended voices remain inline, while the full catalog opens from a compact `View all voices` action.
-- **P2 - Secondary controls competed with selection.** Latency, fallback, expressive tags, and manual IDs now stay inside the collapsed Language & quality section.
-- **P3 - Active tab lacked the target emphasis.** The selected segment now uses the theme primary/on-primary colors.
+- **P2 - Header hierarchy and identity treatment differed from the selected concept.** The sheet now uses the Agent Passport title, large profile card, circular avatar, pin-style profile chip, status line, and four-column metrics strip.
+- **P2 - Configuration controls lacked the concept's card hierarchy.** Personality, model, and reasoning are grouped into one outlined Active configuration card with matching icon medallions and row affordances.
+- **P2 - Safety controls did not match the selected inline treatment.** Approval status, chat override, and fast tier now share one outlined Safety & speed card with compact segmented controls.
+- **P2 - Primary action looked detached and visually unfinished.** Start new chat now uses the selected full-width purple-to-relay gradient, white outlined chat icon, and a single clean label.
+- **P2 - Nested sheet and content gestures caused visible vertical bounce.** Sheet drag gestures are disabled for this scrollable detail surface and overscroll is suppressed; repeated device swipes keep the sheet anchored while the content scrolls.
 
 ## Final review
 
-- Layout and hierarchy match the selected hybrid: summary, Output/Listening/Advanced tabs, grouped provider, grouped model/voice, inline play/stop, active waveform, and collapsed language/quality.
-- Interactions are wired: tabs switch sections, provider/model/voice selections update the draft, only one preview can play, the active play button becomes Stop, and full catalogs remain accessible.
-- Accessibility: native Material controls retain semantics and practical tap targets; the active preview has explicit play/stop descriptions; the screen remains vertically scrollable for large text and long provider catalogs.
-- Accepted native adaptation: Android exposed dropdowns and dynamic account-backed catalogs use more vertical space than the static concept. The hierarchy and core actions remain intact without clipping or overlap.
+- Layout and hierarchy match the selected Agent Passport direction: profile identity, metrics, Agent/Session tabs, active configuration, safety and speed, primary chat action, and identity customization.
+- Interactions remain wired: profile selection, configuration rows, Agent/Session tabs, approval and fast controls, new chat, and identity customization.
+- Runtime values remain live rather than copied from the static concept; connection state, message count, route label, provider, and model can therefore differ from the reference.
+- Native Android adaptation preserves system insets and scrollability on the taller 1080 x 2340 device viewport.
 
 No open P0, P1, or P2 findings.
+
+final result: passed

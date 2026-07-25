@@ -1,6 +1,6 @@
 # Hermes-Relay-Android v1.5.0
 
-**Release Date:** July 22, 2026
+**Release Date:** July 25, 2026
 
 ## Download
 
@@ -12,22 +12,26 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-This feature release overhauls voice setup and playback, expands upstream Gateway-aware controls, and makes active Hermes work easier to understand.
+This release makes the Hermes Dashboard and Gateway the clear standard connection, keeps active work reachable across the app and Android backgrounding, and gives profiles, voice, attachments, image generation, and approvals a more coherent native interface.
 
 ## Added
 
-- Standard and Realtime voice settings now have distinct, organized cards for provider, model, and voice selection, with upstream-aware discovery, descriptions, inline previews, waveform feedback, loading skeletons, and an expandable scrolling voice browser.
-- Standard Hermes speech now streams completed reply segments as they arrive. Starting another preview or reply stops the prior audio, and leaving voice mode stops playback.
-- Manage and diagnostics consume upstream health hints and compatibility details, follow canonical Gateway redirects, compress larger RPC payloads, and preserve profile-scoped behavior.
-- Chat surfaces one-turn model selection, queued recovery, project labels, interim Gateway events, and image-generation progress.
+- The Agent Passport drawer combines live route and session context with explicit profile switching, personality, model, reasoning, approval-policy, chat-override, and processing-tier controls.
+- Secure browser-based Dashboard sign-in is scoped to the selected host. Chat, sessions, Manage, and Standard Voice share the same authenticated Gateway route while the API server remains an automatic fallback.
+- Standard and Realtime voice settings use focused provider, model, and voice cards with upstream-aware discovery, descriptions, inline previews, waveforms, and a browsable catalog. Standard replies can begin speaking completed segments before generation finishes.
+- User-started turns stay protected until every concurrent session settles. Privacy-safe notifications reopen the correct chat for approvals, questions, elevated permissions, or secure responses.
+- Onboarding finishes with a layered permission review: notifications are recommended deliberately, optional capabilities remain separate, and users can continue without granting phone access.
+- Chat surfaces one-turn model choices, approval modes, advisor progress, queued recovery, project labels, collapsible attachments, persisted images, interim Gateway events, and image-generation activity.
 
 ## Fixed
 
-- Voice settings and active-turn correction copy remain complete across supported languages.
-- Chat reactivates the original live Gateway session after a connection loss, avoids duplicate prompt submission when an acknowledgement is lost, and prevents duplicate session rows from crashing the drawer.
-- Relay pairing retains Tailscale and other QR fallback routes when added to an existing Standard connection, recovers older stored routes, and shows a route-specific Dashboard sign-in action instead of leaving remote Chat loading.
-- Remote route checks use the API server's supported `GET /health` contract. Selecting Tailscale now moves Dashboard/Gateway, sessions, Manage, Standard Voice, API, and Relay together instead of leaving dashboard-backed features on the saved LAN host; Manage also labels host-side Nous provider authentication separately from Dashboard sign-in.
-- Hosted Manage OAuth remains bound to the selected dashboard, direct-chat image memory is bounded, and session reset and recovery behavior follow upstream contracts.
+- Gateway reconnects reactivate the original live session without resubmitting acknowledged prompts or duplicating session rows.
+- Tailscale, QR, and other remote routes move Dashboard, Gateway, sessions, Manage, Standard Voice, API fallback, and optional Relay together.
+- Dashboard authentication, model routing, recovery, and profile state stay scoped to the selected connection and session, including during cold start and rapid switching.
+- Promoted voice and background tasks keep their owning Chat row until the work settles.
+- User-installed certificate authorities work for self-hosted HTTPS/WSS while normal chain, hostname, and Relay-pin verification remain enforced.
+- Malformed syntax-highlighting ranges no longer crash Markdown rendering.
+- Developer Options no longer exposes the obsolete Relay feature flag; version-tap unlock, relock, backup, import, and reset actions now persist and report accurately.
 
 ## Install / Verify
 
