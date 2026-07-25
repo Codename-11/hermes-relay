@@ -39,6 +39,8 @@ fun ThinkingBlock(
     modifier: Modifier = Modifier,
     /** Message timestamp shown right-aligned in the header (null hides it). */
     timestamp: Long? = null,
+    headerText: String? = null,
+    accessibilityLabel: String = "Thinking",
 ) {
     var expanded by remember { mutableStateOf(isStreaming) }
     val locale = LocalLocale.current.platformLocale
@@ -65,13 +67,13 @@ fun ThinkingBlock(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Psychology,
-                    contentDescription = "Thinking",
+                    contentDescription = accessibilityLabel,
                     modifier = Modifier.size(16.dp),
                     tint = MaterialTheme.colorScheme.tertiary
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (isStreaming) "Thinking..." else "Thought process",
+                    text = headerText ?: if (isStreaming) "Thinking..." else "Thought process",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.tertiary
                 )

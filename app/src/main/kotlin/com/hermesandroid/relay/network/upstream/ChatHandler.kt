@@ -10,11 +10,11 @@ import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.MoaReference
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
-import com.hermesandroid.relay.network.upstream.GatewaySubagentEvent
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -43,6 +43,9 @@ class ChatHandler {
 
         /** Maximum number of messages kept in memory per session. Oldest are trimmed. */
         internal const val MAX_MESSAGES = 500
+        private const val MAX_MOA_REFERENCES = 32
+        private const val MAX_MOA_LABEL_CHARS = 120
+        private const val MAX_MOA_REFERENCE_CHARS = 16_000
 
         private fun timestampToMillis(timestamp: Double?): Long {
             val value = timestamp ?: return 0L
@@ -1018,6 +1021,27 @@ class ChatHandler {
                 startedAt = task.startedAt,
             )
         }
+        val checkpointMoaReferences = assistant.moaReferences
+            .filter { it.index in 1..MAX_MOA_REFERENCES }
+            .distinctBy { it.index }
+            .sortedBy { it.index }
+            .take(MAX_MOA_REFERENCES)
+            .map { reference ->
+                MoaReference(
+                    index = reference.index,
+                    count = reference.count,
+                    label = reference.label.take(MAX_MOA_LABEL_CHARS),
+                    text = if (reference.available) {
+                        reference.text.take(MAX_MOA_REFERENCE_CHARS)
+                    } else {
+                        ""
+                    },
+                    available = reference.available,
+                )
+            }
+        val restoredMoaReferences = currentAssistant?.moaReferences
+            ?.takeIf { it.isNotEmpty() }
+            ?: checkpointMoaReferences
         val restoredAssistant = ChatMessage(
             id = assistant.id,
             role = MessageRole.ASSISTANT,
@@ -1041,6 +1065,7 @@ class ChatHandler {
             cardDispatches = currentAssistant?.cardDispatches?.takeIf { it.isNotEmpty() }
                 ?: assistant.cardDispatches,
             backgroundTask = currentAssistant?.backgroundTask ?: restoredBackgroundTask,
+            moaReferences = restoredMoaReferences,
         )
 
         activeAgentName = restoredAssistant.agentName ?: activeAgentName
@@ -1414,6 +1439,10 @@ class ChatHandler {
                     } else {
                         prior.badges
                     },
+                    // Keep sanitized advisor state while reconciling a still-live
+                    // row, but clear it once completion made history authoritative.
+                    // The server transcript never becomes the source of these blocks.
+                    moaReferences = if (prior.isStreaming) prior.moaReferences else emptyList(),
                 )
             } else {
                 // INSERT — a server message with no local row yet. Built from
@@ -2666,6 +2695,44 @@ class ChatHandler {
     }
 
     // --- Gateway subagent lanes ---
+
+    fun onMoaReference(messageId: String, event: GatewayMoaReference) {
+        _messages.update { messages ->
+            val targetIndex = messages.indexOfLast {
+                it.id == messageId && it.role == MessageRole.ASSISTANT
+            }
+            if (targetIndex < 0) return@update messages
+            _isStreaming.value = true
+
+            val message = messages[targetIndex]
+            val nextIndex = event.index ?: ((message.moaReferences.maxOfOrNull { it.index } ?: 0) + 1)
+            if (nextIndex !in 1..MAX_MOA_REFERENCES) return@update messages
+            val reference = MoaReference(
+                index = nextIndex,
+                count = event.count,
+                label = event.label.take(MAX_MOA_LABEL_CHARS),
+                text = if (event.available) event.text.take(MAX_MOA_REFERENCE_CHARS) else "",
+                available = event.available,
+            )
+            val existingAtIndex = message.moaReferences.firstOrNull { it.index == nextIndex }
+            val exactReplay = existingAtIndex == reference
+            val base = if (nextIndex == 1 && !exactReplay) {
+                emptyList()
+            } else {
+                message.moaReferences
+            }
+            if (exactReplay) {
+                messages
+            } else {
+                val upserted = (base.filterNot { it.index == nextIndex } + reference)
+                    .sortedBy(MoaReference::index)
+                    .take(MAX_MOA_REFERENCES)
+                messages.toMutableList().also {
+                    it[targetIndex] = message.copy(moaReferences = upserted)
+                }
+            }
+        }
+    }
 
     /**
      * Lane labels by task index, captured from `subagent.start` (goal

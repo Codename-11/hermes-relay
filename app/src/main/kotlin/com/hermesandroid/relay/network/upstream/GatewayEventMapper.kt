@@ -48,6 +48,7 @@ class GatewayEventMapper(
     private var syntheticToolCounter = 0
     private var providerWaitStatusActive = false
     private var compactionStatusActive = false
+    private var moaStatusActive = false
     private var pendingInteraction: GatewayAsk? = null
 
     /**
@@ -301,9 +302,57 @@ class GatewayEventMapper(
                 }
             }
 
-            // MoA activity proves auto-compaction has resumed even though
-            // Android does not currently render these upstream events.
-            "moa.reference", "moa.aggregating", "tool.progress" -> clearActivityStatuses()
+            "moa.reference" -> {
+                clearProviderWaitAndCompaction()
+                val text = payload.string("text")?.trim().orEmpty()
+                if (text.isNotEmpty()) {
+                    val available = !isFailedMoaReference(text)
+                    callbacks.onMoaReference(
+                        GatewayMoaReference(
+                            index = payload.int("index")?.takeIf { it > 0 },
+                            count = payload.int("count")
+                                ?.takeIf { it > 0 },
+                            label = payload.string("label")?.trim()?.take(MAX_MOA_LABEL_CHARS).orEmpty()
+                                .ifBlank { "Advisor" },
+                            text = if (available) text.take(MAX_MOA_REFERENCE_CHARS) else "",
+                            available = available,
+                        ),
+                    )
+                }
+            }
+
+            "moa.progress" -> {
+                clearProviderWaitAndCompaction()
+                val total = payload.int("refs_total")
+                    ?.takeIf { it > 0 }
+                val done = payload.int("refs_done")
+                if (total != null && done != null) {
+                    setMoaStatus("MoA: ${done.coerceIn(0, total)}/$total advisors complete")
+                }
+            }
+
+            "moa.phase" -> {
+                clearProviderWaitAndCompaction()
+                when (payload.string("phase")?.lowercase()) {
+                    "aggregator", "aggregating" -> setMoaStatus("MoA: aggregating…")
+                    "reference", "references" -> {
+                        val total = payload.int("refs_total")
+                            ?.takeIf { it > 0 }
+                        val done = payload.int("refs_done")
+                        if (total != null && done != null) {
+                            setMoaStatus("MoA: ${done.coerceIn(0, total)}/$total advisors complete")
+                        }
+                    }
+                }
+            }
+
+            // Legacy phase marker retained by upstream for older consumers.
+            "moa.aggregating" -> {
+                clearProviderWaitAndCompaction()
+                setMoaStatus("MoA: aggregating…")
+            }
+
+            "tool.progress" -> clearActivityStatuses()
 
             "status.update" -> {
                 val text = payload.string("text")
@@ -335,16 +384,31 @@ class GatewayEventMapper(
     }
 
     private fun clearActivityStatuses() {
+        clearProviderWaitAndCompaction()
+        if (!moaStatusActive) return
+        moaStatusActive = false
+        callbacks.onStatusClear(MOA_STATUS_KIND)
+    }
+
+    private fun clearProviderWaitAndCompaction() {
         clearProviderWaitStatus()
         if (!compactionStatusActive) return
         compactionStatusActive = false
         callbacks.onStatusClear(COMPACTION_STATUS_KIND)
     }
 
+    private fun setMoaStatus(text: String) {
+        moaStatusActive = true
+        callbacks.onStatusUpdate(MOA_STATUS_KIND, text)
+    }
+
     companion object {
         const val PROVIDER_WAIT_STATUS_KIND = "provider_wait"
         const val COMPACTION_STATUS_KIND = "compacting"
         const val ERROR_STATUS_KIND = "error"
+        const val MOA_STATUS_KIND = "moa"
+        private const val MAX_MOA_LABEL_CHARS = 120
+        private const val MAX_MOA_REFERENCE_CHARS = 16_000
         private val OUTPUT_RISK_LEVELS = setOf("low", "medium", "high", "critical")
         private val INTERACTION_RESUME_EVENTS = setOf(
             "reasoning.delta",
@@ -359,6 +423,11 @@ class GatewayEventMapper(
             "message.complete",
             "error",
         )
+
+        internal fun isFailedMoaReference(text: String): Boolean {
+            val normalized = text.trimStart().lowercase()
+            return normalized.startsWith("[failed:") || normalized.startsWith("[skipped:")
+        }
 
         fun interactionRequest(type: String, payload: JsonObject?): GatewayAsk? = when (type) {
             "clarify.request" -> GatewayAsk(

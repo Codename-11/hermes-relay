@@ -320,6 +320,14 @@ data class GatewayModelProvider(
     val totalModels: Int = 0,
 )
 
+data class GatewayMoaReference(
+    val index: Int?,
+    val count: Int?,
+    val label: String,
+    val text: String,
+    val available: Boolean = true,
+)
+
 /** Result of the gateway `model.options` RPC. */
 data class GatewayModelOptions(
     val providers: List<GatewayModelProvider>,
@@ -414,6 +422,8 @@ class GatewayTurnCallbacks(
     val onToolGenerating: (toolName: String?) -> Unit,
     /** `subagent.*` lifecycle on the parent session — feeds the subagent lanes. */
     val onSubagentEvent: (GatewaySubagentEvent) -> Unit,
+    /** Successful MoA advisor output for a transient labelled reference block. */
+    val onMoaReference: (GatewayMoaReference) -> Unit,
     /**
      * Server-side interactive ask (clarify/approval/sudo/secret) that blocks
      * the turn until answered via the matching respond RPC or the turn is

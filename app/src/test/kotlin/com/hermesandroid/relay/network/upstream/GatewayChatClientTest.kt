@@ -441,6 +441,7 @@ class GatewayChatClientTest {
         // ConcurrentLinkedQueue rejects nulls — unnamed generating events store "".
         val toolGenerating = ConcurrentLinkedQueue<String>()
         val subagentEvents = ConcurrentLinkedQueue<GatewaySubagentEvent>()
+        val moaReferences = ConcurrentLinkedQueue<GatewayMoaReference>()
         val usages = ConcurrentLinkedQueue<UsageInfo>()
         val reconcileRequests = AtomicInteger(0)
         val completeLatch = CountDownLatch(1)
@@ -461,6 +462,7 @@ class GatewayChatClientTest {
             onError = { errors += it; completeLatch.countDown() },
             onToolGenerating = { toolGenerating += it ?: "" },
             onSubagentEvent = { subagentEvents += it },
+            onMoaReference = { moaReferences += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { },
             onInteractionResolved = { interactionResolutions += it },

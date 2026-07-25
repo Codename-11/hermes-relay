@@ -6,6 +6,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpoint
+import com.hermesandroid.relay.data.ChatTurnMoaReferenceCheckpoint
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.MessageRole
@@ -2016,6 +2017,20 @@ class ChatHandlerTest {
                         completedAt = 7L,
                     ),
                 ),
+                moaReferences = listOf(
+                    ChatTurnMoaReferenceCheckpoint(
+                        index = 1,
+                        count = 2,
+                        label = "advisor-a",
+                        text = "Recovered advice",
+                    ),
+                    ChatTurnMoaReferenceCheckpoint(
+                        index = 2,
+                        count = 2,
+                        label = "advisor-b",
+                        available = false,
+                    ),
+                ),
             ),
             turnStatus = "Running terminal",
             priorUserMessageCount = 1,
@@ -2034,8 +2049,105 @@ class ChatHandlerTest {
         assertFalse(restored.toolCalls[0].isComplete)
         assertTrue(restored.toolCalls[1].isComplete)
         assertEquals(true, restored.toolCalls[1].success)
+        assertEquals(listOf(1, 2), restored.moaReferences.map { it.index })
+        assertEquals("Recovered advice", restored.moaReferences.first().text)
+        assertFalse(restored.moaReferences.last().available)
         assertTrue(handler.isStreaming.value)
         assertEquals("Running terminal", handler.turnStatus.value)
+    }
+
+    @Test
+    fun onMoaReference_upsertsByCanonicalIndexAndResetsOnNewSequence() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(2, 2, "advisor-b", "Second"),
+        )
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(1, 2, "advisor-a", "First"),
+        )
+        assertEquals(listOf(1), handler.messages.value.single().moaReferences.map { it.index })
+
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(2, 2, "advisor-b", "Second"),
+        )
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(1, 2, "advisor-a", "First"),
+        )
+
+        assertEquals(listOf(1, 2), handler.messages.value.single().moaReferences.map { it.index })
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(2, 2, "advisor-b", "Updated second"),
+        )
+        assertEquals(
+            "Updated second",
+            handler.messages.value.single().moaReferences.single { it.index == 2 }.text,
+        )
+
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(1, 2, "advisor-a", "New first"),
+        )
+
+        val reset = handler.messages.value.single().moaReferences
+        assertEquals(listOf(1), reset.map { it.index })
+        assertEquals("New first", reset.single().text)
+    }
+
+    @Test
+    fun loadMessageHistory_doesNotPersistMoaReferenceBlocks() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live",
+                role = MessageRole.ASSISTANT,
+                content = "Answer",
+                timestamp = 1L,
+                moaReferences = listOf(
+                    com.hermesandroid.relay.data.MoaReference(1, 1, "advisor", "Transient"),
+                ),
+            ),
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "assistant-live", role = "assistant", content = JsonPrimitive("Answer"))),
+        )
+
+        assertTrue(handler.messages.value.single().moaReferences.isEmpty())
+    }
+
+    @Test
+    fun loadMessageHistory_preservesMoaReferencesWhileMatchingTurnIsStillLive() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live",
+                role = MessageRole.ASSISTANT,
+                content = "Partial",
+                timestamp = 1L,
+                isStreaming = true,
+                moaReferences = listOf(
+                    com.hermesandroid.relay.data.MoaReference(1, 1, "advisor", "Transient"),
+                ),
+            ),
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "assistant-live", role = "assistant", content = JsonPrimitive("Partial"))),
+        )
+
+        assertEquals("Transient", handler.messages.value.single().moaReferences.single().text)
     }
 
     // --- Helper ---

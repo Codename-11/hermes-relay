@@ -19,6 +19,7 @@ import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
 import com.hermesandroid.relay.data.ChatTurnBackgroundTaskCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpointStore
+import com.hermesandroid.relay.data.ChatTurnMoaReferenceCheckpoint
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.DataStoreChatTurnCheckpointStore
@@ -277,6 +278,9 @@ class ChatViewModel : ViewModel() {
         private const val CHECKPOINT_WRITE_INTERVAL_MS = 750L
         private const val MAX_CHECKPOINT_TEXT_CHARS = 200_000
         private const val MAX_CHECKPOINT_TOOL_RESULT_CHARS = 20_000
+        private const val MAX_CHECKPOINT_MOA_REFERENCES = 32
+        private const val MAX_CHECKPOINT_MOA_LABEL_CHARS = 120
+        private const val MAX_CHECKPOINT_MOA_TEXT_CHARS = 16_000
 
         /**
          * One-line capability nudge appended to the SSE `system_message` when a
@@ -1396,6 +1400,9 @@ class ChatViewModel : ViewModel() {
             },
             onSubagentEvent = { event ->
                 if (acceptsEvent()) handler.onSubagentEvent(messageId, event)
+            },
+            onMoaReference = { event ->
+                if (acceptsEvent()) handler.onMoaReference(messageId, event)
             },
             onInteractionRequest = { ask ->
                 if (acceptsEvent()) presentInteractionAsk(handler, ask)
@@ -4089,6 +4096,21 @@ class ChatViewModel : ViewModel() {
                 badges = assistant.badges,
                 cards = assistant.cards,
                 cardDispatches = assistant.cardDispatches,
+                moaReferences = assistant.moaReferences
+                    .take(MAX_CHECKPOINT_MOA_REFERENCES)
+                    .map { reference ->
+                        ChatTurnMoaReferenceCheckpoint(
+                            index = reference.index,
+                            count = reference.count,
+                            label = reference.label.take(MAX_CHECKPOINT_MOA_LABEL_CHARS),
+                            text = if (reference.available) {
+                                reference.text.take(MAX_CHECKPOINT_MOA_TEXT_CHARS)
+                            } else {
+                                ""
+                            },
+                            available = reference.available,
+                        )
+                    },
                 toolCalls = assistant.toolCalls.map { tool ->
                     ChatTurnToolCheckpoint(
                         id = tool.id,
@@ -4544,6 +4566,9 @@ class ChatViewModel : ViewModel() {
                     handler.onSubagentEvent(messageId, event)
                     scheduleCheckpointWrite(immediate = true)
                 }
+            },
+            onMoaReference = { event ->
+                if (owns()) handler.onMoaReference(messageId, event)
             },
             onInteractionRequest = { ask ->
                 if (owns()) presentInteractionAsk(handler, ask)
@@ -6599,6 +6624,11 @@ class ChatViewModel : ViewModel() {
                             streamDeltas.flushNow()
                             handler.onSubagentEvent(currentMessageId, event)
                             scheduleCheckpointWrite(immediate = true)
+                        },
+                        onMoaReference = { event ->
+                            ensurePostInterimMessage()
+                            streamDeltas.flushNow()
+                            handler.onMoaReference(currentMessageId, event)
                         },
                         onInteractionRequest = { ask ->
                             presentInteractionAsk(handler, ask)

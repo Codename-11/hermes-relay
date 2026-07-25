@@ -2783,6 +2783,7 @@ class GatewayChatClient(
         onError = { v -> callbackDispatcher { callbacks.onError(v) } },
         onToolGenerating = { v -> callbackDispatcher { callbacks.onToolGenerating(v) } },
         onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
+        onMoaReference = { v -> callbackDispatcher { callbacks.onMoaReference(v) } },
         onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
         onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
         onInteractionResolved = { v -> callbackDispatcher { callbacks.onInteractionResolved(v) } },
