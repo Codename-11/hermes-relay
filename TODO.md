@@ -1170,6 +1170,7 @@ Follow-ups:
 
 ## Attachments (shipped 2026-06-18 — `docs/plans/2026-06-18-attachment-experience.md`)
 
+- **Collapsible message groups (shipped 2026-07-25).** Android wraps rendered galleries and generic/LOADING/FAILED cards in a localized, accessible attachment disclosure. It defaults open, remembers the user's fold state by stable message identity, and leaves a compact count/name/type summary available to restore all attachment actions.
 - **B3 — download progress + cancel.** Inbound fetch is un-cancelable; the previews work scaffolded an indeterminate bar + nullable `onCancel`. Live wiring needs the fetch-path owner (`ChatViewModel`/`Attachment`) to expose determinate progress (Content-Length) + a cancel hook.
 - **C5 — agent-side sensitivity config gate.** `RELAY_MEDIA_SENSITIVITY_HINTS` (env or per-profile) instructing the agent to annotate sensitive media via the prompt-builder. Transport (relay `X-Media-Sensitive` header + client blur) already ships; the agent isn't asked to set the bit yet.
 - **Relay thumbnails (D6).** Server-side thumbnail generation to avoid full-size download for cards/galleries. Needs an image lib (Pillow not currently a dep) — evaluate before adding.

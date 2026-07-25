@@ -2597,6 +2597,22 @@
     <string name="attachment_unmute">ミュートを解除する</string>
     <string name="attachment_mute">ミュート</string>
     <string name="attachment_title">アタッチメント</string>
+    <plurals name="attachment_group_count">
+        <item quantity="other">添付ファイル %1$d 件</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">添付ファイルを折りたたむ</string>
+    <string name="attachment_group_expand">添付ファイルを展開する</string>
+    <string name="attachment_group_collapsed">折りたたみ済み</string>
+    <string name="attachment_group_expanded">展開済み</string>
+    <string name="attachment_type_image">画像</string>
+    <string name="attachment_type_video">動画</string>
+    <string name="attachment_type_audio">音声</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">テキスト</string>
+    <string name="attachment_type_file">ファイル</string>
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay が予期せず終了しました</string>
