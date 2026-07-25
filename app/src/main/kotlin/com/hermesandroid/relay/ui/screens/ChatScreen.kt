@@ -2836,6 +2836,18 @@ fun ChatScreen(
                                     )
                                 }
                             }
+                            val providerModelIds = modelProviders.flatMap { it.models }.toSet()
+                            sseModelOptions.filter { it.id !in providerModelIds }.forEach { model ->
+                                add(
+                                    ChatInputPickerOption(
+                                        label = AgentDisplay.displayModelName(model.id) ?: model.id,
+                                        value = model.id,
+                                        group = "Routes",
+                                        secondary = model.routeDetail,
+                                        selected = selectedModelOverride == model.id,
+                                    ),
+                                )
+                            }
                         } else {
                             sseModelOptions.forEach { model ->
                                 add(

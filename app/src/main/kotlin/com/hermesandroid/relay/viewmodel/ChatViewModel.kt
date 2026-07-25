@@ -59,6 +59,9 @@ import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
 import com.hermesandroid.relay.network.upstream.ApiModelOption
+import com.hermesandroid.relay.network.upstream.ApiModelRoutingErrorCode
+import com.hermesandroid.relay.network.upstream.ApiModelRoutingException
+import com.hermesandroid.relay.network.upstream.ApiModelSelectionAck
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.isCurrentModelOptionsResponse
 import com.hermesandroid.relay.network.upstream.sessionTurnModelHint
@@ -494,8 +497,11 @@ class ChatViewModel : ViewModel() {
     private val modelOptionsGeneration = java.util.concurrent.atomic.AtomicLong(0L)
     private val modelOptionsByProfile = mutableMapOf<String, GatewayModelOptions>()
 
-    private fun modelOptionsProfileKey(): String =
-        activeProfileContextKey ?: "__unbound__"
+    private fun modelOptionsProfileKey(): String {
+        val connectionProfile = activeProfileContextKey ?: "__unbound__"
+        val session = chatHandler?.currentSessionId?.value ?: "__draft__"
+        return "$connectionProfile::$session"
+    }
 
     private fun activateModelOptionsProfile(profileKey: String) {
         modelOptionsGeneration.incrementAndGet()
@@ -643,13 +649,15 @@ class ChatViewModel : ViewModel() {
      * model override is cleared.
      */
     private val _selectedProviderOverride = MutableStateFlow<String?>(null)
+    private val apiSessionModelLocks = mutableMapOf<String, ApiModelSelectionAck.Locked>()
 
     fun fetchModels() {
         val client = apiClient ?: return
         val generation = modelOptionsGeneration.incrementAndGet()
         val profileKey = modelOptionsProfileKey()
         viewModelScope.launch {
-            val providerInventory = client.getProviderModelOptions().getOrNull()
+            val providerResult = client.getProviderModelOptions()
+            val providerInventory = providerResult.getOrNull()
             if (!isCurrentModelOptionsResponse(
                     generation,
                     modelOptionsGeneration.get(),
@@ -660,6 +668,7 @@ class ChatViewModel : ViewModel() {
                 return@launch
             }
             if (providerInventory != null) {
+                val aliases = client.getModelOptions()
                 val options = GatewayModelOptions(
                     providers = providerInventory.providers,
                     currentModel = providerInventory.currentModel,
@@ -669,10 +678,24 @@ class ChatViewModel : ViewModel() {
                 _modelProviders.value = options.providers
                 _gatewayCurrentModel.value = options.currentModel
                 _gatewayCurrentProvider.value = options.currentProvider
-                _apiModelOptions.value = emptyList()
-                _availableModels.value = options.providers.flatMap { it.models }.distinct()
+                // Keep OpenAI route aliases visible alongside authenticated
+                // provider inventory. An alias remains the request id while
+                // its root is used only to validate the provider route.
+                _apiModelOptions.value = aliases
+                _availableModels.value =
+                    (options.providers.flatMap { it.models } + aliases.map { it.id }).distinct()
             } else {
-                // Older API servers expose only their OpenAI-compatible aliases.
+                val failure = providerResult.exceptionOrNull()
+                if (
+                    failure !is ApiModelRoutingException ||
+                    failure.code != ApiModelRoutingErrorCode.INVENTORY_UNSUPPORTED
+                ) {
+                    _transientNotice.tryEmit(
+                        failure?.message ?: "Model inventory could not be loaded.",
+                    )
+                    return@launch
+                }
+                // Confirmed older API servers expose only OpenAI-compatible aliases.
                 val options = client.getModelOptions()
                 if (!isCurrentModelOptionsResponse(
                         generation,
@@ -699,6 +722,18 @@ class ChatViewModel : ViewModel() {
      * default.
      */
     fun selectModel(model: String?, provider: String? = null) {
+        if (model.isNullOrBlank() && streamingEndpoint != "gateway") {
+            val sessionId = chatHandler?.currentSessionId?.value
+            val locked = sessionId?.let(apiSessionModelLocks::get)
+            if (locked != null) {
+                _selectedModelOverride.value = locked.model
+                _selectedProviderOverride.value = locked.provider
+                _transientNotice.tryEmit(
+                    "This session is locked to ${locked.model}. Start a new chat to use Server default.",
+                )
+                return
+            }
+        }
         _selectedModelOverride.value = AgentDisplay.requestModelName(model)
         // Keep the provider paired with the model pick so a fresh chat's
         // session.create can bind both (gateway needs the provider to resolve
@@ -2758,6 +2793,9 @@ class ChatViewModel : ViewModel() {
 
     /** Clear server-owned catalogs before a different connection starts loading. */
     fun resetConnectionCatalogs() {
+        modelOptionsGeneration.incrementAndGet()
+        modelOptionsByProfile.clear()
+        apiSessionModelLocks.clear()
         _availableSkills.value = emptyList()
         _personalityNames.value = emptyList()
         _defaultPersonality.value = ""
@@ -3017,6 +3055,18 @@ class ChatViewModel : ViewModel() {
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
+        if (streamingEndpoint != "gateway") {
+            val session = handler.sessions.value.firstOrNull { it.sessionId == sessionId }
+            if (session?.hasModelConfig == true && !session.model.isNullOrBlank()) {
+                _selectedModelOverride.value = session.model
+                _selectedProviderOverride.value = _modelProviders.value
+                    .singleOrNull { session.model in it.models }
+                    ?.slug
+            } else {
+                _selectedModelOverride.value = null
+                _selectedProviderOverride.value = null
+            }
+        }
         selectBackgroundProcessSession(sessionId)
         handler.clearMessages()
         _contextUsage.value = null
@@ -6286,6 +6336,25 @@ class ChatViewModel : ViewModel() {
                 clearTurnCheckpoint()
             }
         }
+        val onPreflightErrorCb = { error: Throwable ->
+            val errorMsg = error.message
+                ?: "Model routing could not be confirmed before sending."
+            stopImageActivityBridge()
+            flushAndReleaseStreamDeltas()
+            // The chat POST never started, so server history cannot contain
+            // this turn. Preserve the composed rows and make the user bubble
+            // explicitly retryable instead of reconciling it away.
+            handler.updateDeliveryStatus(userMessageId, MessageDeliveryStatus.FAILED)
+            AppAnalytics.onStreamError()
+            handler.onStreamError(errorMsg)
+            emitError(error, context = "send_message")
+            activeStream = null
+            _queuedMessages.value = emptyList()
+            _steerableTurn.value = false
+            _steerNotice.value = null
+            clearPendingAsk(approvalStamp = "deny")
+            clearTurnCheckpoint()
+        }
 
         // === v0.4.1 voice-intent + v0.7.x card-dispatch session sync ===
         // Synthesize OpenAI-format `assistant` (with tool_calls) + `tool`
@@ -6382,11 +6451,12 @@ class ChatViewModel : ViewModel() {
                 onErrorCb("Gateway unavailable and no API fallback is configured.")
                 return null
             }
-            dispatchedSseEndpoint = endpoint
-            updateTurnCheckpointTransport(endpoint)
-            warnIfAttachmentsDropped(endpoint)
             return when (endpoint) {
-            "runs" -> sseClient.sendRunStream(
+            "runs" -> {
+                dispatchedSseEndpoint = endpoint
+                updateTurnCheckpointTransport(endpoint)
+                warnIfAttachmentsDropped(endpoint)
+                sseClient.sendRunStream(
                     message = message,
                     systemMessage = systemMsg,
                     attachments = attachments,
@@ -6409,7 +6479,12 @@ class ChatViewModel : ViewModel() {
                     modelOverride = modelOverride,
                     profileName = profileName,
                 ).asTurnHandle()
-            "completions" -> sseClient.sendChatCompletionsStream(
+            }
+            "completions" -> {
+                dispatchedSseEndpoint = endpoint
+                updateTurnCheckpointTransport(endpoint)
+                warnIfAttachmentsDropped(endpoint)
+                sseClient.sendChatCompletionsStream(
                     message = message,
                     systemMessage = systemMsg,
                     attachments = attachments,
@@ -6428,6 +6503,7 @@ class ChatViewModel : ViewModel() {
                     modelOverride = modelOverride,
                     profileName = profileName,
                 ).asTurnHandle()
+            }
             else -> {
                 var delegated: ActiveTurnHandle? = null
                 val preflight = viewModelScope.launch {
@@ -6446,6 +6522,12 @@ class ChatViewModel : ViewModel() {
                             // model hint in the turn body.
                             val sessionModelOverride =
                                 sessionTurnModelHint(acknowledgement, modelOverride)
+                            if (acknowledgement is ApiModelSelectionAck.Locked) {
+                                apiSessionModelLocks[sessionId] = acknowledgement
+                            }
+                            dispatchedSseEndpoint = endpoint
+                            updateTurnCheckpointTransport(endpoint)
+                            warnIfAttachmentsDropped(endpoint)
                             delegated = sseClient.sendChatStream(
                                 sessionId = sessionId,
                                 message = message,
@@ -6465,13 +6547,12 @@ class ChatViewModel : ViewModel() {
                                 onError = onErrorCb,
                                 modelOverride = sessionModelOverride,
                                 profileName = profileName,
+                                expectedModelLock =
+                                    acknowledgement as? ApiModelSelectionAck.Locked,
                             ).asTurnHandle()
                         },
                         onFailure = { error ->
-                            onErrorCb(
-                                error.message
-                                    ?: "Model routing could not be confirmed before sending.",
-                            )
+                            onPreflightErrorCb(error)
                         },
                     )
                 }

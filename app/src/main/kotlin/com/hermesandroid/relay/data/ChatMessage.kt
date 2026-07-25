@@ -392,6 +392,8 @@ data class ChatSession(
      * for locally-created optimistic rows. Drives the drawer's Thread tag (see ADR 12).
      */
     val source: String? = null,
+    /** Server reports a persisted session runtime/model binding. */
+    val hasModelConfig: Boolean = false,
 ) {
     val activityTimestamp: Long
         get() = firstPositive(lastActivityAt, updatedAt, startedAt)

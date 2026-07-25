@@ -312,6 +312,7 @@ class HermesApiClientTest {
               "session_id": "session-1",
               "runtime": {
                 "requested": {"model": "grok-4.3", "provider": "xai"},
+                "effective": {"model": "grok-4.3", "provider": "xai"},
                 "model_lock": "accepted"
               }
             }
@@ -322,7 +323,48 @@ class HermesApiClientTest {
         assertEquals("grok-4.3", ack?.model)
         assertEquals("xai", ack?.provider)
         assertEquals("accepted", ack?.state)
+        assertEquals("grok-4.3", ack?.effectiveModel)
+        assertEquals("xai", ack?.effectiveProvider)
         assertNull(parseApiModelLockAck(Json, """{"session_id":"session-1"}"""))
+    }
+
+    @Test
+    fun modelOptionsWithoutSessionLockUsesLegacyHintContract() {
+        val capabilities = ServerCapabilities(
+            sessionsApi = true,
+            sessionsChatStream = true,
+            runs = false,
+            portable = true,
+            healthy = true,
+            modelOptions = true,
+            sessionModelLock = false,
+        )
+
+        assertEquals(ApiModelRoutingStrategy.LEGACY_HINT, apiModelRoutingStrategy(capabilities))
+    }
+
+    @Test
+    fun terminalRuntimeMustConfirmExactEffectiveRoute() {
+        val expected = ApiModelSelectionAck.Locked(
+            sessionId = "session-1",
+            model = "fast-route",
+            provider = "openai",
+            effectiveModel = "gpt-5-mini",
+            effectiveProvider = "openai",
+        )
+        val confirmed = Json.parseToJsonElement(
+            """{"model_lock":"confirmed","effective":{"model":"gpt-5-mini","provider":"openai"}}""",
+        ) as kotlinx.serialization.json.JsonObject
+        val wrongProvider = Json.parseToJsonElement(
+            """{"model_lock":"confirmed","effective":{"model":"gpt-5-mini","provider":"azure"}}""",
+        ) as kotlinx.serialization.json.JsonObject
+        val merelyAccepted = Json.parseToJsonElement(
+            """{"model_lock":"accepted","effective":{"model":"gpt-5-mini","provider":"openai"}}""",
+        ) as kotlinx.serialization.json.JsonObject
+
+        assertTrue(confirmedRuntimeMatches(confirmed, expected))
+        assertFalse(confirmedRuntimeMatches(wrongProvider, expected))
+        assertFalse(confirmedRuntimeMatches(merelyAccepted, expected))
     }
 
     @Test

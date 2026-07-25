@@ -239,6 +239,7 @@ internal fun parseApiProviderModelOptionsBody(
 }
 
 enum class ApiModelRoutingErrorCode {
+    INVENTORY_UNSUPPORTED,
     INVENTORY_UNAVAILABLE,
     PROVIDER_NOT_AUTHENTICATED,
     MODEL_NOT_AVAILABLE,
@@ -260,9 +261,23 @@ sealed interface ApiModelSelectionAck {
         val sessionId: String,
         val model: String,
         val provider: String?,
+        val effectiveModel: String = model,
+        val effectiveProvider: String? = provider,
     ) : ApiModelSelectionAck
     data class LegacyModelHint(val model: String) : ApiModelSelectionAck
 }
+
+internal enum class ApiModelRoutingStrategy { LOCKED, LEGACY_HINT, INCOMPLETE }
+
+internal fun apiModelRoutingStrategy(capabilities: ServerCapabilities): ApiModelRoutingStrategy =
+    when {
+        capabilities.sessionModelLock && capabilities.modelOptions ->
+            ApiModelRoutingStrategy.LOCKED
+        capabilities.sessionModelLock ->
+            ApiModelRoutingStrategy.INCOMPLETE
+        else ->
+            ApiModelRoutingStrategy.LEGACY_HINT
+    }
 
 internal fun sessionTurnModelHint(
     acknowledgement: ApiModelSelectionAck,
@@ -275,6 +290,8 @@ internal data class ParsedApiModelLockAck(
     val model: String?,
     val provider: String?,
     val state: String?,
+    val effectiveModel: String?,
+    val effectiveProvider: String?,
 )
 
 internal fun parseApiModelLockAck(json: Json, body: String): ParsedApiModelLockAck? {
@@ -282,12 +299,26 @@ internal fun parseApiModelLockAck(json: Json, body: String): ParsedApiModelLockA
         ?: return null
     val runtime = root["runtime"] as? JsonObject ?: return null
     val requested = runtime["requested"] as? JsonObject
+    val effective = runtime["effective"] as? JsonObject
     return ParsedApiModelLockAck(
         sessionId = (root["session_id"] as? JsonPrimitive)?.contentOrNull,
         model = (requested?.get("model") as? JsonPrimitive)?.contentOrNull,
         provider = (requested?.get("provider") as? JsonPrimitive)?.contentOrNull,
         state = (runtime["model_lock"] as? JsonPrimitive)?.contentOrNull,
+        effectiveModel = (effective?.get("model") as? JsonPrimitive)?.contentOrNull,
+        effectiveProvider = (effective?.get("provider") as? JsonPrimitive)?.contentOrNull,
     )
+}
+
+internal fun confirmedRuntimeMatches(
+    runtime: JsonObject?,
+    expected: ApiModelSelectionAck.Locked,
+): Boolean {
+    runtime ?: return false
+    val effective = runtime["effective"] as? JsonObject ?: return false
+    return (runtime["model_lock"] as? JsonPrimitive)?.contentOrNull == "confirmed" &&
+        (effective["model"] as? JsonPrimitive)?.contentOrNull == expected.effectiveModel &&
+        (effective["provider"] as? JsonPrimitive)?.contentOrNull == expected.effectiveProvider
 }
 
 internal fun parseModelOptionsBody(json: Json, body: String): List<ApiModelOption>? {
@@ -747,8 +778,16 @@ class HermesApiClient(
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         ApiModelRoutingException(
-                            ApiModelRoutingErrorCode.INVENTORY_UNAVAILABLE,
-                            "Model inventory unavailable (HTTP ${response.code}).",
+                            if (response.code == 404) {
+                                ApiModelRoutingErrorCode.INVENTORY_UNSUPPORTED
+                            } else {
+                                ApiModelRoutingErrorCode.INVENTORY_UNAVAILABLE
+                            },
+                            if (response.code == 401 || response.code == 403) {
+                                "Model inventory authorization failed (HTTP ${response.code})."
+                            } else {
+                                "Model inventory unavailable (HTTP ${response.code})."
+                            },
                         ),
                     )
                 }
@@ -785,27 +824,25 @@ class HermesApiClient(
         val selectedModel = AgentDisplay.requestModelName(model)
             ?: return@withContext Result.success(ApiModelSelectionAck.ServerDefault)
         val selectedProvider = provider?.trim()?.takeIf { it.isNotEmpty() }
-        val capabilities = lastCapabilities ?: probeCapabilities()
+        // Capability snapshots can be populated by a disconnected startup
+        // probe. Re-probe at the lock boundary instead of trusting a stale
+        // false forever after the connection recovers.
+        val capabilities = probeCapabilities()
 
-        if (capabilities.sessionModelLock || capabilities.modelOptions) {
-            if (!capabilities.sessionModelLock || !capabilities.modelOptions) {
-                return@withContext Result.failure(
-                    ApiModelRoutingException(
-                        ApiModelRoutingErrorCode.LOCK_CAPABILITY_INCOMPLETE,
-                        "Server advertises an incomplete model-routing contract.",
-                    ),
-                )
-            }
+        if (apiModelRoutingStrategy(capabilities) == ApiModelRoutingStrategy.LOCKED) {
             val inventory = getProviderModelOptions().getOrElse {
                 return@withContext Result.failure(it)
             }
+            val aliases = getModelOptions()
+            val selectedRoot = aliases.firstOrNull { it.id == selectedModel }?.root
+                ?.takeIf { it.isNotBlank() }
+            val providerModel = selectedRoot ?: selectedModel
             val providerRow = when {
                 selectedProvider != null ->
                     inventory.providers.firstOrNull { it.slug == selectedProvider }
-                else ->
-                    inventory.providers.singleOrNull { selectedModel in it.models }
+                else -> inventory.providers.singleOrNull { providerModel in it.models }
                         ?: inventory.providers.firstOrNull {
-                            it.isCurrent && selectedModel in it.models
+                            it.isCurrent && providerModel in it.models
                         }
             } ?: return@withContext Result.failure(
                 ApiModelRoutingException(
@@ -821,7 +858,7 @@ class HermesApiClient(
                     ),
                 )
             }
-            if (selectedModel !in providerRow.models) {
+            if (providerModel !in providerRow.models) {
                 return@withContext Result.failure(
                     ApiModelRoutingException(
                         ApiModelRoutingErrorCode.MODEL_NOT_AVAILABLE,
@@ -829,7 +866,7 @@ class HermesApiClient(
                     ),
                 )
             }
-            if (selectedModel in providerRow.unavailableModels) {
+            if (providerModel in providerRow.unavailableModels) {
                 return@withContext Result.failure(
                     ApiModelRoutingException(
                         ApiModelRoutingErrorCode.MODEL_NOT_AVAILABLE_ON_PLAN,
@@ -867,7 +904,9 @@ class HermesApiClient(
                         ack?.sessionId != sessionId ||
                         ack?.model != selectedModel ||
                         ack?.provider != providerRow.slug ||
-                        ack?.state != "accepted"
+                        ack?.state != "accepted" ||
+                        ack?.effectiveModel.isNullOrBlank() ||
+                        ack?.effectiveProvider.isNullOrBlank()
                     ) {
                         return@withContext Result.failure(
                             ApiModelRoutingException(
@@ -876,11 +915,14 @@ class HermesApiClient(
                             ),
                         )
                     }
+                    val confirmedAck = requireNotNull(ack)
                     Result.success(
                         ApiModelSelectionAck.Locked(
                             sessionId = sessionId,
                             model = selectedModel,
                             provider = providerRow.slug,
+                            effectiveModel = requireNotNull(confirmedAck.effectiveModel),
+                            effectiveProvider = confirmedAck.effectiveProvider,
                         ),
                     )
                 }
@@ -895,6 +937,14 @@ class HermesApiClient(
                 )
             }
         } else {
+            if (apiModelRoutingStrategy(capabilities) == ApiModelRoutingStrategy.INCOMPLETE) {
+                return@withContext Result.failure(
+                    ApiModelRoutingException(
+                        ApiModelRoutingErrorCode.LOCK_CAPABILITY_INCOMPLETE,
+                        "Server advertises an incomplete model-routing contract.",
+                    ),
+                )
+            }
             if (selectedProvider != null) {
                 return@withContext Result.failure(
                     ApiModelRoutingException(
@@ -1038,6 +1088,7 @@ class HermesApiClient(
         onError: (String) -> Unit,
         modelOverride: String? = null,
         profileName: String? = null,
+        expectedModelLock: ApiModelSelectionAck.Locked? = null,
     ): EventSource {
         if (!modelOverride.isNullOrBlank()) {
             Log.d(TAG, "sendChatStream: modelOverride=$modelOverride (profile pick)")
@@ -1068,6 +1119,7 @@ class HermesApiClient(
             }
 
         val completeCalled = AtomicBoolean(false)
+        val runtimeConfirmed = AtomicBoolean(expectedModelLock == null)
         val receivedEvent = AtomicBoolean(false)
         val drainRetryScheduled = AtomicBoolean(false)
         val turnSource = RetryingEventSource(request, mainHandler)
@@ -1088,7 +1140,13 @@ class HermesApiClient(
                 tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
-                        mainHandler.post { onComplete() }
+                        mainHandler.post {
+                            if (runtimeConfirmed.get()) {
+                                onComplete()
+                            } else {
+                                onError("Server ended the turn without confirming the selected model route.")
+                            }
+                        }
                     }
                     return
                 }
@@ -1164,9 +1222,17 @@ class HermesApiClient(
                         }
                         // assistant.completed — one turn finished, but run may continue with tool calls
                         "assistant.completed" -> {
+                            val runtimeMatches = expectedModelLock?.let {
+                                confirmedRuntimeMatches(event.runtime, it)
+                            } ?: true
+                            if (runtimeMatches) runtimeConfirmed.set(true)
                             mainHandler.post {
                                 onUsage(event.usage)
-                                if (event.interrupted == true) {
+                                if (!runtimeMatches) {
+                                    if (completeCalled.compareAndSet(false, true)) {
+                                        onError("Server response did not confirm the selected model route.")
+                                    }
+                                } else if (event.interrupted == true) {
                                     if (completeCalled.compareAndSet(false, true)) {
                                         onError("Response interrupted")
                                     }
@@ -1178,9 +1244,15 @@ class HermesApiClient(
                         // run.completed — the entire agent loop is done (all turns + tool calls)
                         "run.completed" -> {
                             if (completeCalled.compareAndSet(false, true)) {
+                                val runtimeMatches = expectedModelLock?.let {
+                                    confirmedRuntimeMatches(event.runtime, it)
+                                } ?: true
+                                if (runtimeMatches) runtimeConfirmed.set(true)
                                 mainHandler.post {
                                     onUsage(event.usage)
-                                    if (event.interrupted == true) {
+                                    if (!runtimeMatches) {
+                                        onError("Server response did not confirm the selected model route.")
+                                    } else if (event.interrupted == true) {
                                         onError("Run interrupted")
                                     } else {
                                         onComplete()
@@ -1190,7 +1262,13 @@ class HermesApiClient(
                         }
                         "done" -> {
                             if (completeCalled.compareAndSet(false, true)) {
-                                mainHandler.post { onComplete() }
+                                mainHandler.post {
+                                    if (runtimeConfirmed.get()) {
+                                        onComplete()
+                                    } else {
+                                        onError("Server ended the turn without confirming the selected model route.")
+                                    }
+                                }
                             }
                         }
                         "error" -> {
@@ -1269,7 +1347,13 @@ class HermesApiClient(
             override fun onClosed(eventSource: EventSource) {
                 tracer.done()
                 if (completeCalled.compareAndSet(false, true)) {
-                    mainHandler.post { onComplete() }
+                    mainHandler.post {
+                        if (runtimeConfirmed.get()) {
+                            onComplete()
+                        } else {
+                            onError("Server closed the turn without confirming the selected model route.")
+                        }
+                    }
                 }
             }
         }
