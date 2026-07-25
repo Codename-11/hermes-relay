@@ -1,5 +1,48 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-24 — Realtime background-task delivery continuity
+
+Chat stream completion now preserves an otherwise empty assistant row when it
+owns a promoted background task. This keeps the task identity available after
+the provider's initial spoken handoff, so later progress, completion, and
+forced-summary events update and settle the initiating row even when a newer
+persistent Voice command has started. Existing empty-response cleanup remains
+unchanged for assistant rows without background work.
+
+## 2026-07-23 — Android user-CA trust for self-hosted Hermes
+
+The shared Android network security configuration now accepts CA certificates
+that the device owner deliberately installed in Android's user credential store,
+in addition to system roots. Because the policy is attached to the common
+application manifest, it covers both product flavors and every platform-backed
+Hermes transport: endpoint probes, Dashboard requests and authentication
+WebView, redirects, Gateway WebSockets, API streaming, Standard Voice, and
+Relay HTTPS/WSS. Default OkHttp and WebView certificate-chain and hostname
+checks remain active, and Relay's independent certificate pinner is not
+overridden.
+
+An app-wide policy is required for arbitrary operator-supplied server names and
+for consistent WebView behavior. A runtime opt-in would require parallel custom
+trust implementations for each client and could not safely reconfigure WebView;
+per-connection CA import would add private trust-material lifecycle without
+covering all transports. The tradeoff is that Android disables public
+Certificate Transparency verification when user trust anchors are enabled.
+User documentation records the deliberate-installation boundary and a device or
+emulator validation procedure with positive chain and negative hostname checks.
+JVM coverage locks the accepted anchor sources and rejects pin overrides or
+debug-only trust additions.
+
+## 2026-07-23 — Bounded Android code-highlighting ranges
+
+Android Markdown code rendering now validates every syntax-highlighting span
+before applying it to Compose text. The bundled highlighting dependency can
+emit a reversed multiline-comment range when malformed or incomplete code
+contains a closing delimiter before its opening delimiter; the Markdown
+renderer previously passed that range directly to `AnnotatedString` and
+crashed. Both fenced and indented code use the guarded renderer, valid spans
+remain highlighted, and malformed ranges are clipped or ignored. Focused JVM
+coverage reproduces the dependency output and verifies the safe conversion.
+
 ## 2026-07-20 — Image generation placeholder during turns
 
 Android chat now specializes the generic tool lifecycle for active
