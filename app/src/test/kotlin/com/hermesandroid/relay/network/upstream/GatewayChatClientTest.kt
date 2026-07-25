@@ -2180,80 +2180,84 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `auto continue buffers message start racing resume acknowledgement`() = runBlocking {
-        harness.recoveryAutoContinueAttempt = 1
-        harness.suppressAckMethods += "session.resume"
-        val recorder = Recorder()
+    fun `auto continue buffers message start racing resume acknowledgement`() {
+        runBlocking {
+            harness.recoveryAutoContinueAttempt = 1
+            harness.suppressAckMethods += "session.resume"
+            val recorder = Recorder()
 
-        val pending = async(Dispatchers.IO) {
-            client.recoverTurn(
-                "stored-42",
-                null,
-                recorder.callbacks,
-            ).getOrThrow()
+            val pending = async(Dispatchers.IO) {
+                client.recoverTurn(
+                    "stored-42",
+                    null,
+                    recorder.callbacks,
+                ).getOrThrow()
+            }
+            val ack = harness.awaitPendingAck()
+            assertEquals("session.resume", ack.method)
+            val liveId = (harness.recoveryResult("stored-42")
+                .getValue("session_id") as JsonPrimitive).content
+            ack.ws.send(harness.eventFrame("message.start", null, liveId))
+            ack.ws.send(
+                harness.eventFrame(
+                    "message.delta",
+                    buildJsonObject { put("text", "continued answer") },
+                    liveId,
+                ),
+            )
+            harness.releaseAck(ack, harness.recoveryResult(liveId))
+
+            val recovery = pending.await()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (recorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
+            assertEquals(1, recovery.autoContinue?.attempt)
+            assertTrue(recovery.hasPendingWork)
+            assertEquals(listOf("continued answer"), recorder.textDeltas.toList())
+            recovery.handle?.detach()
         }
-        val ack = harness.awaitPendingAck()
-        assertEquals("session.resume", ack.method)
-        val liveId = (harness.recoveryResult("stored-42")
-            .getValue("session_id") as JsonPrimitive).content
-        ack.ws.send(harness.eventFrame("message.start", null, liveId))
-        ack.ws.send(
-            harness.eventFrame(
-                "message.delta",
-                buildJsonObject { put("text", "continued answer") },
-                liveId,
-            ),
-        )
-        harness.releaseAck(ack, harness.recoveryResult(liveId))
-
-        val recovery = pending.await()
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-        while (recorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
-        assertEquals(1, recovery.autoContinue?.attempt)
-        assertTrue(recovery.hasPendingWork)
-        assertEquals(listOf("continued answer"), recorder.textDeltas.toList())
-        recovery.handle?.detach()
     }
 
     @Test
-    fun `resume race delivers auto continue events through exactly one owner`() = runBlocking {
-        // Keep the recovered live id warm so the early message.start could be
-        // accepted by normal unsolicited routing while session.resume is also
-        // buffering it. Recovery must exclusively claim the frame instead.
-        assertTrue(client.prewarmAwait("stored-42"))
-        harness.recoveryAutoContinueAttempt = 1
-        harness.suppressAckMethods += "session.resume"
-        val recorder = Recorder()
-        client.setUnsolicitedTurnProvider {
-            GatewayInboundTurnRegistration(recorder.callbacks) { true }
-        }
+    fun `resume race delivers auto continue events through exactly one owner`() {
+        runBlocking {
+            // Keep the recovered live id warm so the early message.start could be
+            // accepted by normal unsolicited routing while session.resume is also
+            // buffering it. Recovery must exclusively claim the frame instead.
+            assertTrue(client.prewarmAwait("stored-42"))
+            harness.recoveryAutoContinueAttempt = 1
+            harness.suppressAckMethods += "session.resume"
+            val recorder = Recorder()
+            client.setUnsolicitedTurnProvider {
+                GatewayInboundTurnRegistration(recorder.callbacks) { true }
+            }
 
-        val pending = async(Dispatchers.IO) {
-            client.recoverTurn(
-                "stored-42",
-                null,
-                recorder.callbacks,
-            ).getOrThrow()
-        }
-        val ack = harness.awaitPendingAck()
-        assertEquals("session.resume", ack.method)
-        val liveId = (harness.recoveryResult("stored-42")
-            .getValue("session_id") as JsonPrimitive).content
-        ack.ws.send(harness.eventFrame("message.start", null, liveId))
-        ack.ws.send(
-            harness.eventFrame(
-                "message.delta",
-                buildJsonObject { put("text", "continued once") },
-                liveId,
-            ),
-        )
-        harness.releaseAck(ack, harness.recoveryResult(liveId))
+            val pending = async(Dispatchers.IO) {
+                client.recoverTurn(
+                    "stored-42",
+                    null,
+                    recorder.callbacks,
+                ).getOrThrow()
+            }
+            val ack = harness.awaitPendingAck()
+            assertEquals("session.resume", ack.method)
+            val liveId = (harness.recoveryResult("stored-42")
+                .getValue("session_id") as JsonPrimitive).content
+            ack.ws.send(harness.eventFrame("message.start", null, liveId))
+            ack.ws.send(
+                harness.eventFrame(
+                    "message.delta",
+                    buildJsonObject { put("text", "continued once") },
+                    liveId,
+                ),
+            )
+            harness.releaseAck(ack, harness.recoveryResult(liveId))
 
-        val recovery = pending.await()
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-        while (recorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
-        assertEquals(listOf("continued once"), recorder.textDeltas.toList())
-        recovery.handle?.detach()
+            val recovery = pending.await()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (recorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
+            assertEquals(listOf("continued once"), recorder.textDeltas.toList())
+            recovery.handle?.detach()
+        }
     }
 
     @Test

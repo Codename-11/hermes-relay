@@ -107,6 +107,7 @@ class NativeDashboardAuthTest {
             .split("&")
             .first { it.startsWith("code_challenge=") }
             .substringAfter("=")
+            .let { java.net.URLDecoder.decode(it, Charsets.UTF_8) }
         assertEquals(expectedChallenge, authorizeChallenge)
     }
 

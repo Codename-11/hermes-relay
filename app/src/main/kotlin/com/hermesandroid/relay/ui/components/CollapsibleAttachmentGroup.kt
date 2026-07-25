@@ -28,9 +28,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -111,12 +111,12 @@ internal fun CollapsibleAttachmentGroup(
             onClick = { expanded = !expanded },
             modifier = Modifier
                 .fillMaxWidth()
-                .clearAndSetSemantics {
+                .testTag("attachment-group-toggle-$messageKey")
+                .semantics(mergeDescendants = true) {
                     contentDescription = actionLabel
                     role = Role.Button
                     stateDescription = stateLabel
-                }
-                .testTag("attachment-group-toggle-$messageKey"),
+                },
             shape = MaterialTheme.shapes.small,
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
             contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
