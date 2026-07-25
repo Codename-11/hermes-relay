@@ -164,6 +164,7 @@ class GatewayChatClient(
         private const val CONNECT_ATTEMPTS = 2
         private const val INBOUND_BIND_TIMEOUT_MS = 2_000L
         private const val CANCELLED_TURN_SUBMIT_WAIT_MS = 2_000L
+        private const val MAX_RECOVERY_BUFFERED_EVENTS = 256
 
         /** Distinct socket-loss (flap) events per turn we'll try to recover from. */
         private const val MAX_TURN_REJOINS = 4
@@ -361,6 +362,15 @@ class GatewayChatClient(
 
     @Volatile
     private var activeTurn: GatewayTurn? = null
+
+    private data class RecoveryEvent(
+        val sessionId: String,
+        val type: String,
+        val payload: JsonObject?,
+    )
+
+    private val recoveryEventLock = Any()
+    private var recoveryEvents: MutableList<RecoveryEvent>? = null
 
     /**
      * Turns deliberately detached when the user switches profile/session.
@@ -820,24 +830,33 @@ class GatewayChatClient(
             }
 
             if (response == null) {
-                response = rpc(
-                    "session.resume",
-                    buildJsonObject {
-                        put("session_id", storedId)
-                        put("cols", DEFAULT_COLS)
-                        put("source", sessionSource)
-                        requestedProfile?.let { put("profile", it) }
-                    },
-                ).getOrElse { error ->
-                    preferredLiveId?.let { liveId ->
-                        claimedBackground?.let { backgroundTurns.putIfAbsent(liveId, it) }
+                synchronized(recoveryEventLock) {
+                    recoveryEvents = mutableListOf()
+                }
+                response = try {
+                    rpc(
+                        "session.resume",
+                        buildJsonObject {
+                            put("session_id", storedId)
+                            put("cols", DEFAULT_COLS)
+                            put("source", sessionSource)
+                            requestedProfile?.let { put("profile", it) }
+                        },
+                    ).getOrElse { error ->
+                        preferredLiveId?.let { liveId ->
+                            claimedBackground?.let { backgroundTurns.putIfAbsent(liveId, it) }
+                        }
+                        throw error
                     }
+                } catch (error: Throwable) {
+                    synchronized(recoveryEventLock) { recoveryEvents = null }
                     throw error
                 }
             }
 
             val recoveredLiveId = response.stringField("session_id")
                 ?: run {
+                    synchronized(recoveryEventLock) { recoveryEvents = null }
                     if (!preferredLiveId.isNullOrBlank()) {
                         claimedBackground?.let { backgroundTurns.putIfAbsent(preferredLiveId, it) }
                     }
@@ -854,6 +873,9 @@ class GatewayChatClient(
                     user = value.stringField("user").orEmpty(),
                     assistant = value.stringField("assistant").orEmpty(),
                     streaming = value.booleanField("streaming") == true,
+                    status = value.stringField("status"),
+                    error = value.stringField("error"),
+                    recoverable = value.booleanField("recoverable") == true,
                 )
             }
             val queued = (response["queued"] as? JsonObject)?.let { value ->
@@ -862,8 +884,20 @@ class GatewayChatClient(
                     ?.let(::GatewayQueuedTurn)
             }
             val running = response.booleanField("running") == true || inflight?.streaming == true
+            val autoContinue = (response["auto_continue"] as? JsonObject)?.let { value ->
+                val attempt = value.stringField("attempt")?.toIntOrNull()
+                    ?: (value["attempt"] as? JsonPrimitive)?.intOrNull
+                if (attempt != null && attempt > 0) {
+                    GatewayAutoContinue(
+                        attempt = attempt,
+                        interruptedAt = value.stringField("interrupted_at")?.toDoubleOrNull(),
+                    )
+                } else {
+                    null
+                }
+            }
 
-            if (running) {
+            if (running || autoContinue != null) {
                 if (boundTurn == null || boundTurn.ended) {
                     boundTurn = GatewayTurn(
                         callbacks = dispatchOn(callbacks),
@@ -873,6 +907,13 @@ class GatewayChatClient(
                         activeTurn = turn
                     }
                 }
+                val buffered = synchronized(recoveryEventLock) {
+                    recoveryEvents
+                        ?.filter { it.sessionId == recoveredLiveId }
+                        .orEmpty()
+                        .also { recoveryEvents = null }
+                }
+                buffered.forEach { event -> boundTurn?.onEvent(event.type, event.payload) }
                 queued?.let { queuedTurn ->
                     queuedTurnProvider?.invoke(queuedTurn)?.let { registration ->
                         boundTurn.installQueuedSuccessor(registration)
@@ -884,6 +925,7 @@ class GatewayChatClient(
                 }
                 boundTurn.armWatchdog()
             } else if (queued != null) {
+                synchronized(recoveryEventLock) { recoveryEvents = null }
                 // A queued-only snapshot belongs to the NEXT turn. Never let
                 // its events flow through the completed checkpoint's mapper.
                 val priorBoundTurn = boundTurn
@@ -914,6 +956,7 @@ class GatewayChatClient(
                     priorBoundTurn?.detach()
                 }
             } else {
+                synchronized(recoveryEventLock) { recoveryEvents = null }
                 if (boundTurn != null) {
                     if (activeTurn === boundTurn) activeTurn = null
                     boundTurn.discardDeferredEvents()
@@ -929,6 +972,7 @@ class GatewayChatClient(
                 status = response.stringField("status"),
                 inflight = inflight,
                 queued = queued,
+                autoContinue = autoContinue,
                 handle = (if (boundTurn?.ended == true) activeTurn else boundTurn)
                     ?.takeUnless { it.ended },
             )
@@ -1845,6 +1889,25 @@ class GatewayChatClient(
             return
         }
 
+        // A cold session.resume may schedule auto-continue before its RPC
+        // response reaches Android. The recovery buffer is an ownership gate,
+        // not an observational copy: an event is either claimed here for
+        // replay or routed live below, never both. The resume response drains
+        // and closes the gate under this same lock, so later frames route live.
+        // Already-owned sibling sessions retain their background routing.
+        val claimedByRecovery = !eventSessionId.isNullOrBlank() &&
+            !backgroundTurns.containsKey(eventSessionId) &&
+            synchronized(recoveryEventLock) {
+                recoveryEvents?.let { buffered ->
+                    if (buffered.size >= MAX_RECOVERY_BUFFERED_EVENTS) {
+                        buffered.removeAt(0)
+                    }
+                    buffered += RecoveryEvent(eventSessionId, type, payload)
+                    true
+                } ?: false
+            }
+        if (claimedByRecovery) return
+
         // A profile/session switch may leave an upstream turn running while a
         // different profile becomes visible. Its events must never paint the
         // new transcript, but the terminal event still needs to reconcile the
@@ -2704,6 +2767,9 @@ class GatewayChatClient(
         onTextDelta = { v -> callbackDispatcher { callbacks.onTextDelta(v) } },
         onInterimMessage = { text, alreadyStreamed ->
             callbackDispatcher { callbacks.onInterimMessage(text, alreadyStreamed) }
+        },
+        onInterimReconciled = { text ->
+            callbackDispatcher { callbacks.onInterimReconciled(text) }
         },
         onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
         onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },

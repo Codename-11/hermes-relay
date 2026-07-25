@@ -63,6 +63,9 @@ class GatewayClientHarness(
 
     @Volatile
     var recoveryInflightStreaming: Boolean? = null
+    var recoveryInflightError: String? = null
+    var recoveryInflightRecoverable: Boolean = false
+    var recoveryAutoContinueAttempt: Int? = null
 
     @Volatile
     var recoveryQueuedUser: String? = null
@@ -299,15 +302,26 @@ class GatewayClientHarness(
             put("info", buildJsonObject { put("project", project) })
         }
         val inflightStreaming = recoveryInflightStreaming ?: recoveryRunning
-        if (recoveryRunning || recoveryInflightStreaming != null) {
+        if (recoveryRunning || recoveryInflightStreaming != null || recoveryInflightError != null) {
             put("inflight", buildJsonObject {
                 put("user", "research this")
                 put("assistant", recoveryAssistant)
                 put("streaming", inflightStreaming)
+                recoveryInflightError?.let { error ->
+                    put("status", "error")
+                    put("error", error)
+                    put("recoverable", recoveryInflightRecoverable)
+                }
             })
         }
         recoveryQueuedUser?.let { user ->
             put("queued", buildJsonObject { put("user", user) })
+        }
+        recoveryAutoContinueAttempt?.let { attempt ->
+            put("auto_continue", buildJsonObject {
+                put("attempt", attempt)
+                put("interrupted_at", 1_700_000_000.0)
+            })
         }
     }
 
@@ -1958,6 +1972,104 @@ class GatewayChatClientTest {
         assertNull(recovery.queued)
         assertNotNull(recovery.handle)
         recovery.handle!!.detach()
+    }
+
+    @Test
+    fun `recoverTurn exposes retained terminal failure without live handle`() {
+        harness.recoveryInflightStreaming = false
+        harness.recoveryAssistant = "partial answer"
+        harness.recoveryInflightError = "provider failed"
+        harness.recoveryInflightRecoverable = true
+
+        val recovery = runBlocking {
+            client.recoverTurn(
+                "stored-42",
+                null,
+                Recorder().callbacks,
+            ).getOrThrow()
+        }
+
+        assertFalse(recovery.running)
+        assertFalse(recovery.hasPendingWork)
+        assertEquals("error", recovery.inflight?.status)
+        assertEquals("provider failed", recovery.inflight?.error)
+        assertTrue(recovery.inflight?.recoverable == true)
+        assertNull(recovery.handle)
+    }
+
+    @Test
+    fun `auto continue buffers message start racing resume acknowledgement`() = runBlocking {
+        harness.recoveryAutoContinueAttempt = 1
+        harness.suppressAckMethods += "session.resume"
+        val recorder = Recorder()
+
+        val pending = async(Dispatchers.IO) {
+            client.recoverTurn(
+                "stored-42",
+                null,
+                recorder.callbacks,
+            ).getOrThrow()
+        }
+        val ack = harness.awaitSuppressedAck("session.resume")
+        val liveId = (harness.recoveryResult("stored-42")
+            .getValue("session_id") as JsonPrimitive).content
+        ack.ws.send(harness.eventFrame("message.start", null, liveId))
+        ack.ws.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "continued answer") },
+                liveId,
+            ),
+        )
+        harness.releaseAck(ack, harness.recoveryResult(liveId))
+
+        val recovery = pending.await()
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (recorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
+        assertEquals(1, recovery.autoContinue?.attempt)
+        assertTrue(recovery.hasPendingWork)
+        assertEquals(listOf("continued answer"), recorder.textDeltas.toList())
+        recovery.handle?.detach()
+    }
+
+    @Test
+    fun `resume race delivers auto continue events through exactly one owner`() = runBlocking {
+        // Keep the recovered live id warm so the early message.start could be
+        // accepted by normal unsolicited routing while session.resume is also
+        // buffering it. Recovery must exclusively claim the frame instead.
+        assertTrue(client.prewarmAwait("stored-42"))
+        harness.recoveryAutoContinueAttempt = 1
+        harness.suppressAckMethods += "session.resume"
+        val recorder = Recorder()
+        client.setUnsolicitedTurnProvider {
+            GatewayInboundTurnRegistration(recorder.callbacks) { true }
+        }
+
+        val pending = async(Dispatchers.IO) {
+            client.recoverTurn(
+                "stored-42",
+                null,
+                recorder.callbacks,
+            ).getOrThrow()
+        }
+        val ack = harness.awaitSuppressedAck("session.resume")
+        val liveId = (harness.recoveryResult("stored-42")
+            .getValue("session_id") as JsonPrimitive).content
+        ack.ws.send(harness.eventFrame("message.start", null, liveId))
+        ack.ws.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "continued once") },
+                liveId,
+            ),
+        )
+        harness.releaseAck(ack, harness.recoveryResult(liveId))
+
+        val recovery = pending.await()
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (recorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
+        assertEquals(listOf("continued once"), recorder.textDeltas.toList())
+        recovery.handle?.detach()
     }
 
     @Test

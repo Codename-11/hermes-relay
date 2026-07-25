@@ -216,13 +216,18 @@ class GatewayEventMapper(
             "message.complete" -> {
                 // Non-streaming servers (or error turns) deliver everything
                 // here; backfill whatever never streamed.
+                val failed = payload.string("status").equals(ERROR_STATUS_KIND, ignoreCase = true)
+                val error = payload.string("error")
                 val text = payload.string("text")
-                val responsePreviewed = payload.boolean("response_previewed") == true
-                val duplicatesPreview = responsePreviewed &&
-                    !text.isNullOrEmpty() &&
-                    previewedText?.let { preview -> text.startsWith(preview) || preview.startsWith(text) } == true
-                if (!text.isNullOrEmpty() &&
-                    !duplicatesPreview &&
+                    ?: error?.takeIf { failed }?.let { "Error: $it" }
+                val reconcilesInterim = !text.isNullOrEmpty() &&
+                    previewedText?.let { preview ->
+                        preview.isNotEmpty() &&
+                            (text.startsWith(preview) || preview.startsWith(text))
+                    } == true
+                if (reconcilesInterim) {
+                    callbacks.onInterimReconciled(text)
+                } else if (!text.isNullOrEmpty() &&
                     !isIntentionalSilenceMarker(text) &&
                     (!sawTextDelta || previewedText != null)
                 ) {
@@ -233,6 +238,12 @@ class GatewayEventMapper(
                     callbacks.onThinkingDelta(reasoning)
                 }
                 callbacks.onUsage(parseGatewayUsage(payload?.get("usage") as? JsonObject))
+                if (failed) {
+                    callbacks.onStatusUpdate(
+                        ERROR_STATUS_KIND,
+                        error?.takeIf { it.isNotBlank() } ?: text.orEmpty().ifBlank { "Turn failed" },
+                    )
+                }
                 turnEnded = true
                 callbacks.onComplete()
             }
@@ -333,6 +344,7 @@ class GatewayEventMapper(
     companion object {
         const val PROVIDER_WAIT_STATUS_KIND = "provider_wait"
         const val COMPACTION_STATUS_KIND = "compacting"
+        const val ERROR_STATUS_KIND = "error"
         private val OUTPUT_RISK_LEVELS = setOf("low", "medium", "high", "critical")
         private val INTERACTION_RESUME_EVENTS = setOf(
             "reasoning.delta",

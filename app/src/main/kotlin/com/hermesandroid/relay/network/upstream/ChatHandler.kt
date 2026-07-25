@@ -521,6 +521,42 @@ class ChatHandler {
         }
     }
 
+    /**
+     * Collapse a provisional post-interim segment back into its sealed
+     * assistant bubble when the terminal text proves they are one response.
+     * Tool/card state accumulated after the interim remains attached.
+     */
+    fun reconcileInterimMessage(
+        interimMessageId: String,
+        currentMessageId: String,
+        content: String,
+    ) {
+        _messages.update { messages ->
+            val interim = messages.firstOrNull { it.id == interimMessageId } ?: return@update messages
+            val current = messages.firstOrNull { it.id == currentMessageId }
+            val mergedTools = (interim.toolCalls + current?.toolCalls.orEmpty())
+                .distinctBy { it.id ?: "${it.name}:${it.startedAt}" }
+            val merged = interim.copy(
+                content = content,
+                isStreaming = true,
+                toolCalls = mergedTools,
+                thinkingContent = current?.thinkingContent
+                    ?.takeIf { it.isNotBlank() }
+                    ?: interim.thinkingContent,
+                isThinkingStreaming = current?.isThinkingStreaming
+                    ?: interim.isThinkingStreaming,
+                badges = (interim.badges + current?.badges.orEmpty()).distinct(),
+                cards = (interim.cards + current?.cards.orEmpty()).distinct(),
+                cardDispatches = (interim.cardDispatches + current?.cardDispatches.orEmpty())
+                    .distinctBy { "${it.cardKey}:${it.actionValue}:${it.timestamp}" },
+                backgroundTask = current?.backgroundTask ?: interim.backgroundTask,
+            )
+            messages
+                .filterNot { it.id == currentMessageId && currentMessageId != interimMessageId }
+                .map { if (it.id == interimMessageId) merged else it }
+        }
+    }
+
     /** Remove a provisional client-side message that never became a real turn. */
     fun removeMessage(messageId: String) {
         _messages.update { messages -> messages.filterNot { it.id == messageId } }
@@ -1222,7 +1258,8 @@ class ChatHandler {
             if (displayKind == "hidden") return@mapNotNull null
             val role = when {
                 displayKind == "model_switch" ||
-                    displayKind == "async_delegation_complete" -> MessageRole.SYSTEM
+                    displayKind == "async_delegation_complete" ||
+                    displayKind == "auto_continue" -> MessageRole.SYSTEM
                 item.role == "user" -> MessageRole.USER
                 item.role == "assistant" -> MessageRole.ASSISTANT
                 item.role == "system" ->
@@ -1540,7 +1577,7 @@ class ChatHandler {
     private fun renderedRoleOf(item: MessageItem): MessageRole? =
         when (item.displayKind?.trim()?.lowercase()) {
             "hidden" -> null
-            "model_switch", "async_delegation_complete" -> MessageRole.SYSTEM
+            "model_switch", "async_delegation_complete", "auto_continue" -> MessageRole.SYSTEM
             else -> when (item.role) {
                 "user" -> MessageRole.USER
                 "assistant" -> MessageRole.ASSISTANT
@@ -1574,6 +1611,7 @@ class ChatHandler {
                     else -> "$count background tasks completed"
                 }
             }
+            "auto_continue" -> "Continued after an interrupted turn"
             else -> null
         }
 
