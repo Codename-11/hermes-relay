@@ -79,7 +79,8 @@ fun DeveloperSettingsScreen(
     val scope = rememberCoroutineScope()
     val isDarkTheme = LocalBrand.current.isDark
 
-    val relayEnabled by FeatureFlags.relayEnabled(context).collectAsState(initial = FeatureFlags.isDevBuild)
+    val relayEnabled by FeatureFlags.relayEnabled(context)
+        .collectAsState(initial = FeatureFlags.defaultRelayEnabled)
 
     // Data management local state — unfolded from the private
     // DataManagementSection helper in the old SettingsScreen.
@@ -330,7 +331,16 @@ fun DeveloperSettingsScreen(
                         }
                         Switch(
                             checked = relayEnabled,
-                            onCheckedChange = { scope.launch { FeatureFlags.setRelayEnabled(context, it) } }
+                            onCheckedChange = { enabled ->
+                                scope.launch {
+                                    FeatureFlags.setRelayEnabled(context, enabled)
+                                    if (enabled) {
+                                        connectionViewModel.connectRelay()
+                                    } else {
+                                        connectionViewModel.disconnectRelay()
+                                    }
+                                }
+                            }
                         )
                     }
 

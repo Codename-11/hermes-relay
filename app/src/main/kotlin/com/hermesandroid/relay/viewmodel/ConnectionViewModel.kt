@@ -40,6 +40,7 @@ import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.computeConnectionSecurity
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfilePresentation
 import com.hermesandroid.relay.data.SessionTransport
@@ -4493,6 +4494,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     //
     // The payload's relay block is optional — when null, only the API server
     // side is configured (matches the legacy "API-only" QR flow).
+    fun enableRelayToolsForPairing() {
+        viewModelScope.launch {
+            FeatureFlags.setRelayEnabled(getApplication<Application>(), true)
+        }
+    }
+
     fun applyPairingPayload(
         payload: com.hermesandroid.relay.ui.components.HermesPairingPayload,
         ttlSeconds: Long,
@@ -4519,6 +4526,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             authManager.setPendingGrants(relay.grants)
         }
         authManager.setPendingTtlSeconds(ttlSeconds)
+        if (payload.relay != null) {
+            enableRelayToolsForPairing()
+        }
         val existingStandardRoutes = if (preserveStandardConfig) {
             activeConnection.value?.routeCandidates.orEmpty()
         } else {

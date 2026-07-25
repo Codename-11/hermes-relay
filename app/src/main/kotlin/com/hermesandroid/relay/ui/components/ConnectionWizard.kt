@@ -198,7 +198,7 @@ fun ConnectionWizard(
     val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
     val relayEnabled by FeatureFlags.relayEnabled(context)
-        .collectAsState(initial = FeatureFlags.isDevBuild)
+        .collectAsState(initial = FeatureFlags.defaultRelayEnabled)
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val currentApiUrl by connectionViewModel.apiServerUrl.collectAsState()
     val currentRelayUrl by connectionViewModel.relayUrl.collectAsState()
@@ -1017,6 +1017,7 @@ private fun applyManualPair(
 ) {
     if (apiUrl.isNotBlank()) vm.updateApiServerUrl(apiUrl)
     vm.updateRelayUrl(relayUrl)
+    vm.enableRelayToolsForPairing()
     vm.authManager.applyServerIssuedCodeAndReset(code.trim().uppercase())
     vm.disconnectRelay()
     vm.connectRelay(relayUrl)

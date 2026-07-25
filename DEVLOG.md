@@ -1,5 +1,23 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-25 — Relay tools are a visible product control
+
+Fixed the Android state where the Relay WebSocket could display `Connected`
+while the legacy release feature flag still read `Relay enabled: No`, leaving
+both connection controls disabled. The sideload flavor now defaults Relay tools
+on, while an explicit stored user choice remains authoritative and the Google
+Play flavor retains its conservative opt-in default.
+
+The Relay status sheet now distinguishes transport state from the tools
+capability and exposes the tools switch directly. Toggling it connects or
+disconnects the transport, so the UI cannot recreate the contradictory state.
+QR and manual Relay pairing also enable the tools automatically. Locking
+Developer Options no longer disables stable Relay functionality.
+
+Added pure-JVM coverage for debug, sideload, Google Play, explicit opt-in, and
+explicit opt-out resolution. Updated the Relay copy in every shipped Android
+locale catalog.
+
 ## 2026-07-25 — Active-turn retention and actionable interaction alerts
 
 Android now promotes user-started chat work to foreground execution until every

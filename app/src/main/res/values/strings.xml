@@ -1288,7 +1288,7 @@
     <string name="dev_settings_reset_all_data_cd">Reset all data</string>
     <string name="dev_options_section">Developer Options</string>
     <string name="dev_settings_relay_features">Relay features</string>
-    <string name="dev_settings_relay_features_desc">Show Relay Server and Pairing settings for Bridge/Terminal development</string>
+    <string name="dev_settings_relay_features_desc">Show or hide Terminal, Bridge, device tools, Relay sessions, and secure remote routes</string>
     <string name="dev_settings_realtime_voice_lab">Realtime voice lab</string>
     <string name="dev_settings_realtime_voice_lab_desc">Open the provider websocket testbench for dev builds</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">Open realtime voice lab</string>
@@ -2439,6 +2439,10 @@
     <string name="conn_info_regenerate_code">Regenerate code</string>
     <string name="conn_info_relay_desc">Relay connection status and configuration.</string>
     <string name="conn_info_relay_enabled_flag">Relay enabled</string>
+    <string name="conn_info_relay_transport_state">Transport state</string>
+    <string name="conn_info_relay_tools">Relay tools</string>
+    <string name="conn_info_relay_tools_desc">Terminal, Bridge, device tools, Relay sessions, and secure remote routes.</string>
+    <string name="conn_info_relay_tools_off_hint">Turn on Relay tools to use this paired Relay connection.</string>
     <string name="conn_info_relay_title">Relay</string>
     <string name="conn_info_relay_url">Relay URL</string>
     <string name="conn_info_route_preference">Route preference</string>

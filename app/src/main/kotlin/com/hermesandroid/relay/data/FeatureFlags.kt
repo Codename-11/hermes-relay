@@ -10,9 +10,9 @@ import kotlinx.coroutines.flow.map
 /**
  * Feature flags with compile-time defaults and runtime overrides.
  *
- * In debug builds, all features are unlocked by default.
- * In release builds, experimental features are hidden unless the user
- * enables Developer Options (tap version 7 times in Settings > About).
+ * Debug builds unlock experimental features by default. Stable Relay tools
+ * are also enabled by default in the full-capability sideload flavor; the
+ * Google Play flavor keeps the conservative opt-in default.
  *
  * Runtime overrides persist in DataStore so testers can toggle features
  * without needing a debug APK.
@@ -26,16 +26,33 @@ object FeatureFlags {
     /** Whether the app is running a debug build. */
     val isDevBuild: Boolean get() = BuildConfig.DEV_MODE
 
+    /** Initial Relay-tools value before DataStore emits its persisted override. */
+    val defaultRelayEnabled: Boolean
+        get() = resolveRelayEnabled(
+            isDevBuild = isDevBuild,
+            isSideload = BuildFlavor.isSideload,
+            storedOverride = null,
+        )
+
     /** Observe whether Developer Options have been unlocked. */
     fun devOptionsUnlocked(context: Context): Flow<Boolean> =
         context.relayDataStore.data.map { prefs ->
             if (isDevBuild) true else prefs[KEY_DEV_OPTIONS_UNLOCKED] ?: false
         }
 
-    /** Observe whether relay features (settings, pairing, onboarding pages) are enabled. */
+    /**
+     * Observe whether Relay tools are enabled.
+     *
+     * Sideload builds are the full-capability product, so Relay defaults on.
+     * A persisted user choice always wins, while debug builds remain unlocked.
+     */
     fun relayEnabled(context: Context): Flow<Boolean> =
         context.relayDataStore.data.map { prefs ->
-            if (isDevBuild) true else prefs[KEY_RELAY_ENABLED] ?: false
+            resolveRelayEnabled(
+                isDevBuild = isDevBuild,
+                isSideload = BuildFlavor.isSideload,
+                storedOverride = prefs[KEY_RELAY_ENABLED],
+            )
         }
 
     /** Unlock Developer Options. */
@@ -45,11 +62,10 @@ object FeatureFlags {
         }
     }
 
-    /** Lock Developer Options and disable all experimental features. */
+    /** Lock Developer Options. Stable Relay tools keep their own user setting. */
     suspend fun lockDevOptions(context: Context) {
         context.relayDataStore.edit { prefs ->
             prefs[KEY_DEV_OPTIONS_UNLOCKED] = false
-            prefs[KEY_RELAY_ENABLED] = false
         }
     }
 
@@ -70,6 +86,20 @@ object FeatureFlags {
      * effect — it's a placeholder hook, not yet load-bearing.
      */
     const val useExoPlayerVoice: Boolean = true
+
+    /**
+     * Pure resolver kept internal so flavor/default behavior has fast JVM
+     * regression coverage without Android DataStore or BuildConfig fixtures.
+     */
+    internal fun resolveRelayEnabled(
+        isDevBuild: Boolean,
+        isSideload: Boolean,
+        storedOverride: Boolean?,
+    ): Boolean = if (isDevBuild) {
+        true
+    } else {
+        storedOverride ?: isSideload
+    }
 }
 
 /**

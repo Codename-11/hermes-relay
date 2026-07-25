@@ -531,7 +531,8 @@ fun RelayInfoSheet(
     val isInsecureConnection by connectionViewModel.isInsecureConnection.collectAsState()
     val insecureMode by connectionViewModel.insecureMode.collectAsState()
     val relayEnabled by FeatureFlags.relayEnabled(context)
-        .collectAsState(initial = FeatureFlags.isDevBuild)
+        .collectAsState(initial = FeatureFlags.defaultRelayEnabled)
+    val scope = rememberCoroutineScope()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -557,7 +558,9 @@ fun RelayInfoSheet(
             HorizontalDivider()
 
             InfoRow(label = stringResource(R.string.conn_info_url), value = relayUrl, monospace = true)
-            ChipRow(label = stringResource(R.string.conn_info_connection_state)) { connectionChip(relayConnectionState) }
+            ChipRow(label = stringResource(R.string.conn_info_relay_transport_state)) {
+                connectionChip(relayConnectionState)
+            }
 
             if (isInsecureConnection) {
                 Row(
@@ -586,10 +589,40 @@ fun RelayInfoSheet(
                 label = stringResource(R.string.conn_info_insecure_mode_allowed),
                 value = if (insecureMode) stringResource(R.string.conn_info_yes) else stringResource(R.string.conn_info_no)
             )
-            InfoRow(
-                label = stringResource(R.string.conn_info_relay_enabled_flag),
-                value = if (relayEnabled) stringResource(R.string.conn_info_yes) else stringResource(R.string.conn_info_no)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.conn_info_relay_tools),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = stringResource(R.string.conn_info_relay_tools_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = relayEnabled,
+                    onCheckedChange = { enabled ->
+                        scope.launch {
+                            FeatureFlags.setRelayEnabled(context, enabled)
+                            if (enabled) {
+                                connectionViewModel.connectRelay()
+                            } else {
+                                connectionViewModel.disconnectRelay()
+                            }
+                        }
+                    },
+                )
+            }
 
             Spacer(modifier = Modifier.height(4.dp))
 
@@ -597,24 +630,32 @@ fun RelayInfoSheet(
                 relayConnectionState == ConnectionState.Connecting ||
                 relayConnectionState == ConnectionState.Reconnecting
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { connectionViewModel.connectRelay() },
-                    enabled = relayEnabled && !isConnected,
-                    modifier = Modifier.fillMaxWidth(0.5f)
+            if (relayEnabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(stringResource(R.string.conn_info_connect))
+                    OutlinedButton(
+                        onClick = { connectionViewModel.connectRelay() },
+                        enabled = !isConnected,
+                        modifier = Modifier.fillMaxWidth(0.5f)
+                    ) {
+                        Text(stringResource(R.string.conn_info_connect))
+                    }
+                    OutlinedButton(
+                        onClick = { connectionViewModel.disconnectRelay() },
+                        enabled = isConnected,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.conn_info_disconnect))
+                    }
                 }
-                OutlinedButton(
-                    onClick = { connectionViewModel.disconnectRelay() },
-                    enabled = relayEnabled && isConnected,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(R.string.conn_info_disconnect))
-                }
+            } else {
+                Text(
+                    text = stringResource(R.string.conn_info_relay_tools_off_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             HorizontalDivider()

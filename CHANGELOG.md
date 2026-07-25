@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Relay no longer reports Connected while its tools are silently disabled.** Full-capability sideload builds default Relay tools on, QR and manual Relay pairing enable them automatically, and the Relay status sheet exposes a direct tools switch that keeps transport state synchronized instead of hiding the control behind Developer Options.
 - **Background chats stay reachable without an always-on connection.** Android now protects user-started work until every concurrent Gateway session settles, shows active and waiting counts in its ongoing notification, and gives each privacy-safe interaction alert expanded session context plus a direct review, answer, or secure-response action.
 - **Android alerts when a background Gateway turn needs input.** Approval, clarification, elevated-permission, and secret requests post privacy-safe notifications that reopen the correct conversation, survive reconnect replay without duplicates, and clear when the request is answered or expires.
 - **Promoted voice tasks keep their Chat row through background delivery.** Completing the provider's initial spoken handoff no longer removes an otherwise empty assistant bubble that still owns a running background task.

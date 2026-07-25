@@ -111,7 +111,7 @@ fun ConnectionDetailScreen(
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
     val relayEnabled by FeatureFlags.relayEnabled(context)
-        .collectAsState(initial = FeatureFlags.isDevBuild)
+        .collectAsState(initial = FeatureFlags.defaultRelayEnabled)
 
     val connection = connections.firstOrNull { it.id == connectionId }
     // Connection was removed (e.g. via the overflow menu) — leave the screen.

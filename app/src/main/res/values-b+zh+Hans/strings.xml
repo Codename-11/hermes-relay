@@ -1183,7 +1183,7 @@
     <string name="dev_settings_reset_all_data_cd">重置全部数据</string>
     <string name="dev_options_section">开发者选项</string>
     <string name="dev_settings_relay_features">Relay 功能</string>
-    <string name="dev_settings_relay_features_desc">显示 Relay 服务器和配对设置，用于 Bridge/Terminal 开发</string>
+    <string name="dev_settings_relay_features_desc">显示或隐藏终端、Bridge、设备工具、Relay 会话和安全远程路由</string>
     <string name="dev_settings_realtime_voice_lab">实时语音实验室</string>
     <string name="dev_settings_realtime_voice_lab_desc">为开发构建打开 provider websocket 测试台</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">打开实时语音实验室</string>
@@ -2314,6 +2314,10 @@
     <string name="conn_info_regenerate_code">重新生成代码</string>
     <string name="conn_info_relay_desc">Relay 连接状态和配置。</string>
     <string name="conn_info_relay_enabled_flag">Relay 已启用</string>
+    <string name="conn_info_relay_transport_state">传输状态</string>
+    <string name="conn_info_relay_tools">Relay 工具</string>
+    <string name="conn_info_relay_tools_desc">终端、Bridge、设备工具、Relay 会话和安全远程路由。</string>
+    <string name="conn_info_relay_tools_off_hint">开启 Relay 工具以使用此已配对的 Relay 连接。</string>
     <string name="conn_info_relay_title">Relay</string>
     <string name="conn_info_relay_url">Relay 地址</string>
     <string name="conn_info_route_preference">路由偏好</string>

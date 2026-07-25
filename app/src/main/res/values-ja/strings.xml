@@ -1199,7 +1199,7 @@
     <string name="dev_settings_reset_all_data_cd">すべてのデータをリセット</string>
     <string name="dev_options_section">開発者向けオプション</string>
     <string name="dev_settings_relay_features">Relay の特徴</string>
-    <string name="dev_settings_relay_features_desc">Relay サーバーと Bridge/ターミナル開発用のペアリング設定を表示</string>
+    <string name="dev_settings_relay_features_desc">ターミナル、Bridge、デバイスツール、Relay セッション、安全なリモートルートを表示または非表示にする</string>
     <string name="dev_settings_realtime_voice_lab">リアルタイム音声ラボ</string>
     <string name="dev_settings_realtime_voice_lab_desc">開発ビルド用のプロバイダー WebSocket テストベンチを開きます</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">リアルタイム音声ラボを開く</string>
@@ -2330,6 +2330,10 @@
     <string name="conn_info_regenerate_code">コードを再生成する</string>
     <string name="conn_info_relay_desc">Relay 接続ステータスと構成。</string>
     <string name="conn_info_relay_enabled_flag">Relay が有効になりました</string>
+    <string name="conn_info_relay_transport_state">トランスポートの状態</string>
+    <string name="conn_info_relay_tools">Relay ツール</string>
+    <string name="conn_info_relay_tools_desc">ターミナル、Bridge、デバイスツール、Relay セッション、安全なリモートルート。</string>
+    <string name="conn_info_relay_tools_off_hint">このペアリング済み Relay 接続を使用するには、Relay ツールをオンにしてください。</string>
     <string name="conn_info_relay_title">Relay</string>
     <string name="conn_info_relay_url">Relay URL</string>
     <string name="conn_info_route_preference">ルートの優先順位</string>

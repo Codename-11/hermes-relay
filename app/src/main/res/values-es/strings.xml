@@ -1074,7 +1074,7 @@
     <string name="dev_settings_reset_all_data_cd">Restablecer todos los datos</string>
     <string name="dev_options_section">Opciones de desarrollador</string>
     <string name="dev_settings_relay_features">Características de Relay</string>
-    <string name="dev_settings_relay_features_desc">Mostrar el servidor Relay y la configuración de emparejamiento para el desarrollo de Bridge/Terminal</string>
+    <string name="dev_settings_relay_features_desc">Mostrar u ocultar Terminal, Bridge, herramientas del dispositivo, sesiones Relay y rutas remotas seguras</string>
     <string name="dev_settings_realtime_voice_lab">Laboratorio de voz en tiempo real</string>
     <string name="dev_settings_realtime_voice_lab_desc">Abra el banco de pruebas del proveedor websocket para compilaciones de desarrollo.</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">Abrir laboratorio de voz en tiempo real</string>
@@ -2119,6 +2119,10 @@
     <string name="conn_info_regenerate_code">regenerar código</string>
     <string name="conn_info_relay_desc">Estado y configuración de la conexión Relay.</string>
     <string name="conn_info_relay_enabled_flag">Relay habilitado</string>
+    <string name="conn_info_relay_transport_state">Estado del transporte</string>
+    <string name="conn_info_relay_tools">Herramientas Relay</string>
+    <string name="conn_info_relay_tools_desc">Terminal, Bridge, herramientas del dispositivo, sesiones Relay y rutas remotas seguras.</string>
+    <string name="conn_info_relay_tools_off_hint">Activa las herramientas Relay para usar esta conexión Relay emparejada.</string>
     <string name="conn_info_relay_title">Relay</string>
     <string name="conn_info_relay_url">URL de Relay</string>
     <string name="conn_info_route_preference">Preferencia de ruta</string>
