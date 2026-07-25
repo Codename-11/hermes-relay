@@ -2923,6 +2923,7 @@ class ChatHandler {
                         msg.id == messageId &&
                         msg.role == MessageRole.ASSISTANT &&
                         msg.toolCalls.isEmpty() &&
+                        msg.backgroundTask == null &&
                         msg.thinkingContent.isBlank() &&
                         (msg.content.isBlank() || isIntentionalSilenceMarker(msg.content))
                 }

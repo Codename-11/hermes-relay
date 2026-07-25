@@ -41,8 +41,6 @@ import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.LocalMarkdownColors
 import com.mikepenz.markdown.compose.LocalMarkdownDimens
 import com.mikepenz.markdown.compose.elements.MarkdownDivider
-import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
-import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownTable
 import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
 import com.mikepenz.markdown.compose.elements.MarkdownTableRow
@@ -152,7 +150,7 @@ fun MarkdownContent(
         ),
         components = markdownComponents(
             codeBlock = {
-                MarkdownHighlightedCodeBlock(
+                SafeMarkdownHighlightedCodeBlock(
                     content = it.content,
                     node = it.node,
                     highlightsBuilder = highlightsBuilder,
@@ -160,7 +158,7 @@ fun MarkdownContent(
                 )
             },
             codeFence = {
-                MarkdownHighlightedCodeFence(
+                SafeMarkdownHighlightedCodeFence(
                     content = it.content,
                     node = it.node,
                     highlightsBuilder = highlightsBuilder,
