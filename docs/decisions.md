@@ -2130,7 +2130,8 @@ stable identity independent of endpoint URLs.
   API server only when configured and usable. Users choose a transport only in
   advanced diagnostics or compatibility settings, not during normal setup.
   Endpoint discovery may advertise a conventional API route, but does not enable
-  that optional fallback unless the connection has persisted API configuration.
+  that optional fallback unless the connection has persisted API configuration;
+  cold-start state remains unconfigured until that persisted value is hydrated.
 
 **Product flow.** Normal onboarding asks for one Hermes address, discovers the
 Dashboard/Gateway, authenticates through its supported provider, and finishes
