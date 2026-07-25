@@ -6371,50 +6371,62 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun resetOnboarding() {
+    fun resetOnboarding(onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            dataManager.resetOnboarding()
-            _onboardingCompleted.value = false
+            val success = dataManager.resetOnboarding()
+            if (success) {
+                _onboardingCompleted.value = false
+            }
+            onResult(success)
         }
     }
 
-    fun resetAppData() {
+    fun resetAppData(onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            disconnectRelay()
-            authManager.clearSession()
-            authManager.clearApiKey()
-            dataManager.resetAppData()
-            profileController.profileSelectionStore.clearAll()
-            profileController.profileLockStore.clearAll()
-            profileController.profilePresentationStore.clearAll()
-            profileController.profileSessionStore.clearAll()
-            _apiServerUrl.value = ""
-            _relayUrl.value = ""
-            rebuildApiClient()
-            shutdownClientOffMain(profileChatApiClient)
-            profileChatApiClient = null
-            profileChatApiClientUrl = null
-            profileChatApiClientKey = null
-            profileController.clearSelectionState()
-            _lastSessionId.value = null
+            val success = runCatching {
+                disconnectRelay()
+                authManager.clearSession()
+                authManager.clearApiKey()
+                check(dataManager.resetAppData()) { "App data store reset failed" }
+                profileController.profileSelectionStore.clearAll()
+                profileController.profileLockStore.clearAll()
+                profileController.profilePresentationStore.clearAll()
+                profileController.profileSessionStore.clearAll()
+                _apiServerUrl.value = ""
+                _relayUrl.value = ""
+                rebuildApiClient()
+                shutdownClientOffMain(profileChatApiClient)
+                profileChatApiClient = null
+                profileChatApiClientUrl = null
+                profileChatApiClientKey = null
+                profileController.clearSelectionState()
+                _lastSessionId.value = null
+            }.onFailure {
+                android.util.Log.e("ConnectionVM", "Failed to reset app data", it)
+            }.isSuccess
+            onResult(success)
         }
     }
 
-    fun exportSettings(onResult: (String) -> Unit) {
+    fun exportSettings(onResult: (String?) -> Unit) {
         viewModelScope.launch {
-            val json = dataManager.exportSettings(
-                serverUrl = _relayUrl.value,
-                theme = theme.value,
-                onboardingCompleted = _onboardingCompleted.value,
-                // Pass 2: AuthManager.sessionLabels is gone — replaced by
-                // `agentProfiles: StateFlow<List<Profile>>`. The DataManager
-                // param is marked @Suppress("UNUSED_PARAMETER") and isn't
-                // written to the backup anyway, so an empty list keeps the
-                // signature stable until the param is removed in a later pass.
-                sessionLabels = emptyList(),
-                apiServerUrl = _apiServerUrl.value,
-                relayUrl = _relayUrl.value
-            )
+            val json = runCatching {
+                dataManager.exportSettings(
+                    serverUrl = _relayUrl.value,
+                    theme = theme.value,
+                    onboardingCompleted = _onboardingCompleted.value,
+                    // Pass 2: AuthManager.sessionLabels is gone — replaced by
+                    // `agentProfiles: StateFlow<List<Profile>>`. The DataManager
+                    // param is marked @Suppress("UNUSED_PARAMETER") and isn't
+                    // written to the backup anyway, so an empty list keeps the
+                    // signature stable until the param is removed in a later pass.
+                    sessionLabels = emptyList(),
+                    apiServerUrl = _apiServerUrl.value,
+                    relayUrl = _relayUrl.value
+                )
+            }.onFailure {
+                android.util.Log.e("ConnectionVM", "Failed to prepare settings backup", it)
+            }.getOrNull()
             onResult(json)
         }
     }
@@ -6436,24 +6448,39 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 onResult(false)
                 return@launch
             }
-            // Apply imported settings
-            if (backup.connections.isNotEmpty()) {
+            val success = runCatching {
+                val importedRelayUrl = if (backup.connections.isEmpty()) {
+                    backup.relayUrl ?: backup.serverUrl
+                } else {
+                    null
+                }
+                // A backup is a replacement snapshot, including when it
+                // intentionally contains zero connections.
                 dataManager.restoreConnectionBackup(backup)
+                getApplication<Application>().relayDataStore.edit { preferences ->
+                    preferences[KEY_THEME] = backup.theme
+                    importedRelayUrl?.let { preferences[KEY_RELAY_URL] = it }
+                    backup.apiServerUrl
+                        ?.takeIf { backup.connections.isEmpty() }
+                        ?.let { preferences[KEY_API_SERVER_URL] = it }
+                }
                 connectionStore.activeConnection.value?.let { restored ->
                     restorePersistedActiveConnectionContext(restored)
                 }
-            } else {
-                // Prefer v2 fields, fall back to v1 serverUrl for relay
-                val importedRelayUrl = backup.relayUrl ?: backup.serverUrl
-                importedRelayUrl?.let { updateRelayUrl(it) }
-                backup.apiServerUrl?.let { updateApiServerUrl(it) }
-            }
-            setTheme(backup.theme)
-            if (backup.onboardingCompleted) {
-                dataManager.setOnboardingCompleted(true)
-                _onboardingCompleted.value = true
-            }
-            onResult(true)
+                if (backup.connections.isEmpty()) {
+                    // Preserve v1/v2 compatibility after clearing the current
+                    // multi-connection snapshot.
+                    importedRelayUrl?.let { updateRelayUrl(it) }
+                    backup.apiServerUrl?.let { updateApiServerUrl(it) }
+                }
+                check(dataManager.setOnboardingCompleted(backup.onboardingCompleted)) {
+                    "Failed to restore onboarding state"
+                }
+                _onboardingCompleted.value = backup.onboardingCompleted
+            }.onFailure {
+                android.util.Log.e("ConnectionVM", "Failed to import settings backup", it)
+            }.isSuccess
+            onResult(success)
         }
     }
 

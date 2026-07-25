@@ -93,7 +93,6 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
-import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfilePresentation
 import com.hermesandroid.relay.data.ProfilePresentationPolicy
@@ -548,9 +547,6 @@ fun RelayInfoSheet(
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val isInsecureConnection by connectionViewModel.isInsecureConnection.collectAsState()
     val insecureMode by connectionViewModel.insecureMode.collectAsState()
-    val relayEnabled by FeatureFlags.relayEnabled(context)
-        .collectAsState(initial = FeatureFlags.isDevBuild)
-
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
@@ -604,11 +600,6 @@ fun RelayInfoSheet(
                 label = stringResource(R.string.conn_info_insecure_mode_allowed),
                 value = if (insecureMode) stringResource(R.string.conn_info_yes) else stringResource(R.string.conn_info_no)
             )
-            InfoRow(
-                label = stringResource(R.string.conn_info_relay_enabled_flag),
-                value = if (relayEnabled) stringResource(R.string.conn_info_yes) else stringResource(R.string.conn_info_no)
-            )
-
             Spacer(modifier = Modifier.height(4.dp))
 
             val isConnected = relayConnectionState == ConnectionState.Connected ||
@@ -621,14 +612,14 @@ fun RelayInfoSheet(
             ) {
                 OutlinedButton(
                     onClick = { connectionViewModel.connectRelay() },
-                    enabled = relayEnabled && !isConnected,
+                    enabled = relayUrl.isNotBlank() && !isConnected,
                     modifier = Modifier.fillMaxWidth(0.5f)
                 ) {
                     Text(stringResource(R.string.conn_info_connect))
                 }
                 OutlinedButton(
                     onClick = { connectionViewModel.disconnectRelay() },
-                    enabled = relayEnabled && isConnected,
+                    enabled = isConnected,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(stringResource(R.string.conn_info_disconnect))
