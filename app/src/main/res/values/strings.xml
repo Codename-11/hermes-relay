@@ -1223,6 +1223,12 @@
     <string name="appearance_font">Font</string>
     <string name="appearance_font_desc">Sets the typeface across the whole app. Code and timestamps stay monospaced.</string>
     <string name="appearance_animation">Animation</string>
+    <string name="appearance_image_generation_style">Image generation</string>
+    <string name="appearance_image_generation_style_desc">Rotate through all three progress animations, or keep one style for every generation.</string>
+    <string name="appearance_image_generation_rotate">Rotate</string>
+    <string name="appearance_image_generation_grid">Grid</string>
+    <string name="appearance_image_generation_sphere">Sphere</string>
+    <string name="appearance_image_generation_nodes">Nodes</string>
     <string name="appearance_ascii_sphere">ASCII sphere</string>
     <string name="appearance_ascii_sphere_desc">Show animated sphere on empty chat screen and ambient mode</string>
     <string name="appearance_behind_messages">Behind messages</string>
@@ -1284,6 +1290,9 @@
     <string name="dev_settings_realtime_voice_lab">Realtime voice lab</string>
     <string name="dev_settings_realtime_voice_lab_desc">Open the provider websocket testbench for dev builds</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">Open realtime voice lab</string>
+    <string name="dev_settings_image_generation_lab">Image generation lab</string>
+    <string name="dev_settings_image_generation_lab_desc">Preview generation loops and the final image reveal</string>
+    <string name="dev_settings_open_image_generation_lab_cd">Open image generation lab</string>
     <string name="dev_settings_lock_dev_options">Lock developer options</string>
     <string name="dev_settings_lock_dev_options_desc">Hide this section and disable experimental features</string>
     <string name="dev_settings_locked_toast">Developer options locked</string>

@@ -2640,6 +2640,17 @@ fun RelayApp() {
                         onNavigateToRealtimeVoice = {
                             navController.navigate(Screen.RealtimeVoiceTest.route)
                         },
+                        onNavigateToImageGenerationLab = {
+                            terminalAppContext.startActivity(
+                                android.content.Intent().apply {
+                                    setClassName(
+                                        terminalAppContext,
+                                        "com.hermesandroid.relay.ui.screens.ImageGenerationDesignQaActivity",
+                                    )
+                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                            )
+                        },
                     )
                 }
                 composable(Screen.RealtimeVoiceTest.route) {

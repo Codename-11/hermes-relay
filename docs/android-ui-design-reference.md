@@ -211,6 +211,68 @@ Use this reference for Quest visual tone, but do not force the phone layout into
 - Status logs can become compact floating diagnostic panels.
 - QR pairing should use the same state model and log language, adapted to headset camera/input constraints.
 
+## Motion Language
+
+Motion should explain an agent state change. It is not ambient decoration.
+For generative work, the preferred visual grammar is:
+
+`unresolved material → recognizable structure → verified success → controlled dissolution`
+
+The first and last frames of a loop must match exactly. Construction and
+deconstruction should use related trajectories so the animation feels
+reversible rather than resetting. Keep the background stable across the seam;
+moving lights, unmatched point positions, and phase discontinuities make even a
+technically continuous loop appear to flash.
+
+### Image-generation progress
+
+The image-generation treatments establish the current reference:
+
+- **Grid:** pixels diffuse into and out of a clean, symmetrical field. Preserve
+  the smooth pixel-wave materialization; do not expose the background through a
+  nearly complete grid in a way that makes the surface look torn or dirty.
+- **Sphere:** sparse depth particles are pulled into a structured spherical
+  surface and released along the same paths. The resolved form is divided into
+  thirds and may perform Rubik-like outer-slice turns. Each turn owns exactly
+  one valid outer layer at a time; overlapping slice animations read as broken
+  geometry. Avoid jellyfish motion, wavy path lines, or a simple spin-and-breathe
+  loop.
+- **Nodes:** orphan nodes and short path fragments converge into an exact,
+  symmetrical lattice. Edges connect progressively only as their endpoints
+  resolve. Once the complete topology is valid, show one clean success sweep
+  and a restrained settle pulse before deconstruction.
+
+Appearance offers **Rotate**, **Grid**, **Sphere**, and **Nodes**. Rotate is the
+default and assigns one complete treatment per generation in repeating order;
+it must not swap styles while a single image is being generated.
+
+Particles should be structural material with an origin and destination, not a
+generic wallpaper effect. Each treatment can use different material—pixels,
+depth dust, nodes, or path fragments—while retaining the same
+construct/verify/deconstruct story.
+
+### Result handoff
+
+The progress animation and generated result are one continuous surface:
+
+1. Advance the active animation to a stable resolved keyframe.
+2. Keep that resolved form mounted beneath the result.
+3. Materialize the real result through geometry related to the progress motif.
+4. Let the result take visual ownership before removing the progress layer.
+
+Do not insert a blank frame, rebuild the surrounding bubble, hard-swap the
+content, or stop the animation at an arbitrary phase. The preferred image
+reveal is a smooth diagonal pixel wave, long enough for the materialization to
+be legible but without delaying access to the result.
+
+### Iteration and verification
+
+Animation work should use a debug-only lab reachable from Developer Options.
+The lab should offer deterministic style selection, speed controls, restart,
+and an explicit result reveal. It must not ship in release variants. Use the
+fast sideload build/deploy loop for visual tuning, then run the full Android
+gate only after the motion is accepted.
+
 ## Implementation Notes For Future Sessions
 
 When implementing this reference:
