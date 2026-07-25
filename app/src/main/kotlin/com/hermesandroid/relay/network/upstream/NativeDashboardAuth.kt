@@ -47,6 +47,10 @@ interface NativeDashboardTokenStore {
     fun clear()
 }
 
+internal fun clearNativeDashboardTokens(store: NativeDashboardTokenStore) {
+    NativeTokenRefreshCoordinator.clear(store)
+}
+
 class EncryptedNativeDashboardTokenStore(
     context: Context,
     tokenStoreKey: String,
@@ -80,6 +84,7 @@ class NativeDashboardAuthorization internal constructor(
     val authorizationUrl: String,
     internal val verifier: String,
     internal val state: String,
+    internal val generation: Long,
 )
 
 class NativeDashboardAuthClient(
@@ -119,32 +124,58 @@ class NativeDashboardAuthClient(
             .apply { provider?.takeIf(String::isNotBlank)?.let { addQueryParameter("provider", it) } }
             .build()
             .toString()
-        return NativeDashboardAuthorization(url, verifier, state)
+        val generation = NativeTokenRefreshCoordinator.beginAuthorization(
+            tokenStore.coordinationKey,
+        )
+        return NativeDashboardAuthorization(url, verifier, state, generation)
     }
 
     fun exchangeCallback(
         authorization: NativeDashboardAuthorization,
         callbackTarget: String,
+        commitAllowed: () -> Boolean = { true },
     ): NativeDashboardTokens {
         val callback = callbackTarget.toHttpUrlOrNull()
             ?: "http://127.0.0.1$callbackTarget".toHttpUrlOrNull()
-            ?: throw IOException("Native sign-in callback was malformed")
+            ?: throw NativeDashboardCallbackException("Native sign-in callback was malformed")
         if (callback.host != "127.0.0.1" || callback.encodedPath != CALLBACK_PATH) {
-            throw IOException("Native sign-in callback did not use the expected loopback path")
+            throw NativeDashboardCallbackException(
+                "Native sign-in callback did not use the expected loopback path",
+            )
         }
-        callback.queryParameter("error")?.let { throw IOException("Gateway rejected native sign-in") }
+        if (callback.queryParameter("state") != authorization.state) {
+            throw NativeDashboardCallbackException("Native sign-in callback state did not match")
+        }
+        callback.queryParameter("error")?.let {
+            throw NativeDashboardCallbackException(
+                message = "Gateway rejected native sign-in",
+                retryable = false,
+            )
+        }
         val code = callback.queryParameter("code")
             ?.takeIf(String::isNotBlank)
-            ?: throw IOException("Native sign-in callback did not include an authorization code")
-        if (callback.queryParameter("state") != authorization.state) {
-            throw IOException("Native sign-in callback state did not match")
-        }
+            ?: throw NativeDashboardCallbackException(
+                "Native sign-in callback did not include an authorization code",
+            )
         val payload = NativeTokenExchange(code = code, codeVerifier = authorization.verifier)
         return postTokens(
             path = "/auth/native/token",
             payload = json.encodeToString(payload),
             clearOnAuthFailure = false,
+            expectedGeneration = authorization.generation,
+            commitAllowed = commitAllowed,
         )
+    }
+
+    internal fun cancelAuthorization(authorization: NativeDashboardAuthorization) {
+        NativeTokenRefreshCoordinator.cancelAuthorization(
+            tokenStore.coordinationKey,
+            authorization.generation,
+        )
+    }
+
+    fun clearStoredSession() {
+        clearNativeDashboardTokens(tokenStore)
     }
 
     fun refresh(tokens: NativeDashboardTokens? = null): NativeDashboardTokens {
@@ -161,11 +192,15 @@ class NativeDashboardAuthClient(
                 throw IOException("Native dashboard session cannot be refreshed")
             }
             val payload = NativeTokenRefresh(current.refreshToken, current.provider)
+            val generation = NativeTokenRefreshCoordinator.currentGeneration(
+                tokenStore.coordinationKey,
+            )
             try {
                 postTokens(
                     path = "/auth/native/refresh",
                     payload = json.encodeToString(payload),
                     clearOnAuthFailure = false,
+                    expectedGeneration = generation,
                 )
             } catch (error: NativeDashboardAuthHttpException) {
                 if (error.statusCode == 400 || error.statusCode == 401) {
@@ -180,6 +215,8 @@ class NativeDashboardAuthClient(
         path: String,
         payload: String,
         clearOnAuthFailure: Boolean,
+        expectedGeneration: Long,
+        commitAllowed: () -> Boolean = { true },
     ): NativeDashboardTokens {
         val url = "$baseUrl$path".toHttpUrlOrNull()
             ?: throw IOException("Dashboard URL is not a valid http(s) address")
@@ -203,7 +240,15 @@ class NativeDashboardAuthClient(
                     }
                 }
         }
-        tokenStore.save(tokens)
+        synchronized(NativeTokenRefreshCoordinator.lockFor(tokenStore.coordinationKey)) {
+            if (!commitAllowed() ||
+                NativeTokenRefreshCoordinator.currentGeneration(tokenStore.coordinationKey) !=
+                expectedGeneration
+            ) {
+                throw IOException("Dashboard sign-in is no longer active")
+            }
+            tokenStore.save(tokens)
+        }
         return tokens
     }
 
@@ -225,6 +270,17 @@ class NativeDashboardAuthClient(
             }
         }
     }
+}
+
+internal class NativeDashboardCallbackException(
+    message: String,
+    val retryable: Boolean = true,
+) : IOException(message)
+
+internal fun isNativeDashboardTransportEligible(baseUrl: String): Boolean {
+    val url = baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
+    return url.scheme == "https" ||
+        (url.scheme == "http" && url.host == "127.0.0.1")
 }
 
 /**
@@ -295,7 +351,33 @@ private class NativeDashboardAuthHttpException(
 
 private object NativeTokenRefreshCoordinator {
     private val locks = ConcurrentHashMap<String, Any>()
+    private val generations = ConcurrentHashMap<String, Long>()
+
     fun lockFor(key: String): Any = locks.computeIfAbsent(key) { Any() }
+
+    fun currentGeneration(key: String): Long =
+        synchronized(lockFor(key)) { generations[key] ?: 0L }
+
+    fun beginAuthorization(key: String): Long =
+        synchronized(lockFor(key)) {
+            (generations[key] ?: 0L).plus(1L).also { generations[key] = it }
+        }
+
+    fun cancelAuthorization(key: String, expectedGeneration: Long) {
+        synchronized(lockFor(key)) {
+            if ((generations[key] ?: 0L) == expectedGeneration) {
+                generations[key] = expectedGeneration + 1L
+            }
+        }
+    }
+
+    fun clear(store: NativeDashboardTokenStore) {
+        synchronized(lockFor(store.coordinationKey)) {
+            generations[store.coordinationKey] =
+                (generations[store.coordinationKey] ?: 0L) + 1L
+            store.clear()
+        }
+    }
 }
 
 @Serializable

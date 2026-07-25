@@ -15,6 +15,7 @@ security-crypto = "1.1.0"
 tink-android = "1.23.0"
 lifecycle = "2.11.0"
 activity-compose = "1.13.0"
+browser = "1.9.0"
 appcompat = "1.7.1"
 core-ktx = "1.19.0"
 datastore = "1.2.1"
@@ -54,6 +55,7 @@ lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-view
 
 # Activity
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
+browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
 appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 
 # Core

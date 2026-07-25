@@ -126,6 +126,84 @@ class NativeDashboardAuthTest {
     }
 
     @Test
+    fun exchangeCallback_doesNotRestoreTokensAfterSessionClear() {
+        val responseStarted = CountDownLatch(1)
+        val releaseResponse = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                responseStarted.countDown()
+                check(releaseResponse.await(5, TimeUnit.SECONDS))
+                return MockResponse().setBody(
+                    """{"access_token":"late","refresh_token":"late-refresh","expires_at":3000,"provider":"nous","user_id":"u"}""",
+                )
+            }
+        }
+        val client = NativeDashboardAuthClient(server.url("/").toString(), store)
+        val authorization = client.beginAuthorization("http://127.0.0.1:43123/callback")
+        val failure = AtomicReference<Throwable?>()
+        val exchange = Thread {
+            runCatching {
+                client.exchangeCallback(
+                    authorization,
+                    "/callback?code=late-code&state=${authorization.state}",
+                )
+            }.exceptionOrNull()?.let(failure::set)
+        }.apply { start() }
+
+        assertTrue(responseStarted.await(5, TimeUnit.SECONDS))
+        client.clearStoredSession()
+        releaseResponse.countDown()
+        exchange.join(5_000)
+
+        assertFalse(exchange.isAlive)
+        assertTrue(failure.get() is java.io.IOException)
+        assertEquals(null, store.load())
+    }
+
+    @Test
+    fun exchangeCallback_doesNotCommitAfterAttemptCancellation() {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"access_token":"cancelled","refresh_token":"refresh","expires_at":3000,"provider":"nous","user_id":"u"}""",
+            ),
+        )
+        val client = NativeDashboardAuthClient(server.url("/").toString(), store)
+        val authorization = client.beginAuthorization("http://127.0.0.1:43123/callback")
+
+        val result = runCatching {
+            client.exchangeCallback(
+                authorization,
+                "/callback?code=code&state=${authorization.state}",
+                commitAllowed = { false },
+            )
+        }
+
+        assertTrue(result.isFailure)
+        assertEquals(null, store.load())
+    }
+
+    @Test
+    fun trustedBearerPolicy_rejectsCleartextDashboardRoute() {
+        store.save(
+            NativeDashboardTokens(
+                accessToken = "must-not-leak",
+                refreshToken = "must-not-refresh",
+                expiresAt = 1,
+                provider = "nous",
+            ),
+        )
+
+        val bearer = trustedDashboardBearerAuthOrNull(
+            candidate = "http://hermes.local:9119",
+            trusted = "http://hermes.local:9119",
+            tokenStoreProvider = { store },
+        )
+
+        assertEquals(null, bearer)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
     fun bearerAuth_refreshesNearExpiryAndAuthenticatesTicketRequest() {
         store.save(
             NativeDashboardTokens(

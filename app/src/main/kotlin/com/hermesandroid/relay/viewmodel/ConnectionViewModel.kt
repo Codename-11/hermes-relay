@@ -68,6 +68,7 @@ import com.hermesandroid.relay.network.upstream.mirrorDashboardSessionCookies
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
 import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.shared.EndpointResolver
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
@@ -960,6 +961,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun activeDashboardCookieStore(): DashboardCookieStore? =
         upstreamTransport.activeDashboardCookieStore()
+
+    /** Trusted active-connection clients used by the shared dashboard sign-in route. */
+    fun dashboardClientForActive(dashboardUrl: String): DashboardApiClient =
+        upstreamTransport.dashboardClientForActive(dashboardUrl)
+
+    fun nativeDashboardAuthClientForActive(dashboardUrl: String): NativeDashboardAuthClient? =
+        upstreamTransport.nativeDashboardAuthClientForActive(dashboardUrl)
+
+    fun dashboardHttpClientForActive(dashboardUrl: String): okhttp3.OkHttpClient =
+        upstreamTransport.dashboardHttpClientForActive(dashboardUrl)
 
     /** Authenticated Dashboard config for dashboard-primary feature catalogs. */
     suspend fun loadActiveDashboardConfig(): Result<JsonObject>? {
@@ -4927,7 +4938,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val active = connectionStore.connections.value.firstOrNull { it.id == connectionId }
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                dashboardCookieStoreFor(connectionId).clear()
+                upstreamTransport.clearDashboardAuthentication(connectionId)
             }
             connectionStore.setDashboardStatus(
                 connectionId = connectionId,

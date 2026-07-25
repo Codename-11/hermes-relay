@@ -170,6 +170,17 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
+Dashboard/Gateway redirect providers use the upstream native PKCE contract when
+`GET /api/status` advertises `native_pkce`. Android opens the selected provider
+in a Custom Tab and owns a single ephemeral callback on
+`http://127.0.0.1:<os-assigned-port>/callback`. PKCE verifier and CSRF state
+exist only for that sign-in coroutine. Access and refresh tokens are encrypted
+per connection and are attached only to the exact trusted dashboard base for
+Manage, Gateway tickets, and standard voice. Native exchange is allowed only
+for HTTPS dashboard addresses (plus literal loopback for development). A
+gateway without the capability uses the legacy cookie/WebView flow; a failed
+native attempt never silently downgrades.
+
 Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (plus the API server credentials and optional dashboard URL) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
 As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candidates** (`lan` / `tailscale` / `public` / operator-defined roles). A single pairing covers every network the phone might be on — the phone picks the highest-priority reachable candidate at connect time and re-probes on network change. The single-URL top-level fields still appear in v3 QRs for backward compatibility; old phones ignore `endpoints` via `ignoreUnknownKeys = true`, new phones prefer `endpoints` and fall back to the top-level URL when the array is absent. See [`docs/remote-access.md`](remote-access.md) for the operator-facing setup per mode.

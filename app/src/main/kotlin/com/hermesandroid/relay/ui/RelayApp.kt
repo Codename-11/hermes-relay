@@ -154,7 +154,6 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.relay.RelayProfileInspectorClient
 import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
-import com.hermesandroid.relay.network.upstream.DynamicDashboardCookieJar
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
@@ -599,15 +598,9 @@ fun RelayApp() {
     val standardVoiceClient = remember {
         StandardHermesVoiceClient(
             context = mediaContext,
-            okHttpClient = okhttp3.OkHttpClient.Builder()
-                .cookieJar(
-                    DynamicDashboardCookieJar {
-                        connectionViewModel.activeDashboardCookieStore()
-                    },
-                )
-                .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
-                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build(),
+            dashboardHttpClientProvider = { dashboardUrl ->
+                connectionViewModel.dashboardHttpClientForActive(dashboardUrl)
+            },
             dashboardUrlProvider = { connectionViewModel.activeDashboardUrl() },
             // Live read (null for the default profile) — sent defensively on
             // /api/audio/speak; upstream ignores it, so standard voice stays the
@@ -1476,10 +1469,10 @@ fun RelayApp() {
             // The VM's cached per-connection store — the prewarm must NOT
             // construct its own (each instance lazily pays a multi-second
             // Keystore keyset build under a process-global Tink lock).
-            val cookieStore = connectionViewModel.activeDashboardCookieStore()
-                ?: return@LaunchedEffect
             prewarmDashboardManage(
-                cookieStore = cookieStore,
+                clientFactory = {
+                    connectionViewModel.dashboardClientForActive(effectiveDashboardUrl)
+                },
                 connectionId = connection.id,
                 dashboardUrl = effectiveDashboardUrl,
                 effectiveProfileName = effectiveManageProfile,
@@ -2301,8 +2294,8 @@ fun RelayApp() {
                         standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
                         relayVoiceReady = relayVoiceReady,
                         dashboardUrl = voiceDashboardUrl,
-                        dashboardCookieStoreProvider = {
-                            connectionViewModel.activeDashboardCookieStore()
+                        dashboardClientProvider = { dashboardUrl ->
+                            connectionViewModel.dashboardClientForActive(dashboardUrl)
                         },
                         onOpenManage = {
                             navController.navigate(Screen.Manage.route) {

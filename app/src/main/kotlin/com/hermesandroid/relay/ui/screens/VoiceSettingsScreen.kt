@@ -112,9 +112,7 @@ import com.hermesandroid.relay.network.relay.VoiceProviderValidationResponse
 import com.hermesandroid.relay.network.upstream.ConfigFieldType
 import com.hermesandroid.relay.network.upstream.ConfigSchemaField
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
-import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.ElevenLabsVoices
-import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.applyConfigEdits
 import com.hermesandroid.relay.network.upstream.configValueAt
 import com.hermesandroid.relay.network.upstream.parseConfigSchema
@@ -184,12 +182,12 @@ fun VoiceSettingsScreen(
      */
     connectionId: String? = null,
     /**
-     * Dashboard base URL + per-connection cookie store provider for the
-     * standard-path server voice-config editor (`/api/config`, cookie auth).
+     * Dashboard base URL + trusted per-connection client provider for the
+     * standard-path server voice-config editor (`/api/config`, session auth).
      * Null on connections with no dashboard — the editor card is then hidden.
      */
     dashboardUrl: String? = null,
-    dashboardCookieStoreProvider: (() -> DashboardCookieStore?)? = null,
+    dashboardClientProvider: ((String) -> DashboardApiClient)? = null,
     onOpenManage: (() -> Unit)? = null,
     onBack: () -> Unit,
     settingsViewModel: VoiceSettingsViewModel = viewModel(),
@@ -208,17 +206,12 @@ fun VoiceSettingsScreen(
     // just observes it; the editor cards push saves back through the VM.
     val configState by settingsViewModel.configState.collectAsState()
 
-    // Standard-path server voice-config editor client (dashboard cookie auth).
+    // Standard-path server voice-config editor client (cookie or native bearer).
     // Built once per (dashboardUrl, connection); shut down on dispose. Null when
     // the connection has no dashboard, which hides the card entirely.
     val dashboardConfigClient = remember(dashboardUrl, connectionId) {
         val url = dashboardUrl?.trim()?.takeIf { it.isNotBlank() } ?: return@remember null
-        DashboardApiClient(
-            baseUrl = url,
-            okHttpClient = DashboardApiClient.defaultClient(
-                cookieStore = dashboardCookieStoreProvider?.invoke() ?: InMemoryDashboardCookieStore(),
-            ),
-        )
+        dashboardClientProvider?.invoke(url)
     }
     DisposableEffect(dashboardConfigClient) {
         onDispose { dashboardConfigClient?.shutdown() }

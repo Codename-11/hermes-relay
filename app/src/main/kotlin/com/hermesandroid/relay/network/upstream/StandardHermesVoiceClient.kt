@@ -41,15 +41,15 @@ import java.util.concurrent.TimeUnit
  * These routes live on `hermes_cli/web_server.py` (:9119 by convention), NOT
  * on the API server (:8642) — current upstream api_server advertises
  * `audio_api: false` and registers no audio routes. Auth is the dashboard
- * cookie session (gated_auth_middleware), so [okHttpClient] must carry the
- * same per-connection cookie jar the Manage tab signs in with; an API bearer
- * header is meaningless on this surface. Revisit when upstream PR #8199
+ * dashboard session (gated_auth_middleware), so [dashboardHttpClientProvider]
+ * must carry the same exact-origin cookie or native bearer session used by
+ * Manage. The API-server bearer is unrelated to this surface. Revisit when upstream PR #8199
  * lands the `/v1/audio` routes on the API server (docs/upstream-contributions.md section 6).
  * (No glob spellings in block comments — Kotlin block comments nest.)
  */
 class StandardHermesVoiceClient(
     private val context: Context,
-    private val okHttpClient: OkHttpClient,
+    private val dashboardHttpClientProvider: (String) -> OkHttpClient,
     private val dashboardUrlProvider: () -> String?,
     // Active chat profile name (null = default/launch). Sent DEFENSIVELY on
     // /api/audio/speak: upstream `TTSSpeakRequest` is text-only and Pydantic
@@ -66,12 +66,10 @@ class StandardHermesVoiceClient(
 ) : VoiceAudioClient {
     override val route: VoiceAudioRoute = VoiceAudioRoute.Standard
 
-    private val callClient: OkHttpClient =
-        standardHermesDashboardAudioClient(okHttpClient)
-
     override suspend fun transcribe(audioFile: File): Result<String> = withContext(Dispatchers.IO) {
         val baseUrl = dashboardBaseUrl()
             ?: return@withContext Result.failure(IllegalStateException("Hermes dashboard URL not configured"))
+        val callClient = callClient(baseUrl)
         if (!audioFile.exists() || audioFile.length() == 0L) {
             return@withContext Result.failure(IOException("Audio file missing or empty: ${audioFile.name}"))
         }
@@ -102,7 +100,7 @@ class StandardHermesVoiceClient(
             .header("Accept", "application/json")
             .build()
 
-        executeJson(request, "Hermes audio transcribe").mapCatching { root ->
+        executeJson(request, "Hermes audio transcribe", callClient).mapCatching { root ->
             val transcript = root.stringField("transcript")
                 ?: root.stringField("text")
                 ?: root.stringField("message")
@@ -116,6 +114,7 @@ class StandardHermesVoiceClient(
     override suspend fun synthesize(text: String): Result<File> = withContext(Dispatchers.IO) {
         val baseUrl = dashboardBaseUrl()
             ?: return@withContext Result.failure(IllegalStateException("Hermes dashboard URL not configured"))
+        val callClient = callClient(baseUrl)
         val cleanText = text.trim()
         if (cleanText.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Cannot synthesize blank text"))
@@ -138,7 +137,7 @@ class StandardHermesVoiceClient(
             .header("Accept", "application/json")
             .build()
 
-        executeJson(request, "Hermes audio speak").mapCatching { root ->
+        executeJson(request, "Hermes audio speak", callClient).mapCatching { root ->
             val dataUrl = root.stringField("data_url") ?: root.stringField("dataUrl")
             if (dataUrl.isNullOrBlank()) {
                 throw IOException("Hermes audio speak returned no audio")
@@ -162,13 +161,14 @@ class StandardHermesVoiceClient(
         try {
             val baseUrl = dashboardBaseUrl()
                 ?: throw IllegalStateException("Hermes dashboard URL not configured")
+            val callClient = callClient(baseUrl)
             val ticketUrl = "$baseUrl/api/auth/ws-ticket".toHttpUrlOrNull()
                 ?: throw IOException("Hermes dashboard URL is not a valid address: $baseUrl")
             val ticketRequest = Request.Builder()
                 .url(ticketUrl)
                 .post(ByteArray(0).toRequestBody(null))
                 .build()
-            val ticket = executeJson(ticketRequest, "Dashboard websocket ticket")
+            val ticket = executeJson(ticketRequest, "Dashboard websocket ticket", callClient)
                 .getOrThrow()
                 .stringField("ticket")
                 ?: throw IOException("Dashboard websocket ticket response missing ticket")
@@ -195,7 +195,14 @@ class StandardHermesVoiceClient(
     private fun dashboardBaseUrl(): String? =
         dashboardUrlProvider()?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
 
-    private fun executeJson(request: Request, operation: String): Result<JsonObject> {
+    private fun callClient(baseUrl: String): OkHttpClient =
+        standardHermesDashboardAudioClient(dashboardHttpClientProvider(baseUrl))
+
+    private fun executeJson(
+        request: Request,
+        operation: String,
+        callClient: OkHttpClient,
+    ): Result<JsonObject> {
         return try {
             callClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {

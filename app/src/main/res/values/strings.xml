@@ -1852,6 +1852,10 @@
     <string name="dashboard_oauth_verifying">Verifying dashboard session…</string>
     <string name="dashboard_oauth_not_accepted">Sign-in was not accepted yet. Finish the dashboard flow to continue.</string>
     <string name="dashboard_oauth_verify_failed">Dashboard sign-in verification failed</string>
+    <string name="dashboard_native_signin_opening">Complete sign-in in your browser, then return here.</string>
+    <string name="dashboard_native_signin_cancelled">Browser sign-in cancelled.</string>
+    <string name="dashboard_native_signin_requires_https">Secure browser sign-in requires an HTTPS dashboard address.</string>
+    <string name="dashboard_native_signin_unavailable">Secure browser sign-in is unavailable for this connection. Refresh the connection and try again.</string>
     <string name="dashboard_close_signin">Close sign-in</string>
 
     <!-- Error body -->

@@ -6,22 +6,21 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
-## Active — Complete Android native dashboard sign-in
+## Verify Android native dashboard sign-in on device
 
-The Android upstream client has the secure native-auth lower layer for gateways
-that advertise `native_pkce`: S256/state generation, strict `127.0.0.1`
-callback validation, encrypted per-connection bearer/refresh-token storage,
-token rotation, authenticated REST calls, and WebSocket ticket minting. Older
-gateways remain compatible with the existing cookie flow.
+Android now selects Custom Tab + PKCE for HTTPS gateways that advertise
+`native_pkce`. The lifecycle-owned callback binds only `127.0.0.1` on an
+OS-assigned port, keeps verifier/state inside the sign-in coroutine, rejects
+untrusted callback noise, and closes on completion, cancellation, navigation,
+or timeout. Encrypted bearer/refresh tokens authenticate Gateway chat, Manage,
+prewarm, and standard voice; sign-out clears both cookie and native sessions.
+Older gateways retain the identified WebView cookie fallback.
 
-The remaining product gate is the Android lifecycle owner for the ephemeral
-loopback listener and system-browser launch. It must bind only
-`127.0.0.1` on an OS-assigned port, keep the verifier/state in the sign-in
-coroutine only, close on callback/cancel/timeout, and then hand the callback
-directly to `NativeDashboardAuthClient`. Once that owner is device-tested, both
-dashboard sign-in entry points can select it when `/api/status.auth_flows`
-contains `native_pkce` and retain the WebView only as the identified
-old-gateway fallback.
+Before release, device-test the real Custom Tab → provider → loopback return,
+configuration/background transitions, Manage reload, Gateway chat ticket,
+standard voice, sign-out, and process relaunch. Native bearer exchange remains
+disabled for non-loopback HTTP dashboard addresses; configure HTTPS before
+using the native flow.
 
 ---
 

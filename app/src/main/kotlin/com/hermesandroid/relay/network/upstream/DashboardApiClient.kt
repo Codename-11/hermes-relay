@@ -1383,7 +1383,9 @@ fun trustedDashboardBearerAuthOrNull(
     trusted: String,
     tokenStoreProvider: () -> NativeDashboardTokenStore,
 ): DashboardBearerAuth? =
-    if (sameDashboardBase(candidate, trusted)) {
+    if (isNativeDashboardTransportEligible(candidate) &&
+        sameDashboardBase(candidate, trusted)
+    ) {
         DashboardBearerAuth(candidate, tokenStoreProvider())
     } else {
         null

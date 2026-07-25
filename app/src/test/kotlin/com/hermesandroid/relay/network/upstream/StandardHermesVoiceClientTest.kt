@@ -152,7 +152,7 @@ class StandardHermesVoiceClientTest {
         socketFactory: (Request, WebSocketListener) -> WebSocket,
     ): StandardHermesVoiceClient = StandardHermesVoiceClient(
         context = mockk<Context>(relaxed = true),
-        okHttpClient = DashboardApiClient.defaultClient(),
+        dashboardHttpClientProvider = { DashboardApiClient.defaultClient() },
         dashboardUrlProvider = { server.url("/").toString() },
         webSocketFactory = socketFactory,
     )

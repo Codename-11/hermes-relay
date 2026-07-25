@@ -465,15 +465,8 @@ fun DashboardManagementScreen(
                 )
         }
     }
-    val clientFactory = remember(dashboardUrl, cookieStoreFactory) {
-        {
-            DashboardApiClient(
-                baseUrl = dashboardUrl,
-                okHttpClient = DashboardApiClient.defaultClient(
-                    cookieStore = cookieStoreFactory(),
-                ),
-            )
-        }
+    val clientFactory = remember(dashboardUrl, connectionViewModel) {
+        { connectionViewModel.dashboardClientForActive(dashboardUrl) }
     }
 
     suspend fun loadDashboardSection(
@@ -1952,7 +1945,7 @@ private suspend fun fetchDashboardSectionStateWith(
  * start lands on an already-populated Manage tab.
  */
 internal suspend fun prewarmDashboardManage(
-    cookieStore: DashboardCookieStore,
+    clientFactory: () -> DashboardApiClient,
     connectionId: String,
     dashboardUrl: String,
     effectiveProfileName: String? = null,
@@ -1981,12 +1974,7 @@ internal suspend fun prewarmDashboardManage(
     // encrypted cookie store per section: 8 Keystore keyset builds, each
     // holding Tink's process-global lock for seconds on StrongBox devices,
     // which starved main-thread keystore users and froze the UI at startup.
-    val client = withContext(Dispatchers.IO) {
-        DashboardApiClient(
-            baseUrl = dashboardUrl,
-            okHttpClient = DashboardApiClient.defaultClient(cookieStore = cookieStore),
-        )
-    }
+    val client = withContext(Dispatchers.IO) { clientFactory() }
     try {
         val preamble = try {
             fetchDashboardPreamble(client)
@@ -2634,6 +2622,7 @@ private fun DashboardOAuthSignInDialog(
     dashboardUrl: String,
     provider: DashboardAuthProvider,
     cookieStoreFactory: () -> DashboardCookieStore,
+    clientFactory: () -> DashboardApiClient,
     onDismiss: () -> Unit,
     onAuthenticated: (DashboardAuthSession) -> Unit,
     onError: (String) -> Unit,
@@ -2670,16 +2659,7 @@ private fun DashboardOAuthSignInDialog(
         statusText = context.getString(R.string.dashboard_oauth_verifying)
         scope.launch {
             try {
-                val session = withDashboardClient(
-                    clientFactory = {
-                        DashboardApiClient(
-                            baseUrl = dashboardUrl,
-                            okHttpClient = DashboardApiClient.defaultClient(
-                                cookieStore = cookieStoreFactory(),
-                            ),
-                        )
-                    },
-                ) { client ->
+                val session = withDashboardClient(clientFactory = clientFactory) { client ->
                     client.currentSession().getOrNull()
                 }
                 if (session?.authenticated == true) {

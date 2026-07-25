@@ -245,6 +245,7 @@ dependencies {
 
     // Activity
     implementation(libs.activity.compose)
+    implementation(libs.browser)
     implementation(libs.appcompat)
 
     // Core
