@@ -55,6 +55,7 @@ import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayEventMapper
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
+import com.hermesandroid.relay.network.upstream.GatewayModelOptions
 import com.hermesandroid.relay.network.upstream.GatewayProcess
 import com.hermesandroid.relay.network.upstream.GatewayProcessCapability
 import com.hermesandroid.relay.network.upstream.GatewayProcessEvent
