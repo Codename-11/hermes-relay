@@ -59,6 +59,17 @@ longer-lived Relay session and its clamped grants.
 All file routes resolve real paths under configured allowed roots and reject
 symlink escapes.
 
+## Chat activity compatibility
+
+| Method | Route | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/chat/image-activity` | Paired `chat` grant | Read image-generation activity from the selected Hermes session when the upstream Gateway does not expose native tool progress |
+
+This optional route reports only image-generation lifecycle state. It does not
+proxy chat prompts, response text, tool results, or session control. Android
+uses native Gateway events when available and silently stops polling when an
+older Relay does not provide the route.
+
 ## Relay voice
 
 Every route below is Relay-owned. Vanilla Hermes voice uses Dashboard
