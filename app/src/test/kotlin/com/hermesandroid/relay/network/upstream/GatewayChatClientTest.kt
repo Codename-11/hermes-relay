@@ -295,6 +295,10 @@ class GatewayClientHarness(
                         put("key", "fast")
                         put("value", (params["value"] as? JsonPrimitive)?.contentOrNull ?: "normal")
                     }
+                    "yolo" -> buildJsonObject {
+                        put("key", "yolo")
+                        put("value", (params["value"] as? JsonPrimitive)?.contentOrNull ?: "0")
+                    }
                     "approvals.mode" -> {
                         approvalMode =
                             (params["value"] as? JsonPrimitive)?.contentOrNull ?: approvalMode
@@ -1890,6 +1894,25 @@ class GatewayChatClientTest {
         assertEquals("normal", (rpc["value"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("live-resumed", (rpc["session_id"] as? JsonPrimitive)?.contentOrNull)
         assertFalse(rpc.containsKey("scope"))
+    }
+
+    @Test
+    fun `yolo update targets live session with ephemeral session scope`() {
+        val r = Recorder()
+        client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        val result = runBlocking { client.setYolo(true) }
+
+        assertTrue(result.isSuccess)
+        assertTrue(result.getOrThrow())
+        val rpc = harness.awaitRpc("config.set")
+        assertEquals("yolo", (rpc["key"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("1", (rpc["value"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("session", (rpc["scope"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("live-resumed", (rpc["session_id"] as? JsonPrimitive)?.contentOrNull)
     }
 
     // --- Edit & regenerate ---
