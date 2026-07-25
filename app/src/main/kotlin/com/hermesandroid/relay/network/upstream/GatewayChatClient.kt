@@ -1890,19 +1890,23 @@ class GatewayChatClient(
         }
 
         // A cold session.resume may schedule auto-continue before its RPC
-        // response reaches Android. Keep a small copy of session-scoped events
-        // while that response is in flight; normal routing still proceeds for
-        // already-owned sibling sessions, and recovery later replays only the
-        // exact live id returned by the RPC.
-        if (!eventSessionId.isNullOrBlank()) {
+        // response reaches Android. The recovery buffer is an ownership gate,
+        // not an observational copy: an event is either claimed here for
+        // replay or routed live below, never both. The resume response drains
+        // and closes the gate under this same lock, so later frames route live.
+        // Already-owned sibling sessions retain their background routing.
+        val claimedByRecovery = !eventSessionId.isNullOrBlank() &&
+            !backgroundTurns.containsKey(eventSessionId) &&
             synchronized(recoveryEventLock) {
                 recoveryEvents?.let { buffered ->
-                    if (buffered.size < MAX_RECOVERY_BUFFERED_EVENTS) {
-                        buffered += RecoveryEvent(eventSessionId, type, payload)
+                    if (buffered.size >= MAX_RECOVERY_BUFFERED_EVENTS) {
+                        buffered.removeAt(0)
                     }
-                }
+                    buffered += RecoveryEvent(eventSessionId, type, payload)
+                    true
+                } ?: false
             }
-        }
+        if (claimedByRecovery) return
 
         // A profile/session switch may leave an upstream turn running while a
         // different profile becomes visible. Its events must never paint the
