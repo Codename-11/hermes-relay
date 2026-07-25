@@ -33,6 +33,7 @@ object InteractionRequestNotifier {
     private const val TAG = "InteractionNotifier"
     internal const val CHANNEL_ID = "chat_interactions"
     private const val CHANNEL_NAME = "Hermes needs input"
+    private const val GROUP_KEY = "gateway-interactions"
     internal const val NOTIFICATION_ID = 3823
     internal const val DEFAULT_PROFILE_ROUTE_VALUE = "__server_default__"
 
@@ -72,6 +73,31 @@ object InteractionRequestNotifier {
         -> "Open Hermes to respond securely."
     }
 
+    internal fun safeExpandedBody(
+        sessionId: String,
+        ask: GatewayAsk,
+        profile: String? = null,
+    ): String {
+        val action = when (ask.kind) {
+            GatewayAsk.Kind.APPROVAL ->
+                "Review the requested action. Nothing is approved from the notification."
+            GatewayAsk.Kind.CLARIFY -> "Open this conversation to answer Hermes' question."
+            GatewayAsk.Kind.SUDO -> "Open this conversation to respond securely or deny."
+            GatewayAsk.Kind.SECRET -> "Open this conversation to respond securely or skip."
+        }
+        val profileLabel = profile?.takeIf { it.isNotBlank() } ?: "Server default"
+        val sessionLabel = sessionId.takeLast(12)
+        return "$action\nProfile: $profileLabel\nSession: …$sessionLabel"
+    }
+
+    internal fun actionLabel(ask: GatewayAsk): String = when (ask.kind) {
+        GatewayAsk.Kind.APPROVAL -> "Review approval"
+        GatewayAsk.Kind.CLARIFY -> "Answer"
+        GatewayAsk.Kind.SUDO,
+        GatewayAsk.Kind.SECRET,
+        -> "Respond securely"
+    }
+
     @SuppressLint("MissingPermission", "NotificationPermission")
     fun notify(
         context: Context,
@@ -106,6 +132,7 @@ object InteractionRequestNotifier {
         )
         val title = safeTitle(ask)
         val body = safeBody(ask)
+        val expandedBody = safeExpandedBody(sessionId, ask, profile)
         val publicVersion = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Hermes needs your input")
@@ -117,6 +144,7 @@ object InteractionRequestNotifier {
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
             .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(expandedBody))
             .setContentIntent(tapPending)
             .setAutoCancel(false)
             .setOnlyAlertOnce(true)
@@ -124,6 +152,8 @@ object InteractionRequestNotifier {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(publicVersion)
+            .setGroup(GROUP_KEY)
+            .addAction(0, actionLabel(ask), tapPending)
             .build()
 
         return runCatching {
