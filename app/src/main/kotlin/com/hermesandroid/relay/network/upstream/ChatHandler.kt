@@ -156,6 +156,15 @@ class ChatHandler {
     var onMediaBarePathRequested: (messageId: String, originalPath: String) -> Unit = { _, _ -> }
 
     /**
+     * Fired for a canonical `@image:<path>` directive found on a persisted
+     * USER history row. This is intentionally separate from free-form
+     * assistant `MEDIA:` parsing: only the bounded upstream directive parser
+     * can reach this callback.
+     */
+    var onPersistedUserImageRequested: (messageId: String, originalPath: String) -> Unit =
+        { _, _ -> }
+
+    /**
      * Buffer for incomplete lines during streaming. Tool annotations are line-oriented
      * (backtick + emoji + tool_name + backtick), so we accumulate text until we see a
      * newline and then scan completed lines. This handles the case where a single
@@ -1158,6 +1167,7 @@ class ChatHandler {
         // the wholesale `_messages.value = ...` assignment so the ViewModel's
         // mutateMessage lookups find the newly-loaded messages.
         val pendingMediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
+        val pendingPersistedUserImages = mutableListOf<Pair<String, String>>()
 
         // Reconcile optimistic (client-UUID) live ids to their server ids BEFORE
         // building the carry map, so the id-keyed delta-merge updates rows in
@@ -1250,12 +1260,18 @@ class ChatHandler {
             val messageId = item.id ?: java.util.UUID.randomUUID().toString()
             val rawContent = rawServerContent
 
+            val persistedImages = if (role == MessageRole.USER && rawContent.isNotEmpty()) {
+                PersistedImageReferenceParser.parse(rawContent)
+            } else {
+                PersistedImageReferences(rawContent, emptyList())
+            }
+
             // Run the media marker parser on assistant content; strip matched
             // lines and queue hits for post-assignment dispatch.
-            val afterMedia = if (role == MessageRole.ASSISTANT && rawContent.isNotEmpty()) {
-                extractMediaMarkersFromContent(messageId, rawContent, pendingMediaHits)
+            val afterMedia = if (role == MessageRole.ASSISTANT && persistedImages.cleanedText.isNotEmpty()) {
+                extractMediaMarkersFromContent(messageId, persistedImages.cleanedText, pendingMediaHits)
             } else {
-                rawContent
+                persistedImages.cleanedText
             }
 
             // Cards are synchronous (no async fetch) so we attach them
@@ -1293,12 +1309,28 @@ class ChatHandler {
             // content-keyed queue. Inbound attachments are intentionally
             // excluded — they come back via the marker re-dispatch.
             val carriedAttachments = run {
-                val byId = prior?.attachments.orEmpty().filter { it.relayToken == null }
+                val persistedImagePaths = persistedImages.paths.toHashSet()
+                val byId = prior?.attachments.orEmpty().filter { attachment ->
+                    attachment.relayToken == null ||
+                        (
+                            role == MessageRole.USER &&
+                                attachment.relayToken in persistedImagePaths
+                            )
+                }
                 when {
                     byId.isNotEmpty() -> byId
                     role == MessageRole.USER ->
                         priorOutboundByContent[cleanedContent]?.removeFirstOrNull().orEmpty()
                     else -> emptyList()
+                }
+            }
+            if (
+                role == MessageRole.USER &&
+                carriedAttachments.isEmpty() &&
+                persistedImages.paths.isNotEmpty()
+            ) {
+                persistedImages.paths.forEach { path ->
+                    pendingPersistedUserImages += messageId to path
                 }
             }
             // Server reasoning is authoritative when present; absent, keep the
@@ -1437,6 +1469,9 @@ class ChatHandler {
                 }
             }
         }
+        for ((messageId, path) in pendingPersistedUserImages) {
+            onPersistedUserImageRequested(messageId, path)
+        }
     }
 
     /** One adoptable server row during id reconciliation. `taken` enforces consume-once. */
@@ -1565,6 +1600,7 @@ class ChatHandler {
             val t = line.trim()
             if (t.isEmpty()) continue
             if (mediaRelayRegex.containsMatchIn(t) || mediaBarePathRegex.containsMatchIn(t)) continue
+            if (PersistedImageReferenceParser.parse(t).paths.isNotEmpty()) continue
             if (cardMarkerRegex.containsMatchIn(t)) continue
             if (sb.isNotEmpty()) sb.append('\n')
             sb.append(t)
