@@ -178,6 +178,40 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun gatewayRichCardActionStaysOnGatewayInsteadOfDrainingThroughSessionsApi() {
+        viewModel.sseFallbackEndpoint = "sessions"
+        val cardMessageId = "card-message"
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = cardMessageId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = System.currentTimeMillis(),
+                isStreaming = true,
+            ),
+        )
+        handler.onTextDelta(
+            cardMessageId,
+            """
+            CARD:{"type":"approval_request","id":"test-card","actions":[{"label":"Approve","value":"approve","mode":"send_text"}]}
+            """.trimIndent(),
+        )
+        handler.onTurnComplete(cardMessageId)
+        val card = handler.messages.value.single { it.id == cardMessageId }.cards.single()
+        val apiRequestsBeforeAction = apiServer.requestCount
+
+        viewModel.dispatchCardAction(
+            messageId = cardMessageId,
+            cardKey = card.id!!,
+            action = card.actions.single(),
+        )
+
+        val submit = gatewayHarness.awaitRpc("prompt.submit")
+        assertEquals("approve", (submit["text"] as JsonPrimitive).content)
+        assertEquals(apiRequestsBeforeAction, apiServer.requestCount)
+    }
+
+    @Test
     fun dashboardOnlyPersonalityCatalogLoadsAndSurvivesRefreshFailure() {
         viewModel.updateApiClient(null)
         viewModel.streamingEndpoint = "completions"

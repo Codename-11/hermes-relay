@@ -6898,13 +6898,11 @@ class ChatViewModel : ViewModel() {
         // (set only by sendVoiceMessage) onto SSE. resolveSseFallback picks the
         // best available SSE route.
         //
-        // Synthetic sync messages (voice intents / card dispatches / provider-
-        // answered realtime turns) have the same gateway limitation — prompt.submit
-        // can't carry them — but on a gateway-primary phone "leave them for the
-        // next SSE turn" means *never*: the default transport is the gateway, so
-        // unsynced traces would defer forever and the agent never learns what
-        // happened in realtime voice. Drain them by forcing this one turn onto
-        // the sessions SSE route, but ONLY when that is strictly safe:
+        // Synthetic voice-intent and provider-answered realtime traces have the
+        // same gateway limitation — prompt.submit can't carry them — but on a
+        // gateway-primary phone "leave them for the next SSE turn" means *never*.
+        // Drain those voice-only traces by forcing this one turn onto the sessions
+        // SSE route, but ONLY when that is strictly safe:
         //  - an existing session id + the sessions fallback route (a stateless
         //    completions/runs detour would drop THIS turn from the transcript
         //    to save a trace — worse than deferring), and
@@ -6913,16 +6911,21 @@ class ChatViewModel : ViewModel() {
         //    can't see — the sessions POST would 404 and fail the user's turn).
         // Cost when it fires: one turn without live gateway thinking. The synced
         // traces persist server-side, so this happens at most once per batch.
+        //
+        // Rich-card actions are different: the action itself is the current user
+        // turn. Keep it on the selected Gateway and defer its optional synthetic
+        // audit trace until a naturally selected SSE turn. A card must never
+        // activate or depend on the optional API fallback.
         val sseDrainEndpoint = resolveSseFallback(handler)
-        val forceSseForTraceDrain =
+        val forceSseForVoiceTraceDrain =
             client != null &&
-            voiceIntentMessages != null &&
+            (hasVoiceIntents || hasRealtimeTurns) &&
                 streamingEndpoint == "gateway" &&
                 profileName == null &&
                 sseDrainEndpoint == "sessions"
         val effectiveEndpoint =
             if (client != null &&
-                (interfaceContextPrompt != null || forceSseForTraceDrain) &&
+                (interfaceContextPrompt != null || forceSseForVoiceTraceDrain) &&
                 streamingEndpoint == "gateway"
             ) {
                 sseDrainEndpoint

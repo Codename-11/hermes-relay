@@ -219,6 +219,19 @@ internal fun resolveEffectiveDashboardUrl(
 }
 
 /**
+ * Resolve the runtime API route only after the optional fallback was explicitly
+ * configured. Discovery may attach a conventional same-host API candidate to a
+ * Dashboard route, but that candidate alone must not enable API traffic.
+ */
+internal fun resolveEffectiveApiServerUrl(
+    savedUrl: String,
+    endpoint: EndpointCandidate?,
+): String {
+    if (savedUrl.isBlank()) return ""
+    return endpoint?.api?.url?.takeIf { it.isNotBlank() } ?: savedUrl
+}
+
+/**
  * Add Relay transport metadata to the connection's existing standard routes
  * without adopting the Relay QR's API/Dashboard identity.
  */
@@ -779,7 +792,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     )
 
     private fun effectiveApiServerUrlSnapshot(): String =
-        connectionManager.activeEndpoint.value?.api?.url ?: _apiServerUrl.value
+        resolveEffectiveApiServerUrl(
+            savedUrl = _apiServerUrl.value,
+            endpoint = connectionManager.activeEndpoint.value,
+        )
 
     private fun effectiveRelayUrlSnapshot(): String =
         connectionManager.activeEndpoint.value?.relay?.url ?: autoRelayUrlSnapshot()
@@ -1031,16 +1047,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val relayUrl: StateFlow<String> = _relayUrl.asStateFlow()
 
     /**
-     * Runtime route for chat/API traffic. The persisted API URL remains the
-     * connection's base config; a resolver-selected endpoint temporarily wins
-     * so paired devices can roam between LAN, Tailscale, and operator VPN
-     * routes without rewriting stored settings.
+     * Runtime route for chat/API traffic. Once API fallback is explicitly
+     * configured, a resolver-selected endpoint temporarily wins so paired
+     * devices can roam without rewriting stored settings. Discovery alone
+     * never enables the optional API surface.
      */
     val effectiveApiServerUrl: StateFlow<String> = combine(
         _apiServerUrl,
         connectionManager.activeEndpoint,
     ) { savedUrl, endpoint ->
-        endpoint?.api?.url ?: savedUrl
+        resolveEffectiveApiServerUrl(savedUrl, endpoint)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_API_URL)
 
     /**
