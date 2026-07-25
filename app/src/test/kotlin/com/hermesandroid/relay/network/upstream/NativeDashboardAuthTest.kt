@@ -1,11 +1,17 @@
 package com.hermesandroid.relay.network.upstream
 
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import okio.ByteString.Companion.toByteString
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -155,9 +161,109 @@ class NativeDashboardAuthTest {
         assertEquals("Bearer new-access", ticket.getHeader("Authorization"))
         assertEquals("new-refresh", store.load()?.refreshToken)
     }
+
+    @Test
+    fun hostileSetupOrigin_neverReceivesActiveConnectionBearer() {
+        store.save(
+            NativeDashboardTokens(
+                accessToken = "must-not-leak",
+                refreshToken = "refresh",
+                expiresAt = 3000,
+            ),
+        )
+        server.enqueue(MockResponse().setBody("""{"auth_required":false}"""))
+        val hostileUrl = server.url("/attacker").toString()
+        val bearer = trustedDashboardBearerAuthOrNull(
+            candidate = hostileUrl,
+            trusted = "https://trusted.example/hermes",
+            tokenStoreProvider = { store },
+        )
+        val client = DashboardApiClient(
+            hostileUrl,
+            DashboardApiClient.defaultClient(bearerAuth = bearer),
+        )
+
+        kotlinx.coroutines.runBlocking { client.getStatus().getOrThrow() }
+
+        assertEquals(null, bearer)
+        assertEquals(null, server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test
+    fun concurrentClients_rotateSingleUseRefreshTokenExactlyOnce() {
+        val shared = AtomicReference<NativeDashboardTokens?>(
+            NativeDashboardTokens(
+                accessToken = "old-access",
+                refreshToken = "single-use-refresh",
+                expiresAt = 1005,
+                provider = "nous",
+            ),
+        )
+        val refreshCalls = AtomicInteger()
+        val ticketCalls = AtomicInteger()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/auth/native/refresh" -> {
+                    refreshCalls.incrementAndGet()
+                    MockResponse().setBody(
+                        """{"access_token":"new-access","refresh_token":"rotated-refresh","expires_at":3000,"provider":"nous","user_id":"u"}""",
+                    )
+                }
+                "/api/auth/ws-ticket" -> {
+                    ticketCalls.incrementAndGet()
+                    if (request.getHeader("Authorization") == "Bearer new-access") {
+                        MockResponse().setBody("""{"ticket":"ticket","ttl_seconds":30}""")
+                    } else {
+                        MockResponse().setResponseCode(401)
+                    }
+                }
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val storeA = SharedMemoryNativeTokenStore("connection-a", shared)
+        val storeB = SharedMemoryNativeTokenStore("connection-a", shared)
+        val clientA = dashboardClientWithBearer(storeA)
+        val clientB = dashboardClientWithBearer(storeB)
+        val start = CountDownLatch(1)
+        val done = CountDownLatch(2)
+        val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+
+        listOf(clientA, clientB).forEach { client ->
+            Thread {
+                try {
+                    start.await()
+                    kotlinx.coroutines.runBlocking { client.requestWsTicket().getOrThrow() }
+                } catch (error: Throwable) {
+                    failures += error
+                } finally {
+                    done.countDown()
+                }
+            }.start()
+        }
+        start.countDown()
+
+        assertTrue(done.await(5, TimeUnit.SECONDS))
+        assertTrue(failures.toString(), failures.isEmpty())
+        assertEquals(1, refreshCalls.get())
+        assertEquals(2, ticketCalls.get())
+        assertEquals("rotated-refresh", shared.get()?.refreshToken)
+    }
+
+    private fun dashboardClientWithBearer(store: NativeDashboardTokenStore): DashboardApiClient =
+        DashboardApiClient(
+            server.url("/").toString(),
+            DashboardApiClient.defaultClient(
+                bearerAuth = DashboardBearerAuth(
+                    server.url("/").toString(),
+                    store,
+                    clockSeconds = { 1000 },
+                ),
+            ),
+        )
 }
 
 private class MemoryNativeTokenStore : NativeDashboardTokenStore {
+    override val coordinationKey: String = "memory-${System.identityHashCode(this)}"
     private var tokens: NativeDashboardTokens? = null
     override fun load(): NativeDashboardTokens? = tokens
     override fun save(tokens: NativeDashboardTokens) {
@@ -165,5 +271,18 @@ private class MemoryNativeTokenStore : NativeDashboardTokenStore {
     }
     override fun clear() {
         tokens = null
+    }
+}
+
+private class SharedMemoryNativeTokenStore(
+    override val coordinationKey: String,
+    private val shared: AtomicReference<NativeDashboardTokens?>,
+) : NativeDashboardTokenStore {
+    override fun load(): NativeDashboardTokens? = shared.get()
+    override fun save(tokens: NativeDashboardTokens) {
+        shared.set(tokens)
+    }
+    override fun clear() {
+        shared.set(null)
     }
 }

@@ -1349,6 +1349,33 @@ class DashboardApiClient(
     }
 }
 
+/**
+ * Bearer credentials are scoped to the exact saved dashboard base, including
+ * reverse-proxy path prefix. A same-host or arbitrary Add Connection probe is
+ * not sufficient authority to receive the active connection's token.
+ */
+fun sameDashboardBase(candidate: String, trusted: String): Boolean {
+    val candidateUrl = candidate.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
+    val trustedUrl = trusted.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
+    return candidateUrl.scheme == trustedUrl.scheme &&
+        candidateUrl.host == trustedUrl.host &&
+        candidateUrl.port == trustedUrl.port &&
+        candidateUrl.encodedPath.trimEnd('/') == trustedUrl.encodedPath.trimEnd('/') &&
+        candidateUrl.query == null &&
+        trustedUrl.query == null
+}
+
+fun trustedDashboardBearerAuthOrNull(
+    candidate: String,
+    trusted: String,
+    tokenStoreProvider: () -> NativeDashboardTokenStore,
+): DashboardBearerAuth? =
+    if (sameDashboardBase(candidate, trusted)) {
+        DashboardBearerAuth(candidate, tokenStoreProvider())
+    } else {
+        null
+    }
+
 interface DashboardCookieStore {
     fun load(): List<StoredDashboardCookie>
     fun save(cookies: List<StoredDashboardCookie>)

@@ -7,6 +7,7 @@ import com.hermesandroid.relay.auth.buildRawTokenStore
 import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -39,6 +40,8 @@ data class NativeDashboardTokens(
 )
 
 interface NativeDashboardTokenStore {
+    /** Stable, non-secret identity used to serialize refresh-token rotation. */
+    val coordinationKey: String
     fun load(): NativeDashboardTokens?
     fun save(tokens: NativeDashboardTokens)
     fun clear()
@@ -49,6 +52,7 @@ class EncryptedNativeDashboardTokenStore(
     tokenStoreKey: String,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : NativeDashboardTokenStore {
+    override val coordinationKey: String = tokenStoreKey
     private val store: SessionTokenStore = SecureStoreCache.getOrBuild(tokenStoreKey) {
         buildRawTokenStore(context.applicationContext, tokenStoreKey)
     }
@@ -143,18 +147,33 @@ class NativeDashboardAuthClient(
         )
     }
 
-    fun refresh(tokens: NativeDashboardTokens = tokenStore.load()
-        ?: throw IOException("No native dashboard session is stored")): NativeDashboardTokens {
-        if (tokens.refreshToken.isBlank()) {
-            tokenStore.clear()
-            throw IOException("Native dashboard session cannot be refreshed")
+    fun refresh(tokens: NativeDashboardTokens? = null): NativeDashboardTokens {
+        return synchronized(NativeTokenRefreshCoordinator.lockFor(tokenStore.coordinationKey)) {
+            val current = tokenStore.load()
+                ?: tokens
+                ?: throw IOException("No native dashboard session is stored")
+            // A sibling client may already have rotated the single-use refresh
+            // token while this caller was waiting. Adopt that winner instead
+            // of replaying the stale token.
+            if (tokens != null && current != tokens) return@synchronized current
+            if (current.refreshToken.isBlank()) {
+                clearIfUnchanged(current)
+                throw IOException("Native dashboard session cannot be refreshed")
+            }
+            val payload = NativeTokenRefresh(current.refreshToken, current.provider)
+            try {
+                postTokens(
+                    path = "/auth/native/refresh",
+                    payload = json.encodeToString(payload),
+                    clearOnAuthFailure = false,
+                )
+            } catch (error: NativeDashboardAuthHttpException) {
+                if (error.statusCode == 400 || error.statusCode == 401) {
+                    clearIfUnchanged(current)
+                }
+                throw error
+            }
         }
-        val payload = NativeTokenRefresh(tokens.refreshToken, tokens.provider)
-        return postTokens(
-            path = "/auth/native/refresh",
-            payload = json.encodeToString(payload),
-            clearOnAuthFailure = true,
-        )
     }
 
     private fun postTokens(
@@ -173,7 +192,7 @@ class NativeDashboardAuthClient(
                 if (clearOnAuthFailure && (response.code == 400 || response.code == 401)) {
                     tokenStore.clear()
                 }
-                throw IOException("Dashboard native authentication failed (HTTP ${response.code})")
+                throw NativeDashboardAuthHttpException(response.code)
             }
             val body = response.body?.string().orEmpty()
             runCatching { json.decodeFromString<NativeDashboardTokens>(body) }
@@ -189,6 +208,10 @@ class NativeDashboardAuthClient(
     }
 
     private fun randomBytes(size: Int) = ByteArray(size).also(random::nextBytes).toByteString()
+
+    private fun clearIfUnchanged(expected: NativeDashboardTokens) {
+        if (tokenStore.load() == expected) tokenStore.clear()
+    }
 
     companion object {
         fun requireStrictLoopbackRedirect(redirectUri: String) {
@@ -215,10 +238,9 @@ class DashboardBearerAuth(
     private val clockSeconds: () -> Long = { System.currentTimeMillis() / 1000L },
 ) : Interceptor, Authenticator {
     private val authClient = NativeDashboardAuthClient(baseUrl, tokenStore)
-    private val refreshLock = Any()
 
     override fun intercept(chain: Interceptor.Chain): Response {
-        val tokens = usableTokens(forceRefresh = false)
+        val tokens = usableTokens(forceRefresh = false, failedAccessToken = null)
         val request = tokens?.let {
             chain.request().newBuilder()
                 .header("Authorization", "Bearer ${it.accessToken}")
@@ -230,18 +252,31 @@ class DashboardBearerAuth(
     override fun authenticate(route: Route?, response: Response): Request? {
         if (responseCount(response) >= 2) return null
         val previous = response.request.header("Authorization") ?: return null
-        val tokens = usableTokens(forceRefresh = true) ?: return null
+        val failedAccessToken = previous.removePrefix("Bearer ").takeIf { it != previous }
+        val tokens = usableTokens(
+            forceRefresh = true,
+            failedAccessToken = failedAccessToken,
+        ) ?: return null
         val next = "Bearer ${tokens.accessToken}"
         if (next == previous) return null
         return response.request.newBuilder().header("Authorization", next).build()
     }
 
-    private fun usableTokens(forceRefresh: Boolean): NativeDashboardTokens? = synchronized(refreshLock) {
-        val current = tokenStore.load() ?: return@synchronized null
-        val nearExpiry = current.expiresAt <= 0L || clockSeconds() >= current.expiresAt - 60L
-        if (!forceRefresh && !nearExpiry) return@synchronized current
-        runCatching { authClient.refresh(current) }.getOrNull()
-    }
+    private fun usableTokens(
+        forceRefresh: Boolean,
+        failedAccessToken: String?,
+    ): NativeDashboardTokens? =
+        synchronized(NativeTokenRefreshCoordinator.lockFor(tokenStore.coordinationKey)) {
+            val current = tokenStore.load() ?: return@synchronized null
+            // A request can receive its 401 after another client already
+            // rotated the token. Retry with the winner; do not rotate again.
+            if (failedAccessToken != null && current.accessToken != failedAccessToken) {
+                return@synchronized current
+            }
+            val nearExpiry = current.expiresAt <= 0L || clockSeconds() >= current.expiresAt - 60L
+            if (!forceRefresh && !nearExpiry) return@synchronized current
+            runCatching { authClient.refresh(current) }.getOrNull()
+        }
 
     private fun responseCount(response: Response): Int {
         var count = 1
@@ -252,6 +287,15 @@ class DashboardBearerAuth(
         }
         return count
     }
+}
+
+private class NativeDashboardAuthHttpException(
+    val statusCode: Int,
+) : IOException("Dashboard native authentication failed (HTTP $statusCode)")
+
+private object NativeTokenRefreshCoordinator {
+    private val locks = ConcurrentHashMap<String, Any>()
+    fun lockFor(key: String): Any = locks.computeIfAbsent(key) { Any() }
 }
 
 @Serializable

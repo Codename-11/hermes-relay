@@ -12,6 +12,7 @@ import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.network.upstream.resolveStreamingEndpointPreference
+import com.hermesandroid.relay.network.upstream.trustedDashboardBearerAuthOrNull
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -119,6 +120,19 @@ class UpstreamTransportController(
         }
     }
 
+    private fun bearerAuthForTrustedDashboard(
+        connectionId: String,
+        dashboardUrl: String,
+    ): DashboardBearerAuth? {
+        if (activeConnectionIdProvider() != connectionId) return null
+        val trustedDashboardUrl = dashboardUrlProvider() ?: return null
+        return trustedDashboardBearerAuthOrNull(
+            candidate = dashboardUrl,
+            trusted = trustedDashboardUrl,
+            tokenStoreProvider = { dashboardTokenStoreFor(connectionId) },
+        )
+    }
+
     // --- DashboardApiClient factory ----------------------------------------
 
     /**
@@ -132,10 +146,7 @@ class UpstreamTransportController(
             baseUrl = dashboardUrl,
             okHttpClient = DashboardApiClient.defaultClient(
                 cookieStore = dashboardCookieStoreFor(connectionId),
-                bearerAuth = DashboardBearerAuth(
-                    dashboardUrl,
-                    dashboardTokenStoreFor(connectionId),
-                ),
+                bearerAuth = bearerAuthForTrustedDashboard(connectionId, dashboardUrl),
             ),
         )
 
@@ -150,7 +161,7 @@ class UpstreamTransportController(
             okHttpClient = DashboardApiClient.defaultClient(
                 cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
                 bearerAuth = activeConnectionIdProvider()?.let {
-                    DashboardBearerAuth(dashboardUrl, dashboardTokenStoreFor(it))
+                    bearerAuthForTrustedDashboard(it, dashboardUrl)
                 },
             ),
         )
