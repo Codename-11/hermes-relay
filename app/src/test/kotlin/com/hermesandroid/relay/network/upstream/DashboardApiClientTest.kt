@@ -686,6 +686,7 @@ class DashboardApiClientTest {
             name = "Local",
             baseUrl = "https://llm.example/v1",
             model = "qwen",
+            models = listOf("qwen", "qwen-vl", " qwen ", ""),
             apiKey = "never-persist-this",
         )
 
@@ -701,7 +702,9 @@ class DashboardApiClientTest {
         assertEquals("/api/providers/custom-endpoints", server.takeRequest().path)
         val save = server.takeRequest()
         assertEquals("/api/providers/custom-endpoints", save.path)
-        assertTrue(save.body.readUtf8().contains("never-persist-this"))
+        val saveBody = save.body.readUtf8()
+        assertTrue(saveBody.contains("never-persist-this"))
+        assertTrue(saveBody.contains(""""models":["qwen","qwen-vl"]"""))
         assertEquals("/api/providers/custom-endpoints/validate", server.takeRequest().path)
         assertEquals("/api/providers/custom-endpoints/local/activate", server.takeRequest().path)
         assertEquals("/api/providers/custom-endpoints/local", server.takeRequest().path)

@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.ui.screens
 
+import com.hermesandroid.relay.network.upstream.DashboardComponentHealth
+import com.hermesandroid.relay.network.upstream.DashboardComponentHealthRollup
 import com.hermesandroid.relay.viewmodel.PendingMcpOAuth
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -9,6 +11,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DashboardManageParityTest {
+    @Test
+    fun componentHealthLines_surfaceDegradedDetailsWithoutChangingReachability() {
+        val lines = dashboardComponentHealthLines(
+            DashboardComponentHealthRollup(
+                supported = true,
+                overall = "degraded",
+                components = listOf(
+                    DashboardComponentHealth(
+                        name = "platforms",
+                        status = "degraded",
+                        configured = 3,
+                        connected = 1,
+                        unhandled5xxCount5m = 2,
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(
+            listOf("platforms: degraded · 1/3 connected · 2 server errors / 5m"),
+            lines,
+        )
+    }
+
     @Test
     fun oauthMcpRow_exposesAuthenticateOnlyForAuthoritativeOauthField() {
         val oauth = Json.parseToJsonElement(

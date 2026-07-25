@@ -202,6 +202,8 @@
     <string name="conn_label_session">Session</string>
     <string name="conn_label_route">Route</string>
     <string name="conn_label_status">Status</string>
+    <string name="dashboard_component_connected">connected</string>
+    <string name="dashboard_component_server_errors_5m">server errors / 5m</string>
     <string name="conn_label_connect">Connect</string>
     <string name="conn_label_connections">Connections</string>
     <string name="conn_detail_add_connection">Add a Vanilla Hermes API/dashboard connection</string>
