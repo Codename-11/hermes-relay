@@ -27,6 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,9 +51,17 @@ import com.hermesandroid.relay.network.upstream.DashboardAuthProvider
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
+import com.hermesandroid.relay.network.upstream.DashboardRedirectAuthMode
+import com.hermesandroid.relay.network.upstream.NativeDashboardSignInCoordinator
+import com.hermesandroid.relay.network.upstream.dashboardRedirectAuthMode
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
+import com.hermesandroid.relay.network.upstream.isNativeDashboardTransportEligible
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Connection-level Dashboard authentication flow. It is deliberately outside
@@ -66,7 +75,8 @@ fun DashboardSignInScreen(
     onBack: () -> Unit,
     onAuthenticated: () -> Unit,
 ) {
-    val context = LocalContext.current.applicationContext
+    val context = LocalContext.current
+    val appContext = context.applicationContext
     val scope = rememberCoroutineScope()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val dashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
@@ -78,22 +88,22 @@ fun DashboardSignInScreen(
     var loading by remember(dashboardUrl, connectionId) { mutableStateOf(true) }
     var actionInFlight by remember { mutableStateOf(false) }
     var actionMessage by remember { mutableStateOf<String?>(null) }
+    var actionIsError by remember { mutableStateOf(false) }
     var oauthProvider by remember { mutableStateOf<DashboardAuthProvider?>(null) }
+    var redirectAuthMode by remember(dashboardUrl, connectionId) {
+        mutableStateOf(DashboardRedirectAuthMode.WebView)
+    }
+    var nativeSignInJob by remember(dashboardUrl, connectionId) { mutableStateOf<Job?>(null) }
     var authenticationComplete by remember { mutableStateOf(false) }
 
-    val cookieStoreFactory = remember(context, connectionId) {
+    val cookieStoreFactory = remember(appContext, connectionId) {
         {
             connectionViewModel.activeDashboardCookieStore()
-                ?: EncryptedDashboardCookieStore(context, connectionId)
+                ?: EncryptedDashboardCookieStore(appContext, connectionId)
         }
     }
-    val clientFactory = remember(dashboardUrl, cookieStoreFactory) {
-        {
-            DashboardApiClient(
-                baseUrl = dashboardUrl,
-                okHttpClient = DashboardApiClient.defaultClient(cookieStoreFactory()),
-            )
-        }
+    val clientFactory = remember(dashboardUrl, connectionViewModel) {
+        { connectionViewModel.dashboardClientForActive(dashboardUrl) }
     }
 
     suspend fun verifyAndRecord(client: DashboardApiClient): DashboardAuthSession? {
@@ -115,7 +125,7 @@ fun DashboardSignInScreen(
 
     fun finishAuthentication() {
         scope.launch {
-            invalidateDashboardManageCache(context.cacheDir)
+            invalidateDashboardManageCache(appContext.cacheDir)
             connectionViewModel.refreshStandardVoice()
             connectionViewModel.refreshDashboardProfiles()
             authenticationComplete = true
@@ -132,11 +142,13 @@ fun DashboardSignInScreen(
         try {
             val status = client.getStatus().getOrElse {
                 actionMessage = it.message ?: context.getString(R.string.dashboard_request_failed)
+                actionIsError = true
                 return@LaunchedEffect
             }
-            providers = status.authProviderDetails.ifEmpty {
-                client.getAuthProviders().getOrNull().orEmpty()
-            }
+            providers = client.getAuthProviders().getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?: status.authProviderDetails
+            redirectAuthMode = dashboardRedirectAuthMode(status.authFlows)
             val session = if (status.authRequired) client.currentSession().getOrNull() else null
             connectionViewModel.recordDashboardStatus(
                 status = status,
@@ -157,6 +169,7 @@ fun DashboardSignInScreen(
         if (actionInFlight || dashboardUrl.isBlank()) return
         actionInFlight = true
         actionMessage = null
+        actionIsError = false
         scope.launch {
             val client = clientFactory()
             try {
@@ -167,9 +180,11 @@ fun DashboardSignInScreen(
                 } else {
                     actionMessage = result.exceptionOrNull()?.message
                         ?: context.getString(R.string.dashboard_signin_no_session)
+                    actionIsError = true
                 }
             } catch (e: Exception) {
                 actionMessage = e.message ?: context.getString(R.string.dashboard_signin_failed)
+                actionIsError = true
             } finally {
                 actionInFlight = false
                 client.shutdown()
@@ -177,11 +192,75 @@ fun DashboardSignInScreen(
         }
     }
 
-    oauthProvider?.let { provider ->
+    fun startRedirectSignIn(provider: DashboardAuthProvider) {
+        if (actionInFlight || dashboardUrl.isBlank()) return
+        if (redirectAuthMode == DashboardRedirectAuthMode.WebView) {
+            oauthProvider = provider
+            return
+        }
+        if (!isNativeDashboardTransportEligible(dashboardUrl)) {
+            actionMessage = context.getString(R.string.dashboard_native_signin_requires_https)
+            actionIsError = true
+            return
+        }
+        val authClient = connectionViewModel.nativeDashboardAuthClientForActive(dashboardUrl)
+        if (authClient == null) {
+            actionMessage = context.getString(R.string.dashboard_native_signin_unavailable)
+            actionIsError = true
+            return
+        }
+
+        actionInFlight = true
+        actionIsError = false
+        actionMessage = context.getString(R.string.dashboard_native_signin_opening)
+        nativeSignInJob = scope.launch {
+            try {
+                NativeDashboardSignInCoordinator(authClient).signIn(provider.name) { authorizationUrl ->
+                    withContext(Dispatchers.Main.immediate) {
+                        launchNativeDashboardAuthorization(context, authorizationUrl)
+                    }
+                }
+                val client = clientFactory()
+                val session = try {
+                    verifyAndRecord(client)
+                } finally {
+                    client.shutdown()
+                }
+                if (session?.authenticated == true) {
+                    actionMessage = session.provider?.let {
+                        context.getString(R.string.dashboard_signed_in_with, it)
+                    } ?: context.getString(R.string.dashboard_signed_in)
+                    actionIsError = false
+                    finishAuthentication()
+                } else {
+                    actionMessage = context.getString(R.string.dashboard_signin_no_session)
+                    actionIsError = true
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                actionMessage = error.message
+                    ?: context.getString(R.string.dashboard_signin_failed)
+                actionIsError = true
+            } finally {
+                actionInFlight = false
+                nativeSignInJob = null
+            }
+        }
+    }
+
+    DisposableEffect(dashboardUrl, connectionId) {
+        onDispose { nativeSignInJob?.cancel() }
+    }
+
+    oauthProvider
+        ?.takeIf { redirectAuthMode == DashboardRedirectAuthMode.WebView }
+        ?.let { provider ->
         DashboardOAuthDialog(
             dashboardUrl = dashboardUrl,
             provider = provider,
             cookieStoreFactory = cookieStoreFactory,
+            clientFactory = clientFactory,
             onDismiss = { oauthProvider = null },
             onAuthenticated = { session ->
                 oauthProvider = null
@@ -198,7 +277,10 @@ fun DashboardSignInScreen(
                     finishAuthentication()
                 }
             },
-            onError = { actionMessage = it },
+            onError = {
+                actionMessage = it
+                actionIsError = true
+            },
         )
     }
 
@@ -207,7 +289,10 @@ fun DashboardSignInScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.dashboard_sign_in)) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        nativeSignInJob?.cancel()
+                        onBack()
+                    }) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.dashboard_back),
@@ -235,8 +320,17 @@ fun DashboardSignInScreen(
                     providers = providers,
                     actionInFlight = actionInFlight,
                     actionMessage = actionMessage,
+                    actionIsError = actionIsError,
+                    nativePkce = redirectAuthMode == DashboardRedirectAuthMode.NativePkce,
+                    nativeSignInInFlight = nativeSignInJob != null,
+                    nativeTransportEligible = isNativeDashboardTransportEligible(dashboardUrl),
                     onSignIn = ::submitPassword,
-                    onOAuthSignIn = { oauthProvider = it },
+                    onOAuthSignIn = ::startRedirectSignIn,
+                    onCancelNativeSignIn = {
+                        actionMessage = context.getString(R.string.dashboard_native_signin_cancelled)
+                        actionIsError = false
+                        nativeSignInJob?.cancel()
+                    },
                 )
             }
         }
@@ -301,8 +395,13 @@ private fun DashboardSignInForm(
     providers: List<DashboardAuthProvider>,
     actionInFlight: Boolean,
     actionMessage: String?,
+    actionIsError: Boolean,
+    nativePkce: Boolean,
+    nativeSignInInFlight: Boolean,
+    nativeTransportEligible: Boolean,
     onSignIn: (String, String, String) -> Unit,
     onOAuthSignIn: (DashboardAuthProvider) -> Unit,
+    onCancelNativeSignIn: () -> Unit,
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -328,11 +427,18 @@ private fun DashboardSignInForm(
     redirectProviders.forEach { provider ->
         Button(
             onClick = { onOAuthSignIn(provider) },
-            enabled = !actionInFlight,
+            enabled = !actionInFlight && (!nativePkce || nativeTransportEligible),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.dashboard_signin_with_provider, provider.displayName ?: provider.name))
         }
+    }
+    if (nativePkce && !nativeTransportEligible && redirectProviders.isNotEmpty()) {
+        Text(
+            text = stringResource(R.string.dashboard_native_signin_requires_https),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
     }
     if (passwordProvider != null || providers.isEmpty()) {
         if (redirectProviders.isNotEmpty()) HorizontalDivider()
@@ -360,7 +466,23 @@ private fun DashboardSignInForm(
         }
     }
     actionMessage?.let {
-        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        Text(
+            it,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (actionIsError) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+    if (nativeSignInInFlight) {
+        Button(
+            onClick = onCancelNativeSignIn,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.dashboard_cancel))
+        }
     }
 }
 
@@ -369,6 +491,7 @@ private fun DashboardOAuthDialog(
     dashboardUrl: String,
     provider: DashboardAuthProvider,
     cookieStoreFactory: () -> DashboardCookieStore,
+    clientFactory: () -> DashboardApiClient,
     onDismiss: () -> Unit,
     onAuthenticated: (DashboardAuthSession) -> Unit,
     onError: (String) -> Unit,
@@ -408,10 +531,7 @@ private fun DashboardOAuthDialog(
         checking = true
         statusText = verifyingStatus
         scope.launch {
-            val client = DashboardApiClient(
-                dashboardUrl,
-                DashboardApiClient.defaultClient(cookieStoreFactory()),
-            )
+            val client = clientFactory()
             try {
                 val session = client.currentSession().getOrNull()
                 if (session?.authenticated == true) onAuthenticated(session) else {

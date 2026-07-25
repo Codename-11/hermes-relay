@@ -56,6 +56,18 @@
     <string name="onboarding_realtime_label">リアルタイム</string>
     <string name="onboarding_realtime_description">プロバイダーネイティブのリアルタイム音声エージェントとプロファイル認識音声プロバイダー。</string>
     <string name="onboarding_review_permissions">権限の確認</string>
+    <string name="onboarding_finish_setup_title">セットアップを完了</string>
+    <string name="onboarding_finish_setup_description">Hermes への接続準備ができました。このスマートフォンで許可する機能を選ぶか、後で設定から変更できます。</string>
+    <string name="onboarding_chat_manage_ready">準備完了 — スマートフォンの権限は必要ありません。</string>
+    <string name="onboarding_chat_alerts">チャット通知</string>
+    <string name="onboarding_chat_alerts_description">有効にした通知をバックグラウンドでも受け取れるよう、Android の通知を許可します。</string>
+    <string name="onboarding_chat_alerts_ready">このアプリの通知は有効です。</string>
+    <string name="onboarding_optional_features">オプション機能</string>
+    <string name="onboarding_optional_features_description">カメラ、マイク、通知コンパニオン、利用可能な端末ツールは、選択するまで無効のままです。</string>
+    <string name="onboarding_review_optional_permissions">オプション権限を確認</string>
+    <string name="onboarding_enable_chat_alerts">チャット通知を有効にする</string>
+    <string name="onboarding_not_now">今はしない</string>
+    <string name="onboarding_finish">セットアップを完了</string>
 
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">ライブ音声会話</string>
@@ -70,7 +82,7 @@
     <string name="chat_input_start_voice">音声会話を開始する</string>
     <string name="chat_input_voice_setup_needed">音声会話 - 設定が必要です</string>
     <string name="chat_input_stop_streaming">ストリーミングを停止する</string>
-    <string name="chat_input_steer_response">応答を制御する</string>
+    <string name="chat_input_steer_response">応答を修正</string>
     <string name="chat_input_queue_message">キューメッセージ</string>
 
     <!-- Bridge return labels -->
@@ -101,7 +113,7 @@
 
     <!-- Chat screen placeholders -->
     <string name="chat_placeholder_edit">メッセージを編集してください…</string>
-    <string name="chat_placeholder_steer">応答を制御します…</string>
+    <string name="chat_placeholder_steer">応答を修正…</string>
     <string name="chat_placeholder_queue">メッセージをキューに入れます…</string>
     <string name="chat_placeholder_message">メッセージ…</string>
     <string name="chat_edit_busy_snackbar">現在編集できません - 現在のターンが終了するまで待ちます</string>
@@ -353,7 +365,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 または http://your-server:8642</string>
     <string name="cw_api_url_supporting">Hermes API チャットとセッションで使用されます — API ポート 8642 および http:// はベア ホストとして想定されます (ダッシュボードの 9119 は個別に派生します)</string>
     <string name="cw_scan_message">この LAN をスキャンして Hermes ダッシュボード/API を探しています…</string>
-    <string name="cw_dashboard_signin_hint">ダッシュボード経由でサインインして、管理と音声のロックを解除します。チャットでは API キーはオプションです。</string>
+    <string name="cw_dashboard_signin_hint">ダッシュボード経由でサインインして、管理と音声のロックを解除します。API キーは任意の直接 API フォールバックでのみ使います。</string>
     <string name="cw_pair_relay_section">Relay のペア (オプション)</string>
     <string name="cw_pair_relay_section_desc">すでに Relay プラグインを実行していますか?ここでペアリングすると、ターミナル、Bridge、およびチャネル許可が有効になります。</string>
     <string name="cw_pair_relay_url_label">Relay URL</string>
@@ -660,11 +672,11 @@
     <string name="settings_profile_lock_desc">アプリを 1 つのエージェント プロファイルに固定する</string>
     <string name="settings_quick_controls">クイックコントロール</string>
     <string name="settings_persistent_connection">永続的な接続</string>
-    <string name="settings_persistent_connection_desc">Hermes への接続をバッ​​クグラウンドで開いたままにします</string>
-    <string name="settings_connect_on_demand">オンデマンドのみに接続します · バッテリーを節約します</string>
-    <string name="settings_turn_complete_alerts">ターン完了アラート</string>
-    <string name="settings_turn_complete_alerts_desc">アプリがバックグラウンドで動作しているときに返信が完了したときに通知する</string>
-    <string name="settings_turn_complete_alerts_off">バックグラウンドでの返信が終了してもアラートは表示されません</string>
+    <string name="settings_persistent_connection_desc">チャットが実行されていないときも接続を維持</string>
+    <string name="settings_connect_on_demand">アクティブなチャットは自動的に接続を維持 · アイドル時はバッテリー節約のため接続を閉じます</string>
+    <string name="settings_turn_complete_alerts">チャット通知</string>
+    <string name="settings_turn_complete_alerts_desc">バックグラウンドで Hermes が入力を必要としたとき、または完了したときに通知します</string>
+    <string name="settings_turn_complete_alerts_off">バックグラウンドのチャット動作を通知しません</string>
     <string name="settings_keep_connected_deep_sleep">深い睡眠中も接続を維持する</string>
     <string name="settings_keep_connected_battery_desc">Android は、画面がしばらくオフになった後でも接続を一時停止できます (Doze)。永続的な接続がバックグラウンドで動作し続けるように、無制限のバッテリーを許可します。</string>
     <string name="settings_allow_unrestricted_battery">無制限のバッテリーを許可する</string>
@@ -694,8 +706,8 @@
     <string name="chat_settings_recent_prompt_chips_desc">最近のメッセージをコンポーザーの上にタップ可能なチップとして表示し、再送信します。デフォルトではオフです。</string>
     <string name="chat_settings_keep_keyboard_open">送信時にキーボードを開いたままにする</string>
     <string name="chat_settings_keep_keyboard_open_desc">送信後はコンポーザー内に留まります。メッセージを送信するたびにキーボードを閉じるには、オフにします。</string>
-    <string name="chat_settings_notify_when_finishes">Hermes が終了したら通知する</string>
-    <string name="chat_settings_notify_when_finishes_desc">アプリがバックグラウンドで動作中に返信が完了したときに通知を投稿する</string>
+    <string name="chat_settings_notify_when_finishes">バックグラウンドのチャット通知</string>
+    <string name="chat_settings_notify_when_finishes_desc">バックグラウンドで Hermes が入力を必要としたとき、または完了したときに通知します</string>
     <string name="chat_settings_share_phone_status">電話のステータスをエージェントと共有する</string>
     <string name="chat_settings_share_phone_status_desc">すべてのチャット ターンにアプリと電話に関する短いシステム メッセージを含めます</string>
     <string name="chat_settings_bridge_permissions">Bridge + 権限</string>
@@ -1189,7 +1201,7 @@
     <string name="dev_settings_relay_features">Relay の特徴</string>
     <string name="dev_settings_relay_features_desc">Relay サーバーと Bridge/ターミナル開発用のペアリング設定を表示</string>
     <string name="dev_settings_realtime_voice_lab">リアルタイム音声ラボ</string>
-    <string name="dev_settings_realtime_voice_lab_desc">開発ビルド用のプロバイダー WebSocket テストベンチを開きます</string>
+    <string name="dev_settings_realtime_voice_lab_desc">リアルタイム音声の設定を確認し、マイクの集中テストを実行します</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">リアルタイム音声ラボを開く</string>
     <string name="dev_settings_lock_dev_options">開発者向けオプションをロックする</string>
     <string name="dev_settings_lock_dev_options_desc">このセクションを非表示にし、実験的な機能を無効にします</string>
@@ -1220,6 +1232,7 @@
     <string name="dev_settings_export_failed">エクスポートに失敗しました</string>
     <string name="dev_settings_imported">インポートされた設定</string>
     <string name="dev_settings_import_failed">インポートに失敗しました - 無効なファイル</string>
+    <string name="dev_settings_reset_failed">リセットに失敗しました</string>
     <string name="dev_settings_export_sensitive_backup_title">機密性の高いバックアップをエクスポートしますか?</string>
     <string name="dev_settings_export_sensitive_backup_body">このバックアップには、保存された接続、API キー、Relay セッション トークン、デバイス ID、およびダッシュボード Cookie が含まれます。ファイルを持っている人は誰でも、Hermes サーバーにアクセスできる可能性があります。</string>
     <string name="dev_settings_export_action">輸出</string>
@@ -1489,7 +1502,7 @@
     <string name="voice_settings_route_relay">Relay</string>
     <string name="voice_settings_route_relay_desc">Relay プラグイン音声 — プロファイル対応プロバイダーとストリーミング音声出力。</string>
     <string name="voice_settings_optional">オプション</string>
-    <string name="voice_settings_signin_route_hint">%1$s ルート経由で接続されており、ダッシュボードのサインインはホストごとに行われます。ホーム ネットワークからのサインインは引き継がれません。このルートの途中で [管理] に一度サインインすると、ここでも音声のロックが解除されます。</string>
+    <string name="voice_settings_signin_route_hint">%1$s ルートで保存済みのダッシュボード セッションを再利用できませんでした。[管理] を開いて再度サインインし、音声を有効にしてください。</string>
     <string name="voice_settings_signin_default_hint">Hermes ダッシュボードでは、標準音声を書き起こしたり話したりする前にサインインする必要があります。管理に一度サインインすると、この接続のロックが解除されます。</string>
     <string name="voice_settings_sign_in_via_manage">「管理」経由でサインインする</string>
     <string name="voice_settings_unsupported_build_body">この Hermes サーバー ビルドでは、ダッシュボードのオーディオ ルートがまだ公開されていません。サーバー上の hermes-agent を更新するか、Relay をペアにして Relay 音声を使用します。</string>
@@ -1728,7 +1741,7 @@
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">ダッシュボードへのサインインが必要です</string>
     <string name="dashboard_signin_required_body">管理は、%1$s で Hermes ダッシュボード セッションを使用します。</string>
-    <string name="dashboard_signin_route_hint">あなたは %1$s ルート上にいます。ダッシュボードのサインインはホストごとに行われるため、他のルートからのサインインは引き継がれません。ここで 1 回サインインすると、アプリは両方のセッションを維持します。</string>
+    <string name="dashboard_signin_route_hint">%1$s ルートで保存済みのダッシュボード セッションを再利用できませんでした。再度サインインして、この接続の信頼済みルート全体でセッションを更新してください。</string>
     <string name="dashboard_signin_with_provider">%1$s でサインインします</string>
     <string name="dashboard_username_password">ユーザー名 &amp; パスワード</string>
     <string name="dashboard_username">ユーザー名</string>
@@ -1779,6 +1792,31 @@
     <string name="dashboard_action_use">使用</string>
     <string name="dashboard_action_describe">説明する</string>
     <string name="dashboard_action_model">モデル</string>
+    <string name="dashboard_tab_custom_endpoints">エンドポイント</string>
+    <string name="dashboard_tab_custom_endpoints_lower">エンドポイント</string>
+    <string name="dashboard_tile_custom_endpoints_title">カスタムエンドポイント</string>
+    <string name="dashboard_tile_custom_endpoints_sub">OpenAI 互換プロバイダー</string>
+    <string name="dashboard_action_authenticate">認証</string>
+    <string name="dashboard_action_validate">検証</string>
+    <string name="dashboard_action_edit">編集</string>
+    <string name="dashboard_mcp_oauth_title">%1$s を認証</string>
+    <string name="dashboard_mcp_oauth_body">Hermes はブラウザでプロバイダーを開きます。アクセスを承認したら、この画面に戻ってください。認証情報は Hermes サーバーに保存されます。</string>
+    <string name="dashboard_mcp_oauth_approved">MCP 認証が承認されました</string>
+    <string name="dashboard_mcp_oauth_failed">MCP 認証に失敗しました</string>
+    <string name="dashboard_mcp_oauth_no_browser">MCP 認証を完了するためのブラウザを利用できません。</string>
+    <string name="dashboard_custom_endpoint_add">エンドポイントを追加</string>
+    <string name="dashboard_custom_endpoint_edit">エンドポイントを編集</string>
+    <string name="dashboard_custom_endpoint_name">名前</string>
+    <string name="dashboard_custom_endpoint_url">ベース URL</string>
+    <string name="dashboard_custom_endpoint_model">デフォルトモデル</string>
+    <string name="dashboard_custom_endpoint_key">API キー（任意）</string>
+    <string name="dashboard_custom_endpoint_key_help">保存時に既存のキーを保持するには空欄にしてください。検証にはここで入力したキーのみが使用されます。Hermes が保存済みのキーを表示または削除することはありません。</string>
+    <string name="dashboard_custom_endpoint_context">コンテキスト長（任意）</string>
+    <string name="dashboard_custom_endpoint_discover">/models からモデルを検出</string>
+    <string name="dashboard_custom_endpoint_valid">エンドポイントに接続できました · %1$d モデル</string>
+    <string name="dashboard_custom_endpoint_validate_failed">エンドポイントの検証に失敗しました</string>
+    <string name="dashboard_custom_endpoint_save_failed">エンドポイントの保存に失敗しました</string>
+    <string name="dashboard_custom_endpoint_saved">カスタムエンドポイントを保存しました</string>
     <string name="dashboard_action_completed">%1$s 完了</string>
     <string name="dashboard_action_failed">%1$s が失敗しました</string>
     <string name="dashboard_more">もっと</string>
@@ -2093,7 +2131,7 @@
     <string name="active_section_api_key_already_set">API キーはすでに設定されています</string>
     <string name="active_section_api_key_needed_hint">Hermes サーバーで作成した API_SERVER_KEY を使用します。このキーはアプリから発行されません。</string>
     <string name="active_section_api_key_not_configured">API キーが構成されていません</string>
-    <string name="active_section_api_key_optional">API キー (オプション)</string>
+    <string name="active_section_api_key_optional">直接 API の API キー</string>
     <string name="active_section_api_key_stored_hint">鍵は安全に保管されます。</string>
     <string name="active_section_api_reachable_voice_review">API に到達可能 — 音声設定を確認してください</string>
     <string name="active_section_api_relay_voice_reachable">API 到達可能 — Relay 音声が設定されています</string>
@@ -2211,6 +2249,19 @@
     <string name="conn_info_confirms_on_next_message">次のメッセージで確認します</string>
     <string name="conn_info_connect">接続する</string>
     <string name="conn_info_connected">接続済み</string>
+    <string name="conn_info_active_configuration">有効な構成</string>
+    <string name="conn_info_inherited">継承</string>
+    <string name="conn_info_bypassed">バイパス</string>
+    <string name="conn_info_customize_identity">アイデンティティをカスタマイズ</string>
+    <string name="conn_info_agent_passport">エージェントパスポート</string>
+    <string name="conn_info_chat_override">チャットの上書き</string>
+    <string name="conn_info_fast_tier">高速ティア</string>
+    <string name="conn_info_fast">高速</string>
+    <string name="conn_info_context">コンテキスト</string>
+    <string name="conn_info_profile_already_bypasses">承認はプロファイルですでにバイパスされています。</string>
+    <string name="conn_info_start_new_chat">新しいチャットを開始</string>
+    <string name="conn_info_approval_mode_short_desc">承認を適用する方法を選択します。</string>
+    <string name="conn_info_approval_policy">承認ポリシー</string>
     <string name="conn_info_connecting">接続中…</string>
     <string name="conn_info_connection">繋がり</string>
     <string name="conn_info_connection_state">接続状態</string>
@@ -2466,6 +2517,7 @@
     <string name="tool_progress_status_completed">完成した</string>
     <string name="tool_progress_status_failed">失敗した</string>
     <string name="tool_progress_status_running">走っている</string>
+    <string name="image_generation_rendering">画像を生成中</string>
     <string name="tool_progress_cd_collapse">崩壊</string>
     <string name="tool_progress_cd_expand">拡大する</string>
 
@@ -2559,6 +2611,22 @@
     <string name="attachment_unmute">ミュートを解除する</string>
     <string name="attachment_mute">ミュート</string>
     <string name="attachment_title">アタッチメント</string>
+    <plurals name="attachment_group_count">
+        <item quantity="other">添付ファイル %1$d 件</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">添付ファイルを折りたたむ</string>
+    <string name="attachment_group_expand">添付ファイルを展開する</string>
+    <string name="attachment_group_collapsed">折りたたみ済み</string>
+    <string name="attachment_group_expanded">展開済み</string>
+    <string name="attachment_type_image">画像</string>
+    <string name="attachment_type_video">動画</string>
+    <string name="attachment_type_audio">音声</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">テキスト</string>
+    <string name="attachment_type_file">ファイル</string>
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay が予期せず終了しました</string>
@@ -3283,9 +3351,47 @@
     <string name="active_section_optional_api_fallback">任意の直接 API フォールバック</string>
     <string name="active_section_api_not_required">この接続が Hermes Dashboard を使用する場合は必要ありません。</string>
     <string name="active_section_where_api_key">このキーはどこで入手しますか？</string>
-    <string name="active_section_api_key_explainer">API_SERVER_KEY は Hermes サーバー上で作成します。このアプリからは発行されません。任意の API サーバーを有効にする場合のみ設定し、同じ値をここに入力してください。</string>
+    <string name="active_section_api_key_explainer">API_SERVER_KEY は Hermes サーバー上で作成します。このアプリからは発行されません。任意の API サーバーを有効にする場合のみ設定します。このサーバーには使用可能なキーが必要です。同じ値をここに入力してください。</string>
     <string name="active_section_scan_relay_qr">Relay QR をスキャン</string>
     <string name="active_section_other_relay_methods">その他のペアリング方法</string>
     <string name="endpoints_tailscale_setup_hint">両方のデバイスで Tailscale に接続し、Hermes Dashboard がポート 9119 で到達可能である必要があります。</string>
     <string name="endpoints_setup_help">Tailscale セットアップヘルプ</string>
+    <string name="voice_settings_provider_desc">音声を生成する場所です。利用可能な選択肢は、この Hermes ホストとインストール済みプロバイダーから取得されます。</string>
+    <string name="voice_settings_model_desc">Latest はプロバイダーの更新に追従します。音声の動作を固定するには、バージョン付きモデルを選択します。</string>
+    <string name="voice_settings_voice_desc">返信の声を選択します。音声をプレビューしても選択は保存されません。</string>
+    <string name="voice_settings_language_desc">自動では、プロバイダーが話し言葉を検出します。検出が不安定な場合だけ言語を選択します。</string>
+    <string name="voice_settings_language_auto">自動</string>
+    <string name="voice_settings_provider_options_title">音声オプション</string>
+    <string name="voice_settings_provider_options_desc">選択したプロバイダーが対応する設定だけを表示します。</string>
+    <string name="voice_settings_auto_speak">返信を読み上げる</string>
+    <string name="voice_settings_auto_speak_desc">このホスト設定に対応する Hermes 画面で、アシスタントの返信を自動的に読み上げます。</string>
+    <string name="voice_settings_realtime_model_desc">Hermes チャットモデルではなく、ライブ音声セッションを制御します。Latest はプロバイダーの更新に追従し、バージョン付きモデルは固定されます。</string>
+    <string name="voice_settings_realtime_voice_desc">ライブセッション内で使う音声です。プロバイダーが公開している場合、組み込み音声とカスタム音声が表示されます。</string>
+    <string name="dashboard_component_connected">接続済み</string>
+    <string name="dashboard_component_server_errors_5m">サーバーエラー / 5分</string>
+    <string name="appearance_image_generation_style">画像生成</string>
+    <string name="appearance_image_generation_style_desc">3種類の進行アニメーションを順番に使うか、毎回同じスタイルを使用します。</string>
+    <string name="appearance_image_generation_rotate">ローテーション</string>
+    <string name="appearance_image_generation_grid">グリッド</string>
+    <string name="appearance_image_generation_sphere">球体</string>
+    <string name="appearance_image_generation_nodes">ノード</string>
+    <string name="dev_settings_image_generation_lab">画像生成ラボ</string>
+    <string name="dev_settings_image_generation_lab_desc">生成ループと最終画像の表示をプレビューします</string>
+    <string name="dev_settings_open_image_generation_lab_cd">画像生成ラボを開く</string>
+    <string name="dashboard_native_signin_opening">ブラウザでサインインを完了してから、ここに戻ってください。</string>
+    <string name="dashboard_native_signin_cancelled">ブラウザでのサインインをキャンセルしました。</string>
+    <string name="dashboard_native_signin_requires_https">安全なブラウザサインインには、HTTPSのダッシュボードアドレスが必要です。</string>
+    <string name="dashboard_native_signin_unavailable">この接続では安全なブラウザサインインを利用できません。接続を更新して、もう一度お試しください。</string>
+    <string name="conn_info_yolo_mode_desc_ephemeral">このチャットでのみ承認確認を省略します。セッションが変わるとリセットされます。</string>
+    <string name="conn_info_yolo_mode_profile_off">プロフィールの承認がオフのため、このチャットではすでに確認を省略しています。チャット単位の例外を使う前に、手動またはスマートを選択してください。</string>
+    <string name="conn_info_approval_mode_title">プロフィール承認モード</string>
+    <string name="conn_info_approval_mode_desc">このHermesプロフィールに対する永続的なポリシーです。すべてのチャットとデバイスに適用されます。</string>
+    <string name="conn_info_approval_mode_unsupported">プロフィール承認モードを選択するにはHermesを更新してください。チャット単位のYOLOは引き続き利用できます。</string>
+    <string name="conn_info_approval_mode_profile_read_only">この多重化プロフィールでは読み取り専用です。現在のモードはプロフィールセッション開始後に表示され、変更にはupstreamのプロフィール別設定RPCが必要です。</string>
+    <string name="conn_info_approval_mode_manual">手動</string>
+    <string name="conn_info_approval_mode_manual_desc">保護されたツール呼び出しのたびに確認します。</string>
+    <string name="conn_info_approval_mode_smart">スマート</string>
+    <string name="conn_info_approval_mode_smart_desc">Hermesが高いリスクを検出した場合にのみ確認します。</string>
+    <string name="conn_info_approval_mode_off">オフ</string>
+    <string name="conn_info_approval_mode_off_desc">このプロフィールの承認を常に省略します。</string>
 </resources>

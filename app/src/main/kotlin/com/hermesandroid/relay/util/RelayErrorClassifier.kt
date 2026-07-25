@@ -227,6 +227,18 @@ private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?
 
     val msg = t.message.orEmpty().lowercase()
 
+    // Upstream rejects new API work with this stable code while an intentional
+    // shutdown/external drain is in progress. Keep it distinct from provider
+    // 503s: the server is healthy and will accept work after the drain clears.
+    if (msg.startsWith("api error 503: gateway_draining:")) {
+        return HumanError(
+            title = "Hermes is restarting",
+            body = "Hermes is draining active work. Wait a moment, then retry this message.",
+            retryable = true,
+            actionLabel = ctx?.getString(R.string.error_classify_retry) ?: "Retry",
+        )
+    }
+
     // Typed exceptions are checked first because an IOException message scan
     // would otherwise swallow SSL/timeout/connect errors whose messages
     // happen to contain HTTP-ish substrings. Only fall through to the

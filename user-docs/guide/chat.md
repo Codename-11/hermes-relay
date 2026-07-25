@@ -127,12 +127,19 @@ around 75% and **red** near 90%, with a `· NN% ctx` readout in the header
 subtitle as you get close to the limit — a quiet heads-up to wrap up or
 `/compress` before the model starts dropping the earliest messages.
 
-## Turn-complete notifications
+## Chat alerts
 
-Long task running while you switch away? If you leave the app mid-reply,
-Hermes-Relay posts a **"Hermes replies"** notification when the turn finishes, so
-you can jump back in. Toggle it under **Settings → Chat → Notify when Hermes
-finishes** (it asks for notification permission the first time).
+If you leave the app during a Gateway turn, Hermes-Relay alerts you when Hermes
+needs an approval, clarification, elevated-permission response, or secret, and
+again when the turn finishes. An action-required alert opens the exact
+conversation and request. Replayed events replace the existing alert, and the
+alert clears after you respond, the request expires, or the turn resumes.
+
+Notification text never includes the command, question, secret prompt, or
+environment-variable name. Those details stay inside the authenticated chat
+surface, including on the lock screen. Toggle this behavior under **Settings →
+Quick Controls → Chat alerts**; Android asks for notification permission the
+first time.
 
 ## Smooth auto-scroll
 
@@ -238,11 +245,23 @@ A running Gateway chat keeps its event connection attached; if that connection
 drops, the app reconnects while the server continues working. Idle chats pre-warm
 when reopened so the next message is fast.
 
-If you want the connection to stay fully open even when the app is in the
-background, turn on **Settings → Quick Controls → Persistent connection** (off by
-default). It holds the app's connection to Hermes open via an ongoing
+While any chat is running, Hermes-Relay automatically uses an ongoing Android
+notification to keep the app and its connection active until every concurrent
+turn finishes or is interrupted. If a turn needs approval, clarification, or
+sensitive input, its separate alert reopens the exact profile and conversation.
+Expanding that alert shows safe session context, but never the requested command,
+question, password, secret, or environment-variable name.
+
+If you want the connection to stay fully open even when no chat is running,
+turn on **Settings → Quick Controls → Persistent connection** (off by default).
+It extends the same foreground protection to idle time via an ongoing
 notification, so messages and live features stay responsive; for relay-paired
 setups it also keeps device control and notification mirroring reachable. Tap
-**Turn off** on the notification, or flip the toggle, to stop. This uses more
+**Turn off always-on** on the notification, or flip the toggle, to stop the idle
+retention without interrupting active work. This uses more
 battery; swiping the app away from recents also ends it. It's the same approach
 apps like Home Assistant use to stay connected.
+
+Chat alerts and active-turn protection do not require Persistent connection.
+Enable it only when an idle connection or Relay-powered live features must
+remain reachable during long background or Doze periods.

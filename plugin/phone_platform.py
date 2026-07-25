@@ -135,6 +135,8 @@ _REPLY_READ_TIMEOUT = _REPLY_POLL_TIMEOUT + 10.0
 # Backoff (seconds) when the relay is unreachable / erroring, so a down relay
 # doesn't spin the loop. Resets to fast polling once a poll succeeds.
 _REPLY_BACKOFF = (2.0, 5.0, 10.0, 30.0)
+_MAX_METADATA_KEYS = 24
+_MAX_METADATA_STRING_LENGTH = 512
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +236,33 @@ def _replies_url_and_headers() -> tuple[str, Dict[str, str]]:
     return f"{_relay_base_url()}{_RELAY_REPLIES_PATH}", headers
 
 
+def _safe_metadata(value: Any) -> Dict[str, Any]:
+    """Return a small JSON-safe metadata dict for normalized gateway events."""
+    if not isinstance(value, dict):
+        return {}
+    safe: Dict[str, Any] = {}
+    for raw_key, raw_value in value.items():
+        if len(safe) >= _MAX_METADATA_KEYS:
+            break
+        if not isinstance(raw_key, str) or not raw_key:
+            continue
+        key = raw_key[:80]
+        if isinstance(raw_value, str):
+            safe[key] = raw_value[:_MAX_METADATA_STRING_LENGTH]
+        elif isinstance(raw_value, (bool, int, float)) or raw_value is None:
+            safe[key] = raw_value
+        elif isinstance(raw_value, list):
+            items: List[Any] = []
+            for item in raw_value[:16]:
+                if isinstance(item, str):
+                    items.append(item[:_MAX_METADATA_STRING_LENGTH])
+                elif isinstance(item, (bool, int, float)) or item is None:
+                    items.append(item)
+            if items:
+                safe[key] = items
+    return safe
+
+
 def _normalize_reply(
     reply: Any, default_chat_id: str
 ) -> Optional[Dict[str, Any]]:
@@ -256,6 +285,7 @@ def _normalize_reply(
         "chat_id": reply.get("chat_id") or default_chat_id,
         "reply_to": reply.get("reply_to"),
         "message_id": str(reply.get("message_id") or uuid.uuid4().hex[:12]),
+        "metadata": _safe_metadata(reply.get("metadata")),
     }
 
 
@@ -431,14 +461,21 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
             message_id=normalized["reply_to"],
             role_authorized=True,
         )
-        event = MessageEvent(
-            text=normalized["text"],
-            message_type=MessageType.TEXT,
-            source=source,
-            message_id=normalized["message_id"],
-            reply_to_message_id=normalized["reply_to"],
-            raw_message=reply,
-        )
+        event_kwargs = {
+            "text": normalized["text"],
+            "message_type": MessageType.TEXT,
+            "source": source,
+            "message_id": normalized["message_id"],
+            "reply_to_message_id": normalized["reply_to"],
+            "raw_message": reply,
+            "metadata": normalized["metadata"],
+        }
+        try:
+            event = MessageEvent(**event_kwargs)
+        except TypeError:
+            # Older upstream MessageEvent builds did not expose metadata yet.
+            event_kwargs.pop("metadata", None)
+            event = MessageEvent(**event_kwargs)
         logger.info(
             "[%s] inbound reply chat=%s reply_to=%s len=%d",
             self.name, chat_id, normalized["reply_to"], len(normalized["text"]),
@@ -546,6 +583,7 @@ def _env_enablement() -> Optional[dict]:
         "enabled": True,
         "relay_url": _relay_base_url(),
         "home_channel_name": _home_channel_name(),
+        "typing_indicator": False,
     }
     home = _home_channel()
     seed["home_channel"] = {"chat_id": home, "name": _home_channel_name()}

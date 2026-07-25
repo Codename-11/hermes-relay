@@ -60,6 +60,36 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun getStatus_parsesNousAndOptionalGatewayTopology() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """
+                {
+                  "auth_required": false,
+                  "nous_session_valid": "terminal",
+                  "profiles": ["default", "worker"],
+                  "gateway_mode": "multiplex",
+                  "gateways": [{
+                    "profile": "default",
+                    "ports": {"api_server": 8642, "webhook": 8080},
+                    "served_profiles": ["default", "worker"]
+                  }]
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val status = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getStatus().getOrThrow()
+
+        assertEquals("terminal", status.nousSessionValid)
+        assertEquals(listOf("default", "worker"), status.profiles)
+        assertEquals("multiplex", status.gatewayMode)
+        assertEquals(8642, status.gateways.single().ports["api_server"])
+        assertEquals(listOf("default", "worker"), status.gateways.single().servedProfiles)
+    }
+
+    @Test
     fun getModelOptions_alwaysRequestsUnconfiguredProviders() = runTest {
         // HRUI-022: newer upstream hides unconfigured provider skeleton rows
         // unless the client opts in — without include_unconfigured=1 the
@@ -274,6 +304,81 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun mirrorDashboardSessionCookies_reusesEncryptedSessionOnTrustedRoute() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie("hermes_session_at", "access", "192.168.1.20"),
+                storedCookie("hermes_session_rt", "refresh", "192.168.1.20"),
+                storedCookie("hermes_session_provider", "basic", "192.168.1.20"),
+            ),
+        )
+
+        val mirrored = mirrorDashboardSessionCookies(
+            store = store,
+            targetUrl = "http://100.64.0.20:9119",
+            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+        )
+        val cookies = DashboardCookieJar(store).loadForRequest(
+            "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
+        )
+
+        assertEquals(3, mirrored)
+        assertEquals(
+            listOf("hermes_session_at", "hermes_session_rt", "hermes_session_provider"),
+            cookies.map { it.name },
+        )
+    }
+
+    @Test
+    fun mirrorDashboardSessionCookies_doesNotCopyPkceOrToUnknownHost() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie("hermes_session_at", "access", "192.168.1.20"),
+                storedCookie("hermes_session_pkce", "verifier", "192.168.1.20"),
+            ),
+        )
+
+        assertEquals(
+            0,
+            mirrorDashboardSessionCookies(
+                store = store,
+                targetUrl = "http://attacker.example:9119",
+                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+            ),
+        )
+        assertEquals(
+            1,
+            mirrorDashboardSessionCookies(
+                store = store,
+                targetUrl = "http://100.64.0.20:9119",
+                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+            ),
+        )
+        val mirroredNames = DashboardCookieJar(store).loadForRequest(
+            "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
+        ).map { it.name }
+
+        assertEquals(listOf("hermes_session_at"), mirroredNames)
+    }
+
+    @Test
+    fun mirrorDashboardSessionCookies_explicitSignOutClearsEveryRoute() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(listOf(storedCookie("hermes_session", "session", "192.168.1.20")))
+        mirrorDashboardSessionCookies(
+            store = store,
+            targetUrl = "http://100.64.0.20:9119",
+            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+        )
+
+        store.clear()
+
+        assertTrue(store.load().isEmpty())
+    }
+
+    @Test
     fun getStatus_defaultsMissingAuthFieldsForOlderDashboard() = runTest {
         server.enqueue(
             MockResponse()
@@ -329,6 +434,22 @@ class DashboardApiClientTest {
         assertEquals("bailey", session.username)
         assertEquals("basic", session.provider)
     }
+
+    private fun storedCookie(
+        name: String,
+        value: String,
+        domain: String,
+    ) = StoredDashboardCookie(
+        name = name,
+        value = value,
+        expiresAt = Long.MAX_VALUE,
+        domain = domain,
+        path = "/",
+        secure = false,
+        httpOnly = true,
+        hostOnly = true,
+        persistent = true,
+    )
 
     @Test
     fun currentSession_mapsUnauthorizedToUnauthenticated() = runTest {
@@ -468,6 +589,125 @@ class DashboardApiClientTest {
         assertTrue(body.contains(""""name":"linear""""))
         assertTrue(body.contains(""""LINEAR_API_KEY":"secret""""))
         assertTrue(body.contains(""""enable":false"""))
+    }
+
+    @Test
+    fun mcpOAuth_preservesProfileAndParsesOpaqueFlow() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"flow_id":"opaque-flow","server_name":"hosted","status":"authorization_required","authorization_url":"https://auth.example/authorize?state=secret"}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"flow_id":"opaque-flow","server_name":"hosted","status":"approved","authorization_url":null}""",
+            ),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        val started = client.startMcpOAuth("hosted tools", profile = "work profile").getOrThrow()
+        val approved = client.getMcpOAuthFlow(started.flowId).getOrThrow()
+
+        assertEquals("opaque-flow", started.flowId)
+        assertEquals("approved", approved.status)
+        assertEquals("/api/mcp/servers/hosted%20tools/auth?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/oauth/flows/opaque-flow", server.takeRequest().path)
+    }
+
+    @Test
+    fun mcpOAuthCapability_canonicalMissingFlowUsesReadOnlyGetAndIsSupported() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"detail":"OAuth flow not found or expired"}"""),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        assertTrue(client.supportsHostedMcpOAuth().getOrThrow())
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__", request.path)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun mcpOAuthCapability_genericFastApi404UsesReadOnlyGetAndIsUnsupported() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"detail":"Not Found"}"""),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        assertFalse(client.supportsHostedMcpOAuth().getOrThrow())
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__", request.path)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun mcpMutations_preserveSelectedProfile() = runTest {
+        repeat(5) {
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("{}"))
+        }
+        val client = DashboardApiClient(server.url("/").toString())
+
+        client.setMcpServerEnabled("hosted", true, "work profile").getOrThrow()
+        client.testMcpServer("hosted", "work profile").getOrThrow()
+        client.removeMcpServer("hosted", "work profile").getOrThrow()
+        client.installMcpCatalogEntry("hosted", profile = "work profile").getOrThrow()
+
+        assertEquals("/api/mcp/servers/hosted/enabled?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/servers/hosted/test?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/servers/hosted?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/catalog/install?profile=work%20profile", server.takeRequest().path)
+    }
+
+    @Test
+    fun customEndpointCrud_usesPublicDashboardRoutesAndRedactedResponse() = runTest {
+        val listBody = """
+            {"endpoints":[{"id":"local","name":"Local","base_url":"https://llm.example/v1","model":"qwen","models":["qwen"],"has_api_key":true,"api_key_preview":"sk-…1234","is_current":true}],"current":{"provider":"local","model":"qwen"}}
+        """.trimIndent()
+        repeat(5) {
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+                if (it == 2) """{"ok":true,"reachable":true,"message":"","models":["qwen"]}"""
+                else if (it == 3) """{"ok":true,"provider":"local","model":"qwen"}"""
+                else listBody,
+            ))
+        }
+        val client = DashboardApiClient(server.url("/").toString())
+        val draft = DashboardCustomEndpointDraft(
+            id = "local",
+            name = "Local",
+            baseUrl = "https://llm.example/v1",
+            model = "qwen",
+            models = listOf("qwen", "qwen-vl", " qwen ", ""),
+            apiKey = "never-persist-this",
+        )
+
+        val listed = client.getCustomEndpoints().getOrThrow()
+        client.saveCustomEndpoint(draft).getOrThrow()
+        val validation = client.validateCustomEndpoint(draft).getOrThrow()
+        client.activateCustomEndpoint("local").getOrThrow()
+        client.deleteCustomEndpoint("local").getOrThrow()
+
+        assertEquals("local", listed.currentProvider)
+        assertTrue(listed.endpoints.single().hasApiKey)
+        assertEquals(listOf("qwen"), validation.models)
+        assertEquals("/api/providers/custom-endpoints", server.takeRequest().path)
+        val save = server.takeRequest()
+        assertEquals("/api/providers/custom-endpoints", save.path)
+        val saveBody = save.body.readUtf8()
+        assertTrue(saveBody.contains("never-persist-this"))
+        assertTrue(saveBody.contains(""""models":["qwen","qwen-vl"]"""))
+        assertEquals("/api/providers/custom-endpoints/validate", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints/local/activate", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints/local", server.takeRequest().path)
     }
 
     @Test
@@ -747,6 +987,20 @@ class DashboardApiClientTest {
 
         assertEquals("/api/config", server.takeRequest().path)
         assertEquals("/api/config/schema", server.takeRequest().path)
+    }
+
+    @Test
+    fun getTtsToolsetConfig_hitsRuntimeProviderRegistry() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"name":"tts","has_category":true,"providers":[]}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.getTtsToolsetConfig().getOrThrow()
+
+        assertEquals("/api/tools/toolsets/tts/config", server.takeRequest().path)
     }
 
     @Test

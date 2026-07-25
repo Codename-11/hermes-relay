@@ -36,7 +36,7 @@ session grant.
 
 | Surface | Owner | Base URL | Primary authentication | Relay required? |
 |---|---|---|---|---|
-| API Server | Upstream Hermes | `http(s)://host:8642` | Optional `API_SERVER_KEY` bearer | No |
+| API Server | Upstream Hermes | `http(s)://host:8642` | Required `API_SERVER_KEY` bearer when the API server is enabled | No |
 | Dashboard / Gateway | Upstream Hermes | `http(s)://host:9119` | Dashboard session; short-lived WS ticket for `/api/ws` | No |
 | Relay | Hermes-Relay plugin | `ws(s)://host:8767` and matching HTTP(S) origin | Pairing code, then Relay session token and grants | Yes |
 | Compatibility hook | Hermes-Relay plugin, older hosts only | Injected into the API server | Same auth as the host API server | No, but non-upstream |

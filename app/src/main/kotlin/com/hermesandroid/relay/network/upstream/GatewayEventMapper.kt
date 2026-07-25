@@ -31,13 +31,25 @@ class GatewayEventMapper(
     var turnEnded: Boolean = false
         private set
 
+    internal val currentInteraction: GatewayAsk?
+        get() = pendingInteraction
+
+    internal fun restoreInteraction(ask: GatewayAsk) {
+        val duplicate = pendingInteraction?.sameRequestAs(ask) == true
+        pendingInteraction = ask
+        if (!duplicate) callbacks.onInteractionRequest(ask)
+    }
+
     private var sawMessageStart = false
     private var previousEventType: String? = null
     private var sawTextDelta = false
     private var sawThinkingDelta = false
+    private var previewedText: String? = null
     private var syntheticToolCounter = 0
     private var providerWaitStatusActive = false
     private var compactionStatusActive = false
+    private var moaStatusActive = false
+    private var pendingInteraction: GatewayAsk? = null
 
     /**
      * `tool.complete` events match their `tool.start` by `tool_id`; when a
@@ -56,6 +68,30 @@ class GatewayEventMapper(
 
     fun onEvent(type: String, payload: JsonObject?) {
         if (turnEnded) return
+
+        interactionRequest(type, payload)?.let { ask ->
+            restoreInteraction(ask)
+            previousEventType = type
+            return
+        }
+        interactionExpiry(type, payload)?.let { expiry ->
+            val pending = pendingInteraction
+            if (pending != null && pending.matches(expiry)) {
+                pendingInteraction = null
+            }
+            callbacks.onInteractionExpired(expiry)
+            previousEventType = type
+            return
+        }
+        if (type in INTERACTION_RESUME_EVENTS) {
+            pendingInteraction?.let { ask ->
+                pendingInteraction = null
+                callbacks.onInteractionResolved(
+                    GatewayAskExpiry(kind = ask.kind, requestId = ask.requestId),
+                )
+            }
+        }
+
         when (type) {
             "reasoning.delta" -> {
                 val text = payload.string("text")
@@ -95,10 +131,27 @@ class GatewayEventMapper(
 
             "message.delta" -> {
                 val text = payload.string("text")
-                if (!text.isNullOrEmpty()) {
+                if (!text.isNullOrEmpty() && !isIntentionalSilenceMarker(text)) {
                     clearActivityStatuses()
                     sawTextDelta = true
+                    previewedText = null
                     callbacks.onTextDelta(text)
+                }
+            }
+
+            "message.interim" -> {
+                val text = payload.string("text") ?: payload.string("message")
+                    ?: payload.string("preview") ?: payload.string("rendered")
+                val alreadyStreamed = payload.boolean("already_streamed") == true
+                if (!text.isNullOrBlank() || alreadyStreamed) {
+                    clearActivityStatuses()
+                    if (!sawMessageStart) {
+                        sawMessageStart = true
+                        callbacks.onStart()
+                    }
+                    callbacks.onInterimMessage(text.orEmpty(), alreadyStreamed)
+                    previewedText = text
+                    sawTextDelta = alreadyStreamed
                 }
             }
 
@@ -114,6 +167,7 @@ class GatewayEventMapper(
                 // assistant message began — close out the previous one.
                 if (sawMessageStart) callbacks.onTurnComplete()
                 sawMessageStart = true
+                previewedText = null
                 callbacks.onStart()
             }
 
@@ -163,8 +217,21 @@ class GatewayEventMapper(
             "message.complete" -> {
                 // Non-streaming servers (or error turns) deliver everything
                 // here; backfill whatever never streamed.
+                val failed = payload.string("status").equals(ERROR_STATUS_KIND, ignoreCase = true)
+                val error = payload.string("error")
                 val text = payload.string("text")
-                if (!sawTextDelta && !text.isNullOrEmpty()) {
+                    ?: error?.takeIf { failed }?.let { "Error: $it" }
+                val reconcilesInterim = !text.isNullOrEmpty() &&
+                    previewedText?.let { preview ->
+                        preview.isNotEmpty() &&
+                            (text.startsWith(preview) || preview.startsWith(text))
+                    } == true
+                if (reconcilesInterim) {
+                    callbacks.onInterimReconciled(text)
+                } else if (!text.isNullOrEmpty() &&
+                    !isIntentionalSilenceMarker(text) &&
+                    (!sawTextDelta || previewedText != null)
+                ) {
                     callbacks.onTextDelta(text)
                 }
                 val reasoning = payload.string("reasoning")
@@ -172,6 +239,12 @@ class GatewayEventMapper(
                     callbacks.onThinkingDelta(reasoning)
                 }
                 callbacks.onUsage(parseGatewayUsage(payload?.get("usage") as? JsonObject))
+                if (failed) {
+                    callbacks.onStatusUpdate(
+                        ERROR_STATUS_KIND,
+                        error?.takeIf { it.isNotBlank() } ?: text.orEmpty().ifBlank { "Turn failed" },
+                    )
+                }
                 turnEnded = true
                 callbacks.onComplete()
             }
@@ -209,36 +282,6 @@ class GatewayEventMapper(
                 )
             }
 
-            "clarify.request" -> callbacks.onInteractionRequest(
-                GatewayAsk(
-                    kind = GatewayAsk.Kind.CLARIFY,
-                    requestId = payload.string("request_id"),
-                    text = payload.string("question") ?: "The agent needs clarification",
-                    choices = (payload?.get("choices") as? JsonArray)
-                        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                        ?.takeIf { it.isNotEmpty() },
-                    timeoutSeconds = CLARIFY_TIMEOUT_SECONDS,
-                ),
-            )
-
-            "approval.request" -> callbacks.onInteractionRequest(
-                GatewayAsk(
-                    kind = GatewayAsk.Kind.APPROVAL,
-                    // Upstream approvals correlate per-SESSION, never
-                    // per-request — a stray request_id must not be adopted.
-                    requestId = null,
-                    text = listOfNotNull(payload.string("command"), payload.string("description"))
-                        .joinToString(" — ")
-                        .ifBlank { "a command approval" },
-                    choices = payload.approvalChoices(),
-                    smartDenied = payload.boolean("smart_denied") == true,
-                    // Current Hermes omits timeout metadata. Keep the legacy
-                    // no-countdown behavior unless a future contract exposes
-                    // the effective per-request timeout explicitly.
-                    timeoutSeconds = payload.int("timeout_seconds") ?: 0,
-                ),
-            )
-
             "tool.output_risk" -> {
                 val toolId = payload.string("tool_id")
                 val risk = payload.string("risk")?.lowercase() ?: return
@@ -259,52 +302,57 @@ class GatewayEventMapper(
                 }
             }
 
-            // MoA activity proves auto-compaction has resumed even though
-            // Android does not currently render these upstream events.
-            "moa.reference", "moa.aggregating", "tool.progress" -> clearActivityStatuses()
+            "moa.reference" -> {
+                clearProviderWaitAndCompaction()
+                val text = payload.string("text")?.trim().orEmpty()
+                if (text.isNotEmpty()) {
+                    val available = !isFailedMoaReference(text)
+                    callbacks.onMoaReference(
+                        GatewayMoaReference(
+                            index = payload.int("index")?.takeIf { it > 0 },
+                            count = payload.int("count")
+                                ?.takeIf { it > 0 },
+                            label = payload.string("label")?.trim()?.take(MAX_MOA_LABEL_CHARS).orEmpty()
+                                .ifBlank { "Advisor" },
+                            text = if (available) text.take(MAX_MOA_REFERENCE_CHARS) else "",
+                            available = available,
+                        ),
+                    )
+                }
+            }
 
-            "sudo.request" -> callbacks.onInteractionRequest(
-                GatewayAsk(
-                    kind = GatewayAsk.Kind.SUDO,
-                    requestId = payload.string("request_id"),
-                    // Payload carries request_id ONLY — no command to show.
-                    text = "Elevated permissions requested",
-                    timeoutSeconds = SUDO_TIMEOUT_SECONDS,
-                ),
-            )
+            "moa.progress" -> {
+                clearProviderWaitAndCompaction()
+                val total = payload.int("refs_total")
+                    ?.takeIf { it > 0 }
+                val done = payload.int("refs_done")
+                if (total != null && done != null) {
+                    setMoaStatus("MoA: ${done.coerceIn(0, total)}/$total advisors complete")
+                }
+            }
 
-            "secret.request" -> callbacks.onInteractionRequest(
-                GatewayAsk(
-                    kind = GatewayAsk.Kind.SECRET,
-                    requestId = payload.string("request_id"),
-                    text = payload.string("prompt") ?: "The agent needs a secret value",
-                    envVar = payload.string("env_var"),
-                    timeoutSeconds = SECRET_TIMEOUT_SECONDS,
-                ),
-            )
+            "moa.phase" -> {
+                clearProviderWaitAndCompaction()
+                when (payload.string("phase")?.lowercase()) {
+                    "aggregator", "aggregating" -> setMoaStatus("MoA: aggregating…")
+                    "reference", "references" -> {
+                        val total = payload.int("refs_total")
+                            ?.takeIf { it > 0 }
+                        val done = payload.int("refs_done")
+                        if (total != null && done != null) {
+                            setMoaStatus("MoA: ${done.coerceIn(0, total)}/$total advisors complete")
+                        }
+                    }
+                }
+            }
 
-            "sudo.expire" -> callbacks.onInteractionExpired(
-                GatewayAskExpiry(
-                    kind = GatewayAsk.Kind.SUDO,
-                    requestId = payload.string("request_id"),
-                ),
-            )
+            // Legacy phase marker retained by upstream for older consumers.
+            "moa.aggregating" -> {
+                clearProviderWaitAndCompaction()
+                setMoaStatus("MoA: aggregating…")
+            }
 
-            "secret.expire" -> callbacks.onInteractionExpired(
-                GatewayAskExpiry(
-                    kind = GatewayAsk.Kind.SECRET,
-                    requestId = payload.string("request_id"),
-                ),
-            )
-
-            // Forward-compatible consumer for the proposed upstream approval
-            // expiry event. Approvals correlate by session, never request id.
-            "approval.expire" -> callbacks.onInteractionExpired(
-                GatewayAskExpiry(
-                    kind = GatewayAsk.Kind.APPROVAL,
-                    requestId = null,
-                ),
-            )
+            "tool.progress" -> clearActivityStatuses()
 
             "status.update" -> {
                 val text = payload.string("text")
@@ -336,27 +384,120 @@ class GatewayEventMapper(
     }
 
     private fun clearActivityStatuses() {
+        clearProviderWaitAndCompaction()
+        if (!moaStatusActive) return
+        moaStatusActive = false
+        callbacks.onStatusClear(MOA_STATUS_KIND)
+    }
+
+    private fun clearProviderWaitAndCompaction() {
         clearProviderWaitStatus()
         if (!compactionStatusActive) return
         compactionStatusActive = false
         callbacks.onStatusClear(COMPACTION_STATUS_KIND)
     }
 
-    private fun JsonObject?.approvalChoices(): List<String>? =
-        (this?.get("choices") as? JsonArray)
-            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
-            ?.filter { it in APPROVAL_CHOICES }
-            ?.distinct()
-            ?.takeIf { it.isNotEmpty() }
-
-    private fun JsonObject?.boolean(key: String): Boolean? =
-        (this?.get(key) as? JsonPrimitive)?.booleanOrNull
+    private fun setMoaStatus(text: String) {
+        moaStatusActive = true
+        callbacks.onStatusUpdate(MOA_STATUS_KIND, text)
+    }
 
     companion object {
         const val PROVIDER_WAIT_STATUS_KIND = "provider_wait"
         const val COMPACTION_STATUS_KIND = "compacting"
-        private val APPROVAL_CHOICES = setOf("once", "session", "always", "deny")
+        const val ERROR_STATUS_KIND = "error"
+        const val MOA_STATUS_KIND = "moa"
+        private const val MAX_MOA_LABEL_CHARS = 120
+        private const val MAX_MOA_REFERENCE_CHARS = 16_000
         private val OUTPUT_RISK_LEVELS = setOf("low", "medium", "high", "critical")
+        private val INTERACTION_RESUME_EVENTS = setOf(
+            "reasoning.delta",
+            "thinking.delta",
+            "reasoning.available",
+            "message.delta",
+            "message.interim",
+            "message.start",
+            "tool.generating",
+            "tool.start",
+            "tool.complete",
+            "message.complete",
+            "error",
+        )
+
+        internal fun isFailedMoaReference(text: String): Boolean {
+            val normalized = text.trimStart().lowercase()
+            return normalized.startsWith("[failed:") || normalized.startsWith("[skipped:")
+        }
+
+        fun interactionRequest(type: String, payload: JsonObject?): GatewayAsk? = when (type) {
+            "clarify.request" -> GatewayAsk(
+                kind = GatewayAsk.Kind.CLARIFY,
+                requestId = payload.string("request_id"),
+                text = payload.string("question") ?: "The agent needs clarification",
+                choices = (payload?.get("choices") as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                    ?.takeIf { it.isNotEmpty() },
+                timeoutSeconds = CLARIFY_TIMEOUT_SECONDS,
+            )
+
+            "approval.request" -> GatewayAsk(
+                kind = GatewayAsk.Kind.APPROVAL,
+                // Upstream approvals correlate per-SESSION, never
+                // per-request — a stray request_id must not be adopted.
+                requestId = null,
+                text = listOfNotNull(payload.string("command"), payload.string("description"))
+                    .joinToString(" — ")
+                    .ifBlank { "a command approval" },
+                choices = payload.approvalChoices(),
+                smartDenied = payload.boolean("smart_denied") == true,
+                timeoutSeconds = payload.int("timeout_seconds") ?: 0,
+            )
+
+            "sudo.request" -> GatewayAsk(
+                kind = GatewayAsk.Kind.SUDO,
+                requestId = payload.string("request_id"),
+                text = "Elevated permissions requested",
+                timeoutSeconds = SUDO_TIMEOUT_SECONDS,
+            )
+
+            "secret.request" -> GatewayAsk(
+                kind = GatewayAsk.Kind.SECRET,
+                requestId = payload.string("request_id"),
+                text = payload.string("prompt") ?: "The agent needs a secret value",
+                envVar = payload.string("env_var"),
+                timeoutSeconds = SECRET_TIMEOUT_SECONDS,
+            )
+
+            else -> null
+        }
+
+        fun interactionExpiry(type: String, payload: JsonObject?): GatewayAskExpiry? = when (type) {
+            "clarify.expire" -> GatewayAskExpiry(
+                kind = GatewayAsk.Kind.CLARIFY,
+                requestId = payload.string("request_id"),
+            )
+
+            "sudo.expire" -> GatewayAskExpiry(
+                kind = GatewayAsk.Kind.SUDO,
+                requestId = payload.string("request_id"),
+            )
+
+            "secret.expire" -> GatewayAskExpiry(
+                kind = GatewayAsk.Kind.SECRET,
+                requestId = payload.string("request_id"),
+            )
+
+            // Forward-compatible consumer for a future upstream approval
+            // expiry event. Approvals correlate by session, never request id.
+            "approval.expire" -> GatewayAskExpiry(
+                kind = GatewayAsk.Kind.APPROVAL,
+                requestId = null,
+            )
+
+            else -> null
+        }
+
+        fun isInteractionResumeEvent(type: String): Boolean = type in INTERACTION_RESUME_EVENTS
 
         /**
          * Hermes 2026-07-15 emits these operational wait lines through the
@@ -422,3 +563,20 @@ private fun JsonObject?.int(key: String): Int? =
 
 private fun JsonObject?.double(key: String): Double? =
     (this?.get(key) as? JsonPrimitive)?.doubleOrNull
+
+private fun JsonObject?.boolean(key: String): Boolean? =
+    (this?.get(key) as? JsonPrimitive)?.booleanOrNull
+
+private fun JsonObject?.approvalChoices(): List<String>? =
+    (this?.get("choices") as? JsonArray)
+        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
+        ?.filter { it in setOf("once", "session", "always", "deny") }
+        ?.distinct()
+        ?.takeIf { it.isNotEmpty() }
+
+private fun GatewayAsk.sameRequestAs(other: GatewayAsk): Boolean =
+    kind == other.kind && requestId == other.requestId
+
+private fun GatewayAsk.matches(expiry: GatewayAskExpiry): Boolean =
+    kind == expiry.kind &&
+        (kind == GatewayAsk.Kind.APPROVAL || requestId == expiry.requestId)

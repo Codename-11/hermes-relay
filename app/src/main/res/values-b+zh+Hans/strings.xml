@@ -56,6 +56,18 @@
     <string name="onboarding_realtime_label">实时语音</string>
     <string name="onboarding_realtime_description">提供商原生的实时语音代理，以及按配置文件区分的语音提供商。</string>
     <string name="onboarding_review_permissions">查看权限</string>
+    <string name="onboarding_finish_setup_title">完成设置</string>
+    <string name="onboarding_finish_setup_description">Hermes 连接已就绪。现在选择这部手机可以使用的功能，或稍后在设置中更改。</string>
+    <string name="onboarding_chat_manage_ready">已就绪 — 无需手机权限。</string>
+    <string name="onboarding_chat_alerts">聊天提醒</string>
+    <string name="onboarding_chat_alerts_description">允许 Android 通知，以便已启用的提醒可在后台送达。</string>
+    <string name="onboarding_chat_alerts_ready">此应用的通知已启用。</string>
+    <string name="onboarding_optional_features">可选功能</string>
+    <string name="onboarding_optional_features_description">相机、麦克风、通知助手和可用的设备工具会保持关闭，直到你主动选择。</string>
+    <string name="onboarding_review_optional_permissions">查看可选权限</string>
+    <string name="onboarding_enable_chat_alerts">启用聊天提醒</string>
+    <string name="onboarding_not_now">暂不</string>
+    <string name="onboarding_finish">完成设置</string>
 
     <!-- 聊天输入栏 -->
     <string name="chat_input_live_voice_hint">实时语音对话</string>
@@ -70,7 +82,7 @@
     <string name="chat_input_start_voice">开始语音对话</string>
     <string name="chat_input_voice_setup_needed">语音对话——需要先设置</string>
     <string name="chat_input_stop_streaming">停止流式响应</string>
-    <string name="chat_input_steer_response">引导回复方向</string>
+    <string name="chat_input_steer_response">修正回复</string>
     <string name="chat_input_queue_message">排队发送消息</string>
 
     <!-- Bridge 返回标签 -->
@@ -101,7 +113,7 @@
 
     <!-- 聊天界面占位符 -->
     <string name="chat_placeholder_edit">编辑你的消息…</string>
-    <string name="chat_placeholder_steer">引导回复方向…</string>
+    <string name="chat_placeholder_steer">修正回复…</string>
     <string name="chat_placeholder_queue">排队发送消息…</string>
     <string name="chat_placeholder_message">输入消息…</string>
     <string name="chat_edit_busy_snackbar">暂时无法编辑——请等当前这一轮结束</string>
@@ -353,7 +365,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 或 http://你的服务器:8642</string>
     <string name="cw_api_url_supporting">聊天和会话使用的 Hermes API——裸主机名默认使用 API 端口 8642 和 http://（仪表盘的 9119 端口单独推导）</string>
     <string name="cw_scan_message">正在扫描本局域网寻找 Hermes 仪表盘/API…</string>
-    <string name="cw_dashboard_signin_hint">通过仪表盘登录以解锁管理和语音——API 密钥对聊天是可选的。</string>
+    <string name="cw_dashboard_signin_hint">通过仪表盘登录以解锁管理和语音——API 密钥仅用于可选的直接 API 回退。</string>
     <string name="cw_pair_relay_section">配对 Relay（可选）</string>
     <string name="cw_pair_relay_for">为 %1$s 配对 Relay</string>
     <string name="cw_pair_relay_scoped_desc">为这个已保存的 Hermes 连接添加可选的 Relay 扩展。这不会添加或替换服务器。</string>
@@ -660,11 +672,11 @@
     <string name="settings_profile_lock_desc">将应用固定到一个代理配置文件</string>
     <string name="settings_quick_controls">快捷控制</string>
     <string name="settings_persistent_connection">持久连接</string>
-    <string name="settings_persistent_connection_desc">在后台保持与 Hermes 的连接</string>
-    <string name="settings_connect_on_demand">仅按需连接 · 省电</string>
-    <string name="settings_turn_complete_alerts">回合完成提醒</string>
-    <string name="settings_turn_complete_alerts_desc">应用在后台时回复完成则通知</string>
-    <string name="settings_turn_complete_alerts_off">后台回复完成时不提醒</string>
+    <string name="settings_persistent_connection_desc">即使没有聊天运行也保持连接</string>
+    <string name="settings_connect_on_demand">活跃聊天会自动保持连接 · 空闲时关闭连接以节省电量</string>
+    <string name="settings_turn_complete_alerts">聊天提醒</string>
+    <string name="settings_turn_complete_alerts_desc">Hermes 在后台需要输入或完成回复时通知</string>
+    <string name="settings_turn_complete_alerts_off">不提醒后台聊天活动</string>
     <string name="settings_keep_connected_deep_sleep">在深度睡眠中保持连接</string>
     <string name="settings_keep_connected_battery_desc">屏幕关闭一段时间后 Android 仍可能暂停连接（Doze）。允许不受限制的电池使用，让持久连接在后台继续工作。</string>
     <string name="settings_allow_unrestricted_battery">允许不受限制的电池</string>
@@ -694,8 +706,8 @@
     <string name="chat_settings_recent_prompt_chips_desc">在输入栏上方显示最近消息为可点击的标签以便重发。默认关闭。</string>
     <string name="chat_settings_keep_keyboard_open">发送时保持键盘打开</string>
     <string name="chat_settings_keep_keyboard_open_desc">发送后留在输入栏。关闭则在每条消息发送后收起键盘。</string>
-    <string name="chat_settings_notify_when_finishes">Hermes 完成时通知</string>
-    <string name="chat_settings_notify_when_finishes_desc">应用在后台时回复完成则发送通知</string>
+    <string name="chat_settings_notify_when_finishes">后台聊天提醒</string>
+    <string name="chat_settings_notify_when_finishes_desc">Hermes 在后台需要输入或完成回复时通知</string>
     <string name="chat_settings_share_phone_status">与代理分享手机状态</string>
     <string name="chat_settings_share_phone_status_desc">每轮聊天附带一条关于应用和手机的简短系统消息</string>
     <string name="chat_settings_bridge_permissions">Bridge + 权限</string>
@@ -1173,7 +1185,7 @@
     <string name="dev_settings_relay_features">Relay 功能</string>
     <string name="dev_settings_relay_features_desc">显示 Relay 服务器和配对设置，用于 Bridge/Terminal 开发</string>
     <string name="dev_settings_realtime_voice_lab">实时语音实验室</string>
-    <string name="dev_settings_realtime_voice_lab_desc">为开发构建打开 provider websocket 测试台</string>
+    <string name="dev_settings_realtime_voice_lab_desc">检查实时语音设置并运行专项麦克风测试</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">打开实时语音实验室</string>
     <string name="dev_settings_lock_dev_options">锁定开发者选项</string>
     <string name="dev_settings_lock_dev_options_desc">隐藏此分区并禁用实验性功能</string>
@@ -1204,6 +1216,7 @@
     <string name="dev_settings_export_failed">导出失败</string>
     <string name="dev_settings_imported">设置已导入</string>
     <string name="dev_settings_import_failed">导入失败——文件无效</string>
+    <string name="dev_settings_reset_failed">重置失败</string>
     <string name="dev_settings_export_sensitive_backup_title">导出敏感备份？</string>
     <string name="dev_settings_export_sensitive_backup_body">此备份包含已保存的连接、API 密钥、Relay 会话令牌、设备 ID 和仪表盘 Cookie。任何持有该文件的人都可能访问您的 Hermes 服务器。</string>
     <string name="dev_settings_export_action">导出</string>
@@ -1473,7 +1486,7 @@
     <string name="voice_settings_route_relay">Relay</string>
     <string name="voice_settings_route_relay_desc">Relay 插件语音——支持按个人资料的提供商和流式语音输出。</string>
     <string name="voice_settings_optional">可选</string>
-    <string name="voice_settings_signin_route_hint">您正通过 %1$s 路由连接，而仪表板登录是按主机区分的——家庭网络上的登录不会延续到此。请在此路由上在 Manage 中登录一次，以在此处解锁语音。</string>
+    <string name="voice_settings_signin_route_hint">无法在 %1$s 路由上复用已保存的仪表板会话。请打开“管理”重新登录并解锁语音。</string>
     <string name="voice_settings_signin_default_hint">您的 Hermes 仪表板需要先登录，标准语音才能转录或朗读。在 Manage 中登录一次即可为此连接解锁。</string>
     <string name="voice_settings_sign_in_via_manage">通过 Manage 登录</string>
     <string name="voice_settings_unsupported_build_body">此 Hermes 服务器构建尚未公开仪表板音频路由。请在服务器上更新 hermes-agent，或配对 Relay 以使用 Relay 语音。</string>
@@ -1712,7 +1725,7 @@
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">需要登录仪表盘</string>
     <string name="dashboard_signin_required_body">管理功能使用位于 %1$s 的 Hermes 仪表盘会话。</string>
-    <string name="dashboard_signin_route_hint">你当前使用 %1$s 路由。仪表盘登录按主机区分，所以在另一条路由上的登录不会自动延续——在这里登录一次，应用会同时保留两个会话。</string>
+    <string name="dashboard_signin_route_hint">无法在 %1$s 路由上复用已保存的仪表板会话。请重新登录，以便在此连接的可信路由之间刷新会话。</string>
     <string name="dashboard_signin_with_provider">使用 %1$s 登录</string>
     <string name="dashboard_username_password">用户名与密码</string>
     <string name="dashboard_username">用户名</string>
@@ -1763,6 +1776,31 @@
     <string name="dashboard_action_use">使用</string>
     <string name="dashboard_action_describe">描述</string>
     <string name="dashboard_action_model">模型</string>
+    <string name="dashboard_tab_custom_endpoints">端点</string>
+    <string name="dashboard_tab_custom_endpoints_lower">端点</string>
+    <string name="dashboard_tile_custom_endpoints_title">自定义端点</string>
+    <string name="dashboard_tile_custom_endpoints_sub">OpenAI 兼容提供商</string>
+    <string name="dashboard_action_authenticate">认证</string>
+    <string name="dashboard_action_validate">验证</string>
+    <string name="dashboard_action_edit">编辑</string>
+    <string name="dashboard_mcp_oauth_title">认证 %1$s</string>
+    <string name="dashboard_mcp_oauth_body">Hermes 将在浏览器中打开提供商。批准访问后请返回此页面；凭据将保留在 Hermes 服务器上。</string>
+    <string name="dashboard_mcp_oauth_approved">MCP 认证已获批准</string>
+    <string name="dashboard_mcp_oauth_failed">MCP 认证失败</string>
+    <string name="dashboard_mcp_oauth_no_browser">没有可用于完成 MCP 认证的浏览器。</string>
+    <string name="dashboard_custom_endpoint_add">添加端点</string>
+    <string name="dashboard_custom_endpoint_edit">编辑端点</string>
+    <string name="dashboard_custom_endpoint_name">名称</string>
+    <string name="dashboard_custom_endpoint_url">基础 URL</string>
+    <string name="dashboard_custom_endpoint_model">默认模型</string>
+    <string name="dashboard_custom_endpoint_key">API 密钥（可选）</string>
+    <string name="dashboard_custom_endpoint_key_help">保存时留空可保留现有密钥。验证仅使用在此输入的密钥；Hermes 不会显示或清除已保存的密钥。</string>
+    <string name="dashboard_custom_endpoint_context">上下文长度（可选）</string>
+    <string name="dashboard_custom_endpoint_discover">从 /models 发现模型</string>
+    <string name="dashboard_custom_endpoint_valid">端点可访问 · %1$d 个模型</string>
+    <string name="dashboard_custom_endpoint_validate_failed">端点验证失败</string>
+    <string name="dashboard_custom_endpoint_save_failed">端点保存失败</string>
+    <string name="dashboard_custom_endpoint_saved">自定义端点已保存</string>
     <string name="dashboard_action_completed">%1$s 已完成</string>
     <string name="dashboard_action_failed">%1$s 失败</string>
     <string name="dashboard_more">更多</string>
@@ -2077,7 +2115,7 @@
     <string name="active_section_api_key_already_set">API 密钥已设置</string>
     <string name="active_section_api_key_needed_hint">使用在 Hermes 服务器上创建的 API_SERVER_KEY。此密钥并非由应用提供。</string>
     <string name="active_section_api_key_not_configured">API 密钥未配置</string>
-    <string name="active_section_api_key_optional">API 密钥（可选）</string>
+    <string name="active_section_api_key_optional">直接 API 的 API 密钥</string>
     <string name="active_section_api_key_stored_hint">密钥已安全存储。</string>
     <string name="active_section_api_reachable_voice_review">API 可达——请检查语音配置</string>
     <string name="active_section_api_relay_voice_reachable">API 可达——Relay 语音已配置</string>
@@ -2195,6 +2233,19 @@
     <string name="conn_info_confirms_on_next_message">下条消息确认</string>
     <string name="conn_info_connect">连接</string>
     <string name="conn_info_connected">已连接</string>
+    <string name="conn_info_active_configuration">当前配置</string>
+    <string name="conn_info_inherited">继承</string>
+    <string name="conn_info_bypassed">已绕过</string>
+    <string name="conn_info_customize_identity">自定义身份</string>
+    <string name="conn_info_agent_passport">智能体档案</string>
+    <string name="conn_info_chat_override">对话覆盖</string>
+    <string name="conn_info_fast_tier">快速层级</string>
+    <string name="conn_info_fast">快速</string>
+    <string name="conn_info_context">上下文</string>
+    <string name="conn_info_profile_already_bypasses">此配置已绕过审批。</string>
+    <string name="conn_info_start_new_chat">开始新对话</string>
+    <string name="conn_info_approval_mode_short_desc">选择如何执行审批。</string>
+    <string name="conn_info_approval_policy">审批策略</string>
     <string name="conn_info_connecting">连接中…</string>
     <string name="conn_info_connection">连接</string>
     <string name="conn_info_connection_state">连接状态</string>
@@ -2452,6 +2503,7 @@
     <string name="tool_progress_status_completed">已完成</string>
     <string name="tool_progress_status_failed">失败</string>
     <string name="tool_progress_status_running">运行中</string>
+    <string name="image_generation_rendering">正在生成图像</string>
     <string name="tool_progress_cd_collapse">折叠</string>
     <string name="tool_progress_cd_expand">展开</string>
 
@@ -2545,6 +2597,22 @@
     <string name="attachment_unmute">取消静音</string>
     <string name="attachment_mute">静音</string>
     <string name="attachment_title">附件</string>
+    <plurals name="attachment_group_count">
+        <item quantity="other">%1$d 个附件</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">收起附件</string>
+    <string name="attachment_group_expand">展开附件</string>
+    <string name="attachment_group_collapsed">已收起</string>
+    <string name="attachment_group_expanded">已展开</string>
+    <string name="attachment_type_image">图片</string>
+    <string name="attachment_type_video">视频</string>
+    <string name="attachment_type_audio">音频</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">文本</string>
+    <string name="attachment_type_file">文件</string>
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay 意外关闭</string>
@@ -3217,9 +3285,47 @@
     <string name="active_section_optional_api_fallback">可选的直接 API 回退</string>
     <string name="active_section_api_not_required">此连接使用 Hermes Dashboard 时不需要配置。</string>
     <string name="active_section_where_api_key">从哪里获取此密钥？</string>
-    <string name="active_section_api_key_explainer">API_SERVER_KEY 需要在 Hermes 服务器上创建，并非由此应用提供。仅在启用可选 API 服务器时进行配置，并在此输入相同的值。</string>
+    <string name="active_section_api_key_explainer">API_SERVER_KEY 需要在 Hermes 服务器上创建，并非由此应用提供。仅在启用可选 API 服务器时配置；该服务器需要可用密钥，并在此输入相同的值。</string>
     <string name="active_section_scan_relay_qr">扫描 Relay 二维码</string>
     <string name="active_section_other_relay_methods">其他配对方式</string>
     <string name="endpoints_tailscale_setup_hint">两台设备都必须连接 Tailscale，并且 Hermes Dashboard 必须可通过端口 9119 访问。</string>
     <string name="endpoints_setup_help">Tailscale 设置帮助</string>
+    <string name="voice_settings_provider_desc">语音生成的位置。可用选项来自此 Hermes 主机及其已安装的提供商。</string>
+    <string name="voice_settings_model_desc">Latest 会跟随提供商升级。选择带版本的模型可固定语音行为。</string>
+    <string name="voice_settings_voice_desc">选择回复的声音。预览语音不会保存选择。</string>
+    <string name="voice_settings_language_desc">自动会让提供商检测口语语言。仅在检测不可靠时选择语言。</string>
+    <string name="voice_settings_language_auto">自动</string>
+    <string name="voice_settings_provider_options_title">语音选项</string>
+    <string name="voice_settings_provider_options_desc">只显示所选提供商支持的设置。</string>
+    <string name="voice_settings_auto_speak">朗读回复</string>
+    <string name="voice_settings_auto_speak_desc">在遵循此主机设置的 Hermes 界面上自动朗读助手回复。</string>
+    <string name="voice_settings_realtime_model_desc">控制实时语音会话，而不是 Hermes 聊天模型。Latest 会跟随提供商升级；带版本的模型会保持固定。</string>
+    <string name="voice_settings_realtime_voice_desc">实时会话中使用的语音。当提供商公布内置或自定义语音时，它们会显示出来。</string>
+    <string name="dashboard_component_connected">已连接</string>
+    <string name="dashboard_component_server_errors_5m">服务器错误 / 5 分钟</string>
+    <string name="appearance_image_generation_style">图像生成</string>
+    <string name="appearance_image_generation_style_desc">轮换使用三种进度动画，或让每次生成都使用同一种样式。</string>
+    <string name="appearance_image_generation_rotate">轮换</string>
+    <string name="appearance_image_generation_grid">网格</string>
+    <string name="appearance_image_generation_sphere">球体</string>
+    <string name="appearance_image_generation_nodes">节点</string>
+    <string name="dev_settings_image_generation_lab">图像生成实验室</string>
+    <string name="dev_settings_image_generation_lab_desc">预览生成循环和最终图像显现效果</string>
+    <string name="dev_settings_open_image_generation_lab_cd">打开图像生成实验室</string>
+    <string name="dashboard_native_signin_opening">请在浏览器中完成登录，然后返回此处。</string>
+    <string name="dashboard_native_signin_cancelled">已取消浏览器登录。</string>
+    <string name="dashboard_native_signin_requires_https">安全浏览器登录需要 HTTPS 控制面板地址。</string>
+    <string name="dashboard_native_signin_unavailable">此连接无法使用安全浏览器登录。请刷新连接后重试。</string>
+    <string name="conn_info_yolo_mode_desc_ephemeral">仅在此聊天中跳过批准提示。会在会话更改时重置。</string>
+    <string name="conn_info_yolo_mode_profile_off">配置文件批准已关闭，因此此聊天已经会跳过提示。使用单聊天例外前，请选择手动或智能。</string>
+    <string name="conn_info_approval_mode_title">配置文件批准模式</string>
+    <string name="conn_info_approval_mode_desc">此 Hermes 配置文件的持久策略。适用于所有聊天和设备。</string>
+    <string name="conn_info_approval_mode_unsupported">请更新 Hermes 以选择配置文件批准模式。单聊天 YOLO 仍可使用。</string>
+    <string name="conn_info_approval_mode_profile_read_only">此多路复用配置文件为只读。配置文件会话启动后会显示当前模式；更改模式需要 upstream 提供按配置文件划分的配置 RPC。</string>
+    <string name="conn_info_approval_mode_manual">手动</string>
+    <string name="conn_info_approval_mode_manual_desc">每次调用受保护工具前都询问。</string>
+    <string name="conn_info_approval_mode_smart">智能</string>
+    <string name="conn_info_approval_mode_smart_desc">仅在 Hermes 检测到较高风险时询问。</string>
+    <string name="conn_info_approval_mode_off">关闭</string>
+    <string name="conn_info_approval_mode_off_desc">始终跳过此配置文件的批准。</string>
 </resources>

@@ -11,6 +11,17 @@ import org.junit.Test
 
 class RelayErrorClassifierTest {
     @Test
+    fun gatewayDrainIsNotMisclassifiedAsProviderOutage() {
+        val err = classifyError(
+            IOException("API error 503: gateway_draining: Gateway is shutting down (Retry-After: 1s)"),
+            context = "send_message",
+        )
+        assertEquals("Hermes is restarting", err.title)
+        assertTrue(err.body.contains("draining"))
+        assertTrue(err.retryable)
+    }
+
+    @Test
     fun connectivityErrorsAreClassifiedForSnackbarSuppression() {
         // The "can't reach the server" family the themed banner owns.
         assertTrue(isConnectivityError(ConnectException("Connection refused")))

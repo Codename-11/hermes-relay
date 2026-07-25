@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network.shared
 
 import java.net.URI
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Resolves profile-scoped Hermes API URLs for phone use.
@@ -41,6 +42,44 @@ object ProfileApiUrlResolver {
         val fragmentPart = profileUri.rawFragment?.let { "#$it" }.orEmpty()
 
         return "$scheme://$hostPart$portPart$pathPart$queryPart$fragmentPart".trimEnd('/')
+    }
+
+    /**
+     * Resolve the canonical API base for a selected Hermes profile.
+     *
+     * A dedicated profile API URL remains authoritative when advertised. When
+     * the dashboard has positively identified a shared multiplex gateway and
+     * the selected non-default profile is in its served-profile list, route
+     * through the upstream `/p/<profile>` mirror on the connection's root API
+     * origin. Older/single-profile servers and incomplete topology snapshots
+     * deliberately keep the root URL.
+     */
+    fun resolveChatBase(
+        profileApiUrl: String?,
+        baseApiUrl: String?,
+        selectedProfileName: String?,
+        gatewayMode: String?,
+        servedProfiles: Collection<String>,
+    ): String? {
+        val base = normalize(baseApiUrl)
+        val dedicated = resolveForConnection(profileApiUrl, base)
+        if (dedicated != null) return dedicated
+
+        val profile = selectedProfileName
+            ?.trim()
+            ?.takeIf { it.isNotBlank() && !it.equals("default", ignoreCase = true) }
+            ?: return base
+        val isKnownMultiplexProfile = gatewayMode.equals("multiplex", ignoreCase = true) &&
+            servedProfiles.any { it.equals(profile, ignoreCase = false) }
+        if (!isKnownMultiplexProfile) return base
+
+        val root = base?.toHttpUrlOrNull() ?: return base
+        return root.newBuilder()
+            .addPathSegment("p")
+            .addPathSegment(profile)
+            .build()
+            .toString()
+            .trimEnd('/')
     }
 
     private fun isLocalBindHost(host: String): Boolean {

@@ -56,6 +56,18 @@
     <string name="onboarding_realtime_label">Realtime</string>
     <string name="onboarding_realtime_description">Provider-native realtime voice agent and profile-aware voice providers.</string>
     <string name="onboarding_review_permissions">Review permissions</string>
+    <string name="onboarding_finish_setup_title">Finish setup</string>
+    <string name="onboarding_finish_setup_description">Your Hermes connection is ready. Choose what this phone can do now, or change it later in Settings.</string>
+    <string name="onboarding_chat_manage_ready">Ready — no phone permission needed.</string>
+    <string name="onboarding_chat_alerts">Chat alerts</string>
+    <string name="onboarding_chat_alerts_description">Allow Android notifications so enabled alerts can reach you in the background.</string>
+    <string name="onboarding_chat_alerts_ready">Notifications are enabled for this app.</string>
+    <string name="onboarding_optional_features">Optional features</string>
+    <string name="onboarding_optional_features_description">Camera, microphone, notification companion, and available device tools stay off until you choose them.</string>
+    <string name="onboarding_review_optional_permissions">Review optional permissions</string>
+    <string name="onboarding_enable_chat_alerts">Enable chat alerts</string>
+    <string name="onboarding_not_now">Not now</string>
+    <string name="onboarding_finish">Finish setup</string>
 
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">Live voice conversation</string>
@@ -70,7 +82,7 @@
     <string name="chat_input_start_voice">Start voice conversation</string>
     <string name="chat_input_voice_setup_needed">Voice conversation — setup needed</string>
     <string name="chat_input_stop_streaming">Stop streaming</string>
-    <string name="chat_input_steer_response">Steer the response</string>
+    <string name="chat_input_steer_response">Correct the response</string>
     <string name="chat_input_queue_message">Queue message</string>
 
     <!-- Bridge return labels -->
@@ -101,7 +113,7 @@
 
     <!-- Chat screen placeholders -->
     <string name="chat_placeholder_edit">Edit your message…</string>
-    <string name="chat_placeholder_steer">Steer the response…</string>
+    <string name="chat_placeholder_steer">Correct the response…</string>
     <string name="chat_placeholder_queue">Queue a message…</string>
     <string name="chat_placeholder_message">Message…</string>
     <string name="chat_edit_busy_snackbar">Can\'t edit right now — wait for the current turn to finish</string>
@@ -190,6 +202,8 @@
     <string name="conn_label_session">Session</string>
     <string name="conn_label_route">Route</string>
     <string name="conn_label_status">Status</string>
+    <string name="dashboard_component_connected">connected</string>
+    <string name="dashboard_component_server_errors_5m">server errors / 5m</string>
     <string name="conn_label_connect">Connect</string>
     <string name="conn_label_connections">Connections</string>
     <string name="conn_detail_add_connection">Add a Vanilla Hermes API/dashboard connection</string>
@@ -370,7 +384,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 or http://your-server:8642</string>
     <string name="cw_api_url_supporting">Hermes API used by Chat and sessions — API port 8642 and http:// assumed for bare hosts (the dashboard\'s 9119 is derived separately)</string>
     <string name="cw_scan_message">Scanning this LAN for Hermes dashboard/API…</string>
-    <string name="cw_dashboard_signin_hint">Sign in via the dashboard to unlock Manage and voice — the API key is optional for Chat.</string>
+    <string name="cw_dashboard_signin_hint">Sign in via the dashboard to unlock Manage and voice — the API key is only for the optional direct API fallback.</string>
     <string name="cw_pair_relay_section">Pair Relay (optional)</string>
     <string name="cw_pair_relay_for">Pair Relay with %1$s</string>
     <string name="cw_pair_relay_scoped_desc">Add the optional Relay extension to this saved Hermes connection. This does not add or replace a server.</string>
@@ -677,11 +691,11 @@
     <string name="settings_profile_lock_desc">Pin the app to one agent profile</string>
     <string name="settings_quick_controls">Quick Controls</string>
     <string name="settings_persistent_connection">Persistent connection</string>
-    <string name="settings_persistent_connection_desc">Keeping your connection to Hermes open in the background</string>
-    <string name="settings_connect_on_demand">Connect on demand only · saves battery</string>
-    <string name="settings_turn_complete_alerts">Turn-complete alerts</string>
-    <string name="settings_turn_complete_alerts_desc">Notify when a reply finishes while the app is in the background</string>
-    <string name="settings_turn_complete_alerts_off">No alert when a backgrounded reply finishes</string>
+    <string name="settings_persistent_connection_desc">Stay connected even when no chat is running</string>
+    <string name="settings_connect_on_demand">Active chats stay connected automatically · idle connection closes to save battery</string>
+    <string name="settings_turn_complete_alerts">Chat alerts</string>
+    <string name="settings_turn_complete_alerts_desc">Notify when Hermes needs input or finishes while the app is in the background</string>
+    <string name="settings_turn_complete_alerts_off">No alerts for background chat activity</string>
     <string name="settings_keep_connected_deep_sleep">Keep it connected in deep sleep</string>
     <string name="settings_keep_connected_battery_desc">Android can still pause the connection once the screen\'s been off a while (Doze). Allow unrestricted battery so Persistent connection keeps working in the background.</string>
     <string name="settings_allow_unrestricted_battery">Allow unrestricted battery</string>
@@ -711,8 +725,8 @@
     <string name="chat_settings_recent_prompt_chips_desc">Show your recent messages as tappable chips above the composer to send them again. Off by default.</string>
     <string name="chat_settings_keep_keyboard_open">Keep keyboard open on send</string>
     <string name="chat_settings_keep_keyboard_open_desc">Stay in the composer after sending. Turn off to dismiss the keyboard after each sent message.</string>
-    <string name="chat_settings_notify_when_finishes">Notify when Hermes finishes</string>
-    <string name="chat_settings_notify_when_finishes_desc">Post a notification when a reply completes while the app is in the background</string>
+    <string name="chat_settings_notify_when_finishes">Background chat alerts</string>
+    <string name="chat_settings_notify_when_finishes_desc">Notify when Hermes needs input or finishes while the app is in the background</string>
     <string name="chat_settings_share_phone_status">Share phone status with agent</string>
     <string name="chat_settings_share_phone_status_desc">Include a short system message about the app and phone on every chat turn</string>
     <string name="chat_settings_bridge_permissions">Bridge + permissions</string>
@@ -888,7 +902,7 @@
     <string name="active_section_optional_api_fallback">Optional direct API fallback</string>
     <string name="active_section_api_not_required">Not required when this connection uses the Hermes Dashboard.</string>
     <string name="active_section_where_api_key">Where do I get this?</string>
-    <string name="active_section_api_key_explainer">API_SERVER_KEY is created on your Hermes server; it is not supplied by this app. Configure it only when you enable the optional API server, then enter the same value here.</string>
+    <string name="active_section_api_key_explainer">API_SERVER_KEY is created on your Hermes server; it is not supplied by this app. Configure it only when you enable the optional API server, which requires a usable key, then enter the same value here.</string>
     <string name="active_section_core_hermes">Core Hermes</string>
     <string name="active_section_optional_relay">Optional Relay</string>
     <string name="active_section_extend_connection">Extend this connection</string>
@@ -1211,6 +1225,12 @@
     <string name="appearance_font">Font</string>
     <string name="appearance_font_desc">Sets the typeface across the whole app. Code and timestamps stay monospaced.</string>
     <string name="appearance_animation">Animation</string>
+    <string name="appearance_image_generation_style">Image generation</string>
+    <string name="appearance_image_generation_style_desc">Rotate through all three progress animations, or keep one style for every generation.</string>
+    <string name="appearance_image_generation_rotate">Rotate</string>
+    <string name="appearance_image_generation_grid">Grid</string>
+    <string name="appearance_image_generation_sphere">Sphere</string>
+    <string name="appearance_image_generation_nodes">Nodes</string>
     <string name="appearance_ascii_sphere">ASCII sphere</string>
     <string name="appearance_ascii_sphere_desc">Show animated sphere on empty chat screen and ambient mode</string>
     <string name="appearance_behind_messages">Behind messages</string>
@@ -1270,8 +1290,11 @@
     <string name="dev_settings_relay_features">Relay features</string>
     <string name="dev_settings_relay_features_desc">Show Relay Server and Pairing settings for Bridge/Terminal development</string>
     <string name="dev_settings_realtime_voice_lab">Realtime voice lab</string>
-    <string name="dev_settings_realtime_voice_lab_desc">Open the provider websocket testbench for dev builds</string>
+    <string name="dev_settings_realtime_voice_lab_desc">Inspect realtime voice setup and run a focused microphone test</string>
     <string name="dev_settings_open_realtime_voice_lab_cd">Open realtime voice lab</string>
+    <string name="dev_settings_image_generation_lab">Image generation lab</string>
+    <string name="dev_settings_image_generation_lab_desc">Preview generation loops and the final image reveal</string>
+    <string name="dev_settings_open_image_generation_lab_cd">Open image generation lab</string>
     <string name="dev_settings_lock_dev_options">Lock developer options</string>
     <string name="dev_settings_lock_dev_options_desc">Hide this section and disable experimental features</string>
     <string name="dev_settings_locked_toast">Developer options locked</string>
@@ -1301,6 +1324,7 @@
     <string name="dev_settings_export_failed">Export failed</string>
     <string name="dev_settings_imported">Settings imported</string>
     <string name="dev_settings_import_failed">Import failed — invalid file</string>
+    <string name="dev_settings_reset_failed">Reset failed</string>
     <string name="dev_settings_export_sensitive_backup_title">Export sensitive backup?</string>
     <string name="dev_settings_export_sensitive_backup_body">This backup includes saved connections, API keys, relay session tokens, device IDs, and dashboard cookies. Anyone with the file may be able to access your Hermes server.</string>
     <string name="dev_settings_export_action">Export</string>
@@ -1540,17 +1564,17 @@
     <string name="voice_settings_back">Back</string>
     <string name="voice_settings_scope_label">Voice scope</string>
     <string name="voice_settings_global_voice">Global voice</string>
-    <string name="voice_settings_standard_scope_body">This connection speaks through your Hermes server\'s configured TTS and STT (config.yaml on the server, or the dashboard\'s Audio settings) — it\'s host-wide, not per profile. Pair Relay to pick providers, models, and voices from the phone and carry them per profile.</string>
+    <string name="voice_settings_standard_scope_body">Standard voice follows this Hermes host\'s existing TTS, STT, and voice configuration. These settings are shared across profiles; Relay can add profile-specific voice choices without replacing the host setup.</string>
     <string name="voice_settings_scope_resolving">Resolving the active profile\'s voice scope…</string>
     <string name="voice_settings_label_profile">Profile</string>
     <string name="voice_settings_label_scope">Scope</string>
-    <string name="voice_settings_relay_scope_footer">Engine, route, and voice picks below are saved for this profile.</string>
+    <string name="voice_settings_relay_scope_footer">Relay voice choices below override the host defaults for this profile only. Clear an override to follow the Hermes host again.</string>
     <string name="voice_settings_for_profile_title">Voice for this profile</string>
     <string name="voice_settings_engine_label">Voice engine</string>
     <string name="voice_settings_engine_hermes">Hermes Chat + Voice Output</string>
-    <string name="voice_settings_engine_hermes_desc">Hermes handles chat, tools, and memory; speech runs over the standard Hermes dashboard or Relay — whichever the STT/TTS route below picks.</string>
+    <string name="voice_settings_engine_hermes_desc">Hermes handles chat, tools, and memory. Speech uses the host\'s Standard configuration unless this profile selects a Relay voice override.</string>
     <string name="voice_settings_engine_realtime">Realtime Agent</string>
-    <string name="voice_settings_engine_realtime_desc">Provider-native realtime speech with Hermes-brokered tools. Requires a paired Relay.</string>
+    <string name="voice_settings_engine_realtime_desc">A live provider session handles listening and speaking with its own voice model and voice. Hermes still handles tools, memory, and confirmations. Requires a paired Relay.</string>
     <string name="voice_settings_experimental">Experimental</string>
     <string name="voice_settings_realtime_no_relay">No Relay is configured for this connection, so the Realtime Agent can\'t start. Pair Relay in Settings → Connections, or switch back to Hermes Chat + Voice Output.</string>
     <string name="voice_settings_route_label">STT/TTS route</string>
@@ -1564,19 +1588,19 @@
     <string name="voice_settings_status_auto_hermes">Ready — using Hermes</string>
     <string name="voice_settings_status_no_route">No route available yet</string>
     <string name="voice_settings_route_auto">Auto</string>
-    <string name="voice_settings_route_auto_desc">Relay when paired; otherwise the Hermes dashboard. Recommended.</string>
+    <string name="voice_settings_route_auto_desc">Use this profile\'s Relay voice when available, then fall back to the Hermes host. Recommended.</string>
     <string name="voice_settings_route_hermes">Hermes</string>
     <string name="voice_settings_route_hermes_desc">The dashboard audio path Hermes Desktop uses — works on a Hermes install, no Relay plugin required.</string>
     <string name="voice_settings_route_relay">Relay</string>
-    <string name="voice_settings_route_relay_desc">Relay plugin voice — profile-aware providers and streaming voice output.</string>
+    <string name="voice_settings_route_relay_desc">Use the provider, model, and voice saved for this profile through Relay.</string>
     <string name="voice_settings_optional">Optional</string>
-    <string name="voice_settings_signin_route_hint">You\'re connected over the %1$s route, and dashboard sign-ins are per-host — a sign-in from your home network doesn\'t carry over. Sign in once in Manage while on this route to unlock voice here too.</string>
+    <string name="voice_settings_signin_route_hint">The saved dashboard session could not be reused on the %1$s route. Open Manage to sign in again and unlock voice.</string>
     <string name="voice_settings_signin_default_hint">Your Hermes dashboard requires sign-in before standard voice can transcribe or speak. Signing in once in Manage unlocks it for this connection.</string>
     <string name="voice_settings_sign_in_via_manage">Sign in via Manage</string>
     <string name="voice_settings_unsupported_build_body">This Hermes server build doesn\'t expose the dashboard audio routes yet. Update hermes-agent on the server, or pair Relay to use Relay voice.</string>
     <string name="voice_settings_tts_title">Text-to-Speech</string>
     <string name="voice_settings_streaming_output_label">Streaming output (/voice/output)</string>
-    <string name="voice_settings_streaming_output_desc">The provider, model, and voice the agent speaks with on the Relay path.</string>
+    <string name="voice_settings_streaming_output_desc">Streams spoken replies with the provider, model, and voice saved for this profile. It does not change the Hermes chat model.</string>
     <string name="voice_settings_basic_synthesize_label">Basic synthesize fallback (/voice/synthesize)</string>
     <string name="voice_settings_basic_synthesize_desc">Always available as the stable speech safety net when provider-native voice is unavailable.</string>
     <string name="voice_settings_provider_unavailable">unavailable</string>
@@ -1584,14 +1608,17 @@
     <string name="voice_settings_yes">yes</string>
     <string name="voice_settings_no">no</string>
     <string name="voice_settings_label_provider">Provider</string>
+    <string name="voice_settings_provider_desc">Where speech is generated. Available choices come from this Hermes host and its installed providers.</string>
     <string name="voice_settings_label_enabled">Enabled</string>
     <string name="voice_settings_label_model">Model</string>
+    <string name="voice_settings_model_desc">Latest follows provider upgrades. Choose a versioned model to keep voice behavior pinned.</string>
     <string name="voice_settings_label_voice">Voice</string>
+    <string name="voice_settings_voice_desc">Choose how replies sound. Previewing a voice does not save the selection.</string>
     <string name="voice_settings_provider_gemini">Gemini</string>
     <string name="voice_settings_provider_xai">xAI</string>
     <string name="voice_settings_hide_enhanced">Hide enhanced voice (%1$s)</string>
     <string name="voice_settings_advanced_enhanced">Advanced: enhanced voice (%1$s)</string>
-    <string name="voice_settings_enhanced_body">Pick a voice and tone for the %1$s TTS provider. Leave a field on \"Server default\" to use the relay\'s saved config.</string>
+    <string name="voice_settings_enhanced_body">Choose the options advertised by %1$s for this profile. Leave a field on \"Server default\" to follow the Relay host configuration.</string>
     <string name="voice_settings_server_default">Server default</string>
     <string name="voice_settings_voice_blank_label">Voice (blank = server default)</string>
     <string name="voice_settings_supports_tone_tags">supports tone tags</string>
@@ -1599,7 +1626,9 @@
     <string name="voice_settings_audio_tags_unsupported">Requires a Gemini 3.1 TTS model — pick one above to enable.</string>
     <string name="voice_settings_voice_direction_label">Voice direction (optional)</string>
     <string name="voice_settings_voice_direction_placeholder">e.g. Warm, calm narrator; unhurried pace.</string>
-    <string name="voice_settings_language_label">Language (optional, e.g. en)</string>
+    <string name="voice_settings_language_label">Language</string>
+    <string name="voice_settings_language_desc">Automatic lets the provider detect the spoken language. Choose a language only when detection is unreliable.</string>
+    <string name="voice_settings_language_auto">Automatic</string>
     <string name="voice_settings_status_active">active</string>
     <string name="voice_settings_status_unavailable">unavailable</string>
     <string name="voice_settings_status_disabled">disabled</string>
@@ -1620,7 +1649,11 @@
     <string name="voice_settings_model_id">Model ID</string>
     <string name="voice_settings_voice_id">Voice ID</string>
     <string name="voice_settings_streaming_latency">Streaming latency: %1$d</string>
-    <string name="voice_settings_fallback_desc">Use legacy Hermes TTS if streaming output fails before audio starts</string>
+    <string name="voice_settings_fallback_desc">If Relay streaming cannot start, speak through the Hermes host\'s Standard voice.</string>
+    <string name="voice_settings_provider_options_title">Voice options</string>
+    <string name="voice_settings_provider_options_desc">Only settings supported by the selected provider are shown.</string>
+    <string name="voice_settings_auto_speak">Read replies aloud</string>
+    <string name="voice_settings_auto_speak_desc">Automatically speak assistant replies on Hermes surfaces that honor this host setting.</string>
     <string name="voice_settings_expressive_tags">Expressive speech tags</string>
     <string name="voice_settings_expressive_tags_desc">Let xAI add tone cues (whisper, laugh, sigh, pitch shifts) to streamed speech.</string>
     <string name="voice_settings_saving">Saving...</string>
@@ -1628,7 +1661,9 @@
     <string name="voice_settings_save_and_test">Save &amp; test</string>
     <string name="voice_settings_sample_rate_must_be_number">Sample rate must be a number</string>
     <string name="voice_settings_realtime_agent_title">Realtime Agent</string>
-    <string name="voice_settings_realtime_agent_desc">Hermes still owns tools and confirmations. Realtime mode may fall back to stable voice if the provider disconnects.</string>
+    <string name="voice_settings_realtime_agent_desc">Realtime uses its own provider model and voice for a live speech session. It does not replace the Hermes chat model; Hermes still owns tools and confirmations.</string>
+    <string name="voice_settings_realtime_model_desc">Controls the live speech session, not the Hermes chat model. Latest follows provider upgrades; a versioned model stays pinned.</string>
+    <string name="voice_settings_realtime_voice_desc">The voice used inside the live session. Built-in and custom voices appear when the provider advertises them.</string>
     <string name="voice_settings_detailed_trace">Detailed trace</string>
     <string name="voice_settings_detailed_trace_desc">Show compact Hermes status and result provenance in the timeline</string>
     <string name="voice_settings_persistent_session">Persistent session</string>
@@ -1643,7 +1678,7 @@
     <string name="voice_settings_delivery_speak">Speak</string>
     <string name="voice_settings_delivery_notify">Notify</string>
     <string name="voice_settings_delivery_show_only">Show only</string>
-    <string name="voice_settings_realtime_defaults_desc">Server-side realtime voice agent defaults for this profile</string>
+    <string name="voice_settings_realtime_defaults_desc">Realtime provider, model, and voice saved for this profile. These choices are separate from Standard Hermes voice.</string>
     <string name="voice_settings_save_realtime_agent">Save realtime agent</string>
     <string name="voice_settings_global_controls_title">Global Voice Controls</string>
     <string name="voice_settings_global_controls_desc">These settings apply to both voice engines, on every profile.</string>
@@ -1691,7 +1726,7 @@
     <string name="voice_settings_signin_required">Sign in required.</string>
     <string name="voice_settings_server_config_title">Server voice config</string>
     <string name="voice_settings_standard_badge">Standard</string>
-    <string name="voice_settings_server_config_desc">Edit the host\'s text-to-speech and speech-to-text settings (config.yaml tts.* / stt.*) — the same values the dashboard\'s Audio settings write. Applies to new voice turns.</string>
+    <string name="voice_settings_server_config_desc">Edit this host\'s Standard Hermes voice settings (config.yaml tts.*, stt.*, and voice.*), matching the dashboard\'s Audio configuration. Changes are host-wide and apply to new voice turns.</string>
     <string name="voice_settings_no_elevenlabs_key">No ElevenLabs API key on the server — set ELEVENLABS_API_KEY in Manage → Keys to pick a voice from a list.</string>
     <string name="voice_settings_saving_ellipsis">Saving…</string>
     <string name="voice_settings_discard">Discard</string>
@@ -1738,6 +1773,7 @@
     <string name="dashboard_tab_cron">Cron</string>
     <string name="dashboard_tab_mcp">MCP</string>
     <string name="dashboard_tab_catalog">Catalog</string>
+    <string name="dashboard_tab_custom_endpoints">Endpoints</string>
     <string name="dashboard_tab_profiles">Profiles</string>
     <string name="dashboard_tab_models">Models</string>
     <string name="dashboard_tab_keys">Keys</string>
@@ -1747,6 +1783,7 @@
     <string name="dashboard_tab_cron_lower">cron</string>
     <string name="dashboard_tab_mcp_lower">mcp</string>
     <string name="dashboard_tab_catalog_lower">catalog</string>
+    <string name="dashboard_tab_custom_endpoints_lower">endpoints</string>
     <string name="dashboard_tab_profiles_lower">profiles</string>
     <string name="dashboard_tab_models_lower">models</string>
     <string name="dashboard_tab_keys_lower">keys</string>
@@ -1763,6 +1800,8 @@
     <string name="dashboard_tile_mcp_sub">Servers, status, tools</string>
     <string name="dashboard_tile_catalog_title">Catalog</string>
     <string name="dashboard_tile_catalog_sub">Discover upstream servers</string>
+    <string name="dashboard_tile_custom_endpoints_title">Custom Endpoints</string>
+    <string name="dashboard_tile_custom_endpoints_sub">OpenAI-compatible providers</string>
     <string name="dashboard_tile_models_title">Models</string>
     <string name="dashboard_tile_models_sub">Pick provider + default model</string>
     <string name="dashboard_tile_keys_title">Keys</string>
@@ -1809,7 +1848,7 @@
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">Dashboard sign-in required</string>
     <string name="dashboard_signin_required_body">Manage uses the Hermes dashboard session at %1$s.</string>
-    <string name="dashboard_signin_route_hint">You\'re on the %1$s route. Dashboard sign-ins are per host, so your sign-in from the other route doesn\'t carry over — sign in once here and the app keeps both sessions.</string>
+    <string name="dashboard_signin_route_hint">The saved dashboard session could not be reused on the %1$s route. Sign in again to refresh it across this connection\'s trusted routes.</string>
     <string name="dashboard_signin_with_provider">Sign in with %1$s</string>
     <string name="dashboard_username_password">Username &amp; Password</string>
     <string name="dashboard_username">Username</string>
@@ -1823,6 +1862,10 @@
     <string name="dashboard_oauth_verifying">Verifying dashboard session…</string>
     <string name="dashboard_oauth_not_accepted">Sign-in was not accepted yet. Finish the dashboard flow to continue.</string>
     <string name="dashboard_oauth_verify_failed">Dashboard sign-in verification failed</string>
+    <string name="dashboard_native_signin_opening">Complete sign-in in your browser, then return here.</string>
+    <string name="dashboard_native_signin_cancelled">Browser sign-in cancelled.</string>
+    <string name="dashboard_native_signin_requires_https">Secure browser sign-in requires an HTTPS dashboard address.</string>
+    <string name="dashboard_native_signin_unavailable">Secure browser sign-in is unavailable for this connection. Refresh the connection and try again.</string>
     <string name="dashboard_close_signin">Close sign-in</string>
 
     <!-- Error body -->
@@ -1854,12 +1897,33 @@
     <string name="dashboard_action_enable">Enable</string>
     <string name="dashboard_action_disable">Disable</string>
     <string name="dashboard_action_test">Test</string>
+    <string name="dashboard_action_authenticate">Authenticate</string>
+    <string name="dashboard_action_validate">Validate</string>
+    <string name="dashboard_action_edit">Edit</string>
     <string name="dashboard_action_remove">Remove</string>
     <string name="dashboard_action_soul">SOUL</string>
     <string name="dashboard_action_edit_soul">Edit SOUL</string>
     <string name="dashboard_action_use">Use</string>
     <string name="dashboard_action_describe">Describe</string>
     <string name="dashboard_action_model">Model</string>
+    <string name="dashboard_mcp_oauth_title">Authenticate %1$s</string>
+    <string name="dashboard_mcp_oauth_body">Hermes will open the provider in your browser. Return here after approving access; credentials stay on the Hermes server.</string>
+    <string name="dashboard_mcp_oauth_approved">MCP authentication approved</string>
+    <string name="dashboard_mcp_oauth_failed">MCP authentication failed</string>
+    <string name="dashboard_mcp_oauth_no_browser">No browser is available to complete MCP authentication.</string>
+    <string name="dashboard_custom_endpoint_add">Add endpoint</string>
+    <string name="dashboard_custom_endpoint_edit">Edit endpoint</string>
+    <string name="dashboard_custom_endpoint_name">Name</string>
+    <string name="dashboard_custom_endpoint_url">Base URL</string>
+    <string name="dashboard_custom_endpoint_model">Default model</string>
+    <string name="dashboard_custom_endpoint_key">API key (optional)</string>
+    <string name="dashboard_custom_endpoint_key_help">Leave blank to preserve an existing key when saving. Validation uses only a key entered here; Hermes does not expose or clear saved keys.</string>
+    <string name="dashboard_custom_endpoint_context">Context length (optional)</string>
+    <string name="dashboard_custom_endpoint_discover">Discover models from /models</string>
+    <string name="dashboard_custom_endpoint_valid">Endpoint reachable · %1$d model(s)</string>
+    <string name="dashboard_custom_endpoint_validate_failed">Endpoint validation failed</string>
+    <string name="dashboard_custom_endpoint_save_failed">Endpoint save failed</string>
+    <string name="dashboard_custom_endpoint_saved">Custom endpoint saved</string>
     <string name="dashboard_action_completed">%1$s completed</string>
     <string name="dashboard_action_failed">%1$s failed</string>
     <string name="dashboard_more">More</string>
@@ -2174,7 +2238,7 @@
     <string name="active_section_api_key_already_set">API key is already set</string>
     <string name="active_section_api_key_needed_hint">Use the API_SERVER_KEY created on your Hermes server. The app does not issue this key.</string>
     <string name="active_section_api_key_not_configured">API key not configured</string>
-    <string name="active_section_api_key_optional">API key (optional)</string>
+    <string name="active_section_api_key_optional">API key for direct API</string>
     <string name="active_section_api_key_stored_hint">Key is stored securely.</string>
     <string name="active_section_api_reachable_voice_review">API reachable — review voice config</string>
     <string name="active_section_api_relay_voice_reachable">API reachable — Relay voice is configured</string>
@@ -2294,6 +2358,19 @@
     <string name="conn_info_confirms_on_next_message">Confirms on next message</string>
     <string name="conn_info_connect">Connect</string>
     <string name="conn_info_connected">Connected</string>
+    <string name="conn_info_active_configuration">Active configuration</string>
+    <string name="conn_info_inherited">Inherited</string>
+    <string name="conn_info_bypassed">Bypassed</string>
+    <string name="conn_info_customize_identity">Customize identity</string>
+    <string name="conn_info_agent_passport">Agent Passport</string>
+    <string name="conn_info_chat_override">Chat override</string>
+    <string name="conn_info_fast_tier">Fast tier</string>
+    <string name="conn_info_fast">Fast</string>
+    <string name="conn_info_context">Context</string>
+    <string name="conn_info_profile_already_bypasses">Approvals already bypassed by profile.</string>
+    <string name="conn_info_start_new_chat">Start new chat</string>
+    <string name="conn_info_approval_mode_short_desc">Choose how approvals are enforced.</string>
+    <string name="conn_info_approval_policy">Approval policy</string>
     <string name="conn_info_connecting">Connecting…</string>
     <string name="conn_info_connection">Connection</string>
     <string name="conn_info_connection_state">Connection state</string>
@@ -2414,7 +2491,19 @@
     <string name="conn_info_yes">Yes</string>
     <string name="conn_info_yes_hidden">Yes (hidden)</string>
     <string name="conn_info_yolo_mode_desc">Bypass approval prompts for tool calls.</string>
+    <string name="conn_info_yolo_mode_desc_ephemeral">Bypass approval prompts for this chat only. Resets when the session changes.</string>
+    <string name="conn_info_yolo_mode_profile_off">Profile approvals are Off, so this chat already bypasses prompts. Choose Manual or Smart before using the per-chat override.</string>
     <string name="conn_info_yolo_mode_title">YOLO mode</string>
+    <string name="conn_info_approval_mode_title">Profile approval mode</string>
+    <string name="conn_info_approval_mode_desc">Persistent policy for this Hermes profile. Applies across chats and devices.</string>
+    <string name="conn_info_approval_mode_unsupported">Update Hermes to choose a profile approval mode. Per-chat YOLO remains available.</string>
+    <string name="conn_info_approval_mode_profile_read_only">Read-only for this multiplexed profile. Its current mode appears after the profile session starts; changing it requires upstream profile-scoped config RPCs.</string>
+    <string name="conn_info_approval_mode_manual">Manual</string>
+    <string name="conn_info_approval_mode_manual_desc">Ask before every protected tool call.</string>
+    <string name="conn_info_approval_mode_smart">Smart</string>
+    <string name="conn_info_approval_mode_smart_desc">Ask only when Hermes detects elevated risk.</string>
+    <string name="conn_info_approval_mode_off">Off</string>
+    <string name="conn_info_approval_mode_off_desc">Persistently bypass approvals for this profile.</string>
 
     <!-- EndpointsCard -->
 
@@ -2549,6 +2638,7 @@
     <string name="tool_progress_status_completed">completed</string>
     <string name="tool_progress_status_failed">failed</string>
     <string name="tool_progress_status_running">running</string>
+    <string name="image_generation_rendering">Rendering image</string>
     <string name="tool_progress_cd_collapse">Collapse</string>
     <string name="tool_progress_cd_expand">Expand</string>
 
@@ -2642,6 +2732,23 @@
     <string name="attachment_unmute">Unmute</string>
     <string name="attachment_mute">Mute</string>
     <string name="attachment_title">Attachment</string>
+    <plurals name="attachment_group_count">
+        <item quantity="one">%1$d attachment</item>
+        <item quantity="other">%1$d attachments</item>
+    </plurals>
+    <string name="attachment_group_named">%1$s · %2$s</string>
+    <string name="attachment_group_named_more">%1$s · %2$s +%3$d</string>
+    <string name="attachment_group_typed_more">%1$s +%2$d</string>
+    <string name="attachment_group_collapse">Collapse attachments</string>
+    <string name="attachment_group_expand">Expand attachments</string>
+    <string name="attachment_group_collapsed">Collapsed</string>
+    <string name="attachment_group_expanded">Expanded</string>
+    <string name="attachment_type_image">Image</string>
+    <string name="attachment_type_video">Video</string>
+    <string name="attachment_type_audio">Audio</string>
+    <string name="attachment_type_pdf">PDF</string>
+    <string name="attachment_type_text">Text</string>
+    <string name="attachment_type_file">File</string>
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay closed unexpectedly</string>
@@ -3288,4 +3395,10 @@
     <string name="tool_output_risk_a11y">, %1$s output risk</string>
     <string name="tool_output_risk_findings">Output risk findings</string>
     <string name="tool_output_risk_redacted">Sensitive spans were redacted upstream.</string>
+    <string name="diag_gateway_heartbeat" translatable="false">Gateway loop: %1$s%2$s</string>
+    <string name="diag_toolsets_inventory" translatable="false">API toolsets: %1$d of %2$d enabled · Relay tools visible: %3$s</string>
+    <string name="diag_yes" translatable="false">yes</string>
+    <string name="diag_no" translatable="false">no</string>
+    <string name="dashboard_nous_terminal_warning" translatable="false">The Nous provider login needs attention on the Hermes host. This is separate from Manage sign-in; chat can continue through another configured provider.</string>
+    <string name="dashboard_gateway_topology" translatable="false">Gateway: %1$s · Profiles: %2$s · Ports: %3$s</string>
 </resources>

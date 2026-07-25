@@ -1,5 +1,132 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-25 — Android 1.5.0 final release reconciliation
+
+The final Android 1.5.0 release tree reconciles the accumulated Dashboard-first
+connection, Gateway recovery, background delivery, Agent Passport, onboarding,
+voice, attachment, image-generation, security, localization, and Developer
+Options work into one public release narrative. Android remains version 1.5.0
+with monotonic versionCode 33 because that prepared version was not previously
+tagged or uploaded to production.
+
+Release notes, the in-app What's New assets, localized Play release notes, and
+the Play listing reference now describe the final tree rather than the earlier
+voice-focused candidate. The release train is gated by the exact-tree private
+Play preflight before the `dev` to `main` release merge and public tag.
+
+## 2026-07-25 — Active-turn retention and actionable interaction alerts
+
+Android now promotes user-started chat work to foreground execution until every
+connection/profile/session-scoped turn settles. Independent leases preserve
+concurrent detached Gateway sessions, track sessions paused for input, and
+prevent one completion from stopping protection for siblings. The existing
+Persistent connection switch now extends retention only to idle periods.
+
+The foreground notification reports active and waiting session counts.
+Interaction alerts add privacy-safe expanded profile/session context and an
+explicit review, answer, or secure-response action that deep-links to the exact
+conversation; commands, questions, passwords, secrets, and environment-variable
+names remain confined to the authenticated chat surface.
+
+Audited `ChatViewModel`, `ConnectionViewModel`, `GatewayChatClient`,
+`GatewayKeepAliveService`, `InteractionRequestNotifier`, the shared Android
+manifest, Android settings copy, chat user documentation, and Play foreground
+service declaration guidance.
+
+## 2026-07-24 — Post-connect permission setup
+
+Android onboarding now finishes with a layered permission step after a
+successful Hermes connection. Standard Chat and Manage are explicitly ready
+without a phone grant; Android notifications are recommended through one
+user-triggered runtime prompt; camera, microphone, notification companion, and
+flavor-supported device tools remain individually optional on the centralized
+Permissions screen. Existing just-in-time permission prompts remain available
+when users skip setup.
+
+Coverage separates the Android-version notification policy from the Compose
+presentation and checks the recommended, granted, optional-review, and skip
+states. English and all shipped Android locale catalogs were updated together.
+
+## 2026-07-24 — Realtime background-task delivery continuity
+
+Chat stream completion now preserves an otherwise empty assistant row when it
+owns a promoted background task. This keeps the task identity available after
+the provider's initial spoken handoff, so later progress, completion, and
+forced-summary events update and settle the initiating row even when a newer
+persistent Voice command has started. Existing empty-response cleanup remains
+unchanged for assistant rows without background work.
+
+## 2026-07-23 — Background interaction notifications
+
+Android Gateway chat now treats approval, clarification, elevated-permission,
+and secret requests as actionable background events. Privacy-safe notifications
+use stable per-session identities, reopen the exact conversation, replace
+replayed requests, and clear on answer, expiry, or resumed turn activity.
+Detached active turns retain and replay their pending interaction when the
+conversation is reopened.
+
+The audit classified `terminal.read.request` as renderer plumbing rather than a
+user decision. Android now answers it with the upstream no-terminal empty
+response instead of showing an interaction or waiting for the server timeout.
+The shared main manifest continues to provide notification and persistent
+connection support to both Google Play and sideload builds.
+
+## 2026-07-23 — Android user-CA trust for self-hosted Hermes
+
+The shared Android network security configuration now accepts CA certificates
+that the device owner deliberately installed in Android's user credential store,
+in addition to system roots. Because the policy is attached to the common
+application manifest, it covers both product flavors and every platform-backed
+Hermes transport: endpoint probes, Dashboard requests and authentication
+WebView, redirects, Gateway WebSockets, API streaming, Standard Voice, and
+Relay HTTPS/WSS. Default OkHttp and WebView certificate-chain and hostname
+checks remain active, and Relay's independent certificate pinner is not
+overridden.
+
+An app-wide policy is required for arbitrary operator-supplied server names and
+for consistent WebView behavior. A runtime opt-in would require parallel custom
+trust implementations for each client and could not safely reconfigure WebView;
+per-connection CA import would add private trust-material lifecycle without
+covering all transports. The tradeoff is that Android disables public
+Certificate Transparency verification when user trust anchors are enabled.
+User documentation records the deliberate-installation boundary and a device or
+emulator validation procedure with positive chain and negative hostname checks.
+JVM coverage locks the accepted anchor sources and rejects pin overrides or
+debug-only trust additions.
+
+## 2026-07-23 — Bounded Android code-highlighting ranges
+
+Android Markdown code rendering now validates every syntax-highlighting span
+before applying it to Compose text. The bundled highlighting dependency can
+emit a reversed multiline-comment range when malformed or incomplete code
+contains a closing delimiter before its opening delimiter; the Markdown
+renderer previously passed that range directly to `AnnotatedString` and
+crashed. Both fenced and indented code use the guarded renderer, valid spans
+remain highlighted, and malformed ranges are clipped or ignored. Focused JVM
+coverage reproduces the dependency output and verifies the safe conversion.
+
+## 2026-07-20 — Image generation placeholder during turns
+
+Android chat now specializes the generic tool lifecycle for active
+`image_generate` calls. While the tool is pending, the message shows a
+theme-aware procedural diffusion canvas with a polite live-region announcement
+instead of a generic tool card. The completed tool result still replaces the
+placeholder through the existing tool completion path. Coverage includes pure
+JVM selection/denoise tests and a Compose accessibility snapshot test.
+
+## 2026-07-20 — Faster Android validation feedback
+
+Android contributors now have one cross-platform pre-push command for locale,
+documentation, collection-API, and version checks plus primary Play-variant
+lint and the focused CI unit-test shard. It uses daemon and configuration-cache
+reuse, supplies a conservative Gradle heap, and discovers the standard Windows
+Android SDK without writing worktree-local configuration. Hosted CI retains
+the exhaustive all-variant lint gate.
+
+Android CI now cancels a superseded run on `dev` or a pull-request ref while
+preserving every `main` run. A newer integration commit therefore stops paying
+for an older release smoke that can no longer become the tested release tip.
+
 ## 2026-07-19 — Android 1.4.9 release preparation
 
 Android advanced to 1.4.9 with versionCode 32 after the dashboard-primary

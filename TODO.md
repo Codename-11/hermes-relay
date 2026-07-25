@@ -6,6 +6,24 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Verify Android native dashboard sign-in on device
+
+Android now selects Custom Tab + PKCE for HTTPS gateways that advertise
+`native_pkce`. The lifecycle-owned callback binds only `127.0.0.1` on an
+OS-assigned port, keeps verifier/state inside the sign-in coroutine, rejects
+untrusted callback noise, and closes on completion, cancellation, navigation,
+or timeout. Encrypted bearer/refresh tokens authenticate Gateway chat, Manage,
+prewarm, and standard voice; sign-out clears both cookie and native sessions.
+Older gateways retain the identified WebView cookie fallback.
+
+Before release, device-test the real Custom Tab → provider → loopback return,
+configuration/background transitions, Manage reload, Gateway chat ticket,
+standard voice, sign-out, and process relaunch. Native bearer exchange remains
+disabled for non-loopback HTTP dashboard addresses; configure HTTPS before
+using the native flow.
+
+---
+
 ## Active — Remove temporary GitHub Pages docs redirects
 
 PR #210 moved current source and production documentation to
@@ -33,6 +51,68 @@ Removal checklist:
 A one-shot operator reminder is scheduled for **2026-10-15 at 09:00 ET** to
 review these gates; it is a review trigger, not authorization for automatic
 removal.
+
+---
+
+## Upstream impact certification follow-ups (2026-07-19)
+
+The client/plugin implementation batch for queued recovery,
+multiplex-profile fallback routing, gateway diagnostics, Windows system-CA
+trust, and retained bootstrap async safety is implemented. The following gates
+intentionally remain outside that code batch:
+
+- **Image-generation lifecycle while tool progress is hidden.** The upstream
+  TUI gateway suppresses every `tool.start` / `tool.complete` event when
+  `display.tool_progress` is off, so a client cannot distinguish an active
+  `image_generate` turn from generic model work. Propose a narrow upstream
+  exception that always emits the lifecycle for `image_generate` while leaving
+  unrelated tool diagnostics hidden. Android already treats that lifecycle as
+  presentation state rather than a generic tool card and keeps the diffusion
+  canvas visible when its local tool display is off.
+- Run `docs/upstream-compatibility-certification.md` against an approved test
+  gateway with real provider calls and an Android device. Include concurrent
+  model/image routing, turn isolation off/on, queued reconnect, same-profile
+  background-completion ownership, compression lineage, and the explicitly
+  approved restart case. Static upstream fixtures are necessary but do not
+  prove device or restart behavior.
+- Upstream the atomic one-turn model arm/submit contract proposed in
+  `docs/upstream-contributions.md`. Until then, document the narrow race where a
+  disconnect or Stop after `/model --once` succeeds but before prompt submission
+  can leave the override armed for a later prompt.
+- Keep HRUI-052 (`/new` session-control reset parity) blocked until upstream
+  exposes a reset on the active gateway session or an authoritative reset event.
+  `slash.exec` runs the command in a separate worker today, and the mirrored
+  slash side effects do not reset the active TUI session's agent. Relay must not
+  clear local model, reasoning, or Fast pins from a successful command response
+  that did not mutate the agent those controls describe.
+- Keep profile-scoped cron execution attempts blocked on the public upstream API
+  proposed in `docs/upstream-contributions.md`. The first-class interim
+  assistant event is no longer blocked: Relay Android and desktop consume
+  upstream `message.interim` / `response_previewed`.
+- Keep Standard voice labeled host-global until upstream exposes a stable
+  profile/per-request audio contract; do not emulate it through Relay on the
+  vanilla path.
+- Keep provider exclusion/disable filtering out of Android Manage until the
+  public model-options payload identifies excluded and disabled providers.
+  `include_unconfigured=1` currently re-adds indistinguishable setup rows, so
+  empty models are not authoritative evidence that a provider should be hidden.
+- Keep persistent approval-mode writes for multiplexed non-launch profiles
+  read-only until upstream `config.get` / `config.set` bind an explicit
+  `profile` to that profile's `HERMES_HOME`. Gateway contract v3 currently
+  accepts `approvals.mode` but resolves it against the gateway process home;
+  Android may reconcile a selected profile's `session.info.approval_mode`, but
+  must not claim a profile-scoped write that upstream ignores.
+- Keep gateway `model.options` profile scoping blocked until the supported
+  upstream RPC accepts an explicit `profile` and documents that the returned
+  provider inventory was built inside that profile's runtime scope. Android
+  now keys picker results to its active profile context and rejects late
+  responses after a profile switch, but it deliberately does not send an
+  invented `profile` parameter. API-server fallback can use the separate,
+  authenticated `/p/<profile>/api/model/options` surface when multiplexed.
+- Expand the desktop upstream-baseline workflow into a live mock-provider E2E
+  once the harness can boot a credential-free upstream gateway deterministically.
+  The initial `ci-desktop-upstream-baseline` gate only checks a clean vanilla
+  checkout and the desktop typed gateway renderer/tests.
 
 ---
 
@@ -1070,7 +1150,7 @@ Things to look into:
 - **Update discovery (shipped 2026-06-30 — CLI + dashboard + app).** `hermes relay update-check`, a dashboard "Plugin version" card, and an app **About → "Relay"** row all compare the installed plugin against the latest `plugin-v*` release and surface the right update command (`hermes plugins update hermes-relay` vs `hermes-relay-update`). The app polls the relay's `GET /relay/update-check` (`:8767`, bearer) on each `auth.ok`; the relay is the single source of truth (the app never hits GitHub). Possible polish (deferred): a more prominent dismissible "relay is behind" banner outside About (today it's capability-first + the About row), and showing the app's own version alongside the relay's in the same readout (the app-Version row already exists separately just above it).
 - **Per-profile enablement (shipped 2026-06-30).** `hermes relay profiles list|enable [--all|NAME]` + `plugin/profiles.py` resolve the install-once/enable-per-profile papercut; docs now cover the pair-once/one-relay model. Possible follow-up: an `install.sh` / `hermes plugins install` prompt offering "enable for all existing profiles" so new installs don't need the manual `profiles enable --all`.
 - `**hermes-relay-self-setup` SKILL.md as a precedent** — we just shipped a self-installing skill that an LLM can fetch from a raw GitHub URL and execute. Does this pattern generalize? Could it become a recommended way for any third-party Hermes project to ship setup automation?
-- **Bootstrap injection** — `hermes_relay_bootstrap/` monkey-patches `aiohttp.web.Application` to inject endpoints into vanilla/partial upstream. This is intentional but feels like a hack. The original broad PR #8556 was **closed as superseded**; native upstream now covers sessions/chat/fork via [#33134](https://github.com/NousResearch/hermes-agent/pull/33134) and skill/toolset discovery via `/v1/skills` + `/v1/toolsets` (#33016). **Done (2026-07-08, HRUI-002):** the bootstrap's sessions CRUD/messages/fork handlers and the legacy `GET /api/skills` list were retired outright — no pre-#33134 fallback remains; old core builds degrade via the client capability probe. **Still gapped (bootstrap remains for these):** config, memory, legacy `/api/skills/{name}` detail + `PUT /api/skills/toggle` (501 stub), available-models, `/api/sessions/search`, and the slash-command middleware — each retires individually when a native replacement lands or the dependent UX is removed. Track upstream per surface.
+- **Bootstrap injection** — `hermes_relay_bootstrap/` monkey-patches `aiohttp.web.Application` to inject endpoints into vanilla/partial upstream. This is intentional but feels like a hack. The original broad PR #8556 was **closed as superseded**; native upstream now covers sessions/chat/fork via [#33134](https://github.com/NousResearch/hermes-agent/pull/33134) and skill/toolset discovery via `/v1/skills` + `/v1/toolsets` (#33016). **Done (2026-07-08, HRUI-002):** the bootstrap's sessions CRUD/messages/fork handlers and the legacy `GET /api/skills` list were retired outright — no pre-#33134 fallback remains; old core builds degrade via the client capability probe. **Done (2026-07-19, HRUI-004/012):** retained session search now uses upstream `AsyncSessionDB` when available and `asyncio.to_thread` on older Hermes, and every compatibility memory mutation resets the upstream consolidation-failure budget when that API exists. **Still gapped (bootstrap remains for these):** config, memory, legacy `/api/skills/{name}` detail + `PUT /api/skills/toggle` (501 stub), available-models, `/api/sessions/search`, and the slash-command middleware — each retires individually when a native replacement lands or the dependent UX is removed. Track upstream per surface.
 - **Gateway slash-command preprocessor — upstream Stage 1 PR.** Sibling follow-up to the native session-control baseline (#33134). Intercepts known gateway commands on `/v1/runs` + `/v1/chat/completions`, dispatches the stateless ones (`/help`, `/commands`) via `gateway_help_lines()`, returns a deterministic "use a channel with session state" notice for the stateful majority. Currently being prepared in `C:/Users/Bailey/Desktop/Open-Projects/hermes-agent-pr-prep/` on branch `feat/api-server-gateway-commands`; awaiting subagent's code + draft PR body before pushing. See `docs/upstream-contributions.md` §5.
 - **Gateway slash-command preprocessor — bootstrap middleware (Stage 1 equivalent).** Sibling shim in `hermes_relay_bootstrap/_command_middleware.py` that mirrors the upstream Stage 1 PR as an aiohttp middleware injected at bootstrap time. Ships the hallucination fix to vanilla-upstream installs before the upstream PR lands. Planned for v0.4.1, after the current bridge feature branch wraps. See `ROADMAP.md` v0.4.1 entry.
 - **Stage 2 — stateful slash-command dispatch on `/api/sessions/{id}/chat/stream`.** Unblocked now that session primitives shipped upstream (#33134 / `f7527b0`). Add a preprocessor scoped to the session chat stream endpoint only, using `session_id` as the persistence handle. Separate upstream PR + matching bootstrap middleware. See `docs/upstream-contributions.md` §5 ("Stage 2").
@@ -1121,6 +1201,7 @@ Follow-ups:
 
 ## Attachments (shipped 2026-06-18 — `docs/plans/2026-06-18-attachment-experience.md`)
 
+- **Collapsible message groups (shipped 2026-07-25).** Android wraps rendered galleries and generic/LOADING/FAILED cards in a localized, accessible attachment disclosure. It defaults open, remembers the user's fold state by stable message identity, and leaves a compact count/name/type summary available to restore all attachment actions.
 - **B3 — download progress + cancel.** Inbound fetch is un-cancelable; the previews work scaffolded an indeterminate bar + nullable `onCancel`. Live wiring needs the fetch-path owner (`ChatViewModel`/`Attachment`) to expose determinate progress (Content-Length) + a cancel hook.
 - **C5 — agent-side sensitivity config gate.** `RELAY_MEDIA_SENSITIVITY_HINTS` (env or per-profile) instructing the agent to annotate sensitive media via the prompt-builder. Transport (relay `X-Media-Sensitive` header + client blur) already ships; the agent isn't asked to set the bit yet.
 - **Relay thumbnails (D6).** Server-side thumbnail generation to avoid full-size download for cards/galleries. Needs an image lib (Pillow not currently a dep) — evaluate before adding.

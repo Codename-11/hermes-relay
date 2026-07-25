@@ -100,7 +100,6 @@ import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.EndpointCandidate
-import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.network.shared.HermesLanDiscovery
@@ -197,8 +196,6 @@ fun ConnectionWizard(
 
     val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
-    val relayEnabled by FeatureFlags.relayEnabled(context)
-        .collectAsState(initial = FeatureFlags.isDevBuild)
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val currentApiUrl by connectionViewModel.apiServerUrl.collectAsState()
     val currentRelayUrl by connectionViewModel.relayUrl.collectAsState()
@@ -621,7 +618,6 @@ fun ConnectionWizard(
                 WizardStep.RelayChoice -> RelayChoiceStep(
                     connectionLabel = activeConnection?.label.orEmpty(),
                     dashboardUrl = currentDashboardUrl,
-                    relayEnabled = relayEnabled,
                     onPickScan = {
                         chosenMethod = PairMethod.Scan
                         cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
@@ -638,7 +634,6 @@ fun ConnectionWizard(
                 )
 
                 WizardStep.Method -> MethodStep(
-                    relayEnabled = relayEnabled,
                     onPickStandard = {
                         chosenMethod = PairMethod.Standard
                         standardError = null
@@ -1701,7 +1696,6 @@ private fun FoundCapabilityLine(label: String, value: String, ready: Boolean) {
 private fun RelayChoiceStep(
     connectionLabel: String,
     dashboardUrl: String,
-    relayEnabled: Boolean,
     onPickScan: () -> Unit,
     onPickEnterCode: () -> Unit,
     onPickShowCode: () -> Unit,
@@ -1769,14 +1763,12 @@ private fun RelayChoiceStep(
             subtitle = stringResource(R.string.cw_method_pair_code_subtitle),
             onClick = onPickEnterCode,
         )
-        if (relayEnabled) {
-            MethodTile(
-                icon = Icons.Filled.PhonelinkLock,
-                title = stringResource(R.string.cw_method_show_code_title),
-                subtitle = stringResource(R.string.cw_method_show_code_subtitle),
-                onClick = onPickShowCode,
-            )
-        }
+        MethodTile(
+            icon = Icons.Filled.PhonelinkLock,
+            title = stringResource(R.string.cw_method_show_code_title),
+            subtitle = stringResource(R.string.cw_method_show_code_subtitle),
+            onClick = onPickShowCode,
+        )
         TextButton(
             onClick = { openExternalUrl(context, RelaySetupDocsUrl) },
             modifier = Modifier.fillMaxWidth(),
@@ -1794,7 +1786,6 @@ private fun RelayChoiceStep(
 
 @Composable
 private fun MethodStep(
-    relayEnabled: Boolean,
     onPickStandard: () -> Unit,
     onPickScan: () -> Unit,
     onPickEnterCode: () -> Unit,
@@ -1931,14 +1922,12 @@ private fun MethodStep(
             onClick = onPickEnterCode,
         )
 
-        if (relayEnabled) {
-            MethodTile(
-                icon = Icons.Filled.PhonelinkLock,
-                title = stringResource(R.string.cw_method_show_code_title),
-                subtitle = stringResource(R.string.cw_method_show_code_subtitle),
-                onClick = onPickShowCode,
-            )
-        }
+        MethodTile(
+            icon = Icons.Filled.PhonelinkLock,
+            title = stringResource(R.string.cw_method_show_code_title),
+            subtitle = stringResource(R.string.cw_method_show_code_subtitle),
+            onClick = onPickShowCode,
+        )
 
         if (onSkip != null) {
             TextButton(

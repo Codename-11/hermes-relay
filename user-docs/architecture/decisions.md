@@ -84,8 +84,9 @@ Phone (HTTP)     → Hermes dashboard (:9119)    [Manage + Vanilla Hermes voice]
 Phone (HTTP/WSS) → Relay Server   (:8767)      [relay voice, terminal, bridge, notifications]
 ```
 
-API-server fallback auth uses optional Bearer token (`API_SERVER_KEY`). Dashboard
-gateway auth uses dashboard cookies plus `/api/auth/ws-ticket`.
+API-server fallback auth uses Bearer token (`API_SERVER_KEY`) when the optional
+API server is enabled. Dashboard gateway auth uses dashboard cookies plus
+`/api/auth/ws-ticket`.
 
 ---
 

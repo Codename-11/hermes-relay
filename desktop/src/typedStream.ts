@@ -108,6 +108,20 @@ export class TypedStreamRenderer {
         }
         break
       }
+      case 'message.interim': {
+        const interim = text(payload, 'text', 'message', 'preview', 'rendered')
+        if (interim) {
+          events.push({
+            type: 'message.interim',
+            session_id: stream.session_id,
+            payload: {
+              text: interim,
+              already_streamed: payload.already_streamed === true
+            }
+          })
+        }
+        break
+      }
       case 'tool.progress': {
         const delta = text(payload, 'delta', 'text', 'preview')
         if (delta) {
@@ -178,7 +192,14 @@ export class TypedStreamRenderer {
         })
         break
       case 'assistant.completed':
-        events.push({ type: 'message.complete', session_id: stream.session_id, payload: {} })
+        events.push({
+          type: 'message.complete',
+          session_id: stream.session_id,
+          payload: {
+            text: text(payload, 'text', 'content', 'message', 'rendered'),
+            response_previewed: payload.response_previewed === true
+          }
+        })
         break
       case 'error':
         events.push({

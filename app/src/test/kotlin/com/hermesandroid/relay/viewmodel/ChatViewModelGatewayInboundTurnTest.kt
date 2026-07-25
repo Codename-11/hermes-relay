@@ -140,6 +140,25 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun gatewaySessionCreateProviderPreservesExplicitFastFalse() {
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "session.info",
+                buildJsonObject { put("fast", false) },
+                "live-resumed",
+            ),
+        )
+        val deadline = System.currentTimeMillis() + 5_000
+        while (viewModel.fastEnabled.value != false) {
+            shadowOf(Looper.getMainLooper()).idle()
+            if (System.currentTimeMillis() >= deadline) error("fast=false did not reconcile")
+            Thread.sleep(20)
+        }
+
+        assertEquals(false, gatewayClient.sessionModelProvider()?.fast)
+    }
+
+    @Test
     fun dashboardOnlyConnectionCanSendWithoutApiClient() {
         viewModel.updateGatewayClient(null)
         gatewayClient.clearSession()
@@ -156,6 +175,40 @@ class ChatViewModelGatewayInboundTurnTest {
         gatewayHarness.awaitRpc("prompt.submit")
         assertTrue(handler.messages.value.any { it.content == "Dashboard-only gateway turn" })
         assertTrue(gatewayClient.hasActiveTurn())
+    }
+
+    @Test
+    fun gatewayRichCardActionStaysOnGatewayInsteadOfDrainingThroughSessionsApi() {
+        viewModel.sseFallbackEndpoint = "sessions"
+        val cardMessageId = "card-message"
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = cardMessageId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = System.currentTimeMillis(),
+                isStreaming = true,
+            ),
+        )
+        handler.onTextDelta(
+            cardMessageId,
+            """
+            CARD:{"type":"approval_request","id":"test-card","actions":[{"label":"Approve","value":"approve","mode":"send_text"}]}
+            """.trimIndent(),
+        )
+        handler.onTurnComplete(cardMessageId)
+        val card = handler.messages.value.single { it.id == cardMessageId }.cards.single()
+        val apiRequestsBeforeAction = apiServer.requestCount
+
+        viewModel.dispatchCardAction(
+            messageId = cardMessageId,
+            cardKey = card.id!!,
+            action = card.actions.single(),
+        )
+
+        val submit = gatewayHarness.awaitRpc("prompt.submit")
+        assertEquals("approve", (submit["text"] as JsonPrimitive).content)
+        assertEquals(apiRequestsBeforeAction, apiServer.requestCount)
     }
 
     @Test
@@ -529,6 +582,224 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun queuedOnlyRecoverySettlesPriorCheckpointBeforeStreamingQueuedTurn() {
+        val now = System.currentTimeMillis()
+        val checkpointStore = MemoryCheckpointStore(
+            ChatTurnCheckpoint(
+                contextKey = PROFILE_CONTEXT,
+                sessionId = STORED_SESSION_ID,
+                liveSessionId = "live-resumed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("prior-user", "First prompt", now - 3_000L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = "prior-assistant",
+                    content = "Old partial",
+                    timestamp = now - 2_900L,
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = now - 2_900L,
+                updatedAt = now,
+            ),
+        )
+        persistedHistory = listOf(
+            MessageItem(
+                id = "server-prior-user",
+                sessionId = STORED_SESSION_ID,
+                role = "user",
+                content = JsonPrimitive("First prompt"),
+            ),
+            MessageItem(
+                id = "server-prior-assistant",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Completed first answer"),
+            ),
+        )
+        gatewayHarness.recoveryRunning = false
+        gatewayHarness.recoveryQueuedUser = "Second queued prompt"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        handler.setSessionId(null)
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+
+        viewModel.prewarmGateway()
+
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.messages.value.any {
+                it.role == MessageRole.USER && it.content == "Second queued prompt"
+            } && handler.messages.value.any {
+                it.id.startsWith("gateway-inbound-") && it.isStreaming
+            }
+        }
+        val beforeEvents = handler.messages.value
+        assertTrue(beforeEvents.any {
+            it.role == MessageRole.ASSISTANT &&
+                it.content == "Completed first answer" &&
+                !it.isStreaming
+        })
+        assertFalse(beforeEvents.any { it.id == "prior-assistant" && it.isStreaming })
+
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Second answer") },
+                "live-resumed",
+            ),
+        )
+        persistedHistory = persistedHistory + listOf(
+            MessageItem(
+                id = "server-queued-user",
+                sessionId = STORED_SESSION_ID,
+                role = "user",
+                content = JsonPrimitive("Second queued prompt"),
+            ),
+            MessageItem(
+                id = "server-queued-assistant",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Second answer"),
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Second answer") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { !handler.isStreaming.value }
+        awaitCondition {
+            handler.messages.value.count {
+                it.role == MessageRole.ASSISTANT && it.content == "Second answer"
+            } == 1
+        }
+        assertTrue(handler.messages.value.any { it.content == "Completed first answer" })
+        assertFalse(handler.messages.value.any {
+            it.id == "prior-assistant" && it.content.contains("Second answer")
+        })
+    }
+
+    @Test
+    fun runningAndQueuedRecoveryCreatesANewPromptAndCheckpointAfterCurrentCompletion() {
+        val now = System.currentTimeMillis()
+        val checkpointStore = MemoryCheckpointStore(
+            ChatTurnCheckpoint(
+                contextKey = PROFILE_CONTEXT,
+                sessionId = STORED_SESSION_ID,
+                liveSessionId = "live-resumed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("prior-user", "First prompt", now - 3_000L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = "prior-assistant",
+                    content = "Current partial",
+                    timestamp = now - 2_900L,
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = now - 2_900L,
+                updatedAt = now,
+            ),
+        )
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Current partial"
+        gatewayHarness.recoveryQueuedUser = "Second queued prompt"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        handler.setSessionId(null)
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+
+        viewModel.prewarmGateway()
+
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.messages.value.any { it.id == "prior-assistant" && it.isStreaming }
+        }
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Current partial completed") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition {
+            handler.messages.value.any {
+                it.role == MessageRole.USER && it.content == "Second queued prompt"
+            } && handler.messages.value.any {
+                it.id.startsWith("gateway-inbound-") && it.isStreaming
+            }
+        }
+        awaitCondition { checkpointStore.checkpoint?.user?.content == "Second queued prompt" }
+        assertTrue(
+            "prior turn was not settled before queued handoff: ${handler.messages.value}",
+            handler.messages.value.any {
+                it.id == "prior-assistant" &&
+                    it.content.endsWith("Current partial completed") &&
+                    !it.isStreaming
+            },
+        )
+
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Second answer") },
+                "live-resumed",
+            ),
+        )
+        persistedHistory = listOf(
+            MessageItem(
+                id = "server-prior-user",
+                sessionId = STORED_SESSION_ID,
+                role = "user",
+                content = JsonPrimitive("First prompt"),
+            ),
+            MessageItem(
+                id = "server-prior-assistant",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Current partial completed"),
+            ),
+            MessageItem(
+                id = "server-queued-user",
+                sessionId = STORED_SESSION_ID,
+                role = "user",
+                content = JsonPrimitive("Second queued prompt"),
+            ),
+            MessageItem(
+                id = "server-queued-assistant",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Second answer"),
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Second answer") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { !handler.isStreaming.value }
+        awaitCondition { checkpointStore.checkpoint == null }
+        assertEquals(
+            1,
+            handler.messages.value.count {
+                it.role == MessageRole.USER && it.content == "Second queued prompt"
+            },
+        )
+        assertEquals(
+            1,
+            handler.messages.value.count {
+                it.role == MessageRole.ASSISTANT && it.content == "Second answer"
+            },
+        )
+    }
+
+    @Test
     fun lateCanceledCompletionDrainsBeforeImmediateNextTurn() {
         serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
         serverWs.send(
@@ -585,7 +856,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun queuedMessageDrainsAfterUnsolicitedTurnCompletes() {
-        gatewayHarness.steerStatus = "rejected"
+        gatewayHarness.redirectStatus = "rejected"
         serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
         serverWs.send(
             gatewayHarness.eventFrame(
@@ -597,7 +868,7 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { handler.isStreaming.value }
 
         viewModel.sendMessage("Run this next")
-        gatewayHarness.awaitRpc("session.steer")
+        gatewayHarness.awaitRpc("session.redirect")
         awaitCondition { viewModel.queuedMessages.value == listOf("Run this next") }
 
         persistedHistory = persistedAnswerHistory()

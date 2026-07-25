@@ -1,20 +1,22 @@
 # Hermes-Relay-Plugin v__VERSION__
 
-**Release Date:** July 15, 2026
+**Release Date:** July 22, 2026
 
-This patch aligns Server default with Hermes' sticky active profile and lets paired clients import conventional profile avatar files without exposing host paths.
+This patch hardens Relay authorization, adds upstream-aware diagnostics, and keeps plugin bootstrap work off the Gateway event loop.
 
-Pairs with Hermes-Relay-Android v1.4.6 for profile image import. Standard chat and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
+It can accompany Hermes-Relay-Android v1.5.0 for optional Relay diagnostics and power features. Standard chat and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
 ## What's changed
 
 ### Added
 
-- **Paired clients can import profile avatars.** Relay discovers conventional direct-child images such as `avatar.png` and `profile.jpg`, validates their media type, size, and profile boundary, and serves the bytes through an authenticated route.
+- **Upstream-aware Gateway diagnostics.** Doctor and `/relay/info` expose optional health, configuration-route, and capability signals so clients can explain compatibility gaps without treating an older upstream install as a broken Relay.
 
 ### Fixed
 
-- **Server default follows Hermes' active profile.** Advertised identity, model, SOUL, profile metadata, and avatar resolve through the sticky `active_profile` marker instead of always using the root profile.
+- **Privileged Relay paths enforce host authorization and active grants.** Pairing, Android bridge, terminal, session policy, remote profile configuration, and voice provider origins retain their intended trust boundaries.
+- **Plugin bootstrap remains responsive.** Database initialization and compatibility inspection run outside the Gateway event loop while preserving compatibility with older upstream bootstrap contracts.
+- **Windows Gateway detection is non-signalling.** Starting Relay and periodic profile rescans no longer risk terminating an existing Gateway process.
 
 ## Install / update
 

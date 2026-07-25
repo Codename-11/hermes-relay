@@ -59,8 +59,8 @@ data class RouteProbeOutcome(
  *    priority over a higher one. Reachability is **only** the tiebreaker
  *    among candidates that share the same priority.
  *  * **Reachability probe.** Dashboard-first routes use `GET
- *    ${dashboard.url}/api/status`; legacy API routes use `HEAD
- *    ${api.url}/health`. Relay-only routes use `HEAD ${relay.httpUrl}/health`.
+ *    ${dashboard.url}/api/status`; legacy API routes use `GET
+ *    ${api.url}/health`. Relay-only routes use `GET ${relay.httpUrl}/health`.
  *    Each request has a 4-second
  *    per-candidate timeout. Positive results are cached longer than negative
  *    results so repeated `connect()` calls don't hammer healthy routes, while
@@ -110,7 +110,6 @@ class EndpointResolver(
         val baseUrl: String,
         val requestUrl: String,
         val path: String,
-        val useHead: Boolean,
     )
 
     private val probeCache = ConcurrentHashMap<String, CacheEntry>()
@@ -326,7 +325,11 @@ class EndpointResolver(
         val requestBuilder = Request.Builder()
             .url(url)
             .header("Accept", "*/*")
-        val request = if (target.useHead) requestBuilder.head().build() else requestBuilder.get().build()
+        // Hermes API's aiohttp health route accepts GET but returns 405 to
+        // HEAD. That response proves connectivity while the old probe marked
+        // the route unreachable. Health payloads are tiny, so follow the
+        // endpoint's actual public contract on every surface.
+        val request = requestBuilder.get().build()
         return withContext(Dispatchers.IO) {
             try {
                 withTimeoutOrNull(PROBE_TIMEOUT_MS + 200L) {
@@ -407,7 +410,6 @@ class EndpointResolver(
                     baseUrl = base,
                     requestUrl = "$base/api/status",
                     path = "/api/status",
-                    useHead = false,
                 )
             }
 
@@ -416,7 +418,6 @@ class EndpointResolver(
                 baseUrl = base,
                 requestUrl = "$base/health",
                 path = "/health",
-                useHead = true,
             )
         }
 
@@ -436,7 +437,6 @@ class EndpointResolver(
                     baseUrl = relayUrl,
                     requestUrl = "$httpBase/health",
                     path = "/health",
-                    useHead = true,
                 )
             }
 

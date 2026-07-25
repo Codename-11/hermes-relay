@@ -3,6 +3,12 @@ package com.hermesandroid.relay.network.upstream
 import android.content.Context
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.network.shared.VoiceAudioClient
+import com.hermesandroid.relay.network.shared.VoiceSpeechStream
+import com.hermesandroid.relay.network.shared.VoiceSpeechStreamCallbacks
+import com.hermesandroid.relay.network.shared.VoiceSpeechStreamOutcome
+import com.hermesandroid.relay.network.shared.VoiceSpeechStreamStatus
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -17,6 +23,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
 import java.io.File
 import java.io.IOException
 import java.util.Base64
@@ -32,15 +41,15 @@ import java.util.concurrent.TimeUnit
  * These routes live on `hermes_cli/web_server.py` (:9119 by convention), NOT
  * on the API server (:8642) — current upstream api_server advertises
  * `audio_api: false` and registers no audio routes. Auth is the dashboard
- * cookie session (gated_auth_middleware), so [okHttpClient] must carry the
- * same per-connection cookie jar the Manage tab signs in with; an API bearer
- * header is meaningless on this surface. Revisit when upstream PR #8199
+ * dashboard session (gated_auth_middleware), so [dashboardHttpClientProvider]
+ * must carry the same exact-origin cookie or native bearer session used by
+ * Manage. The API-server bearer is unrelated to this surface. Revisit when upstream PR #8199
  * lands the `/v1/audio` routes on the API server (docs/upstream-contributions.md section 6).
  * (No glob spellings in block comments — Kotlin block comments nest.)
  */
 class StandardHermesVoiceClient(
     private val context: Context,
-    private val okHttpClient: OkHttpClient,
+    private val dashboardHttpClientProvider: (String) -> OkHttpClient,
     private val dashboardUrlProvider: () -> String?,
     // Active chat profile name (null = default/launch). Sent DEFENSIVELY on
     // /api/audio/speak: upstream `TTSSpeakRequest` is text-only and Pydantic
@@ -48,6 +57,7 @@ class StandardHermesVoiceClient(
     // upstream ever adds profile-aware TTS. Until then, standard voice remains
     // the host's global TTS (see VoiceViewModel's standard-voice profile notice).
     private val profileProvider: () -> String? = { null },
+    private val webSocketFactory: ((Request, WebSocketListener) -> WebSocket)? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -56,14 +66,10 @@ class StandardHermesVoiceClient(
 ) : VoiceAudioClient {
     override val route: VoiceAudioRoute = VoiceAudioRoute.Standard
 
-    private val callClient: OkHttpClient =
-        okHttpClient.newBuilder()
-            .callTimeout(90, TimeUnit.SECONDS)
-            .build()
-
     override suspend fun transcribe(audioFile: File): Result<String> = withContext(Dispatchers.IO) {
         val baseUrl = dashboardBaseUrl()
             ?: return@withContext Result.failure(IllegalStateException("Hermes dashboard URL not configured"))
+        val callClient = callClient(baseUrl)
         if (!audioFile.exists() || audioFile.length() == 0L) {
             return@withContext Result.failure(IOException("Audio file missing or empty: ${audioFile.name}"))
         }
@@ -94,7 +100,7 @@ class StandardHermesVoiceClient(
             .header("Accept", "application/json")
             .build()
 
-        executeJson(request, "Hermes audio transcribe").mapCatching { root ->
+        executeJson(request, "Hermes audio transcribe", callClient).mapCatching { root ->
             val transcript = root.stringField("transcript")
                 ?: root.stringField("text")
                 ?: root.stringField("message")
@@ -108,6 +114,7 @@ class StandardHermesVoiceClient(
     override suspend fun synthesize(text: String): Result<File> = withContext(Dispatchers.IO) {
         val baseUrl = dashboardBaseUrl()
             ?: return@withContext Result.failure(IllegalStateException("Hermes dashboard URL not configured"))
+        val callClient = callClient(baseUrl)
         val cleanText = text.trim()
         if (cleanText.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Cannot synthesize blank text"))
@@ -130,7 +137,7 @@ class StandardHermesVoiceClient(
             .header("Accept", "application/json")
             .build()
 
-        executeJson(request, "Hermes audio speak").mapCatching { root ->
+        executeJson(request, "Hermes audio speak", callClient).mapCatching { root ->
             val dataUrl = root.stringField("data_url") ?: root.stringField("dataUrl")
             if (dataUrl.isNullOrBlank()) {
                 throw IOException("Hermes audio speak returned no audio")
@@ -148,10 +155,54 @@ class StandardHermesVoiceClient(
         }
     }
 
+    override suspend fun openSpeechStream(
+        callbacks: VoiceSpeechStreamCallbacks,
+    ): Result<VoiceSpeechStream?> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = dashboardBaseUrl()
+                ?: throw IllegalStateException("Hermes dashboard URL not configured")
+            val callClient = callClient(baseUrl)
+            val ticketUrl = "$baseUrl/api/auth/ws-ticket".toHttpUrlOrNull()
+                ?: throw IOException("Hermes dashboard URL is not a valid address: $baseUrl")
+            val ticketRequest = Request.Builder()
+                .url(ticketUrl)
+                .post(ByteArray(0).toRequestBody(null))
+                .build()
+            val ticket = executeJson(ticketRequest, "Dashboard websocket ticket", callClient)
+                .getOrThrow()
+                .stringField("ticket")
+                ?: throw IOException("Dashboard websocket ticket response missing ticket")
+            val websocketUrl = DashboardApiClient.gatewayWebSocketUrl(
+                baseUrl = baseUrl,
+                ticket = ticket,
+                path = "/api/audio/speak-stream",
+            ) ?: throw IOException("Could not build Hermes speech stream URL")
+            val request = Request.Builder().url(websocketUrl).build()
+            StandardHermesSpeechStream(
+                request = request,
+                callbacks = callbacks,
+                json = json,
+                socketFactory = webSocketFactory ?: callClient::newWebSocket,
+            ).also { it.connect() }
+                .let { Result.success<VoiceSpeechStream?>(it) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Result.failure(error)
+        }
+    }
+
     private fun dashboardBaseUrl(): String? =
         dashboardUrlProvider()?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
 
-    private fun executeJson(request: Request, operation: String): Result<JsonObject> {
+    private fun callClient(baseUrl: String): OkHttpClient =
+        standardHermesDashboardAudioClient(dashboardHttpClientProvider(baseUrl))
+
+    private fun executeJson(
+        request: Request,
+        operation: String,
+        callClient: OkHttpClient,
+    ): Result<JsonObject> {
         return try {
             callClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -241,4 +292,210 @@ class StandardHermesVoiceClient(
         // dashboard rejects decoded transcription audio above 25 MB with 413.
         const val MAX_TRANSCRIBE_BYTES = 25L * 1024 * 1024
     }
+}
+
+private class StandardHermesSpeechStream(
+    private val request: Request,
+    private val callbacks: VoiceSpeechStreamCallbacks,
+    private val json: Json,
+    private val socketFactory: (Request, WebSocketListener) -> WebSocket,
+) : VoiceSpeechStream {
+    private val lock = Any()
+    private val outcome = CompletableDeferred<VoiceSpeechStreamOutcome>()
+    private val pendingFrames = ArrayDeque<String>()
+    private var socket: WebSocket? = null
+    private var opened = false
+    private var stopped = false
+    private var finished = false
+    private var audioStarted = false
+    private var sampleRate = DEFAULT_SAMPLE_RATE
+    private var oddByteCarry: Byte? = null
+
+    private val listener = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            val frames = synchronized(lock) {
+                if (stopped || outcome.isCompleted) {
+                    webSocket.cancel()
+                    return
+                }
+                socket = webSocket
+                opened = true
+                pendingFrames.toList().also { pendingFrames.clear() }
+            }
+            frames.forEach(webSocket::send)
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            val root = runCatching { json.decodeFromString<JsonObject>(text) }.getOrNull() ?: return
+            when (root.stringField("type")) {
+                "start" -> {
+                    val nextRate = (root["sample_rate"] as? JsonPrimitive)?.contentOrNull
+                        ?.toIntOrNull()
+                        ?.takeIf { it > 0 }
+                        ?: DEFAULT_SAMPLE_RATE
+                    val channels = (root["channels"] as? JsonPrimitive)?.contentOrNull
+                        ?.toIntOrNull()
+                        ?.takeIf { it > 0 }
+                        ?: 1
+                    if (channels != 1) {
+                        settle(
+                            status = VoiceSpeechStreamStatus.Fallback,
+                            error = IOException("Hermes speech stream returned $channels channels; mono required"),
+                        )
+                        webSocket.cancel()
+                        return
+                    }
+                    synchronized(lock) { sampleRate = nextRate }
+                    callbacks.onStart(nextRate, channels)
+                }
+                "fallback" -> {
+                    val heardAudio = synchronized(lock) { audioStarted }
+                    settle(
+                        status = if (heardAudio) {
+                            VoiceSpeechStreamStatus.Completed
+                        } else {
+                            VoiceSpeechStreamStatus.Fallback
+                        },
+                    )
+                    webSocket.close(1000, "fallback")
+                }
+                "end" -> {
+                    settle(VoiceSpeechStreamStatus.Completed)
+                    webSocket.close(1000, "complete")
+                }
+            }
+        }
+
+        override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+            val delivery = synchronized(lock) {
+                if (stopped || outcome.isCompleted) return
+                var incoming = bytes.toByteArray()
+                oddByteCarry?.let { carry ->
+                    incoming = byteArrayOf(carry) + incoming
+                    oddByteCarry = null
+                }
+                val usable = incoming.size - (incoming.size % 2)
+                if (usable < incoming.size) oddByteCarry = incoming.last()
+                if (usable == 0) return
+                audioStarted = true
+                incoming.copyOf(usable) to sampleRate
+            }
+            runCatching { callbacks.onPcm(delivery.first, delivery.second) }
+                .onFailure { error ->
+                    settle(VoiceSpeechStreamStatus.Failed, error)
+                    webSocket.cancel()
+                }
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            settleForDisconnect(IOException("Hermes speech stream closed ($code): $reason"))
+            webSocket.close(code, reason)
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            settleForDisconnect(IOException("Hermes speech stream closed ($code): $reason"))
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            settleForDisconnect(t)
+        }
+    }
+
+    fun connect() {
+        val created = socketFactory(request, listener)
+        synchronized(lock) {
+            if (socket == null) socket = created
+            if (stopped) created.cancel()
+        }
+    }
+
+    override fun append(text: String) {
+        if (text.isEmpty()) return
+        sendFrame(buildJsonObject { put("text", text) })
+    }
+
+    override fun finish() {
+        synchronized(lock) {
+            if (finished || stopped || outcome.isCompleted) return
+            finished = true
+        }
+        sendFrame(buildJsonObject { put("done", true) })
+    }
+
+    override fun stop() {
+        val current = synchronized(lock) {
+            if (stopped) return
+            stopped = true
+            socket
+        }
+        if (current != null) {
+            current.send(json.encodeToString(JsonObject.serializer(), buildJsonObject { put("stop", true) }))
+            current.cancel()
+        }
+        settle(VoiceSpeechStreamStatus.Stopped)
+    }
+
+    override suspend fun awaitOutcome(): VoiceSpeechStreamOutcome = outcome.await()
+
+    private fun sendFrame(frame: JsonObject) {
+        val encoded = json.encodeToString(JsonObject.serializer(), frame)
+        val current = synchronized(lock) {
+            if (stopped || outcome.isCompleted) return
+            if (!opened) {
+                pendingFrames.addLast(encoded)
+                return
+            }
+            socket
+        }
+        if (current?.send(encoded) != true) {
+            settleForDisconnect(IOException("Hermes speech stream send failed"))
+        }
+    }
+
+    private fun settleForDisconnect(error: Throwable) {
+        val heardAudio = synchronized(lock) { audioStarted }
+        settle(
+            status = if (heardAudio) VoiceSpeechStreamStatus.Failed else VoiceSpeechStreamStatus.Fallback,
+            error = error,
+        )
+    }
+
+    private fun settle(status: VoiceSpeechStreamStatus, error: Throwable? = null) {
+        val result = synchronized(lock) {
+            if (outcome.isCompleted) return
+            VoiceSpeechStreamOutcome(
+                status = status,
+                audioStarted = audioStarted,
+                error = error,
+            )
+        }
+        outcome.complete(result)
+    }
+
+    private fun JsonObject.stringField(name: String): String? =
+        ((this[name] as? JsonPrimitive)?.contentOrNull)?.trim()?.takeIf { it.isNotBlank() }
+
+    private companion object {
+        const val DEFAULT_SAMPLE_RATE = 24_000
+    }
+}
+
+internal const val STANDARD_HERMES_DASHBOARD_AUDIO_TIMEOUT_SECONDS = 180L
+
+internal fun standardHermesDashboardAudioTimeoutSeconds(requestedSeconds: Long): Long =
+    requestedSeconds.coerceIn(
+        minimumValue = 180L,
+        maximumValue = 600L,
+    )
+
+internal fun standardHermesDashboardAudioClient(
+    baseClient: OkHttpClient,
+    timeoutSeconds: Long = STANDARD_HERMES_DASHBOARD_AUDIO_TIMEOUT_SECONDS,
+): OkHttpClient {
+    val boundedTimeoutSeconds = standardHermesDashboardAudioTimeoutSeconds(timeoutSeconds)
+    return baseClient.newBuilder()
+        .callTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+        .readTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+        .writeTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+        .build()
 }

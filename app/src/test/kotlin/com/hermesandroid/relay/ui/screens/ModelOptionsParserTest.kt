@@ -176,4 +176,24 @@ class ModelOptionsParserTest {
         // Authenticated first; server (canonical) order kept within each group.
         assertEquals(listOf("z-auth", "b-auth", "a-skel"), options.map { it.id })
     }
+
+    @Test
+    fun disabledAndExcludedProvidersAreHiddenWhenUpstreamMarksThemExplicitly() {
+        val options = parse(
+            """
+            {
+              "excluded_providers": ["anthropic"],
+              "providers": [
+                {"slug": "openai", "name": "OpenAI", "models": ["gpt-5.5"], "authenticated": true},
+                {"slug": "anthropic", "name": "Anthropic", "models": [], "authenticated": false},
+                {"slug": "xai", "name": "xAI", "models": ["grok-4"], "enabled": false},
+                {"slug": "local", "name": "Local", "models": ["llama"], "excluded": true},
+                {"slug": "ollama", "name": "Ollama", "models": ["qwen"]}
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(listOf("openai", "ollama"), options.map { it.id })
+    }
 }

@@ -268,7 +268,6 @@ fun ActiveCardRelayStatusSection(
 @Composable
 fun ActiveCardFeaturesSection(
     connectionViewModel: ConnectionViewModel,
-    relayEnabled: Boolean,
     onOpenApiInfo: () -> Unit,
     onOpenDashboard: () -> Unit,
     onOpenRelayInfo: () -> Unit,
@@ -349,21 +348,19 @@ fun ActiveCardFeaturesSection(
     }
 
     val relayValue = when {
-        !relayEnabled -> stringResource(R.string.active_section_disabled)
         !relayConfigured -> stringResource(R.string.active_section_optional)
         relayReady -> stringResource(R.string.active_section_ready)
         relayUiState == RelayUiState.Stale -> stringResource(R.string.active_section_reconnect)
         else -> stringResource(R.string.active_section_configured)
     }
     val relayTone = when {
-        !relayEnabled || !relayConfigured -> CapabilityTone.Neutral
+        !relayConfigured -> CapabilityTone.Neutral
         relayReady -> CapabilityTone.Good
         relayUiState == RelayUiState.Stale -> CapabilityTone.Warning
         else -> CapabilityTone.Info
     }
 
     val terminalValue = when {
-        !relayEnabled -> stringResource(R.string.active_section_disabled)
         authState is AuthState.Paired -> stringResource(R.string.active_section_ready)
         relayConfigured -> stringResource(R.string.active_section_pair_relay)
         else -> stringResource(R.string.active_section_optional)
@@ -614,7 +611,6 @@ private fun CapabilityRow(
 @Composable
 fun ActiveCardAdvancedSection(
     connectionViewModel: ConnectionViewModel,
-    relayEnabled: Boolean,
     @Suppress("UNUSED_PARAMETER") isDarkTheme: Boolean,
     onPairRelay: () -> Unit,
     onInsecureAckRequested: () -> Unit,
@@ -654,7 +650,7 @@ fun ActiveCardAdvancedSection(
                             Text(stringResource(R.string.active_section_done))
                         }
                     }
-                    ManualUrlSubsection(connectionViewModel, relayEnabled, showApi = true, showRelay = false)
+                    ManualUrlSubsection(connectionViewModel, showApi = true, showRelay = false)
                 }
             }
         } else {
@@ -731,7 +727,7 @@ fun ActiveCardAdvancedSection(
         TextButton(onClick = { relayEditorOpen = !relayEditorOpen }) {
             Text(stringResource(R.string.active_section_other_relay_methods))
         }
-        if (relayEnabled && relayEditorOpen) {
+        if (relayEditorOpen) {
             Surface(
                 color = Color.Transparent,
                 shape = RoundedCornerShape(12.dp),
@@ -746,7 +742,7 @@ fun ActiveCardAdvancedSection(
                             Text(stringResource(R.string.active_section_done))
                         }
                     }
-                    ManualUrlSubsection(connectionViewModel, relayEnabled = true, showApi = false, showRelay = true)
+                    ManualUrlSubsection(connectionViewModel, showApi = false, showRelay = true)
                 }
             }
         }
@@ -798,7 +794,6 @@ fun ActiveCardAdvancedSection(
 @Composable
 private fun ManualUrlSubsection(
     connectionViewModel: ConnectionViewModel,
-    relayEnabled: Boolean,
     showApi: Boolean,
     showRelay: Boolean,
 ) {
@@ -960,7 +955,7 @@ private fun ManualUrlSubsection(
         }
     }
 
-    if (relayEnabled && showRelay) {
+    if (showRelay) {
         HorizontalDivider()
 
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2098,6 +2093,9 @@ fun ActiveCardRoutesSection(
                 outcomeFor = { candidate ->
                     routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate)]
                 },
+                dashboardAuthenticated = connection.dashboardLastStatus?.authenticated,
+                dashboardSignInRequired = connection.dashboardLastStatus?.authRequired == true &&
+                    connection.dashboardLastStatus.authenticated != true,
                 preferredRole = preferredRole,
                 manualOverrideRole = manualOverrideRole,
                 onUseNow = { candidate -> connectionViewModel.useRouteNow(candidate.role) },
@@ -2127,10 +2125,12 @@ fun ActiveCardRoutesSection(
         if (routeEditorOpen) {
             RouteEditorDialog(
                 original = routeEditorOriginal,
-                onSave = { role, apiUrl, onResult ->
+                relayEnabled = connection.relayUrl.isNotBlank() ||
+                    endpoints.any { it.relay != null },
+                onSave = { role, dashboardUrl, onResult ->
                     connectionViewModel.saveExtraRoute(
                         role = role,
-                        apiUrl = apiUrl,
+                        dashboardUrl = dashboardUrl,
                         original = routeEditorOriginal,
                         onResult = onResult,
                     )

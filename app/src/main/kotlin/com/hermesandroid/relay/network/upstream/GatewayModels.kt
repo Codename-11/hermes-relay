@@ -50,6 +50,29 @@ enum class GatewayConnectionState {
     Ready,
 }
 
+/** Profile-persisted approval policy introduced by upstream gateway contract v3. */
+enum class GatewayApprovalMode(val wireValue: String) {
+    Manual("manual"),
+    Smart("smart"),
+    Off("off");
+
+    companion object {
+        fun fromWire(value: String?): GatewayApprovalMode? = when (value?.trim()?.lowercase()) {
+            "manual" -> Manual
+            "smart" -> Smart
+            "off" -> Off
+            else -> null
+        }
+    }
+}
+
+/** Whether this gateway exposes the contract-v3 profile approval-mode RPCs. */
+enum class GatewayApprovalModeCapability {
+    Unknown,
+    Supported,
+    Unsupported,
+}
+
 /**
  * Streaming-endpoint resolution with the gateway tier — pure so the matrix
  * is unit-testable without an AndroidViewModel. ConnectionViewModel
@@ -57,8 +80,9 @@ enum class GatewayConnectionState {
  *
  * Manual picks pass through untouched (ChatViewModel handles per-turn
  * fallback when a "gateway" pick can't serve a send); "auto" prefers the
- * gateway only when the dashboard probe says [GatewayAvailability.Ready],
- * otherwise it falls back to the capability-preferred SSE endpoint.
+ * gateway while the dashboard probe is unresolved or ready. A capability-
+ * preferred SSE fallback is selected only after a definitive unavailable,
+ * unsupported, or sign-in-required verdict.
  */
 fun resolveStreamingEndpointPreference(
     preference: String,
@@ -66,7 +90,10 @@ fun resolveStreamingEndpointPreference(
     capabilities: ServerCapabilities,
 ): String = when (preference) {
     "sessions", "completions", "runs", "gateway" -> preference
-    else -> if (gateway == GatewayAvailability.Ready) {
+    else -> if (
+        gateway == GatewayAvailability.Ready ||
+        gateway == GatewayAvailability.Unknown
+    ) {
         "gateway"
     } else {
         capabilities.preferredChatEndpoint()
@@ -95,6 +122,28 @@ data class GatewayInflightTurn(
     val user: String,
     val assistant: String,
     val streaming: Boolean,
+    val status: String? = null,
+    val error: String? = null,
+    val recoverable: Boolean = false,
+)
+
+/** A next-turn prompt accepted by upstream while the current turn was busy. */
+data class GatewayQueuedTurn(
+    val user: String,
+)
+
+/** A fresh crash marker caused `session.resume` to schedule one continuation. */
+data class GatewayAutoContinue(
+    val attempt: Int,
+    val interruptedAt: Double?,
+)
+
+/** Optional project identity attached to newer upstream session metadata. */
+data class GatewaySessionProject(
+    val id: String?,
+    val slug: String?,
+    val name: String,
+    val primaryPath: String?,
 )
 
 /** Result of reattaching Android to an existing durable Gateway session. */
@@ -104,9 +153,15 @@ data class GatewaySessionRecovery(
     val running: Boolean,
     val status: String?,
     val inflight: GatewayInflightTurn?,
+    val queued: GatewayQueuedTurn?,
     /** Non-null only when subsequent turn events are bound to [GatewayTurnCallbacks]. */
     val handle: ActiveTurnHandle?,
-)
+    val autoContinue: GatewayAutoContinue? = null,
+) {
+    /** Whether upstream still owes this client live turn events. */
+    val hasPendingWork: Boolean
+        get() = running || queued != null || autoContinue != null
+}
 
 /** A detached sibling turn reached its terminal event on the shared Gateway socket. */
 data class GatewayBackgroundTurnCompletion(
@@ -114,6 +169,25 @@ data class GatewayBackgroundTurnCompletion(
     val profile: String?,
     val expectedAssistantText: String?,
 )
+
+/** Input lifecycle from a deliberately detached Gateway turn. */
+sealed interface GatewayBackgroundInteractionEvent {
+    val storedSessionId: String
+    val profile: String?
+    val ask: GatewayAsk
+
+    data class Requested(
+        override val storedSessionId: String,
+        override val profile: String?,
+        override val ask: GatewayAsk,
+    ) : GatewayBackgroundInteractionEvent
+
+    data class Resolved(
+        override val storedSessionId: String,
+        override val profile: String?,
+        override val ask: GatewayAsk,
+    ) : GatewayBackgroundInteractionEvent
+}
 
 /**
  * One server-side interactive ask. The agent thread upstream is BLOCKED
@@ -273,12 +347,29 @@ data class GatewayModelProvider(
     val totalModels: Int = 0,
 )
 
+data class GatewayMoaReference(
+    val index: Int?,
+    val count: Int?,
+    val label: String,
+    val text: String,
+    val available: Boolean = true,
+)
+
 /** Result of the gateway `model.options` RPC. */
 data class GatewayModelOptions(
     val providers: List<GatewayModelProvider>,
     val currentModel: String,
     val currentProvider: String,
 )
+
+/** Reject provider catalogs that completed after a profile/context switch. */
+internal fun isCurrentModelOptionsResponse(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    requestProfileKey: String,
+    currentProfileKey: String,
+): Boolean =
+    requestGeneration == currentGeneration && requestProfileKey == currentProfileKey
 
 /**
  * The explicit in-chat overrides to bind onto a gateway `session.create` as the
@@ -296,7 +387,9 @@ data class GatewayModelOptions(
  *
  * [model] is the model id (e.g. `grok-4.3`); [provider] is the authenticated
  * provider slug (e.g. `xai`). [reasoningEffort] is the upstream effort string
- * (`low`/`medium`/`high`/…). [fast] pins the priority service tier when true.
+ * (`low`/`medium`/`high`/…). [fast] follows the contract-v4 tri-state: `true`
+ * pins priority, `false` explicitly pins normal, and `null` omits the field so
+ * the profile's service tier is inherited.
  * Note `yolo` is intentionally absent — upstream `session.create` does NOT
  * accept it as a per-session override, so it is applied post-create instead.
  */
@@ -328,6 +421,19 @@ class GatewayTurnCallbacks(
     /** A gateway `message.start` opened an assistant response for this turn. */
     val onStart: () -> Unit,
     val onTextDelta: (String) -> Unit,
+    /**
+     * Gateway `message.interim` sealed an attempted assistant message before
+     * the terminal `message.complete`. When [alreadyStreamed] is false, [text]
+     * has not arrived through `message.delta` and should be rendered before
+     * sealing the current assistant segment.
+     */
+    val onInterimMessage: (text: String, alreadyStreamed: Boolean) -> Unit = { _, _ -> },
+    /**
+     * The terminal text is equal/prefix-related to the sealed interim, so the
+     * existing segment should be replaced in place instead of opening a second
+     * assistant bubble.
+     */
+    val onInterimReconciled: (text: String) -> Unit = { _ -> },
     val onThinkingDelta: (String) -> Unit,
     val onToolCallStart: (toolCallId: String, toolName: String) -> Unit,
     val onToolCallDone: (toolCallId: String, resultPreview: String?) -> Unit,
@@ -352,6 +458,8 @@ class GatewayTurnCallbacks(
     val onToolGenerating: (toolName: String?) -> Unit,
     /** `subagent.*` lifecycle on the parent session — feeds the subagent lanes. */
     val onSubagentEvent: (GatewaySubagentEvent) -> Unit,
+    /** Successful MoA advisor output for a transient labelled reference block. */
+    val onMoaReference: (GatewayMoaReference) -> Unit,
     /**
      * Server-side interactive ask (clarify/approval/sudo/secret) that blocks
      * the turn until answered via the matching respond RPC or the turn is
@@ -360,6 +468,8 @@ class GatewayTurnCallbacks(
     val onInteractionRequest: (GatewayAsk) -> Unit,
     /** Server declared a pending interaction expired; clear only the matching card. */
     val onInteractionExpired: (GatewayAskExpiry) -> Unit,
+    /** The turn resumed after a pending interaction was resolved elsewhere. */
+    val onInteractionResolved: (GatewayAskExpiry) -> Unit = { _ -> },
     /**
      * Gateway `status.update` lifecycle line — model fallback, retries, and
      * errors (often emoji-prefixed: 🔄 fallback, ⏳ retry, ❌ error). Default

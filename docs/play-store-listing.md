@@ -14,9 +14,9 @@ It's not a hosted AI service. It's a companion app for the Hermes agent you run,
 
 QUICK START
 
-1. Run hermes-agent with its API server enabled on your computer or home server.
-2. Install Hermes-Relay and enter your server's address (for example [http://192.168.1.100:8642](http://192.168.1.100:8642)).
-3. The setup wizard checks what your server supports and shows a readiness card — then you're talking.
+1. Run hermes-agent with its Dashboard/Gateway enabled on your computer or home server.
+2. Install Hermes-Relay and select the nearby Dashboard, or enter its address and custom port.
+3. Sign in through the Dashboard when prompted. The setup wizard verifies Chat, sessions, Manage, and voice before finishing.
 
 No server yet? Tap "Try the demo" on the setup screen to explore the app offline — a sample conversation, no login or server required.
 
@@ -24,7 +24,7 @@ A plain Hermes install is enough. Chat, management, and voice all work with no p
 
 HOW IT WORKS
 
-Chat streams directly from your Hermes API Server in real time. Manage and voice use your Hermes dashboard with one sign-in. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
+Chat, sessions, Manage, and voice use the Hermes Dashboard/Gateway with one sign-in. A headless API server remains an automatic compatibility fallback. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
 
 GOOGLE PLAY BUILD
 
@@ -85,11 +85,12 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.9 - Clearer Hermes connections
+v1.5.0 - Hermes, always in reach
 
-* Connect through the Hermes dashboard with one sign-in.
-* Setup now explains nearby, remote, Tailscale, custom-port, and optional Relay paths.
-* Server default consistently displays Hermes' pinned active profile.
+* Secure Dashboard sign-in and a clearer Agent Passport.
+* Active background chats with actionable approval and question alerts.
+* Better attachments, image generation, voice, routing, and recovery.
+* Optional permission guidance that never blocks chat.
 ```
 
 ## Category
@@ -156,12 +157,12 @@ This app is a client for a Hermes server the user runs themselves, so a fresh in
 
 ### Foreground service permissions
 
-The Play build declares `**FOREGROUND_SERVICE_SPECIAL_USE**` for `GatewayKeepAliveService`, backing the opt-in **Persistent connection** feature (off by default). At submission, complete **App content → Foreground service permissions** for `specialUse`:
+The Play build declares `**FOREGROUND_SERVICE_SPECIAL_USE**` for `GatewayKeepAliveService`. It protects user-started active chat turns automatically and also backs the opt-in **Persistent connection** feature for idle connectivity. At submission, complete **App content → Foreground service permissions** for `specialUse`:
 
-- **Use case:** maintains a persistent connection to the user's own Hermes agent server so the assistant stays responsive and delivers replies while the app is backgrounded.
+- **Use case:** keeps a user-started Hermes turn connected until it finishes or pauses for user input, including multiple concurrent sessions; optionally maintains the idle connection when the user enables Persistent connection.
 - **Why a foreground service:** it's a real-time, user-initiated streaming connection that must survive Doze / background execution limits; `dataSync` is force-stopped after a 6-hour/day cap on Android 15, so `specialUse` is the only fit for "stay connected."
-- **User control:** off by default; enabled only via *Settings → Quick Controls → Persistent connection*; shows an ongoing notification with a **Turn off** action; ends when the app is swiped from recents.
-- Google usually asks for a short screen recording of the toggle + notification.
+- **User control:** the service starts when the user sends a chat message and stops after all active turns settle. Continuous idle retention is off by default and enabled only via *Settings → Quick Controls → Persistent connection*. The ongoing notification shows the active/waiting session count; its **Turn off always-on** action disables idle retention without interrupting active work. Swiping the app from recents ends it.
+- Google usually asks for a short screen recording of a backgrounded active turn, the ongoing notification, and the optional persistent toggle.
 
 The Play build does **not** declare `FOREGROUND_SERVICE_MEDIA_PROJECTION` or the Device Control accessibility/bridge services — those are sideload-only.
 
@@ -172,7 +173,7 @@ No data collection or sharing to declare: no telemetry, ads, or third-party anal
 ### Sensitive / runtime permissions in the Play build
 
 - `RECORD_AUDIO` — Voice mode, requested at use.
-- `POST_NOTIFICATIONS` — turn-complete + keep-alive notifications, requested on API 33+.
+- `POST_NOTIFICATIONS` — chat input, turn-complete, and keep-alive notifications, requested on API 33+.
 - `CAMERA` — QR pairing / attachments, requested at use.
 - Notification listener (companion) — user-enabled in system settings.
 

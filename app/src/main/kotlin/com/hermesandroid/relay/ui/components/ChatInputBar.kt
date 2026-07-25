@@ -74,7 +74,7 @@ import kotlinx.coroutines.delay
  * !isStreaming && hasContent      -> SEND    // Send arrow, primary (Relay)
  * !isStreaming                    -> VOICE   // GraphicEq, primary
  * isStreaming && !hasContent      -> STOP    // Stop in a Danger-outlined circle
- * canSteer (gateway transport)    -> STEER   // Send glyph, tertiary (Cyan)
+ * canCorrect (gateway transport)  -> STEER   // Send glyph, tertiary (Cyan)
  * else                            -> QUEUE   // Send glyph + clock badge, tertiary
  * ```
  */
@@ -120,7 +120,7 @@ data class ChatInputPickerControl(
  *    the limit) only when length > [charLimit] - 200 — supportingText
  *    reflows the bar, the overline doesn't.
  *  - [caption] renders a single relayMetadataStyle line above the bar
- *    (steer/queue hinting during streaming-with-text); Cyan when the slot
+ *    (correct/queue hinting during streaming-with-text); Cyan when the slot
  *    is STEER, muted otherwise. Null collapses the row.
  *  - Voice: GraphicEq glyph ("voice session", not "record"); when
  *    ![voiceReady] the button stays FULL alpha with a 6dp Amber dot badge
@@ -191,7 +191,7 @@ fun ChatInputBar(
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // Caption row — steer/queue hinting, single line, no buttons.
+        // Caption row — correct/queue hinting, single line, no buttons.
         AnimatedVisibility(visible = caption != null) {
             Text(
                 text = caption ?: lastCaption.orEmpty(),

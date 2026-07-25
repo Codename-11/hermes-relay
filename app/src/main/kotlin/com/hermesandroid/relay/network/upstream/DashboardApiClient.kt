@@ -16,6 +16,7 @@ import com.hermesandroid.relay.auth.buildRawTokenStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -49,8 +50,40 @@ data class DashboardStatus(
     val authRequired: Boolean,
     val authProviders: List<String> = emptyList(),
     val authProviderDetails: List<DashboardAuthProvider> = emptyList(),
+    @SerialName("auth_flows") val authFlows: List<String> = emptyList(),
     val version: String? = null,
     val message: String? = null,
+    @SerialName("nous_session_valid") val nousSessionValid: String? = null,
+    val profiles: List<String> = emptyList(),
+    @SerialName("gateway_mode") val gatewayMode: String? = null,
+    val gateways: List<DashboardGatewayTopology> = emptyList(),
+    val componentHealth: DashboardComponentHealthRollup = DashboardComponentHealthRollup(),
+)
+
+@Serializable
+data class DashboardGatewayTopology(
+    val profile: String,
+    val ports: Map<String, Int> = emptyMap(),
+    @SerialName("served_profiles") val servedProfiles: List<String> = emptyList(),
+)
+
+@Serializable
+data class DashboardComponentHealthRollup(
+    val supported: Boolean = false,
+    val overall: String? = null,
+    val components: List<DashboardComponentHealth> = emptyList(),
+)
+
+@Serializable
+data class DashboardComponentHealth(
+    val name: String,
+    val status: String,
+    val message: String? = null,
+    val configured: Int? = null,
+    val connected: Int? = null,
+    val healthy: Boolean? = null,
+    val ok: Boolean? = null,
+    @SerialName("unhandled_5xx_count_5m") val unhandled5xxCount5m: Int? = null,
 )
 
 @Serializable
@@ -90,6 +123,54 @@ data class DashboardProfileScope(
 data class DashboardChatDisplaySettings(
     val showReasoning: Boolean? = null,
     val toolDisplay: String? = null,
+)
+
+data class DashboardMcpOAuthFlow(
+    val flowId: String,
+    val serverName: String,
+    val status: String,
+    val authorizationUrl: String? = null,
+    val error: String? = null,
+) {
+    val isTerminal: Boolean get() = status == "approved" || status == "error"
+}
+
+data class DashboardCustomEndpoint(
+    val id: String,
+    val name: String,
+    val baseUrl: String,
+    val model: String,
+    val models: List<String> = emptyList(),
+    val contextLength: Int? = null,
+    val discoverModels: Boolean = true,
+    val hasApiKey: Boolean = false,
+    val apiKeyPreview: String? = null,
+    val isCurrent: Boolean = false,
+)
+
+data class DashboardCustomEndpoints(
+    val endpoints: List<DashboardCustomEndpoint>,
+    val currentProvider: String? = null,
+    val currentModel: String? = null,
+)
+
+data class DashboardCustomEndpointDraft(
+    val id: String? = null,
+    val name: String,
+    val baseUrl: String,
+    val model: String,
+    val models: List<String> = emptyList(),
+    val apiKey: String? = null,
+    val contextLength: Int? = null,
+    val discoverModels: Boolean = true,
+    val makeDefault: Boolean = false,
+)
+
+data class DashboardCustomEndpointValidation(
+    val ok: Boolean,
+    val reachable: Boolean,
+    val message: String,
+    val models: List<String>,
 )
 
 /** One entry from `GET /api/audio/elevenlabs/voices` — non-secret voice metadata. */
@@ -254,6 +335,14 @@ class DashboardApiClient(
      * the values tree — `fields` keys are flat dot-paths, the values are nested.
      */
     suspend fun getConfigSchema(): Result<JsonObject> = getJsonObject("/api/config/schema")
+
+    /**
+     * Runtime TTS provider matrix used by upstream's Tools/Capabilities picker.
+     * This adds plugin provider names and readiness metadata. Command-provider
+     * IDs remain sourced from the dynamic config-schema enum.
+     */
+    suspend fun getTtsToolsetConfig(): Result<JsonObject> =
+        getJsonObject("/api/tools/toolsets/tts/config")
 
     /**
      * Replace the runtime config (`PUT /api/config`). Upstream `save_config`
@@ -466,25 +555,100 @@ class DashboardApiClient(
     suspend fun deleteCronJob(jobId: String, profile: String? = null): Result<JsonObject> =
         deleteJsonObject("/api/cron/jobs/${pathSegment(jobId)}${profileQuery(profile)}")
 
-    suspend fun setMcpServerEnabled(name: String, enabled: Boolean): Result<JsonObject> =
+    suspend fun setMcpServerEnabled(
+        name: String,
+        enabled: Boolean,
+        profile: String? = null,
+    ): Result<JsonObject> =
         putJsonObject(
-            path = "/api/mcp/servers/${pathSegment(name)}/enabled",
+            path = "/api/mcp/servers/${pathSegment(name)}/enabled${profileQuery(profile)}",
             payload = buildJsonObject { put("enabled", enabled) },
         )
 
-    suspend fun testMcpServer(name: String): Result<JsonObject> =
-        postJsonObject("/api/mcp/servers/${pathSegment(name)}/test")
+    suspend fun testMcpServer(name: String, profile: String? = null): Result<JsonObject> =
+        postJsonObject("/api/mcp/servers/${pathSegment(name)}/test${profileQuery(profile)}")
 
-    suspend fun removeMcpServer(name: String): Result<JsonObject> =
-        deleteJsonObject("/api/mcp/servers/${pathSegment(name)}")
+    suspend fun removeMcpServer(name: String, profile: String? = null): Result<JsonObject> =
+        deleteJsonObject("/api/mcp/servers/${pathSegment(name)}${profileQuery(profile)}")
+
+    suspend fun startMcpOAuth(
+        name: String,
+        profile: String? = null,
+    ): Result<DashboardMcpOAuthFlow> =
+        postJsonObject("/api/mcp/servers/${pathSegment(name)}/auth${profileQuery(profile)}")
+            .mapCatching(::parseMcpOAuthFlow)
+
+    suspend fun getMcpOAuthFlow(flowId: String): Result<DashboardMcpOAuthFlow> =
+        getJsonObject("/api/mcp/oauth/flows/${pathSegment(flowId)}")
+            .mapCatching(::parseMcpOAuthFlow)
+
+    /**
+     * Read-only hosted-OAuth capability probe. New dashboards recognize the
+     * flow-status route and return its canonical expired-flow 404; older
+     * FastAPI routers return the generic route-level 404. No OAuth worker is
+     * started and no provider/browser interaction occurs.
+     */
+    suspend fun supportsHostedMcpOAuth(): Result<Boolean> {
+        val result = getJsonObject("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__")
+        return result.fold(
+            onSuccess = { Result.success(true) },
+            onFailure = { error ->
+                val message = error.message.orEmpty()
+                when {
+                    message.contains("OAuth flow not found or expired") -> Result.success(true)
+                    message.contains("HTTP 404") -> Result.success(false)
+                    else -> Result.failure(error)
+                }
+            },
+        )
+    }
+
+    suspend fun getCustomEndpoints(): Result<DashboardCustomEndpoints> =
+        getJsonObject("/api/providers/custom-endpoints")
+            .mapCatching(::parseCustomEndpoints)
+
+    suspend fun saveCustomEndpoint(
+        draft: DashboardCustomEndpointDraft,
+    ): Result<DashboardCustomEndpoints> =
+        postJsonObject(
+            "/api/providers/custom-endpoints",
+            customEndpointPayload(draft),
+        ).mapCatching(::parseCustomEndpoints)
+
+    suspend fun validateCustomEndpoint(
+        draft: DashboardCustomEndpointDraft,
+    ): Result<DashboardCustomEndpointValidation> =
+        postJsonObject(
+            "/api/providers/custom-endpoints/validate",
+            customEndpointPayload(draft),
+        ).mapCatching { root ->
+            DashboardCustomEndpointValidation(
+                ok = root.booleanField("ok") == true,
+                reachable = root.booleanField("reachable") == true,
+                message = root.stringField("message").orEmpty(),
+                models = root.stringList("models"),
+            )
+        }
+
+    suspend fun activateCustomEndpoint(
+        id: String,
+    ): Result<JsonObject> =
+        postJsonObject("/api/providers/custom-endpoints/${pathSegment(id)}/activate")
+
+    suspend fun deleteCustomEndpoint(
+        id: String,
+    ): Result<DashboardCustomEndpoints> =
+        deleteJsonObject("/api/providers/custom-endpoints/${pathSegment(id)}")
+            .mapCatching(::parseCustomEndpoints)
 
     suspend fun installMcpCatalogEntry(
         name: String,
         env: Map<String, String> = emptyMap(),
         enable: Boolean = true,
+        profile: String? = null,
     ): Result<JsonObject> =
         postJsonObject(
-            path = "/api/mcp/catalog/install",
+            path = "/api/mcp/catalog/install${profileQuery(profile)}",
             payload = buildJsonObject {
                 put("name", name)
                 put(
@@ -929,17 +1093,87 @@ class DashboardApiClient(
             return params.joinToString(prefix = "?", separator = "&")
         }
 
+        private fun parseMcpOAuthFlow(root: JsonObject): DashboardMcpOAuthFlow {
+            val flowId = root.stringField("flow_id")
+                ?: throw IOException("MCP OAuth response did not include a flow id")
+            val status = root.stringField("status")
+                ?: throw IOException("MCP OAuth response did not include a status")
+            return DashboardMcpOAuthFlow(
+                flowId = flowId,
+                serverName = root.stringField("server_name").orEmpty(),
+                status = status,
+                authorizationUrl = root.stringField("authorization_url"),
+                error = root.stringField("error"),
+            )
+        }
+
+        private fun parseCustomEndpoints(root: JsonObject): DashboardCustomEndpoints {
+            val current = root["current"] as? JsonObject
+            val endpoints = (root["endpoints"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val obj = element as? JsonObject ?: return@mapNotNull null
+                val id = obj.stringField("id") ?: return@mapNotNull null
+                DashboardCustomEndpoint(
+                    id = id,
+                    name = obj.stringField("name") ?: id,
+                    baseUrl = obj.stringField("base_url").orEmpty(),
+                    model = obj.stringField("model").orEmpty(),
+                    models = obj.stringList("models"),
+                    contextLength = obj.intField("context_length"),
+                    discoverModels = obj.booleanField("discover_models") != false,
+                    hasApiKey = obj.booleanField("has_api_key") == true,
+                    apiKeyPreview = obj.stringField("api_key_preview"),
+                    isCurrent = obj.booleanField("is_current") == true,
+                )
+            }
+            return DashboardCustomEndpoints(
+                endpoints = endpoints,
+                currentProvider = current?.stringField("provider"),
+                currentModel = current?.stringField("model"),
+            )
+        }
+
+        private fun customEndpointPayload(draft: DashboardCustomEndpointDraft): JsonObject =
+            buildJsonObject {
+                draft.id?.takeIf { it.isNotBlank() }?.let { put("id", it) }
+                put("name", draft.name)
+                put("base_url", draft.baseUrl)
+                put("model", draft.model)
+                draft.models
+                    .asSequence()
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+                    .distinct()
+                    .take(MAX_CUSTOM_ENDPOINT_MODELS)
+                    .map(::JsonPrimitive)
+                    .toList()
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { put("models", JsonArray(it)) }
+                draft.apiKey?.takeIf { it.isNotBlank() }?.let { put("api_key", it) }
+                draft.contextLength?.takeIf { it > 0 }?.let { put("context_length", it) }
+                put("discover_models", draft.discoverModels)
+                put("make_default", draft.makeDefault)
+            }
+
+        private const val MAX_CUSTOM_ENDPOINT_MODELS = 256
+
         fun defaultClient(
             cookieStore: DashboardCookieStore = InMemoryDashboardCookieStore(),
-        ): OkHttpClient = OkHttpClient.Builder()
-            .cookieJar(DashboardCookieJar(cookieStore))
-            .connectTimeout(10, TimeUnit.SECONDS)
-            // Skills-hub search fans out server-side with a 30s overall
-            // timeout; keep the read window above it so a slow-but-successful
-            // search doesn't die client-side at the edge.
-            .readTimeout(45, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .build()
+            bearerAuth: DashboardBearerAuth? = null,
+        ): OkHttpClient {
+            val builder = OkHttpClient.Builder()
+                .cookieJar(DashboardCookieJar(cookieStore))
+                .connectTimeout(10, TimeUnit.SECONDS)
+                // Skills-hub search fans out server-side with a 30s overall
+                // timeout; keep the read window above it so a slow-but-successful
+                // search doesn't die client-side at the edge.
+                .readTimeout(45, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+            bearerAuth?.let {
+                builder.addInterceptor(it)
+                builder.authenticator(it)
+            }
+            return builder.build()
+        }
 
         fun parseStatus(root: JsonObject): DashboardStatus {
             val authObject = root["auth"] as? JsonObject
@@ -947,14 +1181,70 @@ class DashboardApiClient(
                 ?: root["providers"]
                 ?: authObject?.get("providers")
             val providers = parseProviders(providersElement)
+            val profiles = (root["profiles"] as? JsonArray).orEmpty().mapNotNull {
+                (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank)
+            }
+            val gateways = (root["gateways"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val obj = element as? JsonObject ?: return@mapNotNull null
+                val profile = obj.stringField("profile") ?: return@mapNotNull null
+                val ports = (obj["ports"] as? JsonObject).orEmpty().mapNotNull { (name, value) ->
+                    (value as? JsonPrimitive)?.contentOrNull?.toIntOrNull()?.let { name to it }
+                }.toMap()
+                val served = (obj["served_profiles"] as? JsonArray).orEmpty().mapNotNull {
+                    (it as? JsonPrimitive)?.contentOrNull
+                }
+                DashboardGatewayTopology(profile = profile, ports = ports, servedProfiles = served)
+            }
             return DashboardStatus(
                 authRequired = root.booleanField("auth_required")
                     ?: authObject.booleanField("required")
                     ?: false,
                 authProviders = providers.map { it.name },
                 authProviderDetails = providers,
+                authFlows = (root["auth_flows"] as? JsonArray).orEmpty().mapNotNull {
+                    (it as? JsonPrimitive)?.contentOrNull
+                },
                 version = root.stringField("version"),
                 message = root.stringField("message") ?: root.stringField("detail"),
+                nousSessionValid = root.stringField("nous_session_valid"),
+                profiles = profiles,
+                gatewayMode = root.stringField("gateway_mode"),
+                gateways = gateways,
+                componentHealth = parseComponentHealth(root),
+            )
+        }
+
+        private fun parseComponentHealth(root: JsonObject): DashboardComponentHealthRollup {
+            val rawComponents = root["components"] as? JsonObject
+                ?: return DashboardComponentHealthRollup()
+            val components = rawComponents.mapNotNull { (name, element) ->
+                val component = element as? JsonObject ?: return@mapNotNull null
+                val safeName = name.trim().takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                DashboardComponentHealth(
+                    name = safeName,
+                    status = component.stringField("status")
+                        ?: component.stringField("state")
+                        ?: component.stringField("health")
+                        ?: component.booleanField("ok")?.let { if (it) "ok" else "degraded" }
+                        ?: component.booleanField("healthy")?.let { if (it) "ok" else "degraded" }
+                        ?: "unknown",
+                    message = component.stringField("message")
+                        ?: component.stringField("summary")
+                        ?: component.stringField("error")
+                        ?: component.stringField("reason"),
+                    configured = component.intField("configured"),
+                    connected = component.intField("connected"),
+                    healthy = component.booleanField("healthy"),
+                    ok = component.booleanField("ok"),
+                    unhandled5xxCount5m = component.intField("unhandled_5xx_count_5m"),
+                )
+            }.sortedBy { it.name }
+            return DashboardComponentHealthRollup(
+                supported = true,
+                overall = root.stringField("overall")
+                    ?: root.stringField("status")
+                    ?: root.stringField("health"),
+                components = components,
             )
         }
 
@@ -1071,6 +1361,35 @@ class DashboardApiClient(
             }
     }
 }
+
+/**
+ * Bearer credentials are scoped to the exact saved dashboard base, including
+ * reverse-proxy path prefix. A same-host or arbitrary Add Connection probe is
+ * not sufficient authority to receive the active connection's token.
+ */
+fun sameDashboardBase(candidate: String, trusted: String): Boolean {
+    val candidateUrl = candidate.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
+    val trustedUrl = trusted.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
+    return candidateUrl.scheme == trustedUrl.scheme &&
+        candidateUrl.host == trustedUrl.host &&
+        candidateUrl.port == trustedUrl.port &&
+        candidateUrl.encodedPath.trimEnd('/') == trustedUrl.encodedPath.trimEnd('/') &&
+        candidateUrl.query == null &&
+        trustedUrl.query == null
+}
+
+fun trustedDashboardBearerAuthOrNull(
+    candidate: String,
+    trusted: String,
+    tokenStoreProvider: () -> NativeDashboardTokenStore,
+): DashboardBearerAuth? =
+    if (isNativeDashboardTransportEligible(candidate) &&
+        sameDashboardBase(candidate, trusted)
+    ) {
+        DashboardBearerAuth(candidate, tokenStoreProvider())
+    } else {
+        null
+    }
 
 interface DashboardCookieStore {
     fun load(): List<StoredDashboardCookie>
@@ -1201,6 +1520,61 @@ class DashboardCookieJar(
         return stored.mapNotNull { it.toCookie() }
             .filter { it.matches(url) }
     }
+}
+
+/**
+ * Copy only Hermes' authenticated dashboard session cookies to another host
+ * that belongs to the same saved Connection. Dashboard cookies are host-only
+ * by design, while a Connection may reach one server through LAN and
+ * Tailscale hostnames/IPs. The encrypted store remains the source of truth and
+ * explicit sign-out clears every mirrored host together.
+ *
+ * PKCE, SSO-attempt, and unrelated application cookies are intentionally not
+ * copied. Secure cookies also remain Secure; this helper never downgrades them
+ * for an HTTP route.
+ */
+fun mirrorDashboardSessionCookies(
+    store: DashboardCookieStore,
+    targetUrl: String,
+    trustedHosts: Set<String>,
+    clockMillis: () -> Long = { System.currentTimeMillis() },
+): Int {
+    val targetHost = targetUrl.toHttpUrlOrNull()?.host?.lowercase() ?: return 0
+    val allowedHosts = trustedHosts.mapTo(mutableSetOf()) { it.lowercase() }
+    if (targetHost !in allowedHosts) return 0
+
+    val now = clockMillis()
+    val all = store.load()
+    val live = all.filterNot { it.isExpired(now) }
+    val existingTargetKeys = live.asSequence()
+        .filter { it.domain.equals(targetHost, ignoreCase = true) }
+        .map { "${it.name.lowercase()}|$targetHost|${it.path}" }
+        .toSet()
+    val mirrored = live.asSequence()
+        .filter { it.isDashboardSessionCookie() }
+        .filter { it.domain.lowercase() in allowedHosts }
+        .filterNot { it.domain.equals(targetHost, ignoreCase = true) }
+        .groupBy { "${it.name.lowercase()}|${it.path}" }
+        .values
+        .mapNotNull { candidates -> candidates.maxByOrNull { it.expiresAt } }
+        .map { it.copy(domain = targetHost, hostOnly = true) }
+        .filterNot { it.key in existingTargetKeys }
+        .toList()
+
+    if (mirrored.isNotEmpty() || live.size != all.size) {
+        store.save(live + mirrored)
+    }
+    return mirrored.size
+}
+
+private fun StoredDashboardCookie.isDashboardSessionCookie(): Boolean {
+    val bareName = name
+        .removePrefix("__Host-")
+        .removePrefix("__Secure-")
+    return bareName == "hermes_session" ||
+        bareName == "hermes_session_at" ||
+        bareName == "hermes_session_rt" ||
+        bareName == "hermes_session_provider"
 }
 
 /**
@@ -1353,3 +1727,8 @@ private fun JsonObject?.booleanField(name: String): Boolean? =
 
 private fun JsonObject?.intField(name: String): Int? =
     (this?.get(name) as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+
+private fun JsonObject?.stringList(name: String): List<String> =
+    (this?.get(name) as? JsonArray).orEmpty().mapNotNull { element ->
+        (element as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+    }

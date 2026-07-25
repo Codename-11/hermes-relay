@@ -3,7 +3,10 @@
 package com.hermesandroid.relay.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -21,11 +25,21 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ViewInAr
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -37,6 +51,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -45,11 +60,13 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -61,11 +78,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AgentDisplay
@@ -90,14 +112,15 @@ import com.hermesandroid.relay.network.relay.VoiceProviderValidationResponse
 import com.hermesandroid.relay.network.upstream.ConfigFieldType
 import com.hermesandroid.relay.network.upstream.ConfigSchemaField
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
-import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.ElevenLabsVoices
-import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.applyConfigEdits
 import com.hermesandroid.relay.network.upstream.configValueAt
 import com.hermesandroid.relay.network.upstream.parseConfigSchema
+import com.hermesandroid.relay.network.upstream.parseTtsToolsetProviders
 import com.hermesandroid.relay.network.upstream.voiceConfigFields
 import com.hermesandroid.relay.ui.LocalSnackbarHost
+import com.hermesandroid.relay.ui.components.VoiceWaveform
+import com.hermesandroid.relay.ui.components.RelaySkeletonLine
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
 import kotlinx.serialization.json.JsonElement
@@ -110,7 +133,11 @@ import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.VoiceConfigUiState
 import com.hermesandroid.relay.viewmodel.VoiceSettingsViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
+import com.hermesandroid.relay.viewmodel.VoiceState
+import com.hermesandroid.relay.viewmodel.VoicePreviewUiState
 import kotlinx.coroutines.launch
+
+internal enum class VoiceSettingsSection { Output, Listening, Advanced }
 
 /**
  * Dedicated voice-mode settings screen. Reachable from Settings → Voice.
@@ -144,7 +171,7 @@ fun VoiceSettingsScreen(
     /**
      * Non-null endpoint display label (e.g. "Tailscale") when the sign-in
      * gate is up because the resolver moved the dashboard to a route the
-     * user hasn't signed in on yet — dashboard cookies are per-host.
+     * saved shared dashboard session was rejected or expired.
      */
     standardVoiceSignInRouteHint: String? = null,
     relayVoiceReady: Boolean = false,
@@ -155,12 +182,12 @@ fun VoiceSettingsScreen(
      */
     connectionId: String? = null,
     /**
-     * Dashboard base URL + per-connection cookie store provider for the
-     * standard-path server voice-config editor (`/api/config`, cookie auth).
+     * Dashboard base URL + trusted per-connection client provider for the
+     * standard-path server voice-config editor (`/api/config`, session auth).
      * Null on connections with no dashboard — the editor card is then hidden.
      */
     dashboardUrl: String? = null,
-    dashboardCookieStoreProvider: (() -> DashboardCookieStore?)? = null,
+    dashboardClientProvider: ((String) -> DashboardApiClient)? = null,
     onOpenManage: (() -> Unit)? = null,
     onBack: () -> Unit,
     settingsViewModel: VoiceSettingsViewModel = viewModel(),
@@ -179,17 +206,12 @@ fun VoiceSettingsScreen(
     // just observes it; the editor cards push saves back through the VM.
     val configState by settingsViewModel.configState.collectAsState()
 
-    // Standard-path server voice-config editor client (dashboard cookie auth).
+    // Standard-path server voice-config editor client (cookie or native bearer).
     // Built once per (dashboardUrl, connection); shut down on dispose. Null when
     // the connection has no dashboard, which hides the card entirely.
     val dashboardConfigClient = remember(dashboardUrl, connectionId) {
         val url = dashboardUrl?.trim()?.takeIf { it.isNotBlank() } ?: return@remember null
-        DashboardApiClient(
-            baseUrl = url,
-            okHttpClient = DashboardApiClient.defaultClient(
-                cookieStore = dashboardCookieStoreProvider?.invoke() ?: InMemoryDashboardCookieStore(),
-            ),
-        )
+        dashboardClientProvider?.invoke(url)
     }
     DisposableEffect(dashboardConfigClient) {
         onDispose { dashboardConfigClient?.shutdown() }
@@ -200,6 +222,7 @@ fun VoiceSettingsScreen(
     val snackbarHost = LocalSnackbarHost.current
     val scope = rememberCoroutineScope()
     var presetApplying by remember { mutableStateOf(false) }
+    var selectedSection by remember { mutableStateOf(VoiceSettingsSection.Output) }
 
     val presetState = VoiceModePresetState(
         voiceSettings = voiceSettings,
@@ -323,12 +346,23 @@ fun VoiceSettingsScreen(
         }
     }
 
+    // Preview audio belongs to this screen. Stop immediately when navigation
+    // removes it, even if the currently selected tab no longer owns an editor.
+    DisposableEffect(voiceViewModel) {
+        onDispose { voiceViewModel.stopVoicePreview() }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.voice_settings_title)) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = {
+                            voiceViewModel.stopVoicePreview()
+                            onBack()
+                        },
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.voice_settings_back),
@@ -356,97 +390,159 @@ fun VoiceSettingsScreen(
                 realtime = configState.realtimeConfig,
                 realtimeModel = voiceSettings.realtimeModel,
                 realtimeVoice = voiceSettings.realtimeVoice,
-            )
-
-            // --- Voice scope (single home; WP-V3 dedupe + WP-V4 honest label) ---
-            VoiceScopeBanner(
-                relayVoiceReady = relayVoiceReady,
-                currentEngine = currentEngine,
-                configState = configState,
-                displayProfile = displayProfile,
-            )
-
-            VoiceModePresetCard(
-                activePreset = activePreset,
-                enabled = presetsReady,
-                applying = presetApplying,
-                onSelect = ::applyPreset,
-            )
-
-            // --- Voice for this profile: engine + route ---
-            VoiceForThisProfileCard(
-                currentEngine = currentEngine,
                 currentAudioRoute = currentAudioRoute,
                 relayVoiceReady = relayVoiceReady,
-                prefsRepo = prefsRepo,
-                standardVoiceAvailability = standardVoiceAvailability,
-                standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
-                onOpenManage = onOpenManage,
+                onClick = { selectedSection = VoiceSettingsSection.Advanced },
             )
 
-            // --- Text-to-Speech (streaming output + basic synthesize + enhanced) ---
-            if (relayVoiceReady) {
-                TextToSpeechCard(
-                    showStreaming = currentEngine == VoiceEngineMode.HermesVoiceOutput,
-                    voiceClient = voiceClient,
-                    settingsViewModel = settingsViewModel,
-                    configState = configState,
-                    voiceSettings = voiceSettings,
-                    prefsRepo = prefsRepo,
-                    voiceViewModel = voiceViewModel,
-                )
+            VoiceSettingsTabs(
+                selected = selectedSection,
+                onSelect = { selectedSection = it },
+            )
+
+            when (selectedSection) {
+                VoiceSettingsSection.Output -> {
+                    if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
+                        val useRelayOutput = relayVoiceReady && currentAudioRoute != VoiceAudioRoute.Standard
+                        if (useRelayOutput) {
+                            if (configState.isLoading || !configState.hasLoaded) {
+                                VoiceOutputLoadingSkeleton()
+                            } else {
+                                StreamingVoiceOutputEditor(
+                                    voiceClient = voiceClient,
+                                    settingsViewModel = settingsViewModel,
+                                    configState = configState,
+                                    voiceViewModel = voiceViewModel,
+                                )
+                            }
+                        } else {
+                            StandardVoiceOutputOverview(
+                                client = dashboardConfigClient,
+                                availability = standardVoiceAvailability,
+                                onOpenManage = onOpenManage,
+                                voiceViewModel = voiceViewModel,
+                            )
+                        }
+                    } else if (relayVoiceReady) {
+                        if (configState.isLoading || !configState.hasLoaded) {
+                            VoiceOutputLoadingSkeleton()
+                        } else {
+                            RealtimeAgentCard(
+                                voiceClient = voiceClient,
+                                settingsViewModel = settingsViewModel,
+                                configState = configState,
+                                voiceSettings = voiceSettings,
+                                prefsRepo = prefsRepo,
+                                voiceViewModel = voiceViewModel,
+                            )
+                        }
+                    }
+                }
+
+                VoiceSettingsSection.Listening -> {
+                    GlobalVoiceControlsCard(
+                        voiceSettings = voiceSettings,
+                        prefsRepo = prefsRepo,
+                        voiceViewModel = voiceViewModel,
+                    )
+                    BargeInCard(
+                        bargeInPrefs = bargeInPrefs,
+                        aecAvailable = aecAvailable,
+                        settingsViewModel = settingsViewModel,
+                    )
+                    SpeechToTextCard(
+                        relayVoiceReady = relayVoiceReady,
+                        configState = configState,
+                    )
+                    if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
+                        VoiceModePresetCard(
+                            activePreset = activePreset,
+                            enabled = presetsReady,
+                            applying = presetApplying,
+                            onSelect = ::applyPreset,
+                        )
+                    }
+                }
+
+                VoiceSettingsSection.Advanced -> {
+                    VoiceForThisProfileCard(
+                        currentEngine = currentEngine,
+                        currentAudioRoute = currentAudioRoute,
+                        relayVoiceReady = relayVoiceReady,
+                        prefsRepo = prefsRepo,
+                        standardVoiceAvailability = standardVoiceAvailability,
+                        standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
+                        onOpenManage = onOpenManage,
+                    )
+                    VoiceScopeBanner(
+                        relayVoiceReady = relayVoiceReady,
+                        currentEngine = currentEngine,
+                        configState = configState,
+                        displayProfile = displayProfile,
+                    )
+                    if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
+                        RealtimeBehaviorSettingsCard(
+                            voiceClient = voiceClient,
+                            settingsViewModel = settingsViewModel,
+                            configState = configState,
+                            voiceSettings = voiceSettings,
+                            prefsRepo = prefsRepo,
+                        )
+                    }
+                    if (dashboardConfigClient != null) {
+                        StandardVoiceServerConfigCard(
+                            client = dashboardConfigClient,
+                            onOpenManage = onOpenManage,
+                            onMessage = { message ->
+                                scope.launch { snackbarHost.showSnackbar(message) }
+                            },
+                        )
+                    }
+                }
             }
+        }
+    }
+}
 
-            // --- Realtime Agent (Relay only) ---
-            if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
-                RealtimeAgentCard(
-                    voiceClient = voiceClient,
-                    settingsViewModel = settingsViewModel,
-                    configState = configState,
-                    voiceSettings = voiceSettings,
-                    prefsRepo = prefsRepo,
-                )
+@Composable
+internal fun VoiceSettingsTabs(
+    selected: VoiceSettingsSection,
+    onSelect: (VoiceSettingsSection) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Row(modifier = Modifier.padding(3.dp)) {
+            VoiceSettingsSection.entries.forEach { section ->
+                val active = selected == section
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .clickable { onSelect(section) },
+                    shape = RoundedCornerShape(13.dp),
+                    color = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else androidx.compose.ui.graphics.Color.Transparent,
+                    contentColor = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            when (section) {
+                                VoiceSettingsSection.Output -> "Output"
+                                VoiceSettingsSection.Listening -> "Listening"
+                                VoiceSettingsSection.Advanced -> "Advanced"
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
-
-            // --- Global Voice Controls ---
-            GlobalVoiceControlsCard(
-                voiceSettings = voiceSettings,
-                prefsRepo = prefsRepo,
-                voiceViewModel = voiceViewModel,
-            )
-
-            // --- Barge-in ---
-            BargeInCard(
-                bargeInPrefs = bargeInPrefs,
-                aecAvailable = aecAvailable,
-                settingsViewModel = settingsViewModel,
-            )
-
-            // --- Speech-to-Text ---
-            SpeechToTextCard(
-                relayVoiceReady = relayVoiceReady,
-                configState = configState,
-            )
-
-            // --- Server voice config (standard path: edit tts.*/stt.* on the host) ---
-            if (dashboardConfigClient != null) {
-                StandardVoiceServerConfigCard(
-                    client = dashboardConfigClient,
-                    onOpenManage = onOpenManage,
-                    onMessage = { message ->
-                        scope.launch { snackbarHost.showSnackbar(message) }
-                    },
-                )
-            }
-
-            // --- Test Current Engine ---
-            TestCurrentEngineCard(
-                currentEngine = currentEngine,
-                relayVoiceReady = relayVoiceReady,
-                configState = configState,
-                displayProfile = displayProfile,
-                voiceViewModel = voiceViewModel,
-            )
         }
     }
 }
@@ -1150,6 +1246,7 @@ private fun StreamingVoiceOutputEditor(
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHost = LocalSnackbarHost.current
+    val previewState by voiceViewModel.voicePreviewState.collectAsState()
 
     var voiceOutputEnabled by remember { mutableStateOf(true) }
     var voiceOutputProvider by remember { mutableStateOf("") }
@@ -1162,6 +1259,10 @@ private fun StreamingVoiceOutputEditor(
     var voiceOutputSpeechTags by remember { mutableStateOf(false) }
     var voiceOutputSaving by remember { mutableStateOf(false) }
     var voiceOutputManualOpen by remember { mutableStateOf(false) }
+
+    DisposableEffect(voiceViewModel) {
+        onDispose { voiceViewModel.stopVoicePreview() }
+    }
 
     val config = configState.voiceOutputConfig
     LaunchedEffect(
@@ -1212,76 +1313,46 @@ private fun StreamingVoiceOutputEditor(
         }
     }
 
-    val activeLabel = stringResource(R.string.voice_settings_status_active)
-    val unavailableLabel = stringResource(R.string.voice_settings_status_unavailable)
-    val disabledLabel = stringResource(R.string.voice_settings_status_disabled)
-    val loadingLabel = stringResource(R.string.voice_settings_loading)
-    val streamingLabel = stringResource(R.string.voice_settings_render_streaming)
-    val basicLabel = stringResource(R.string.voice_settings_render_basic)
-    val fallbackOnLabel = stringResource(R.string.voice_settings_fallback_legacy)
-    val offLabel = stringResource(R.string.voice_settings_off)
-    ProviderRow(
-        label = stringResource(R.string.voice_settings_label_status),
-        value = when {
-            config?.enabled == true -> activeLabel
-            configState.voiceOutputConfigError != null -> unavailableLabel
-            config != null -> disabledLabel
-            else -> loadingLabel
-        },
-    )
-    // Which path actually renders speech, for troubleshooting: streaming
-    // /voice/output when enabled, else the basic /voice/synthesize fallback.
-    ProviderRow(
-        label = stringResource(R.string.voice_settings_render_path),
-        value = when {
-            config?.enabled == true -> streamingLabel
-            config != null -> basicLabel
-            else -> loadingLabel
-        },
-    )
-    ProviderRow(
-        label = stringResource(R.string.voice_settings_label_provider),
-        value = config?.default_provider
-            ?: (configState.voiceOutputConfigError?.let { unavailableLabel } ?: loadingLabel),
-    )
-    config?.default_model?.let { model ->
-        ProviderRow(label = stringResource(R.string.voice_settings_label_model), value = model)
-    }
-    config?.default_voice?.let { voice ->
-        ProviderRow(label = stringResource(R.string.voice_settings_label_voice), value = voice)
-    }
-    config?.let { c ->
-        ProviderRow(label = stringResource(R.string.voice_settings_label_sample_rate), value = stringResource(R.string.voice_settings_hz_value, c.sample_rate))
-        ProviderRow(label = stringResource(R.string.voice_settings_label_language), value = c.language)
-        ProviderRow(label = stringResource(R.string.voice_settings_label_fallback), value = if (c.fallback_enabled) fallbackOnLabel else offLabel)
-        ProviderRow(label = stringResource(R.string.voice_settings_label_advertised), value = voiceOutputProviderList(c))
-        ProviderRow(label = stringResource(R.string.voice_settings_label_auth), value = voiceOutputAuthLabel(c))
-    }
-
-    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(stringResource(R.string.voice_settings_label_enabled), style = MaterialTheme.typography.bodyLarge)
-        Switch(
-            checked = voiceOutputEnabled,
-            onCheckedChange = { voiceOutputEnabled = it },
-        )
-    }
-
     val providers = mergedProviders(
         config?.providers.orEmpty(),
         configState.voiceOutputProviderOptions,
     )
     val selectedOutputProvider = providerFor(providers, voiceOutputProvider)
-    VoiceChoiceDropdown(
-        label = stringResource(R.string.voice_settings_label_provider),
-        value = voiceOutputProvider,
-        choices = providerChoices(providers, voiceOutputProvider),
-        onValueChange = { providerId ->
+    val availableVoices = voiceChoices(
+        selectedOutputProvider,
+        voiceOutputVoice,
+        voiceOutputModel,
+    )
+    val visibleVoices = previewVoiceChoices(availableVoices, voiceOutputVoice)
+
+    fun preview(selectionKey: String, voice: String) {
+        val sampleRate = voiceOutputSampleRate.toIntOrNull()
+        if (sampleRate == null) {
+            settingsViewModel.setVoiceOutputError("Sample rate must be a number")
+            return
+        }
+        voiceViewModel.previewVoiceOutput(
+            selectionKey = selectionKey,
+            provider = voiceOutputProvider,
+            model = voiceOutputModel,
+            voice = voice,
+            sampleRate = sampleRate,
+            language = voiceOutputLanguage,
+        ) { result ->
+            result.exceptionOrNull()?.let { error ->
+                settingsViewModel.setVoiceOutputError(error.message ?: "Voice preview failed")
+            }
+        }
+    }
+
+    VoiceProviderGroupCard(
+        provider = selectedOutputProvider,
+        providerValue = voiceOutputProvider,
+        enabled = voiceOutputEnabled,
+        providerChoices = providerChoices(providers, voiceOutputProvider),
+        onEnabledChange = { voiceOutputEnabled = it },
+        onProviderChange = { providerId ->
+            voiceViewModel.stopVoicePreview()
             voiceOutputProvider = providerId
             providerFor(providers, providerId)?.let { provider ->
                 val selection = selectionWithProviderDefaults(
@@ -1298,7 +1369,7 @@ private fun StreamingVoiceOutputEditor(
             }
             refreshVoiceOutputProviderOptions(providerId, applyDefaults = true)
         },
-        enabled = voiceClient != null,
+        controlsEnabled = voiceClient != null,
     )
     providerOptionsStatusText(
         loading = configState.voiceOutputOptionsLoading == voiceOutputProvider,
@@ -1311,32 +1382,30 @@ private fun StreamingVoiceOutputEditor(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    VoiceChoiceDropdown(
-        label = stringResource(R.string.voice_settings_label_model),
-        value = voiceOutputModel,
-        choices = valueChoices(
+    ModelAndVoiceGroupCard(
+        modelValue = voiceOutputModel,
+        modelChoices = valueChoices(
             selectedOutputProvider?.models.orEmpty(),
             voiceOutputModel,
             selectedOutputProvider?.model_labels.orEmpty(),
         ),
-        onValueChange = { model ->
+        voices = visibleVoices,
+        allVoices = availableVoices,
+        selectedVoice = voiceOutputVoice,
+        previewState = previewState,
+        onModelChange = { model ->
+            voiceViewModel.stopVoicePreview()
             voiceOutputModel = model
             selectedOutputProvider?.let { provider ->
                 voiceOutputVoice = voiceForModel(provider, model, voiceOutputVoice)
             }
         },
-        enabled = voiceClient != null,
-    )
-    VoiceChoiceDropdown(
-        label = stringResource(R.string.voice_settings_label_voice),
-        value = voiceOutputVoice,
-        choices = voiceChoices(
-            selectedOutputProvider,
-            voiceOutputVoice,
-            voiceOutputModel,
-        ),
-        onValueChange = { voiceOutputVoice = it },
-        enabled = voiceClient != null,
+        onVoiceChange = { voice ->
+            voiceViewModel.stopVoicePreview()
+            voiceOutputVoice = voice
+        },
+        onPreviewVoice = { voice -> preview("voice:$voice", voice) },
+        enabled = voiceClient != null && voiceOutputEnabled,
     )
     compatibilityNotice(
         selectedOutputProvider,
@@ -1350,25 +1419,18 @@ private fun StreamingVoiceOutputEditor(
             color = MaterialTheme.colorScheme.error,
         )
     }
-    VoiceChoiceDropdown(
-        label = stringResource(R.string.voice_settings_label_language),
-        value = voiceOutputLanguage,
-        choices = commonLanguages(voiceOutputLanguage, selectedOutputProvider),
-        onValueChange = { voiceOutputLanguage = it },
-        enabled = voiceClient != null,
-    )
-    VoiceChoiceDropdown(
-        label = stringResource(R.string.voice_settings_label_sample_rate),
-        value = voiceOutputSampleRate,
-        choices = intChoices(selectedOutputProvider?.sample_rates.orEmpty(), voiceOutputSampleRate),
-        onValueChange = { voiceOutputSampleRate = it },
+    LanguageQualityCard(
+        expanded = voiceOutputManualOpen,
+        onExpandedChange = { voiceOutputManualOpen = it },
+        language = voiceOutputLanguage,
+        languages = commonLanguages(voiceOutputLanguage, selectedOutputProvider),
+        onLanguageChange = { voiceOutputLanguage = it },
+        sampleRate = voiceOutputSampleRate,
+        sampleRates = intChoices(selectedOutputProvider?.sample_rates.orEmpty(), voiceOutputSampleRate),
+        onSampleRateChange = { voiceOutputSampleRate = it },
         enabled = voiceClient != null,
     )
 
-    AdvancedManualToggle(
-        expanded = voiceOutputManualOpen,
-        onExpandedChange = { voiceOutputManualOpen = it },
-    )
     if (voiceOutputManualOpen) {
         OutlinedTextField(
             value = voiceOutputProvider,
@@ -1406,74 +1468,73 @@ private fun StreamingVoiceOutputEditor(
             singleLine = true,
             label = { Text(stringResource(R.string.voice_settings_label_language)) },
         )
-    }
-
-    Text(
-        text = stringResource(R.string.voice_settings_streaming_latency, voiceOutputLatency.toInt()),
-        style = MaterialTheme.typography.labelLarge,
-    )
-    Slider(
-        value = voiceOutputLatency,
-        onValueChange = { voiceOutputLatency = it },
-        valueRange = 0f..1f,
-        steps = 0,
-    )
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.voice_settings_label_fallback), style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = stringResource(R.string.voice_settings_fallback_desc),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Switch(
-            checked = voiceOutputFallback,
-            onCheckedChange = { voiceOutputFallback = it },
+        Text(
+            text = stringResource(R.string.voice_settings_streaming_latency, voiceOutputLatency.toInt()),
+            style = MaterialTheme.typography.labelLarge,
         )
-    }
+        Slider(
+            value = voiceOutputLatency,
+            onValueChange = { voiceOutputLatency = it },
+            valueRange = 0f..1f,
+            steps = 0,
+        )
 
-    // xAI expressive speech tags on the streaming renderer (xai_tts only).
-    if (voiceOutputProvider == "xai_tts") {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.voice_settings_expressive_tags), style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.voice_settings_label_fallback), style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    text = stringResource(R.string.voice_settings_expressive_tags_desc),
+                    text = stringResource(R.string.voice_settings_fallback_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Switch(
-                checked = voiceOutputSpeechTags,
-                onCheckedChange = { voiceOutputSpeechTags = it },
+                checked = voiceOutputFallback,
+                onCheckedChange = { voiceOutputFallback = it },
             )
+        }
+
+        if (voiceOutputProvider == "xai_tts") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.voice_settings_expressive_tags), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = stringResource(R.string.voice_settings_expressive_tags_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = voiceOutputSpeechTags,
+                    onCheckedChange = { voiceOutputSpeechTags = it },
+                )
+            }
         }
     }
 
     val sampleRateMustBeNumber = stringResource(R.string.voice_settings_sample_rate_must_be_number)
     val providerNotValidMsg = stringResource(R.string.voice_settings_provider_not_valid)
     val savedWithWarningFmt = stringResource(R.string.voice_settings_saved_with_warning_format)
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        FilledTonalButton(
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+        Button(
             onClick = {
-                val client = voiceClient ?: return@FilledTonalButton
+                val client = voiceClient ?: return@Button
                 val sampleRate = voiceOutputSampleRate.toIntOrNull()
                 if (sampleRate == null) {
                     settingsViewModel.setVoiceOutputError(sampleRateMustBeNumber)
-                    return@FilledTonalButton
+                    return@Button
                 }
                 scope.launch {
                     voiceOutputSaving = true
@@ -1528,80 +1589,32 @@ private fun StreamingVoiceOutputEditor(
                 }
             },
             enabled = !voiceOutputSaving && voiceClient != null,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).height(52.dp),
+            shape = RoundedCornerShape(16.dp),
         ) {
-            Text(if (voiceOutputSaving) stringResource(R.string.voice_settings_saving) else stringResource(R.string.voice_settings_save))
+            Text(if (voiceOutputSaving) stringResource(R.string.voice_settings_saving) else "Save changes", fontWeight = FontWeight.SemiBold)
         }
-        FilledTonalButton(
+        OutlinedButton(
             onClick = {
-                val client = voiceClient ?: return@FilledTonalButton
-                val sampleRate = voiceOutputSampleRate.toIntOrNull()
-                if (sampleRate == null) {
-                    settingsViewModel.setVoiceOutputError(sampleRateMustBeNumber)
-                    return@FilledTonalButton
-                }
-                scope.launch {
-                    voiceOutputSaving = true
-                    val validationResult = client.validateVoiceOutputProvider(
-                        providerId = voiceOutputProvider,
-                        model = voiceOutputModel,
-                        voice = voiceOutputVoice,
-                        sampleRate = sampleRate,
-                        language = voiceOutputLanguage,
-                    )
-                    validationIssue(validationResult.getOrNull(), providerNotValidMsg)?.let { issue ->
-                        voiceOutputSaving = false
-                        settingsViewModel.setVoiceOutputError(issue)
-                        return@launch
-                    }
-                    if (validationResult.isFailure) {
-                        voiceOutputSaving = false
-                        val human = classifyError(
-                            validationResult.exceptionOrNull(),
-                            context = "voice_config",
-                        )
-                        settingsViewModel.setVoiceOutputError(human.body)
-                        snackbarHost.showHumanError(human)
-                        return@launch
-                    }
-                    validationWarning(validationResult.getOrNull(), savedWithWarningFmt)?.let { warning ->
-                        settingsViewModel.setVoiceOutputOptionsStatus(warning)
-                    }
-                    val result = client.updateVoiceOutputConfig(
-                        enabled = voiceOutputEnabled,
-                        provider = voiceOutputProvider,
-                        model = voiceOutputModel,
-                        voice = voiceOutputVoice,
-                        sampleRate = sampleRate,
-                        language = voiceOutputLanguage,
-                        codec = "pcm",
-                        optimizeStreamingLatency = voiceOutputLatency.toInt(),
-                        autoSpeechTags = voiceOutputSpeechTags,
-                        fallbackEnabled = voiceOutputFallback,
-                    )
-                    voiceOutputSaving = false
-                    if (result.isSuccess) {
-                        settingsViewModel.setVoiceOutputConfig(result.getOrNull())
-                        voiceViewModel.testVoice()
-                    } else {
-                        val human = classifyError(
-                            result.exceptionOrNull(),
-                            context = "voice_config",
-                        )
-                        settingsViewModel.setVoiceOutputError(human.body)
-                        snackbarHost.showHumanError(human)
-                    }
+                voiceViewModel.stopVoicePreview()
+                config?.let { saved ->
+                    voiceOutputEnabled = saved.enabled
+                    voiceOutputProvider = saved.default_provider.orEmpty()
+                    voiceOutputModel = saved.default_model.orEmpty()
+                    voiceOutputVoice = saved.default_voice.orEmpty()
+                    voiceOutputSampleRate = saved.sample_rate.toString()
+                    voiceOutputLanguage = saved.language
+                    voiceOutputLatency = saved.optimize_streaming_latency.toFloat()
+                    voiceOutputFallback = saved.fallback_enabled
+                    voiceOutputSpeechTags = saved.auto_speech_tags
                 }
             },
-            enabled = !voiceOutputSaving && voiceClient != null,
-            modifier = Modifier.weight(1f),
+            enabled = !voiceOutputSaving && config != null,
+            modifier = Modifier.weight(1f).height(52.dp),
+            shape = RoundedCornerShape(16.dp),
         ) {
-            Icon(
-                imageVector = Icons.Filled.PlayArrow,
-                contentDescription = null,
-            )
-            Spacer(Modifier.size(8.dp))
-            Text(stringResource(R.string.voice_settings_save_and_test))
+            Text("Discard", fontWeight = FontWeight.SemiBold)
+        }
         }
     }
     configState.voiceOutputConfigError?.let { error ->
@@ -1614,12 +1627,1041 @@ private fun StreamingVoiceOutputEditor(
     }
 }
 
+internal fun previewVoiceChoices(
+    choices: List<VoiceChoice>,
+    selected: String,
+    limit: Int = 3,
+): List<VoiceChoice> {
+    if (choices.size <= limit) return choices
+    val selectedChoice = choices.firstOrNull { it.value == selected }
+    val recommended = choices.filter { it.recommended && it.value != selected }.take(limit - 1)
+    return buildList {
+        selectedChoice?.let(::add)
+        addAll(recommended)
+        choices.forEach { choice ->
+            if (size < limit && none { it.value == choice.value }) add(choice)
+        }
+    }
+}
+
+@Composable
+internal fun VoiceProviderGroupCard(
+    provider: RealtimeProviderInfo?,
+    providerValue: String,
+    enabled: Boolean,
+    providerChoices: List<VoiceChoice>,
+    onEnabledChange: (Boolean) -> Unit,
+    onProviderChange: (String) -> Unit,
+    controlsEnabled: Boolean,
+) {
+    var pickerOpen by remember { mutableStateOf(false) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("Provider", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                stringResource(R.string.voice_settings_provider_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(44.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ) {
+                    Icon(Icons.Filled.GraphicEq, contentDescription = null, modifier = Modifier.padding(10.dp))
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        provider?.name?.takeIf { it.isNotBlank() } ?: providerValue,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        provider?.description?.takeIf { it.isNotBlank() }
+                            ?: "${provider?.models?.size ?: 0} models · ${provider?.voices?.size ?: 0} voices",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = if (enabled) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = if (enabled) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                ) {
+                    Text(
+                        when {
+                            !enabled -> "Off"
+                            provider?.status == "unavailable" -> "Unavailable"
+                            provider?.status == "needs_auth" -> "Sign in"
+                            else -> "Ready"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
+                Icon(Icons.Filled.ChevronRight, contentDescription = null)
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Refreshes from the provider", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { pickerOpen = true }, enabled = controlsEnabled) {
+                    Text("Change provider")
+                    Icon(Icons.Filled.ChevronRight, contentDescription = null, modifier = Modifier.size(18.dp))
+                }
+            }
+        }
+    }
+    if (pickerOpen) {
+        AlertDialog(
+            onDismissRequest = { pickerOpen = false },
+            title = { Text("Choose provider") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Voice output", style = MaterialTheme.typography.titleSmall)
+                            Text(if (enabled) "Enabled" else "Disabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = enabled, onCheckedChange = onEnabledChange, enabled = controlsEnabled)
+                    }
+                    HorizontalDivider()
+                    providerChoices.forEach { choice ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = choice.value == providerValue,
+                                    enabled = choice.enabled,
+                                    onClick = {
+                                        onProviderChange(choice.value)
+                                        pickerOpen = false
+                                    },
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = choice.value == providerValue, onClick = null, enabled = choice.enabled)
+                            Column {
+                                Text(choice.label, style = MaterialTheme.typography.titleSmall)
+                                choice.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { pickerOpen = false }) { Text("Done") } },
+        )
+    }
+}
+
+@Composable
+internal fun ModelAndVoiceGroupCard(
+    modelValue: String,
+    modelChoices: List<VoiceChoice>,
+    voices: List<VoiceChoice>,
+    allVoices: List<VoiceChoice>,
+    selectedVoice: String,
+    previewState: VoicePreviewUiState,
+    onModelChange: (String) -> Unit,
+    onVoiceChange: (String) -> Unit,
+    onPreviewVoice: (String) -> Unit,
+    enabled: Boolean,
+) {
+    var voiceListExpanded by remember { mutableStateOf(false) }
+    var modelPickerOpen by remember { mutableStateOf(false) }
+    val selectedModel = modelChoices.firstOrNull { it.value == modelValue }
+    val displayedVoices = if (voiceListExpanded) allVoices else voices
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Model & voice", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                stringResource(R.string.voice_settings_voice_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable(enabled = enabled) { modelPickerOpen = true },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(38.dp),
+                    shape = RoundedCornerShape(13.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ) {
+                    Icon(Icons.Filled.ViewInAr, contentDescription = null, modifier = Modifier.padding(9.dp))
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Model", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(selectedModel?.label ?: modelValue, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    selectedModel?.detail?.let { detail ->
+                        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Icon(Icons.Filled.ChevronRight, contentDescription = null, modifier = Modifier.size(18.dp))
+            }
+            Column(
+                modifier = if (voiceListExpanded) {
+                    Modifier.height(312.dp).verticalScroll(rememberScrollState())
+                } else {
+                    Modifier
+                },
+            ) {
+            displayedVoices.forEachIndexed { index, choice ->
+                val selected = choice.value == selectedVoice
+                val active = previewState.isActive && previewState.selectionKey?.endsWith(":${choice.value}") == true
+                if (index > 0 && !selected) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 54.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else androidx.compose.ui.graphics.Color.Transparent,
+                    border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)) else null,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = selected,
+                                enabled = enabled && choice.enabled,
+                                onClick = { onVoiceChange(choice.value) },
+                            )
+                            .padding(horizontal = if (selected) 7.dp else 0.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        RadioButton(selected = selected, onClick = null, enabled = enabled && choice.enabled)
+                        Surface(
+                            modifier = Modifier.size(34.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            contentColor = MaterialTheme.colorScheme.primary,
+                        ) {
+                            Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.padding(8.dp))
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(voiceDisplayName(choice), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                                if (choice.recommended) {
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                        contentColor = MaterialTheme.colorScheme.primary,
+                                    ) {
+                                        Text("Recommended", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+                                    }
+                                }
+                            }
+                            voiceDisplayDetail(choice)?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (active && previewState.isLoading) {
+                                RelaySkeletonLine(
+                                    width = 72.dp,
+                                    height = 7.dp,
+                                    modifier = Modifier.padding(top = 6.dp),
+                                )
+                            } else if (active && previewState.isPlaying) {
+                                VoiceWaveform(
+                                    amplitude = previewState.amplitude.coerceAtLeast(0.08f),
+                                    state = VoiceState.Speaking,
+                                    outputAudioActive = previewState.amplitude > 0f,
+                                    height = 20.dp,
+                                    compactBars = true,
+                                    modifier = Modifier.width(84.dp),
+                                )
+                            }
+                        }
+                        PreviewCircleButton(
+                            active = active,
+                            loading = active && previewState.isLoading,
+                            enabled = enabled && choice.enabled,
+                            contentDescription = if (active) "Stop ${choice.label} preview" else "Preview ${choice.label}",
+                            onClick = { onPreviewVoice(choice.value) },
+                        )
+                    }
+                }
+            }
+            }
+            if (allVoices.size > voices.size || voiceListExpanded) {
+                TextButton(
+                    onClick = { voiceListExpanded = !voiceListExpanded },
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (voiceListExpanded) "Show fewer voices" else "View all ${allVoices.size} voices")
+                    Icon(
+                        if (voiceListExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
+    if (modelPickerOpen) {
+        ChoicePickerDialog(
+            title = "Choose a model",
+            choices = modelChoices,
+            selected = modelValue,
+            onSelected = {
+                onModelChange(it)
+                modelPickerOpen = false
+            },
+            onDismiss = { modelPickerOpen = false },
+        )
+    }
+}
+
+private fun voiceDisplayName(choice: VoiceChoice): String = choice.label.substringBefore(" - ").trim()
+
+private fun voiceDisplayDetail(choice: VoiceChoice): String? {
+    val embedded = choice.label.substringAfter(" - ", missingDelimiterValue = "").trim()
+    if (embedded.isNotBlank()) return embedded.replaceFirstChar { it.uppercase() }
+    return choice.detail
+        ?.split('·')
+        ?.map(String::trim)
+        ?.firstOrNull { value ->
+            value.isNotBlank() &&
+                !value.equals(choice.value, ignoreCase = true) &&
+                !value.equals("recommended", ignoreCase = true) &&
+                !value.equals("custom", ignoreCase = true) &&
+                !value.endsWith("_api", ignoreCase = true)
+        }
+}
+
+@Composable
+private fun PreviewCircleButton(
+    active: Boolean,
+    loading: Boolean,
+    enabled: Boolean,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .semantics { this.contentDescription = contentDescription }
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            modifier = Modifier.size(32.dp),
+            shape = RoundedCornerShape(999.dp),
+            border = BorderStroke(1.dp, if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+            color = androidx.compose.ui.graphics.Color.Transparent,
+            contentColor = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.padding(7.dp),
+                    strokeWidth = 1.5.dp,
+                )
+            } else {
+                Icon(
+                    imageVector = if (active) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.padding(6.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChoicePickerDialog(
+    title: String,
+    choices: List<VoiceChoice>,
+    selected: String,
+    onSelected: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                choices.forEach { choice ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = choice.value == selected,
+                                enabled = choice.enabled,
+                                onClick = { onSelected(choice.value) },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = choice.value == selected, onClick = null, enabled = choice.enabled)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(choice.label, style = MaterialTheme.typography.titleSmall)
+                            choice.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+@Composable
+internal fun LanguageQualityCard(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    language: String,
+    languages: List<VoiceChoice>,
+    onLanguageChange: (String) -> Unit,
+    sampleRate: String,
+    sampleRates: List<VoiceChoice>,
+    onSampleRateChange: (String) -> Unit,
+    enabled: Boolean,
+    showLanguage: Boolean = true,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onExpandedChange(!expanded) }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.voice_settings_provider_options_title), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (showLanguage) {
+                            "${languageDisplayName(language)} · ${qualityLabel(sampleRate)}"
+                        } else {
+                            qualityLabel(sampleRate)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.ChevronRight,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                )
+            }
+            if (expanded) {
+                if (showLanguage && languages.isNotEmpty()) {
+                    VoiceChoiceDropdown(
+                        label = "Language",
+                        value = language,
+                        choices = languages,
+                        onValueChange = onLanguageChange,
+                        enabled = enabled,
+                    )
+                }
+                VoiceChoiceDropdown(
+                    label = "Sample rate",
+                    value = sampleRate,
+                    choices = sampleRates,
+                    onValueChange = onSampleRateChange,
+                    enabled = enabled,
+                )
+            }
+        }
+    }
+}
+
+private fun languageDisplayName(language: String): String = when (language.lowercase()) {
+    "en", "en-us" -> "English (US)"
+    "en-gb" -> "English (UK)"
+    "es" -> "Spanish"
+    "fr" -> "French"
+    "de" -> "German"
+    "ja" -> "Japanese"
+    "zh" -> "Chinese"
+    else -> language
+}
+
+private fun qualityLabel(sampleRate: String): String = when (sampleRate.toIntOrNull()) {
+    null -> sampleRate
+    in 0..15999 -> "Compact"
+    in 16000..23999 -> "Balanced"
+    else -> "High quality"
+}
+
+@Composable
+private fun LanguageQualitySummaryCard(summary: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.voice_settings_provider_options_title), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StaticProviderCard(
+    provider: String,
+    detail: String,
+    ready: Boolean,
+    actionLabel: String?,
+    onAction: (() -> Unit)?,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("Provider", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(
+                    modifier = Modifier.size(44.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ) { Icon(Icons.Filled.GraphicEq, contentDescription = null, modifier = Modifier.padding(10.dp)) }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(provider, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = if (ready) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = if (ready) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                ) {
+                    Text(if (ready) "Ready" else "Unavailable", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                }
+            }
+            if (actionLabel != null && onAction != null) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Uses host configuration", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onAction) {
+                        Text(actionLabel)
+                        Icon(Icons.Filled.ChevronRight, contentDescription = null, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StaticModelVoiceCard(
+    model: String,
+    voice: String,
+    enabled: Boolean,
+    onPreview: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Model & voice", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(
+                    modifier = Modifier.size(42.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ) { Icon(Icons.Filled.ViewInAr, contentDescription = null, modifier = Modifier.padding(10.dp)) }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Model", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(model, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                }
+                PreviewCircleButton(active = false, loading = false, enabled = enabled, contentDescription = "Preview standard voice", onClick = onPreview)
+            }
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.11f),
+            ) {
+                Row(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RadioButton(selected = true, onClick = null, enabled = enabled)
+                    Surface(
+                        modifier = Modifier.size(38.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                    ) { Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.padding(9.dp)) }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(voice, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text("Configured in Standard Hermes", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    PreviewCircleButton(active = false, loading = false, enabled = enabled, contentDescription = "Preview $voice", onClick = onPreview)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceSaveActions(
+    saving: Boolean,
+    enabled: Boolean,
+    onDiscard: () -> Unit,
+    onSave: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Row(
+            modifier = Modifier.padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            OutlinedButton(
+                onClick = onDiscard,
+                enabled = enabled && !saving,
+                modifier = Modifier.weight(1f).height(52.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) { Text("Discard", fontWeight = FontWeight.SemiBold) }
+            Button(
+                onClick = onSave,
+                enabled = enabled && !saving,
+                modifier = Modifier.weight(1f).height(52.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) { Text(if (saving) "Saving…" else "Save changes", fontWeight = FontWeight.SemiBold) }
+        }
+    }
+}
+
+@Composable
+private fun VoiceOutputLoadingSkeleton() {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            text = "Loading voice options",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                RelaySkeletonLine(width = 92.dp, height = 18.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    RelaySkeletonLine(width = 42.dp, height = 42.dp)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RelaySkeletonLine(width = 176.dp, height = 16.dp)
+                        RelaySkeletonLine(width = 132.dp, height = 11.dp)
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                RelaySkeletonLine(width = 220.dp, height = 12.dp)
+            }
+        }
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                RelaySkeletonLine(width = 138.dp, height = 18.dp)
+                RelaySkeletonLine(width = 250.dp, height = 46.dp)
+                repeat(3) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        RelaySkeletonLine(width = 34.dp, height = 34.dp)
+                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            RelaySkeletonLine(width = 120.dp, height = 15.dp)
+                            RelaySkeletonLine(width = 180.dp, height = 10.dp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Realtime Agent (Relay-only engine).
 // ---------------------------------------------------------------------------
 
 @Composable
+private fun RealtimeBehaviorSettingsCard(
+    voiceClient: RelayVoiceClient?,
+    settingsViewModel: VoiceSettingsViewModel,
+    configState: VoiceConfigUiState,
+    voiceSettings: VoiceSettings,
+    prefsRepo: VoicePreferencesRepository,
+) {
+    val scope = rememberCoroutineScope()
+    val promotion = configState.realtimeConfig?.promotion
+    SectionCard(title = "Real-time behavior") {
+        SettingSwitchRow(
+            title = stringResource(R.string.voice_settings_detailed_trace),
+            detail = stringResource(R.string.voice_settings_detailed_trace_desc),
+            checked = voiceSettings.realtimeTraceDetails,
+            onCheckedChange = { value -> scope.launch { prefsRepo.setRealtimeTraceDetails(value) } },
+        )
+        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+        SettingSwitchRow(
+            title = stringResource(R.string.voice_settings_persistent_session),
+            detail = stringResource(R.string.voice_settings_persistent_session_desc),
+            checked = voiceSettings.realtimePersistentSession,
+            onCheckedChange = { value -> scope.launch { prefsRepo.setRealtimePersistentSession(value) } },
+        )
+        promotion?.let { promo ->
+            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+            SettingSwitchRow(
+                title = stringResource(R.string.voice_settings_promote_long_tasks),
+                detail = stringResource(R.string.voice_settings_promote_long_tasks_desc, promo.promoteAfterMs),
+                checked = promo.enabled,
+                onCheckedChange = { value ->
+                    scope.launch {
+                        val result = voiceClient?.updateRealtimeAgentPromotion(promotionEnabled = value)
+                        if (result?.isSuccess == true) settingsViewModel.setRealtimeConfig(result.getOrNull())
+                    }
+                },
+            )
+            if (promo.enabled) {
+                SettingSwitchRow(
+                    title = stringResource(R.string.voice_settings_spoken_handoff),
+                    detail = stringResource(R.string.voice_settings_spoken_handoff_desc),
+                    checked = promo.spokenHandoff,
+                    onCheckedChange = { value ->
+                        scope.launch {
+                            val result = voiceClient?.updateRealtimeAgentPromotion(spokenHandoff = value)
+                            if (result?.isSuccess == true) settingsViewModel.setRealtimeConfig(result.getOrNull())
+                        }
+                    },
+                )
+                Text("When the answer is ready", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                val modes = listOf(
+                    "speak_verbatim" to "Exact",
+                    "speak_when_idle" to "Summary",
+                    "notify_then_speak" to "Notify",
+                    "visual_only" to "Show",
+                )
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    modes.forEachIndexed { index, (value, label) ->
+                        SegmentedButton(
+                            selected = promo.resultDelivery == value,
+                            onClick = {
+                                scope.launch {
+                                    val result = voiceClient?.updateRealtimeAgentPromotion(resultDelivery = value)
+                                    if (result?.isSuccess == true) settingsViewModel.setRealtimeConfig(result.getOrNull())
+                                }
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index, modes.size),
+                        ) { Text(label, style = MaterialTheme.typography.labelSmall) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingSwitchRow(
+    title: String,
+    detail: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
 private fun RealtimeAgentCard(
+    voiceClient: RelayVoiceClient?,
+    settingsViewModel: VoiceSettingsViewModel,
+    configState: VoiceConfigUiState,
+    voiceSettings: VoiceSettings,
+    prefsRepo: VoicePreferencesRepository,
+    voiceViewModel: VoiceViewModel,
+) {
+    val scope = rememberCoroutineScope()
+    val snackbarHost = LocalSnackbarHost.current
+    val previewState by voiceViewModel.voicePreviewState.collectAsState()
+    val config = configState.realtimeConfig
+
+    var enabled by remember { mutableStateOf(true) }
+    var provider by remember { mutableStateOf("") }
+    var model by remember { mutableStateOf("") }
+    var voice by remember { mutableStateOf("") }
+    var sampleRate by remember { mutableStateOf("24000") }
+    var saving by remember { mutableStateOf(false) }
+    var qualityOpen by remember { mutableStateOf(false) }
+
+    DisposableEffect(voiceViewModel) {
+        onDispose { voiceViewModel.stopVoicePreview() }
+    }
+    LaunchedEffect(
+        config?.enabled,
+        config?.default_provider,
+        config?.default_model,
+        config?.default_voice,
+        config?.sample_rate,
+        voiceSettings.realtimeModel,
+        voiceSettings.realtimeVoice,
+    ) {
+        val saved = config ?: return@LaunchedEffect
+        enabled = saved.enabled
+        provider = saved.default_provider.orEmpty()
+        model = voiceSettings.realtimeModel.ifBlank { saved.default_model.orEmpty() }
+        voice = voiceSettings.realtimeVoice.ifBlank { saved.default_voice.orEmpty() }
+        sampleRate = saved.sample_rate.toString()
+    }
+
+    fun refreshOptions(providerId: String, applyDefaults: Boolean) {
+        settingsViewModel.refreshRealtimeProviderOptions(
+            client = voiceClient,
+            providerId = providerId,
+            applyDefaults = applyDefaults,
+        ) { refreshed ->
+            if (provider == providerId) {
+                val selection = selectionWithProviderDefaults(
+                    provider = refreshed,
+                    model = model,
+                    voice = voice,
+                    sampleRate = sampleRate,
+                    language = null,
+                )
+                model = selection.model
+                voice = selection.voice
+                sampleRate = selection.sampleRate
+            }
+        }
+    }
+
+    val providers = mergedProviders(config?.providers.orEmpty(), configState.realtimeProviderOptions)
+        .filter { it.supports_realtime_agent_native }
+    val selectedProvider = providerFor(providers, provider)
+    val allVoices = voiceChoices(selectedProvider, voice, model)
+    val visibleVoices = previewVoiceChoices(allVoices, voice)
+
+    fun preview(key: String, selectedVoice: String) {
+        val rate = sampleRate.toIntOrNull()
+        if (rate == null) {
+            settingsViewModel.setRealtimeError("Sample rate must be a number")
+            return
+        }
+        voiceViewModel.previewRealtimeAgent(
+            selectionKey = key,
+            provider = provider,
+            model = model,
+            voice = selectedVoice,
+            sampleRate = rate,
+        ) { result ->
+            result.exceptionOrNull()?.let { settingsViewModel.setRealtimeError(it.message ?: "Realtime preview failed") }
+        }
+    }
+
+    VoiceProviderGroupCard(
+        provider = selectedProvider,
+        providerValue = provider,
+        enabled = enabled,
+        providerChoices = providerChoices(providers, provider),
+        onEnabledChange = { enabled = it },
+        onProviderChange = { providerId ->
+            voiceViewModel.stopVoicePreview()
+            provider = providerId
+            providerFor(providers, providerId)?.let { selected ->
+                val selection = selectionWithProviderDefaults(selected, model, voice, sampleRate, null)
+                model = selection.model
+                voice = selection.voice
+                sampleRate = selection.sampleRate
+            }
+            refreshOptions(providerId, applyDefaults = true)
+        },
+        controlsEnabled = voiceClient != null,
+    )
+    providerOptionsStatusText(
+        loading = configState.realtimeOptionsLoading == provider,
+        status = configState.realtimeOptionsStatus,
+        refreshingMessage = stringResource(R.string.voice_settings_refreshing_options),
+    )?.let { status ->
+        Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    ModelAndVoiceGroupCard(
+        modelValue = model,
+        modelChoices = valueChoices(selectedProvider?.models.orEmpty(), model, selectedProvider?.model_labels.orEmpty()),
+        voices = visibleVoices,
+        allVoices = allVoices,
+        selectedVoice = voice,
+        previewState = previewState,
+        onModelChange = { selectedModel ->
+            voiceViewModel.stopVoicePreview()
+            model = selectedModel
+            selectedProvider?.let { voice = voiceForModel(it, selectedModel, voice) }
+        },
+        onVoiceChange = { selectedVoice ->
+            voiceViewModel.stopVoicePreview()
+            voice = selectedVoice
+        },
+        onPreviewVoice = { selectedVoice -> preview("voice:realtime:$selectedVoice", selectedVoice) },
+        enabled = voiceClient != null && enabled,
+    )
+    compatibilityNotice(
+        selectedProvider,
+        model,
+        voice,
+        notAdvertisedMessage = stringResource(R.string.voice_settings_voice_not_advertised),
+    )?.let { notice ->
+        Text(notice, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+    LanguageQualityCard(
+        expanded = qualityOpen,
+        onExpandedChange = { qualityOpen = it },
+        language = "Provider default",
+        languages = emptyList(),
+        onLanguageChange = {},
+        sampleRate = sampleRate,
+        sampleRates = intChoices(selectedProvider?.sample_rates.orEmpty(), sampleRate),
+        onSampleRateChange = { sampleRate = it },
+        enabled = voiceClient != null,
+        showLanguage = false,
+    )
+
+    VoiceSaveActions(
+        saving = saving,
+        enabled = voiceClient != null,
+        onDiscard = {
+            voiceViewModel.stopVoicePreview()
+            config?.let { saved ->
+                enabled = saved.enabled
+                provider = saved.default_provider.orEmpty()
+                model = voiceSettings.realtimeModel.ifBlank { saved.default_model.orEmpty() }
+                voice = voiceSettings.realtimeVoice.ifBlank { saved.default_voice.orEmpty() }
+                sampleRate = saved.sample_rate.toString()
+            }
+        },
+        onSave = {
+            val client = voiceClient ?: return@VoiceSaveActions
+            val rate = sampleRate.toIntOrNull()
+            if (rate == null) {
+                settingsViewModel.setRealtimeError("Sample rate must be a number")
+                return@VoiceSaveActions
+            }
+            scope.launch {
+                saving = true
+                val validation = client.validateRealtimeAgentProvider(provider, model, voice, rate)
+                val issue = validationIssue(validation.getOrNull(), "Provider selection is not valid")
+                if (validation.isFailure || issue != null) {
+                    saving = false
+                    val error = validation.exceptionOrNull()
+                    if (error != null) snackbarHost.showHumanError(classifyError(error, context = "voice_config"))
+                    settingsViewModel.setRealtimeError(issue ?: error?.message ?: "Provider validation failed")
+                    return@launch
+                }
+                val result = client.updateRealtimeAgentConfig(enabled, provider, model, voice, rate)
+                saving = false
+                if (result.isSuccess) {
+                    prefsRepo.setRealtimeSelection(model, voice)
+                    settingsViewModel.setRealtimeConfig(result.getOrNull())
+                } else {
+                    val human = classifyError(result.exceptionOrNull(), context = "voice_config")
+                    settingsViewModel.setRealtimeError(human.body)
+                    snackbarHost.showHumanError(human)
+                }
+            }
+        },
+    )
+    configState.realtimeConfigError?.let { error ->
+        Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+}
+
+@Composable
+private fun LegacyRealtimeAgentCard(
     voiceClient: RelayVoiceClient?,
     settingsViewModel: VoiceSettingsViewModel,
     configState: VoiceConfigUiState,
@@ -2593,6 +3635,7 @@ private fun StandardVoiceServerConfigCard(
     var values by remember { mutableStateOf<JsonObject?>(null) }
     var fields by remember { mutableStateOf<List<ConfigSchemaField>>(emptyList()) }
     var elevenVoices by remember { mutableStateOf<ElevenLabsVoices?>(null) }
+    var toolsetProviders by remember { mutableStateOf(emptyList<com.hermesandroid.relay.network.upstream.TtsToolsetProvider>()) }
     var error by remember { mutableStateOf<String?>(null) }
     var signInRequired by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
@@ -2618,6 +3661,13 @@ private fun StandardVoiceServerConfigCard(
             edits = emptyMap()
             // Best-effort; only consulted when the TTS provider is elevenlabs.
             elevenVoices = client.getElevenLabsVoices().getOrNull()
+            // Best-effort runtime provider registry. Newer upstream builds
+            // include command and plugin providers that the static config
+            // schema cannot enumerate.
+            toolsetProviders = client.getTtsToolsetConfig()
+                .getOrNull()
+                ?.let(::parseTtsToolsetProviders)
+                .orEmpty()
         } else {
             val ex = cfg.exceptionOrNull() ?: sch.exceptionOrNull()
             val msg = ex?.message.orEmpty()
@@ -2650,14 +3700,50 @@ private fun StandardVoiceServerConfigCard(
             val ttsProvider = currentString("tts.provider")
             val sttProvider = currentString("stt.provider")
 
-            Spacer(Modifier.height(4.dp))
+            val behaviorFields = fields.filter { field -> field.key.startsWith("voice.") }
+            if (behaviorFields.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text("Hermes host behavior", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    text = "These settings control voice mode on the Hermes host. They do not change the phone microphone controls on the Listening tab.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                behaviorFields.forEach { field ->
+                    ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            }
+
             Text(stringResource(R.string.voice_settings_tts_title), style = MaterialTheme.typography.labelLarge)
 
             fields.firstOrNull { it.key == "tts.provider" }?.let { field ->
-                ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
+                val schemaChoices = field.options.map { VoiceChoice(value = it) }
+                val runtimeChoices = toolsetProviders.map { provider ->
+                    VoiceChoice(
+                        value = provider.id,
+                        label = buildString {
+                            append(provider.name)
+                            providerStatusLabel(provider.status)?.let { append(" · ").append(it) }
+                        },
+                    )
+                }
+                val runtimeChoicesById = runtimeChoices.associateBy { it.value }
+                val mergedChoices = schemaChoices.map { choice ->
+                    runtimeChoicesById[choice.value] ?: choice
+                } + runtimeChoices.filter { runtime ->
+                    schemaChoices.none { it.value == runtime.value }
+                }
+                ConfigFieldRow(
+                    field = field,
+                    current = current(field.key),
+                    overrideChoices = mergedChoices.withCurrent(ttsProvider),
+                    onEdit = { setEdit(field.key, it) },
+                )
             }
             if (ttsProvider.isNotBlank()) {
-                fields.filter { it.key.startsWith("tts.$ttsProvider.") }.forEach { field ->
+                val selectedProviderFields = fields.filter { it.key.startsWith("tts.$ttsProvider.") }
+                selectedProviderFields.forEach { field ->
                     val isElevenVoice = field.key == "tts.elevenlabs.voice_id" &&
                         elevenVoices?.available == true
                     ConfigFieldRow(
@@ -2669,6 +3755,16 @@ private fun StandardVoiceServerConfigCard(
                             null
                         },
                         onEdit = { setEdit(field.key, it) },
+                    )
+                }
+                if (
+                    selectedProviderFields.isEmpty() &&
+                    toolsetProviders.any { it.id == ttsProvider }
+                ) {
+                    Text(
+                        text = "This installed provider uses its own defaults. Configure credentials and additional options in Manage.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (ttsProvider == "elevenlabs" && elevenVoices?.available == false) {
@@ -2686,10 +3782,14 @@ private fun StandardVoiceServerConfigCard(
             fields.firstOrNull { it.key == "stt.enabled" }?.let { field ->
                 ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
             }
+            fields.firstOrNull { it.key == "stt.echo_transcripts" }?.let { field ->
+                ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
+            }
             fields.firstOrNull { it.key == "stt.provider" }?.let { field ->
                 ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
             }
-            if (sttProvider.isNotBlank()) {
+            val sttEnabled = (current("stt.enabled") as? JsonPrimitive)?.booleanOrNull ?: false
+            if (sttEnabled && sttProvider.isNotBlank()) {
                 fields.filter { it.key.startsWith("stt.$sttProvider.") }.forEach { field ->
                     ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
                 }
@@ -2766,24 +3866,31 @@ private fun ConfigFieldRow(
     overrideChoices: List<VoiceChoice>?,
     onEdit: (JsonElement) -> Unit,
 ) {
-    val label = field.description?.takeIf { it.isNotBlank() } ?: field.key
+    val label = standardConfigFieldLabel(field.key)
+    val description = standardConfigFieldDescription(field)
     val str = (current as? JsonPrimitive)?.contentOrNull.orEmpty()
     when {
-        overrideChoices != null -> VoiceChoiceDropdown(
-            label = label,
-            value = str,
-            choices = overrideChoices,
-            onValueChange = { onEdit(JsonPrimitive(it)) },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        overrideChoices != null -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            VoiceChoiceDropdown(
+                label = label,
+                value = str,
+                choices = overrideChoices,
+                onValueChange = { onEdit(JsonPrimitive(it)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ConfigFieldDescription(description)
+        }
 
-        field.type == ConfigFieldType.Select -> VoiceChoiceDropdown(
-            label = label,
-            value = str,
-            choices = field.options.map { VoiceChoice(value = it) },
-            onValueChange = { onEdit(JsonPrimitive(it)) },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        field.type == ConfigFieldType.Select -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            VoiceChoiceDropdown(
+                label = label,
+                value = str,
+                choices = field.options.map { VoiceChoice(value = it) }.withCurrent(str),
+                onValueChange = { onEdit(JsonPrimitive(it)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ConfigFieldDescription(description)
+        }
 
         field.type == ConfigFieldType.Boolean -> {
             val checked = (current as? JsonPrimitive)?.booleanOrNull ?: false
@@ -2792,33 +3899,86 @@ private fun ConfigFieldRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(label, style = MaterialTheme.typography.bodyMedium)
+                    ConfigFieldDescription(description)
+                }
                 Switch(checked = checked, onCheckedChange = { onEdit(JsonPrimitive(it)) })
             }
         }
 
-        field.type == ConfigFieldType.Number -> OutlinedTextField(
-            value = str,
-            onValueChange = { input ->
-                val parsed = input.toLongOrNull()?.let { JsonPrimitive(it) }
-                    ?: input.toDoubleOrNull()?.let { JsonPrimitive(it) }
-                    ?: JsonPrimitive(input)
-                onEdit(parsed)
-            },
-            label = { Text(label) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-        )
+        field.type == ConfigFieldType.Number -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedTextField(
+                value = str,
+                onValueChange = { input ->
+                    val parsed = input.toLongOrNull()?.let { JsonPrimitive(it) }
+                        ?: input.toDoubleOrNull()?.let { JsonPrimitive(it) }
+                        ?: JsonPrimitive(input)
+                    onEdit(parsed)
+                },
+                label = { Text(label) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ConfigFieldDescription(description)
+        }
 
-        else -> OutlinedTextField(
-            value = str,
-            onValueChange = { onEdit(JsonPrimitive(it)) },
-            label = { Text(label) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+        else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedTextField(
+                value = str,
+                onValueChange = { onEdit(JsonPrimitive(it)) },
+                label = { Text(label) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ConfigFieldDescription(description)
+        }
+    }
+}
+
+@Composable
+private fun ConfigFieldDescription(description: String?) {
+    description?.takeIf { it.isNotBlank() }?.let {
+        Text(
+            text = it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+@Composable
+private fun standardConfigFieldLabel(key: String): String = when {
+    key == "tts.provider" || key == "stt.provider" -> stringResource(R.string.voice_settings_label_provider)
+    key == "stt.enabled" -> stringResource(R.string.voice_settings_stt_title)
+    key == "voice.auto_tts" -> stringResource(R.string.voice_settings_auto_speak)
+    key.endsWith(".model") || key.endsWith(".model_id") -> stringResource(R.string.voice_settings_label_model)
+    key.endsWith(".voice") || key.endsWith(".voice_id") -> stringResource(R.string.voice_settings_label_voice)
+    key.endsWith(".language") || key.endsWith(".language_code") -> stringResource(R.string.voice_settings_label_language)
+    else -> key.substringAfterLast('.')
+        .removeSuffix("_id")
+        .split('_')
+        .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
+}
+
+@Composable
+private fun standardConfigFieldDescription(field: ConfigSchemaField): String? = when {
+    field.key == "tts.provider" -> stringResource(R.string.voice_settings_provider_desc)
+    field.key == "voice.auto_tts" -> stringResource(R.string.voice_settings_auto_speak_desc)
+    field.key.startsWith("tts.") &&
+        (field.key.endsWith(".model") || field.key.endsWith(".model_id")) -> stringResource(R.string.voice_settings_model_desc)
+    field.key.endsWith(".voice") || field.key.endsWith(".voice_id") -> stringResource(R.string.voice_settings_voice_desc)
+    field.key.endsWith(".language") || field.key.endsWith(".language_code") -> stringResource(R.string.voice_settings_language_desc)
+    else -> field.description
+}
+
+private fun providerStatusLabel(status: String?): String? = when (status) {
+    "ready" -> "Ready"
+    "needs_setup" -> "Needs setup"
+    "needs_auth" -> "Sign-in required"
+    "needs_keys" -> "Key required"
+    else -> null
 }
 
 // ===========================================================================
@@ -2919,7 +4079,7 @@ internal fun coerceAudioRoute(
     else -> route
 }
 
-private data class VoiceChoice(
+internal data class VoiceChoice(
     val value: String,
     val label: String = value,
     val detail: String? = null,
@@ -3182,10 +4342,7 @@ private fun providerOptionsStatusText(
 
 @Composable
 private fun commonLanguages(current: String, provider: RealtimeProviderInfo?): List<VoiceChoice> {
-    val base = provider?.languages.orEmpty().ifEmpty {
-        listOf("en", "es", "fr", "de", "ja", "zh")
-    }
-    return valueChoices(base, current, provider?.language_labels.orEmpty())
+    return valueChoices(provider?.languages.orEmpty(), current, provider?.language_labels.orEmpty())
 }
 
 @Composable
@@ -3229,8 +4386,11 @@ private fun VoiceProfileSummaryCard(
     realtime: RealtimeVoiceConfig?,
     realtimeModel: String,
     realtimeVoice: String,
+    currentAudioRoute: VoiceAudioRoute,
+    relayVoiceReady: Boolean,
+    onClick: () -> Unit,
 ) {
-    val (title, subtitle) = voiceOutputSummary(
+    val (profileLabel, voiceSummary) = voiceOutputSummary(
         profile = displayProfile,
         currentEngine = currentEngine,
         output = output,
@@ -3238,29 +4398,202 @@ private fun VoiceProfileSummaryCard(
         realtimeModel = realtimeModel,
         realtimeVoice = realtimeVoice,
     )
+    val profileScoped = currentEngine == VoiceEngineMode.RealtimeAgent ||
+        (relayVoiceReady && currentAudioRoute != VoiceAudioRoute.Standard)
+    val displayedVoiceSummary = if (profileScoped) {
+        voiceSummary
+    } else {
+        "Standard Hermes · Host configuration"
+    }
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Surface(
+                modifier = Modifier.size(44.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                contentColor = MaterialTheme.colorScheme.primary,
+            ) {
+                Icon(
+                    Icons.Filled.GraphicEq,
+                    contentDescription = null,
+                    modifier = Modifier.padding(10.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = if (currentEngine == VoiceEngineMode.RealtimeAgent) {
+                        "Real-time Voice Agent"
+                    } else {
+                        "Hermes Chat + Voice Output"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = profileLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = displayedVoiceSummary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                contentColor = MaterialTheme.colorScheme.primary,
+            ) {
+                Text(
+                    text = if (profileScoped) "Profile" else "Host",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+            }
+            Icon(Icons.Filled.ChevronRight, contentDescription = "Change voice mode")
         }
     }
+}
+
+@Composable
+private fun VoiceModePickerDialog(
+    currentEngine: VoiceEngineMode,
+    currentAudioRoute: VoiceAudioRoute,
+    relayVoiceReady: Boolean,
+    onEngineChange: (VoiceEngineMode) -> Unit,
+    onRouteChange: (VoiceAudioRoute) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Voice mode") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    VoiceEngineMode.HermesVoiceOutput to ("Hermes Chat + Voice Output" to "Hermes answers with your selected TTS voice"),
+                    VoiceEngineMode.RealtimeAgent to ("Real-time Voice Agent" to "Low-latency provider-native conversation"),
+                ).forEach { (engine, copy) ->
+                    val available = engine != VoiceEngineMode.RealtimeAgent || relayVoiceReady
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = currentEngine == engine,
+                                enabled = available,
+                                onClick = { onEngineChange(engine) },
+                            )
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = currentEngine == engine, onClick = null, enabled = available)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(copy.first, style = MaterialTheme.typography.titleSmall)
+                            Text(copy.second, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text("Output route", style = MaterialTheme.typography.labelLarge)
+                    listOf(
+                        VoiceAudioRoute.Auto to "Automatic",
+                        VoiceAudioRoute.Standard to "Standard Hermes",
+                        VoiceAudioRoute.Relay to "Relay voice output",
+                    ).forEach { (route, label) ->
+                        val available = route != VoiceAudioRoute.Relay || relayVoiceReady
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = currentAudioRoute == route,
+                                    enabled = available,
+                                    onClick = { onRouteChange(route) },
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = currentAudioRoute == route, onClick = null, enabled = available)
+                            Text(label)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+@Composable
+private fun StandardVoiceOutputOverview(
+    client: DashboardApiClient?,
+    availability: StandardVoiceAvailability,
+    onOpenManage: (() -> Unit)?,
+    voiceViewModel: VoiceViewModel,
+) {
+    var values by remember(client) { mutableStateOf<JsonObject?>(null) }
+    var loading by remember(client) { mutableStateOf(client != null) }
+    LaunchedEffect(client) {
+        if (client == null) {
+            loading = false
+            values = null
+        } else {
+            loading = true
+            values = client.getConfig().getOrNull()
+            loading = false
+        }
+    }
+    if (loading) {
+        VoiceOutputLoadingSkeleton()
+        return
+    }
+    val provider = values
+        ?.let { configValueAt(it, "tts.provider") as? JsonPrimitive }
+        ?.contentOrNull
+        ?.takeIf { it.isNotBlank() }
+    val model = provider?.let { id ->
+        sequenceOf("tts.$id.model", "tts.$id.model_id")
+            .mapNotNull { key -> (values?.let { configValueAt(it, key) } as? JsonPrimitive)?.contentOrNull }
+            .firstOrNull { it.isNotBlank() }
+    }
+    val voice = provider?.let { id ->
+        sequenceOf("tts.$id.voice", "tts.$id.voice_id")
+            .mapNotNull { key -> (values?.let { configValueAt(it, key) } as? JsonPrimitive)?.contentOrNull }
+            .firstOrNull { it.isNotBlank() }
+    }
+    val ready = availability == StandardVoiceAvailability.Ready
+    StaticProviderCard(
+        provider = provider ?: "Standard Hermes",
+        detail = when {
+            loading -> "Reading host voice configuration…"
+            values == null -> "Open Manage to configure the host voice provider"
+            else -> "Uses this Hermes host’s existing configuration"
+        },
+        ready = ready,
+        actionLabel = if (onOpenManage == null) null else "Manage provider",
+        onAction = onOpenManage,
+    )
+    StaticModelVoiceCard(
+        model = model ?: "Server default",
+        voice = voice ?: "Server default",
+        enabled = ready,
+        onPreview = { voiceViewModel.testVoice() },
+    )
+    LanguageQualitySummaryCard(summary = "Host-wide Standard Hermes settings")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -3405,9 +4738,10 @@ private fun SectionCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
     ) {
         Column(
@@ -3424,7 +4758,8 @@ private fun SectionCard(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
                 )
                 badge?.let { ExperimentalBadge(it) }
             }
@@ -3436,26 +4771,37 @@ private fun SectionCard(
 
 @Composable
 private fun ExperimentalBadge(text: String) {
+    val warning = text.equals("Experimental", ignoreCase = true)
     Row(
         modifier = Modifier
             .background(
-                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f),
+                color = if (warning) {
+                    MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHighest
+                },
                 shape = RoundedCornerShape(999.dp),
             )
             .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Icon(
-            imageVector = Icons.Filled.Warning,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onTertiaryContainer,
-            modifier = Modifier.size(13.dp),
-        )
+        if (warning) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.size(13.dp),
+            )
+        }
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            color = if (warning) {
+                MaterialTheme.colorScheme.onTertiaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         )
     }
 }

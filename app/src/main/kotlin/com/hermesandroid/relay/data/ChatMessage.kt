@@ -142,6 +142,21 @@ data class ChatMessage(
      * through `copy`, while [id] remains the authoritative lookup/wire id.
      */
     val uiKey: String = id,
+    /**
+     * Mixture-of-Agents advisor responses surfaced during the live turn.
+     * Unavailable advisors retain only neutral state, never their raw failure
+     * body. A sanitized bounded copy may enter the local in-flight checkpoint,
+     * but server history never owns these presentation blocks.
+     */
+    val moaReferences: List<MoaReference> = emptyList(),
+)
+
+data class MoaReference(
+    val index: Int,
+    val count: Int?,
+    val label: String,
+    val text: String,
+    val available: Boolean = true,
 )
 
 /** One Chat-visible identity for a promoted/durable realtime Hermes run. */
@@ -392,6 +407,8 @@ data class ChatSession(
      * for locally-created optimistic rows. Drives the drawer's Thread tag (see ADR 12).
      */
     val source: String? = null,
+    /** Server reports a persisted session runtime/model binding. */
+    val hasModelConfig: Boolean = false,
 ) {
     val activityTimestamp: Long
         get() = firstPositive(lastActivityAt, updatedAt, startedAt)

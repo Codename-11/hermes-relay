@@ -21,11 +21,32 @@ MAX_XAI_CUSTOM_VOICE_PAGES = 20
 PROVIDER_OPTIONS_SCHEMA_VERSION = 1
 
 XAI_VOICE_LABELS = {
-    "eve": "Eve - energetic, upbeat",
+    "carina": "Carina - soft, empathetic, soothing",
+    "zagan": "Zagan - powerful, dramatic, unmistakable",
+    "helix": "Helix - bold, dynamic, adrenaline-fueled",
+    "orion": "Orion - rich, cinematic, resonant",
+    "luna": "Luna - gentle, patient, nurturing",
+    "iris": "Iris - friendly, upbeat, charming",
+    "altair": "Altair - elegant, refined, premium",
+    "zenith": "Zenith - sharp, focused, driven",
+    "perseus": "Perseus - strong, confident, trustworthy",
+    "helios": "Helios - upbeat, energetic, versatile",
+    "lux": "Lux - grounded, calm, quietly wise",
+    "kepler": "Kepler - inventive, forward-thinking, charismatic",
+    "rigel": "Rigel - precise, professional, calmly confident",
+    "cosmo": "Cosmo - bright, curious, easy to follow",
+    "celeste": "Celeste - compassionate, confident, reassuring",
+    "ursa": "Ursa - friendly, warm, steadfast",
+    "sirius": "Sirius - quick-witted, clever, playful",
+    "lumen": "Lumen - warm, articulate, engaging",
+    "castor": "Castor - charismatic, down-to-earth, easygoing",
+    "naksh": "Naksh - warm, thoughtful, wise",
+    "atlas": "Atlas - confident, commanding, reassuring",
     "ara": "Ara - warm, friendly",
+    "eve": "Eve - energetic, upbeat",
+    "leo": "Leo - authoritative, strong",
     "rex": "Rex - confident, clear",
     "sal": "Sal - smooth, balanced",
-    "leo": "Leo - authoritative, strong",
 }
 XAI_BUILTIN_VOICES = tuple(XAI_VOICE_LABELS)
 XAI_RECOMMENDED_VOICES = ("eve", "ara", "sal")

@@ -138,6 +138,8 @@ fun MessageBubble(
      * happening.
      */
     recoveringAnswer: Boolean = false,
+    imageGenerationStylePreference: String = "rotate",
+    imageGenerationRotationIndex: Int = 0,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -204,6 +206,28 @@ fun MessageBubble(
         } else {
             extractChatInlineImages(message.content)
         }
+    }
+    val showImageGeneration = shouldShowImageGenerationPlaceholder(
+        toolCalls = message.toolCalls,
+        isStreaming = message.isStreaming,
+        hasMediaResult = message.attachments.isNotEmpty() || inlineImages.isNotEmpty(),
+    )
+    val hasImageGenerationCall = remember(message.toolCalls) {
+        message.toolCalls.any {
+            it.name.trim().lowercase() == "image_generate"
+        }
+    }
+    val imageGenerationStartMillis = remember(message.toolCalls) {
+        imageGenerationStartedAt(message.toolCalls)
+    }
+    val imageGenerationVisualStyle = remember(
+        imageGenerationStylePreference,
+        imageGenerationRotationIndex,
+    ) {
+        resolveImageGenerationVisualStyle(
+            preference = imageGenerationStylePreference,
+            rotationIndex = imageGenerationRotationIndex,
+        )
     }
 
     // Provide the sensitive-media blur mode to the attachment / inline-image
@@ -291,6 +315,30 @@ fun MessageBubble(
             )
         }
 
+        if (!isUser && !isSystem && showThinking) {
+            message.moaReferences.forEach { reference ->
+                ThinkingBlock(
+                    thinkingContent = if (reference.available) {
+                        reference.text
+                    } else {
+                        "Advisor unavailable."
+                    },
+                    isStreaming = false,
+                    headerText = buildString {
+                        append("Advisor ")
+                        append(reference.index)
+                        reference.count?.let { append("/").append(it) }
+                        append(" · ")
+                        append(reference.label)
+                    },
+                    accessibilityLabel = "Mixture of Agents advisor response",
+                    modifier = Modifier
+                        .widthIn(max = maxBubbleWidth)
+                        .padding(bottom = 4.dp),
+                )
+            }
+        }
+
         // Message bubble.
         //
         // Action bubbles (voice/phone origin) wrap the existing Surface in
@@ -309,6 +357,7 @@ fun MessageBubble(
         val showBubble = isUser || isSystem ||
             message.content.isNotBlank() ||
             message.isStreaming ||
+            showImageGeneration ||
             message.cards.isNotEmpty() ||
             message.attachments.isNotEmpty() ||
             inlineImages.isNotEmpty()
@@ -478,35 +527,78 @@ fun MessageBubble(
                     }
                 }
 
-                // Attachments — two or more loaded images collapse into one
-                // grid + swipe-across gallery. Every other item stays on the
-                // unified InboundAttachmentCard path, and layout items retain
-                // their original ChatMessage.attachments indices so retry /
-                // manual-fetch callbacks cannot drift after grouping.
-                if (message.attachments.isNotEmpty()) {
+                // Image generation owns the bubble's progress slot. Keep the
+                // selected progress treatment mounted under the real result,
+                // then reveal the same collapsible attachment surface without
+                // rebuilding the surrounding message bubble.
+                if (hasImageGenerationCall) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    val attachmentItems = remember(message.attachments) {
-                        attachmentLayoutItems(message.attachments)
-                    }
-                    attachmentItems.forEach { item ->
-                        when (item) {
-                            is AttachmentLayoutItem.Gallery -> AttachmentGallery(
-                                attachments = item.attachmentIndices.map(message.attachments::get),
-                                maxWidth = maxBubbleWidth - 24.dp,
-                                modifier = Modifier.padding(vertical = 2.dp),
-                            )
-                            is AttachmentLayoutItem.Single -> {
-                                val index = item.attachmentIndex
-                                InboundAttachmentCard(
-                                    attachment = message.attachments[index],
-                                    onRetry = { onAttachmentRetry(message.id, index) },
-                                    onManualFetch = { onAttachmentManualFetch(message.id, index) },
-                                    maxWidth = maxBubbleWidth - 24.dp,
-                                    modifier = Modifier.padding(vertical = 2.dp),
-                                )
+                    ImageGenerationResultTransition(
+                        generating = showImageGeneration,
+                        startedAtMillis = imageGenerationStartMillis,
+                        visualStyle = imageGenerationVisualStyle,
+                    ) {
+                        if (message.attachments.isNotEmpty()) {
+                            CollapsibleAttachmentGroup(
+                                messageKey = message.uiKey,
+                                attachments = message.attachments,
+                            ) {
+                                val attachmentItems = attachmentLayoutItems(message.attachments)
+                                attachmentItems.forEach { item ->
+                                    when (item) {
+                                        is AttachmentLayoutItem.Gallery -> AttachmentGallery(
+                                            attachments = item.attachmentIndices.map(message.attachments::get),
+                                            maxWidth = maxBubbleWidth - 24.dp,
+                                            modifier = Modifier.padding(vertical = 2.dp),
+                                        )
+                                        is AttachmentLayoutItem.Single -> {
+                                            val index = item.attachmentIndex
+                                            InboundAttachmentCard(
+                                                attachment = message.attachments[index],
+                                                onRetry = { onAttachmentRetry(message.id, index) },
+                                                onManualFetch = { onAttachmentManualFetch(message.id, index) },
+                                                maxWidth = maxBubbleWidth - 24.dp,
+                                                modifier = Modifier.padding(vertical = 2.dp),
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
+                } else if (message.attachments.isNotEmpty()) {
+                        // Two or more loaded images collapse into one grid +
+                        // swipe-across gallery. Every other item stays on the
+                        // unified attachment path, retaining original indices.
+                        Spacer(modifier = Modifier.height(4.dp))
+                        CollapsibleAttachmentGroup(
+                            messageKey = message.uiKey,
+                            attachments = message.attachments,
+                        ) {
+                            // Two or more loaded images collapse into one grid +
+                            // swipe-across gallery. Every other item stays on the
+                            // unified attachment path, retaining original indices.
+                            val attachmentItems = attachmentLayoutItems(message.attachments)
+                            attachmentItems.forEach { item ->
+                                when (item) {
+                                    is AttachmentLayoutItem.Gallery -> AttachmentGallery(
+                                        attachments = item.attachmentIndices.map(message.attachments::get),
+                                        maxWidth = maxBubbleWidth - 24.dp,
+                                        modifier = Modifier.padding(vertical = 2.dp),
+                                    )
+                                    is AttachmentLayoutItem.Single -> {
+                                        val index = item.attachmentIndex
+                                        InboundAttachmentCard(
+                                            attachment = message.attachments[index],
+                                            onRetry = { onAttachmentRetry(message.id, index) },
+                                            onManualFetch = { onAttachmentManualFetch(message.id, index) },
+                                            maxWidth = maxBubbleWidth - 24.dp,
+                                            modifier = Modifier.padding(vertical = 2.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                 }
 
                 // Streaming indicator — only while awaiting the first token. Once
@@ -514,7 +606,11 @@ fun MessageBubble(
                 // signal, so the pulsing dots stop (Messenger/Telegram drop the
                 // typing bubble the moment content appears) instead of throbbing
                 // under the text for the whole turn.
-                if (message.isStreaming && message.content.isBlank()) {
+                if (
+                    message.isStreaming &&
+                    message.content.isBlank() &&
+                    !showImageGeneration
+                ) {
                     // After a few seconds with no content yet, escalate the bare
                     // dots to a labeled "Still working…" so a slow first token
                     // never reads as a hang on the SSE / sessions paths.

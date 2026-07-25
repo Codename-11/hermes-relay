@@ -44,11 +44,16 @@ internal enum class DashboardActionKind {
     EnableMcp,
     DisableMcp,
     TestMcp,
+    AuthenticateMcp,
     RemoveMcp,
     InstallMcpCatalog,
     ViewProfileSoul,
     ActivateProfile,
     DeleteProfile,
+    EditCustomEndpoint,
+    ValidateCustomEndpoint,
+    ActivateCustomEndpoint,
+    DeleteCustomEndpoint,
 
     // Input-backed kinds — intercepted before runAction and routed to a
     // text-input or model-picker dialog instead of firing immediately.

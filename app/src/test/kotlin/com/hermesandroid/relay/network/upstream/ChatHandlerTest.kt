@@ -1,10 +1,12 @@
 package com.hermesandroid.relay.network.upstream
 
 import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpoint
+import com.hermesandroid.relay.data.ChatTurnMoaReferenceCheckpoint
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.MessageRole
@@ -15,6 +17,8 @@ import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
@@ -123,6 +127,47 @@ class ChatHandlerTest {
         assertEquals(2, messages.size)
         assertEquals("First", messages[0].content)
         assertEquals("Second", messages[1].content)
+    }
+
+    @Test
+    fun onStreamComplete_removesExactIntentionalSilenceMarker() {
+        handler.onTextDelta("assist-1", "NO")
+        handler.onTextDelta("assist-1", "_REPLY")
+
+        handler.onStreamComplete("assist-1")
+
+        assertTrue(handler.messages.value.isEmpty())
+        assertFalse(handler.isStreaming.value)
+    }
+
+    @Test
+    fun onStreamComplete_removesEmptyAssistantPlaceholder() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assist-empty",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+
+        handler.onStreamComplete("assist-empty")
+
+        assertTrue(handler.messages.value.isEmpty())
+        assertFalse(handler.isStreaming.value)
+    }
+
+    @Test
+    fun onStreamComplete_keepsProseThatMentionsSilenceMarker() {
+        handler.onTextDelta("assist-1", "I will not use NO_REPLY here.")
+
+        handler.onStreamComplete("assist-1")
+
+        val messages = handler.messages.value
+        assertEquals(1, messages.size)
+        assertEquals("I will not use NO_REPLY here.", messages.single().content)
+        assertFalse(messages.single().isStreaming)
     }
 
     // --- onStreamComplete ---
@@ -388,6 +433,20 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun updateSessions_deduplicatesDuplicateServerRows() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(id = "s1", title = "First"),
+                SessionItem(id = "s1", title = "Duplicate"),
+                SessionItem(id = "s2", title = "Other"),
+            ),
+        )
+
+        assertEquals(listOf("s1", "s2"), handler.sessions.value.map { it.sessionId })
+        assertEquals("First", handler.sessions.value.first().title)
+    }
+
+    @Test
     fun updateSessions_preservesLocalTitle_whenServerReturnsNullTitle() {
         // The server titles a session asynchronously after the first turn (and
         // never on the SSE/runs surfaces), so a re-list often returns the row
@@ -573,6 +632,38 @@ class ChatHandlerTest {
         assertEquals("s1", sessions[1].sessionId)
     }
 
+    @Test
+    fun addSession_collapsesRepeatedOptimisticRows() {
+        val session = ChatSession(sessionId = "s1", title = "Fresh", model = null)
+
+        handler.addSession(session)
+        handler.addSession(session)
+
+        assertEquals(listOf("s1"), handler.sessions.value.map { it.sessionId })
+    }
+
+    @Test
+    fun addSession_afterRefreshKeepsSingleServerEnrichedRow() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "s1",
+                    title = "Server title",
+                    model = "gpt-5.6",
+                    messageCount = 2,
+                ),
+            ),
+        )
+
+        handler.addSession(ChatSession(sessionId = "s1", title = "Optimistic", model = null))
+
+        val session = handler.sessions.value.single()
+        assertEquals("s1", session.sessionId)
+        assertEquals("Server title", session.title)
+        assertEquals("gpt-5.6", session.model)
+        assertEquals(2, session.messageCount)
+    }
+
     // --- setSessionId ---
 
     @Test
@@ -658,6 +749,113 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_skipsTypedHiddenDisplayRows() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "hidden-1",
+                    role = "user",
+                    content = JsonPrimitive("internal compaction handoff"),
+                    displayKind = "hidden",
+                ),
+                MessageItem(id = "visible-1", role = "user", content = JsonPrimitive("visible")),
+            ),
+        )
+
+        assertEquals(1, handler.messages.value.size)
+        assertEquals("visible", handler.messages.value.single().content)
+    }
+
+    @Test
+    fun loadMessageHistory_rendersTypedModelSwitchAsSystemTimelineRow() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "model-1",
+                    role = "user",
+                    content = JsonPrimitive("The model changed"),
+                    displayKind = "model_switch",
+                    displayMetadata = buildJsonObject { put("model", "gpt-5.6") },
+                ),
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals(MessageRole.SYSTEM, msg.role)
+        assertEquals("Model changed to gpt-5.6", msg.content)
+    }
+
+    @Test
+    fun loadMessageHistory_rendersTypedDelegationCompletionAsSystemTimelineRow() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "delegation-1",
+                    role = "user",
+                    content = JsonPrimitive("background task complete"),
+                    displayKind = "async_delegation_complete",
+                    displayMetadata = buildJsonObject { put("task_count", 2) },
+                ),
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals(MessageRole.SYSTEM, msg.role)
+        assertEquals("2 background tasks completed", msg.content)
+    }
+
+    @Test
+    fun loadMessageHistory_rendersAutoContinueAsNeutralSystemTimelineRow() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "continue-1",
+                    role = "user",
+                    content = JsonPrimitive("private continuation prompt"),
+                    displayKind = "auto_continue",
+                ),
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals(MessageRole.SYSTEM, msg.role)
+        assertEquals("Continued after an interrupted turn", msg.content)
+    }
+
+    @Test
+    fun reconcileInterimMessage_collapsesProvisionalFinalBubble() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "interim",
+                role = MessageRole.ASSISTANT,
+                content = "candidate",
+                timestamp = 1L,
+                isStreaming = false,
+            ),
+        )
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "provisional",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 2L,
+                isStreaming = true,
+            ),
+        )
+
+        handler.reconcileInterimMessage(
+            interimMessageId = "interim",
+            currentMessageId = "provisional",
+            content = "candidate answer",
+        )
+
+        val assistant = handler.messages.value.single()
+        assertEquals("interim", assistant.id)
+        assertEquals("candidate answer", assistant.content)
+        assertTrue(assistant.isStreaming)
+    }
+
+    @Test
     fun loadMessageHistory_skipsToolMessages() {
         val items = listOf(
             MessageItem(id = "1", role = "user", content = JsonPrimitive("Hello")),
@@ -704,6 +902,231 @@ class ChatHandlerTest {
         handler.loadMessageHistory(items)
 
         assertEquals("", handler.messages.value[0].content)
+    }
+
+    // --- loadMessageHistory: persisted user image references (HRUI-073) ---
+
+    @Test
+    fun loadMessageHistory_liftsCaptionFirstPersistedImageRef() {
+        val requested = mutableListOf<Pair<String, String>>()
+        handler.onPersistedUserImageRequested = { messageId, path ->
+            requested += messageId to path
+        }
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "image-user-1",
+                    role = "user",
+                    content = JsonPrimitive("What is this?\n@image:/tmp/cat.png"),
+                )
+            )
+        )
+
+        val message = handler.messages.value.single()
+        assertEquals("What is this?", message.content)
+        assertEquals(listOf("image-user-1" to "/tmp/cat.png"), requested)
+    }
+
+    @Test
+    fun loadMessageHistory_keepsImageOnlyTurnAndParsesQuotedSpacedPath() {
+        val requested = mutableListOf<String>()
+        handler.onPersistedUserImageRequested = { _, path -> requested += path }
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "image-user-2",
+                    role = "user",
+                    content = JsonPrimitive(
+                        "@image:`/tmp/Hermes composer images/holiday photo.webp`"
+                    ),
+                )
+            )
+        )
+
+        assertEquals("", handler.messages.value.single().content)
+        assertEquals(
+            listOf("/tmp/Hermes composer images/holiday photo.webp"),
+            requested,
+        )
+    }
+
+    @Test
+    fun loadMessageHistory_extractsMultipleRefsInOrder() {
+        val requested = mutableListOf<String>()
+        handler.onPersistedUserImageRequested = { _, path -> requested += path }
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "image-user-3",
+                    role = "user",
+                    content = JsonPrimitive(
+                        "Compare these\n@image:/tmp/a.png\n@image:\"/tmp/two images/b.jpg\""
+                    ),
+                )
+            )
+        )
+
+        assertEquals("Compare these", handler.messages.value.single().content)
+        assertEquals(listOf("/tmp/a.png", "/tmp/two images/b.jpg"), requested)
+    }
+
+    @Test
+    fun loadMessageHistory_extractsRefFromNativeVisionContentArray() {
+        val requested = mutableListOf<String>()
+        handler.onPersistedUserImageRequested = { _, path -> requested += path }
+        val nativeVisionContent = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("type", "text")
+                    put("text", "Describe this\n@image:/tmp/native.png")
+                }
+            )
+            add(
+                buildJsonObject {
+                    put("type", "image_url")
+                    put(
+                        "image_url",
+                        buildJsonObject { put("url", "data:image/png;base64,AAAA") },
+                    )
+                }
+            )
+        }
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "image-user-4", role = "user", content = nativeVisionContent))
+        )
+
+        assertEquals("Describe this", handler.messages.value.single().content)
+        assertEquals(listOf("/tmp/native.png"), requested)
+    }
+
+    @Test
+    fun loadMessageHistory_keepsMalformedUnknownAndInlineImageDirectivesAsText() {
+        val requested = mutableListOf<String>()
+        handler.onPersistedUserImageRequested = { _, path -> requested += path }
+        val content = listOf(
+            "@image:relative.png",
+            "@image:`/tmp/unclosed.png",
+            "@image:/etc/passwd",
+            "mention @image:/tmp/inline.png here",
+        ).joinToString("\n")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "image-user-5", role = "user", content = JsonPrimitive(content)))
+        )
+
+        assertEquals(content, handler.messages.value.single().content)
+        assertTrue(requested.isEmpty())
+    }
+
+    @Test
+    fun loadMessageHistory_canRenderPathFreeUnavailableImageState() {
+        handler.onPersistedUserImageRequested = { messageId, path ->
+            handler.mutateMessage(messageId) { message ->
+                message.copy(
+                    attachments = message.attachments + Attachment(
+                        contentType = "image/png",
+                        content = "",
+                        fileName = path.substringAfterLast('/'),
+                        state = AttachmentState.FAILED,
+                        errorMessage = "Image unavailable on this connection",
+                    )
+                )
+            }
+        }
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "image-user-6",
+                    role = "user",
+                    content = JsonPrimitive("@image:/tmp/deleted.png"),
+                )
+            )
+        )
+
+        val message = handler.messages.value.single()
+        assertEquals("", message.content)
+        assertEquals(1, message.attachments.size)
+        assertEquals(AttachmentState.FAILED, message.attachments.single().state)
+        assertEquals("deleted.png", message.attachments.single().fileName)
+        assertFalse(message.attachments.single().errorMessage.orEmpty().contains("/tmp/"))
+    }
+
+    @Test
+    fun loadMessageHistory_coldResumeDispatchesPersistedImageOnlyOnceAcrossReloads() {
+        var requestCount = 0
+        handler.onPersistedUserImageRequested = { messageId, path ->
+            requestCount++
+            handler.mutateMessage(messageId) { message ->
+                message.copy(
+                    attachments = message.attachments + Attachment(
+                        contentType = "image/png",
+                        content = "",
+                        fileName = "resume.png",
+                        state = AttachmentState.FAILED,
+                        errorMessage = "Image unavailable on this connection",
+                        relayToken = path,
+                    )
+                )
+            }
+        }
+        val history = listOf(
+            MessageItem(
+                id = "image-user-cold",
+                role = "user",
+                content = JsonPrimitive("@image:/tmp/resume.png"),
+            )
+        )
+
+        handler.loadMessageHistory(history)
+        handler.loadMessageHistory(history)
+
+        val message = handler.messages.value.single()
+        assertEquals(1, requestCount)
+        assertEquals(1, message.attachments.size)
+        assertEquals(AttachmentState.FAILED, message.attachments.single().state)
+    }
+
+    @Test
+    fun loadMessageHistory_immediateReloadCarriesLocalImageWithoutDuplicateFetch() {
+        handler.addUserMessage(
+            ChatMessage(
+                id = "optimistic-image",
+                role = MessageRole.USER,
+                content = "What is this?",
+                timestamp = 1L,
+                attachments = listOf(
+                    Attachment(
+                        contentType = "image/png",
+                        content = "base64-pixels",
+                        fileName = "cat.png",
+                    )
+                ),
+            )
+        )
+        var requestCount = 0
+        handler.onPersistedUserImageRequested = { _, _ -> requestCount++ }
+        val history = listOf(
+            MessageItem(
+                id = "server-image",
+                role = "user",
+                content = JsonPrimitive("What is this?\n@image:/tmp/cat.png"),
+            )
+        )
+
+        handler.loadMessageHistory(history)
+        handler.loadMessageHistory(history)
+
+        val message = handler.messages.value.single()
+        assertEquals("server-image", message.id)
+        assertEquals("What is this?", message.content)
+        assertEquals(1, message.attachments.size)
+        assertEquals("base64-pixels", message.attachments.single().content)
+        assertEquals(0, requestCount)
     }
 
     // --- loadMessageHistory: outbound attachment preservation (GAP 1) ---
@@ -1594,6 +2017,20 @@ class ChatHandlerTest {
                         completedAt = 7L,
                     ),
                 ),
+                moaReferences = listOf(
+                    ChatTurnMoaReferenceCheckpoint(
+                        index = 1,
+                        count = 2,
+                        label = "advisor-a",
+                        text = "Recovered advice",
+                    ),
+                    ChatTurnMoaReferenceCheckpoint(
+                        index = 2,
+                        count = 2,
+                        label = "advisor-b",
+                        available = false,
+                    ),
+                ),
             ),
             turnStatus = "Running terminal",
             priorUserMessageCount = 1,
@@ -1612,8 +2049,105 @@ class ChatHandlerTest {
         assertFalse(restored.toolCalls[0].isComplete)
         assertTrue(restored.toolCalls[1].isComplete)
         assertEquals(true, restored.toolCalls[1].success)
+        assertEquals(listOf(1, 2), restored.moaReferences.map { it.index })
+        assertEquals("Recovered advice", restored.moaReferences.first().text)
+        assertFalse(restored.moaReferences.last().available)
         assertTrue(handler.isStreaming.value)
         assertEquals("Running terminal", handler.turnStatus.value)
+    }
+
+    @Test
+    fun onMoaReference_upsertsByCanonicalIndexAndResetsOnNewSequence() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(2, 2, "advisor-b", "Second"),
+        )
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(1, 2, "advisor-a", "First"),
+        )
+        assertEquals(listOf(1), handler.messages.value.single().moaReferences.map { it.index })
+
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(2, 2, "advisor-b", "Second"),
+        )
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(1, 2, "advisor-a", "First"),
+        )
+
+        assertEquals(listOf(1, 2), handler.messages.value.single().moaReferences.map { it.index })
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(2, 2, "advisor-b", "Updated second"),
+        )
+        assertEquals(
+            "Updated second",
+            handler.messages.value.single().moaReferences.single { it.index == 2 }.text,
+        )
+
+        handler.onMoaReference(
+            "assistant-live",
+            GatewayMoaReference(1, 2, "advisor-a", "New first"),
+        )
+
+        val reset = handler.messages.value.single().moaReferences
+        assertEquals(listOf(1), reset.map { it.index })
+        assertEquals("New first", reset.single().text)
+    }
+
+    @Test
+    fun loadMessageHistory_doesNotPersistMoaReferenceBlocks() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live",
+                role = MessageRole.ASSISTANT,
+                content = "Answer",
+                timestamp = 1L,
+                moaReferences = listOf(
+                    com.hermesandroid.relay.data.MoaReference(1, 1, "advisor", "Transient"),
+                ),
+            ),
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "assistant-live", role = "assistant", content = JsonPrimitive("Answer"))),
+        )
+
+        assertTrue(handler.messages.value.single().moaReferences.isEmpty())
+    }
+
+    @Test
+    fun loadMessageHistory_preservesMoaReferencesWhileMatchingTurnIsStillLive() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live",
+                role = MessageRole.ASSISTANT,
+                content = "Partial",
+                timestamp = 1L,
+                isStreaming = true,
+                moaReferences = listOf(
+                    com.hermesandroid.relay.data.MoaReference(1, 1, "advisor", "Transient"),
+                ),
+            ),
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "assistant-live", role = "assistant", content = JsonPrimitive("Partial"))),
+        )
+
+        assertEquals("Transient", handler.messages.value.single().moaReferences.single().text)
     }
 
     // --- Helper ---

@@ -30,6 +30,18 @@ import org.junit.Test
  * [ChatPayloadResult.droppedAttachments] — never a silent drop.
  */
 class HermesChatPayloadsTest {
+    @Test
+    fun `model route alias id is sent unchanged on every SSE payload`() {
+        val alias = "fast-route"
+        val session = buildSessionChatStreamPayload(message = "hi", modelOverride = alias)
+        val completion = buildChatCompletionsStreamPayload(message = "hi", modelOverride = alias)
+        val run = buildRunStreamPayload(message = "hi", modelOverride = alias)
+
+        assertEquals(alias, session.payload["model"]?.jsonPrimitive?.content)
+        assertEquals(alias, completion.payload["model"]?.jsonPrimitive?.content)
+        assertEquals(alias, run.payload["model"]?.jsonPrimitive?.content)
+    }
+
 
     private val json = Json { ignoreUnknownKeys = true }
 

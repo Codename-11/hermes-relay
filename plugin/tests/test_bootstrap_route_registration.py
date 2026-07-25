@@ -62,6 +62,7 @@ def _fake_upstream() -> dict:
     return {
         "web": web,
         "SessionDB": mock.MagicMock(),
+        "AsyncSessionDB": None,
         "MemoryStore": None,
         "load_config": mock.MagicMock(),
         "save_config": mock.MagicMock(),

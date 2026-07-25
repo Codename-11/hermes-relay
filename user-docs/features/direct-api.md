@@ -25,13 +25,16 @@ When it falls back, the app uses the Hermes `/api/sessions` REST API:
 
 ## Authentication
 
-If the Hermes server is configured with `API_SERVER_KEY`, the app sends:
+Current Hermes API-server deployments require a usable `API_SERVER_KEY` before
+the API server starts. The app sends that server-created value as:
 
 ```
 Authorization: Bearer <API_SERVER_KEY>
 ```
 
-The API key field in Settings is technically optional because Hermes can run an open local API server. For phone-reachable LAN, VPN, or public deployments, set `API_SERVER_KEY` and enter the same value in Android.
+The direct API fallback itself is optional. If you enable it, generate a strong
+server-side key (for example, `openssl rand -hex 32`; upstream requires at least
+16 characters) and enter the same value in Android.
 
 When provided, the key is stored in Android's `EncryptedSharedPreferences` using AES-256-GCM encryption backed by the Android Keystore.
 

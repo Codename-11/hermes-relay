@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicLong
  * network-aware switching" (2026-04-19).
  *
  * Uses [MockWebServer] to stand up real loopback sockets so the
- * OkHttp → HEAD /health path exercises the production code unchanged.
+ * OkHttp → GET /health path exercises the production code unchanged.
  * A test-local mutable clock drives cache-TTL assertions deterministically
  * without `Thread.sleep`.
  */
@@ -393,6 +393,30 @@ class EndpointResolverTest {
 
         assertEquals(candidate, winner)
         assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+    }
+
+    @Test
+    fun apiHealthProbe_usesGetWhenServerRejectsHead() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.path != "/health" -> MockResponse().setResponseCode(404)
+                request.method == "HEAD" -> MockResponse().setResponseCode(405)
+                request.method == "GET" -> MockResponse().setResponseCode(200)
+                else -> MockResponse().setResponseCode(405)
+            }
+        }
+        val apiOnly = EndpointCandidate(
+            role = "tailscale",
+            api = ApiEndpoint(reachableServer.hostName, reachableServer.port),
+        )
+
+        val winner = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            .resolve(listOf(apiOnly))
+
+        assertEquals(apiOnly, winner)
+        val request = reachableServer.takeRequest(1, TimeUnit.SECONDS)
+        assertEquals("GET", request?.method)
+        assertEquals("/health", request?.path)
     }
 
     // ---------------------------------------------------------------

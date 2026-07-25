@@ -37,6 +37,7 @@ class RelayInfoRouteTests(AioHTTPTestCase):
             "pending_commands",
             "media_entry_count",
             "health",
+            "gateway_heartbeat",
         }
         self.assertTrue(required.issubset(set(body.keys())))
 
@@ -46,6 +47,13 @@ class RelayInfoRouteTests(AioHTTPTestCase):
         self.assertEqual(body["plugin_version"], body["version"])
         self.assertEqual(body["protocol_version"], 1)
         self.assertIn("profiles", body["capabilities"])
+        self.assertLessEqual(
+            set(body["gateway_heartbeat"]),
+            {"status", "supported", "age_seconds"},
+        )
+        self.assertNotIn("pid", body["gateway_heartbeat"])
+        self.assertNotIn("path", body["gateway_heartbeat"])
+        self.assertNotIn("updated_at", body["gateway_heartbeat"])
 
         for counter in (
             "uptime_seconds",

@@ -1,5 +1,9 @@
 package com.hermesandroid.relay.ui.onboarding
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,11 +29,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
@@ -59,6 +65,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -71,13 +78,42 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.permissions.AppPermissionStatusProbe
 import com.hermesandroid.relay.ui.components.ConnectionWizard
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 
-/** Page identifiers for dynamic onboarding flow. */
-private enum class OnboardingPage { Welcome, Chat, Manage, Power, Connect }
+/** Page identifiers for the standard-first onboarding flow. */
+internal enum class OnboardingPage { Welcome, Chat, Manage, Power, Connect, Permissions }
+
+internal val standardOnboardingPages = listOf(
+    OnboardingPage.Welcome,
+    OnboardingPage.Chat,
+    OnboardingPage.Manage,
+    OnboardingPage.Power,
+    OnboardingPage.Connect,
+    OnboardingPage.Permissions,
+)
+
+internal enum class OnboardingNotificationAction {
+    RequestPermission,
+    Finish,
+}
+
+internal fun onboardingNotificationAction(
+    sdkInt: Int,
+    notificationsPermitted: Boolean,
+): OnboardingNotificationAction {
+    return if (
+        sdkInt >= Build.VERSION_CODES.TIRAMISU &&
+        !notificationsPermitted
+    ) {
+        OnboardingNotificationAction.RequestPermission
+    } else {
+        OnboardingNotificationAction.Finish
+    }
+}
 
 private val OnboardingAccent = Color(0xFF7B55F6)
 
@@ -125,21 +161,23 @@ fun OnboardingScreen(
      */
     onTryDemo: () -> Unit = {},
 ) {
-    val pages = remember {
-        buildList {
-            add(OnboardingPage.Welcome)
-            add(OnboardingPage.Chat)
-            add(OnboardingPage.Manage)
-            add(OnboardingPage.Power)
-            add(OnboardingPage.Connect)
-        }
-    }
+    val pages = standardOnboardingPages
     val pageCount = pages.size
     val lastPage = pageCount - 1
 
     val pagerState = rememberPagerState(pageCount = { pageCount })
     val coroutineScope = rememberCoroutineScope()
     var showSkipConfirm by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    var notificationsPermitted by remember {
+        mutableStateOf(AppPermissionStatusProbe.snapshot(context).notificationsPermitted)
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        notificationsPermitted =
+            granted || AppPermissionStatusProbe.snapshot(context).notificationsPermitted
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -174,7 +212,11 @@ fun OnboardingScreen(
 
             // The selected welcome frame has no toolbar. Later information
             // pages keep quiet navigation without reserving space above it.
-            if (currentPage in 1 until lastPage) {
+            if (
+                currentPageType == OnboardingPage.Chat ||
+                currentPageType == OnboardingPage.Manage ||
+                currentPageType == OnboardingPage.Power
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -201,7 +243,13 @@ fun OnboardingScreen(
             // Pager content
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                // Connect and permission setup advance only through their
+                // explicit actions. This keeps the post-connect setup page
+                // unreachable until the wizard reports a successful save.
+                userScrollEnabled =
+                    currentPageType != OnboardingPage.Connect &&
+                    currentPageType != OnboardingPage.Permissions,
             ) { pageIndex ->
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -216,10 +264,31 @@ fun OnboardingScreen(
                         )
                         OnboardingPage.Connect -> ConnectPage(
                             connectionViewModel = connectionViewModel,
-                            onComplete = onComplete,
+                            onComplete = {
+                                notificationsPermitted =
+                                    AppPermissionStatusProbe.snapshot(context).notificationsPermitted
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(
+                                        pages.indexOf(OnboardingPage.Permissions),
+                                    )
+                                }
+                            },
                             onManageSignIn = onManageSignIn,
                             onSkip = { showSkipConfirm = true },
                             onTryDemo = onTryDemo,
+                        )
+                        OnboardingPage.Permissions -> PermissionSetupPage(
+                            notificationAction = onboardingNotificationAction(
+                                sdkInt = Build.VERSION.SDK_INT,
+                                notificationsPermitted = notificationsPermitted,
+                            ),
+                            onEnableNotifications = {
+                                notificationPermissionLauncher.launch(
+                                    Manifest.permission.POST_NOTIFICATIONS,
+                                )
+                            },
+                            onReviewPermissions = onOpenPermissions,
+                            onFinish = onComplete,
                         )
                     }
                 }
@@ -227,7 +296,10 @@ fun OnboardingScreen(
 
             // Bottom navigation only on informational pages — the wizard
             // owns its own back/pair affordances.
-            if (currentPageType != OnboardingPage.Connect) {
+            if (
+                currentPageType != OnboardingPage.Connect &&
+                currentPageType != OnboardingPage.Permissions
+            ) {
                 val compactHeight = LocalConfiguration.current.screenHeightDp < 620
                 Column(
                     modifier = Modifier
@@ -622,6 +694,80 @@ private fun PowerToolsPage(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(stringResource(R.string.onboarding_review_permissions))
+            }
+        }
+    }
+}
+
+@Composable
+internal fun PermissionSetupPage(
+    notificationAction: OnboardingNotificationAction,
+    onEnableNotifications: () -> Unit,
+    onReviewPermissions: () -> Unit,
+    onFinish: () -> Unit,
+) {
+    OnboardingPage(
+        icon = Icons.Filled.Security,
+        title = stringResource(R.string.onboarding_finish_setup_title),
+        description = stringResource(R.string.onboarding_finish_setup_description),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            SetupPathSummary(
+                icon = Icons.Filled.CheckCircle,
+                label = stringResource(R.string.perms_chat_and_manage),
+                description = stringResource(R.string.onboarding_chat_manage_ready),
+            )
+            SetupPathSummary(
+                icon = Icons.Filled.Notifications,
+                label = stringResource(R.string.onboarding_chat_alerts),
+                description = if (
+                    notificationAction == OnboardingNotificationAction.Finish
+                ) {
+                    stringResource(R.string.onboarding_chat_alerts_ready)
+                } else {
+                    stringResource(R.string.onboarding_chat_alerts_description)
+                },
+            )
+            SetupPathSummary(
+                icon = Icons.Filled.Tune,
+                label = stringResource(R.string.onboarding_optional_features),
+                description = stringResource(R.string.onboarding_optional_features_description),
+            )
+
+            OutlinedButton(
+                onClick = onReviewPermissions,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Security,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(stringResource(R.string.onboarding_review_optional_permissions))
+            }
+
+            Spacer(Modifier.height(2.dp))
+
+            if (notificationAction == OnboardingNotificationAction.RequestPermission) {
+                GradientOnboardingButton(
+                    label = stringResource(R.string.onboarding_enable_chat_alerts),
+                    onClick = onEnableNotifications,
+                )
+                TextButton(
+                    onClick = onFinish,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.onboarding_not_now))
+                }
+            } else {
+                GradientOnboardingButton(
+                    label = stringResource(R.string.onboarding_finish),
+                    onClick = onFinish,
+                )
             }
         }
     }

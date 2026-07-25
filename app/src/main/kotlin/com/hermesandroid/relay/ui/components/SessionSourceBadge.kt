@@ -19,15 +19,15 @@ data class SourceBadge(val label: String, val color: Color)
  * The app's own chats — no badge (they're "your" conversations from this app /
  * desktop / API, not a distinct gateway lane).
  */
-private val OWN_CHAT_SOURCES = setOf("tui", "api_server", "cli", "local", "")
+private val OWN_CHAT_SOURCES = setOf("tui", "api_server", "cli", "local", "webui", "")
 
 /**
  * Map a session `source` to a drawer badge, or null for the app's own chats and
  * the phone **Thread** (which renders its own thread-spool chip). External
  * gateways — discord / telegram / slack / cron / webhook / web / … — each get a
  * small colored chip so the drawer reads like the desktop's per-channel tags.
- * Confirmed live sources: tui, cli, api_server, web, discord, telegram, cron,
- * webhook, phone.
+ * Confirmed live sources: tui, cli, api_server, webui, web, discord, telegram,
+ * cron, webhook, phone.
  */
 fun sourceBadge(source: String?): SourceBadge? {
     val s = source?.trim()?.lowercase() ?: return null

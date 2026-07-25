@@ -8,8 +8,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [Server 1.4.3] - 2026-07-22
+
+### Added
+
+- **Relay diagnostics describe upstream Gateway compatibility.** Doctor and `/relay/info` report optional Gateway health, configuration-route, and capability signals so clients can distinguish an older upstream install from a Relay failure.
+
+### Fixed
+
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.
+- **Plugin bootstrap work no longer blocks the Gateway event loop.** Database initialization and compatibility-state inspection run off the async request path while preserving older upstream bootstrap behavior.
 - **Starting Relay no longer terminates a running Hermes gateway on Windows.** Profile discovery now checks gateway PIDs through non-signalling process APIs, including during periodic rescans.
+
+## [Android 1.5.0] - 2026-07-25
+
+### Added
+
+- **Voice settings are organized around Standard and Realtime paths.** Provider, model, and voice choices use a cleaner card layout with upstream-aware discovery, useful descriptions, inline previews, waveform feedback, loading skeletons, and an expandable scrolling voice browser.
+- **Standard Hermes speech streams while replies are generated.** Android plays completed speech segments as they arrive, interrupts prior playback before starting another preview or reply, and stops audio when leaving voice mode.
+- **Manage and diagnostics expose more upstream Gateway controls.** Android consumes health hints, follows canonical redirects, compresses larger RPC payloads, scopes diagnostics by profile, and surfaces compatibility information without requiring Relay-only behavior.
+- **Chat shows richer upstream state and media.** One-turn model selection, approval policies, advisor progress, queued-recovery and project labels, collapsible attachments, persisted images, interim Gateway events, and a theme-aware image-generation animation make active work easier to follow.
+- **The Agent Passport makes the active agent controllable.** The chat drawer now combines live connection and session context with profile switching, personality, model, reasoning, approval, and speed controls in one focused surface.
+- **Android onboarding finishes with a permission setup step.** After connecting, users can enable background chat alerts with one deliberate Android prompt, review optional feature permissions individually, or continue immediately without granting phone access.
+- **Image generation stays visible when upstream tool progress is hidden.** A paired Relay can expose read-only image-tool activity from Hermes session state so Android shows and completes its existing generation animation during Standard Gateway turns; native Gateway lifecycle events remain authoritative and Relay remains optional.
+- **Background work stays actionable.** User-started turns remain protected until every active session settles, while privacy-safe notifications reopen the correct conversation for approvals, questions, elevated permissions, and secure responses.
+
+### Fixed
+
+- **Voice settings and active-turn correction remain usable across supported languages.** New voice controls are localized and correction copy accurately describes the turn being replaced.
+- **Chat reconnects preserve the running Gateway turn without duplicating it.** Android reactivates the original live session after a socket loss, avoids resubmitting a prompt when its acknowledgement was lost, and de-duplicates session rows before they reach the drawer.
+- **Relay pairing preserves Tailscale and other fallback routes.** Adding Relay to an existing Standard connection now keeps every signed QR route, restores older per-device endpoints hidden by the connection upgrade, and gives remote Dashboard routes their API fallback. When a host-scoped Dashboard sign-in is still required, Chat shows the route-specific sign-in action instead of loading indefinitely.
+- **Remote routes move every Hermes surface together.** Android uses `GET /health` instead of misclassifying the API server's `405 Method Not Allowed` response to `HEAD`, and the selected Tailscale route now carries Dashboard/Gateway, sessions, Manage, and Standard Voice with API and Relay instead of leaving them pinned to the saved LAN host. Manage also distinguishes host-side Nous provider authentication from Dashboard sign-in.
+- **Hosted Manage and direct-chat compatibility stay bounded and secure.** OAuth state remains tied to the selected dashboard, inline image memory is capped, and session reset and queued-recovery boundaries follow upstream contracts.
+- **Dashboard sign-in is secure and route-aware.** Browser-based authorization is scoped and serialized to the selected host, while cold start no longer activates a temporary localhost API fallback or reports a missing key before stored connection state is ready.
+- **Background and promoted voice work retain their owning chat rows.** Completing an initial spoken handoff no longer removes an otherwise empty assistant bubble that still owns a running task, and concurrent turns remain reachable without requiring an always-on idle connection.
+- **Self-hosted rendering is safer.** Android accepts deliberately installed user certificate authorities without bypassing chain, hostname, or Relay-pin verification, and malformed syntax-highlighting ranges no longer crash Markdown rendering.
+- **Developer Options reflect current product behavior.** The obsolete Relay feature toggle is removed, version-tap unlock and explicit relock persist correctly, and backup, import, reset, and completion messages now report their actual results.
 
 ## [1.4.9] - 2026-07-19
 

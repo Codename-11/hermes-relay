@@ -115,6 +115,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
+import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
@@ -195,8 +196,11 @@ import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
 import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
+import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.SubagentLane
 import com.hermesandroid.relay.ui.components.ToolProgressCard
+import com.hermesandroid.relay.ui.components.isVisibleForToolDisplay
+import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
@@ -223,6 +227,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
+
+internal fun resolveChatHeaderSubtitle(
+    isStreaming: Boolean,
+    statusText: String,
+    projectName: String?,
+    personalityName: String?,
+    modelName: String?,
+): String = if (isStreaming) {
+    statusText
+} else {
+    listOfNotNull(
+        projectName?.takeIf { it.isNotBlank() },
+        personalityName?.takeIf { it.isNotBlank() },
+        modelName?.takeIf { it.isNotBlank() },
+    ).joinToString(" \u00B7 ").ifBlank { statusText }
+}
+
 /**
  * A same-author run breaks into a new visual group once the gap to the
  * neighboring message exceeds this — so a conversation resumed after a pause
@@ -524,6 +545,7 @@ fun ChatScreen(
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val standardVoiceSignInRouteHint by
         connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
+    val dashboardRouteMovedHint by connectionViewModel.dashboardRouteMovedHint.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
@@ -551,11 +573,12 @@ fun ChatScreen(
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
-    val availableModels by chatViewModel.availableModels.collectAsState()
+    val apiModelOptions by chatViewModel.apiModelOptions.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
     val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
+    val gatewayProjectName by chatViewModel.gatewayProjectName.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
     val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
@@ -587,7 +610,7 @@ fun ChatScreen(
     val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
     // Whether the NEXT turn would ride the gateway transport — gates the
     // "Edit & resend" menu entry (conversation rewind needs the gateway).
-    // Per-turn steerability comes from [steerableTurn], which also covers
+    // Per-turn correction availability comes from [steerableTurn], which also covers
     // the preflight-SSE-fallback window.
     val streamingEndpointPref by connectionViewModel.streamingEndpoint.collectAsState()
     val chatServerCapabilities by connectionViewModel.serverCapabilities.collectAsState()
@@ -640,9 +663,24 @@ fun ChatScreen(
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
+    val imageGenerationStyle by connectionViewModel.imageGenerationStyle.collectAsState()
     val thinkingIndicatorStyle by connectionViewModel.thinkingIndicatorStyle.collectAsState()
     val thinkingMatrixPattern by connectionViewModel.thinkingMatrixPattern.collectAsState()
     val thinkingMatrixColor by connectionViewModel.thinkingMatrixColor.collectAsState()
+    val imageGenerationOrdinals = remember(messages) {
+        var nextOrdinal = 0
+        buildMap {
+            messages.forEach { message ->
+                val generationCount = message.toolCalls.count {
+                    it.name.trim().equals("image_generate", ignoreCase = true)
+                }
+                if (generationCount > 0) {
+                    put(message.uiKey, nextOrdinal + generationCount - 1)
+                    nextOrdinal += generationCount
+                }
+            }
+        }
+    }
     var ambientMode by remember { mutableStateOf(false) } // clean text-flow mode, hides chat
     // Clean-mode discoverability hint: a persistent pill shown ONLY on the
     // empty / new-chat view (no messages) — it teaches the long-press entry
@@ -1583,12 +1621,16 @@ fun ChatScreen(
                     // yet (server config still loading), fall back to the plain
                     // connection status \u2014 never the literal "None"/"Default"
                     // personality label.
-                    val subtitleText = when {
-                        !headerChatReady -> statusText
-                        else -> listOfNotNull(
-                            nonDefaultPersonality,
-                            modelName?.takeIf { it.isNotBlank() },
-                        ).joinToString(" \u00B7 ").ifBlank { statusText }
+                    val subtitleText = if (!headerChatReady) {
+                        statusText
+                    } else {
+                        resolveChatHeaderSubtitle(
+                            isStreaming = isStreaming,
+                            statusText = statusText,
+                            projectName = gatewayProjectName,
+                            personalityName = nonDefaultPersonality,
+                            modelName = modelName,
+                        )
                     }
                     val subtitleColor = if (headerChatReady) {
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -1721,6 +1763,10 @@ fun ChatScreen(
                                             transitionSpec = { loadedContentTransform() },
                                             label = "chatHeaderSubtitle",
                                         ) { line ->
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
                                             Text(
                                                 text = line,
                                                 style = MaterialTheme.typography.bodySmall,
@@ -1728,6 +1774,13 @@ fun ChatScreen(
                                                 maxLines = 1,
                                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                             )
+                                            if (isStreaming && animationEnabled) {
+                                                StreamingDots(
+                                                    color = subtitleColor,
+                                                    modifier = Modifier.clearAndSetSemantics { },
+                                                )
+                                            }
+                                        }
                                         }
                                     }
                                 }
@@ -1929,6 +1982,9 @@ fun ChatScreen(
                         chatReady = chatReady,
                         isLoadingHistory = isLoadingHistory,
                         isLoadingSessions = isLoadingSessions,
+                        gatewayAvailability = chatGatewayAvailability,
+                        dashboardRouteMovedHint = dashboardRouteMovedHint,
+                        onNavigateToManage = onNavigateToManage,
                         onNavigateToConnections = onNavigateToConnections,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -2243,6 +2299,9 @@ fun ChatScreen(
                                     isLastInGroup = isLastInGroup,
                                     retainStreamingLayout = retainLiveLayout,
                                     recoveringAnswer = recoveringAnswer,
+                                    imageGenerationStylePreference = imageGenerationStyle,
+                                    imageGenerationRotationIndex =
+                                        imageGenerationOrdinals[message.uiKey] ?: 0,
                                     onAttachmentRetry = { msgId, idx ->
                                         chatViewModel.manualFetchAttachment(msgId, idx)
                                     },
@@ -2315,7 +2374,7 @@ fun ChatScreen(
                                 )
                             }
 
-                            // Steered sends live inside a server-side tool
+                            // Legacy steered sends live inside a server-side tool
                             // result, not a user message — flag the local
                             // bubble so the scrollback explains itself.
                             if (message.role == MessageRole.USER && message.id.startsWith("steer-")) {
@@ -2332,12 +2391,21 @@ fun ChatScreen(
                                 }
                             }
 
-                            if (toolDisplay != "off" && !hasBackgroundTask) {
+                            if (!hasBackgroundTask) {
                                 // Subagent children (taskIndex != null) group
                                 // into lanes after the top-level tool cards;
                                 // the null group renders exactly as before.
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
                                 laneGroups[null]?.forEach { toolCall ->
+                                    // Image generation renders inside MessageBubble
+                                    // so the progress canvas and final media share
+                                    // one stable Surface and transition in place.
+                                    if (toolCall.showsImageGenerationPlaceholder()) {
+                                        return@forEach
+                                    }
+                                    if (!toolCall.isVisibleForToolDisplay(toolDisplay)) {
+                                        return@forEach
+                                    }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     when (toolDisplay) {
                                         "compact" -> CompactToolCall(toolCall = toolCall)
@@ -2347,12 +2415,14 @@ fun ChatScreen(
                                         )
                                     }
                                 }
-                                laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    SubagentLane(
-                                        taskIndex = taskIndex,
-                                        calls = laneGroups.getValue(taskIndex),
-                                    )
+                                if (toolDisplay != "off") {
+                                    laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        SubagentLane(
+                                            taskIndex = taskIndex,
+                                            calls = laneGroups.getValue(taskIndex),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2680,7 +2750,7 @@ fun ChatScreen(
             }
 
             // Input bar — pill field with ONE trailing slot morphing
-            // Send / Voice / Stop / Steer / Queue. "+" taps the file picker,
+            // Send / Voice / Stop / Correct / Queue. "+" taps the file picker,
             // long-press opens the CommandPalette (the dedicated "/" button
             // is gone — typing "/" still surfaces InlineAutocomplete).
             val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()
@@ -2707,13 +2777,16 @@ fun ChatScreen(
             val editBusyMessage = stringResource(R.string.chat_edit_busy_snackbar)
             val stoppedMessage = stringResource(R.string.chat_stopped_snackbar)
             val attachmentPlaceholder = stringResource(R.string.chat_attachment_placeholder)
-            val sseModelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
-                (availableModels.mapNotNull(AgentDisplay::displayModelName) +
-                    agentProfiles.mapNotNull { AgentDisplay.displayModelName(it.model) } +
-                    listOfNotNull(AgentDisplay.displayModelName(selectedModelOverride)))
-                    .distinct()
+            val sseModelOptions = remember(apiModelOptions, agentProfiles, selectedModelOverride) {
+                (apiModelOptions +
+                    agentProfiles.mapNotNull { profile ->
+                        AgentDisplay.requestModelName(profile.model)?.let { ApiModelOption(it) }
+                    } +
+                    listOfNotNull(AgentDisplay.requestModelName(selectedModelOverride)?.let { ApiModelOption(it) }))
+                    .distinctBy { it.id }
             }
-            val currentModelForInput = AgentDisplay.displayModelName(selectedModelOverride)
+            val currentModelForInput = apiModelOptions.firstOrNull { it.id == selectedModelOverride }?.id
+                ?: AgentDisplay.displayModelName(selectedModelOverride)
                 ?: AgentDisplay.displayModelName(gatewayCurrentModel)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
                 ?: AgentDisplay.displayModelName(serverModelName)
@@ -2781,13 +2854,26 @@ fun ChatScreen(
                                     )
                                 }
                             }
+                            val providerModelIds = modelProviders.flatMap { it.models }.toSet()
+                            sseModelOptions.filter { it.id !in providerModelIds }.forEach { model ->
+                                add(
+                                    ChatInputPickerOption(
+                                        label = AgentDisplay.displayModelName(model.id) ?: model.id,
+                                        value = model.id,
+                                        group = "Routes",
+                                        secondary = model.routeDetail,
+                                        selected = selectedModelOverride == model.id,
+                                    ),
+                                )
+                            }
                         } else {
                             sseModelOptions.forEach { model ->
                                 add(
                                     ChatInputPickerOption(
-                                        label = model,
-                                        value = model,
-                                        selected = selectedModelOverride == model,
+                                        label = AgentDisplay.displayModelName(model.id) ?: model.id,
+                                        value = model.id,
+                                        secondary = model.routeDetail,
+                                        selected = selectedModelOverride == model.id,
                                     ),
                                 )
                             }
@@ -2932,7 +3018,11 @@ fun ChatScreen(
                 isDarkTheme = isDarkTheme,
                 modelControl = modelControl,
                 onModelOptionSelected = { option ->
-                    chatViewModel.selectModel(option.value, option.provider)
+                    if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
+                        option.value?.let(chatViewModel::selectApiModel)
+                    } else {
+                        chatViewModel.selectModel(option.value, option.provider)
+                    }
                 },
                 effortControl = effortControl,
                 onEffortOptionSelected = { option ->
@@ -2949,7 +3039,11 @@ fun ChatScreen(
                     onRefresh = { chatViewModel.refreshModelOptions(refresh = true) },
                     onSelect = { option ->
                         showModelSheet = false
-                        chatViewModel.selectModel(option.value, option.provider)
+                        if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
+                            option.value?.let(chatViewModel::selectApiModel)
+                        } else {
+                            chatViewModel.selectModel(option.value, option.provider)
+                        }
                     },
                     onDismiss = { showModelSheet = false },
                 )
@@ -3226,6 +3320,9 @@ private fun ChatColdStartLoadingState(
     chatReady: Boolean,
     isLoadingHistory: Boolean,
     isLoadingSessions: Boolean,
+    gatewayAvailability: GatewayAvailability,
+    dashboardRouteMovedHint: String?,
+    onNavigateToManage: () -> Unit,
     onNavigateToConnections: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -3288,14 +3385,51 @@ private fun ChatColdStartLoadingState(
             )
         }
 
-        ChatLoadingCommandPanel(
-            commands = commands,
-            onNavigateToConnections = onNavigateToConnections,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-        )
+        val dashboardSignInRequired =
+            gatewayAvailability == GatewayAvailability.SignInRequired && !apiReachable
+        if (dashboardSignInRequired) {
+            ElevatedCard(
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                ),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.dashboard_signin_required_title),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = dashboardRouteMovedHint?.let { route ->
+                            stringResource(R.string.dashboard_signin_route_hint, route)
+                        } ?: stringResource(R.string.chat_settings_gateway_needs_signin_desc),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = onNavigateToManage,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.voice_settings_sign_in_via_manage))
+                    }
+                }
+            }
+        } else {
+            ChatLoadingCommandPanel(
+                commands = commands,
+                onNavigateToConnections = onNavigateToConnections,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+            )
+        }
     }
 }
 
