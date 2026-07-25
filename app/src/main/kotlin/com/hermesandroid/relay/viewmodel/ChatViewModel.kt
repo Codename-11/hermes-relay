@@ -49,6 +49,7 @@ import com.hermesandroid.relay.network.upstream.GatewayBackgroundTurnCompletion
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayCompressResult
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
+import com.hermesandroid.relay.network.upstream.GatewayEventMapper
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
 import com.hermesandroid.relay.network.upstream.GatewayProcess
@@ -1341,8 +1342,16 @@ class ChatViewModel : ViewModel() {
                     ?.content
                     ?.takeIf { it.isNotBlank() }
                 if (canWriteTranscript) {
-                    finalizeTurnSideEffects(handler, messageId)
-                    AppAnalytics.onStreamComplete(inputTokens, outputTokens)
+                    val failed = handler.messages.value
+                        .lastOrNull { it.id == messageId }
+                        ?.badges
+                        ?.contains("Error") == true
+                    if (failed) {
+                        finalizeFailedTurnSideEffects(handler, messageId)
+                    } else {
+                        finalizeTurnSideEffects(handler, messageId)
+                        AppAnalytics.onStreamComplete(inputTokens, outputTokens)
+                    }
                     scheduleGatewayHistoryReconcile(
                         storedSessionId = storedSessionId,
                         expectedAssistantText = expectedText,
@@ -1400,7 +1409,11 @@ class ChatViewModel : ViewModel() {
             onStatusUpdate = { kind, text ->
                 if (acceptsEvent()) {
                     handler.setTurnStatus(text, kind)
-                    if (text.trimStart().startsWith("❌")) handler.markError(messageId)
+                    if (kind == GatewayEventMapper.ERROR_STATUS_KIND ||
+                        text.trimStart().startsWith("❌")
+                    ) {
+                        handler.markError(messageId)
+                    }
                 }
             },
             onStatusClear = { kind ->
@@ -4332,17 +4345,38 @@ class ChatViewModel : ViewModel() {
                 recovery?.handle?.detach()
                 return true
             }
+            val retainedFailure = recovery?.inflight?.takeIf {
+                !recovery.running &&
+                    (it.status == GatewayEventMapper.ERROR_STATUS_KIND || !it.error.isNullOrBlank())
+            }
+            if (retainedFailure != null) {
+                val visibleText = retainedFailure.assistant.ifBlank {
+                    "Error: ${retainedFailure.error ?: "Turn failed"}"
+                }
+                handler.restoreInFlightTurn(
+                    checkpoint = checkpoint,
+                    upstreamAssistantText = visibleText,
+                )
+                finalizeFailedTurnSideEffects(handler, checkpoint.assistant.id)
+                refreshSessions()
+                scheduleTitleReconcile(sessionId)
+                drainQueue()
+                gatewayProcessController.sessionReady(sessionId)
+                return true
+            }
             if (recovery?.hasPendingWork == true && recovery.handle != null) {
                 activeStream = recovery.handle
                 activeStreamIsGateway = true
                 activeTurnCheckpointSeed?.liveSessionId = recovery.liveSessionId
-                if (recovery.running) {
+                if (recovery.running || recovery.autoContinue != null) {
                     handler.restoreInFlightTurn(
                         checkpoint = checkpoint,
                         upstreamAssistantText = recovery.inflight?.assistant,
                     )
                     handler.setTurnStatus(
-                        if (recovery.queued != null) {
+                        if (recovery.autoContinue != null) {
+                            "Resuming interrupted turn…"
+                        } else if (recovery.queued != null) {
                             "Reconnected — Hermes is working · queued: “${queuedPromptPreview(recovery.queued.user)}”"
                         } else {
                             checkpoint.turnStatus?.takeIf { it.isNotBlank() }
@@ -4393,6 +4427,12 @@ class ChatViewModel : ViewModel() {
             onTextDelta = { delta ->
                 if (owns()) handler.onTextDelta(messageId, delta)
             },
+            onInterimReconciled = { text ->
+                if (owns()) {
+                    handler.replaceMessageContent(messageId, text)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
             onThinkingDelta = { delta ->
                 if (owns()) handler.onThinkingDelta(messageId, delta)
             },
@@ -4430,7 +4470,16 @@ class ChatViewModel : ViewModel() {
             onReconcileRequired = { },
             onComplete = {
                 if (owns()) {
-                    finalizeTurnSideEffects(handler, messageId)
+                    cancelAnswerRecovery(settleUi = false)
+                    val failed = handler.messages.value
+                        .lastOrNull { it.id == messageId }
+                        ?.badges
+                        ?.contains("Error") == true
+                    if (failed) {
+                        finalizeFailedTurnSideEffects(handler, messageId)
+                    } else {
+                        finalizeTurnSideEffects(handler, messageId)
+                    }
                     if (!queuedSuccessorPending.get()) {
                         val expectedSessionId = checkpoint.sessionId
                         viewModelScope.launch {
@@ -4499,7 +4548,11 @@ class ChatViewModel : ViewModel() {
             onStatusUpdate = { kind, text ->
                 if (owns()) {
                     handler.setTurnStatus(text, kind)
-                    if (text.trimStart().startsWith("❌")) handler.markError(messageId)
+                    if (kind == GatewayEventMapper.ERROR_STATUS_KIND ||
+                        text.trimStart().startsWith("❌")
+                    ) {
+                        handler.markError(messageId)
+                    }
                 }
             },
             onStatusClear = { kind ->
@@ -4611,6 +4664,18 @@ class ChatViewModel : ViewModel() {
         // /return_to_hermes dispatch's respond()). See BridgeRunTracker
         // KDoc for the full contract.
         com.hermesandroid.relay.bridge.BridgeRunTracker.notifyRunCompleted()
+    }
+
+    /** Settle a terminal server failure without success analytics or notification side effects. */
+    private fun finalizeFailedTurnSideEffects(handler: ChatHandler, messageId: String) {
+        handler.onStreamComplete(messageId)
+        handler.markError(messageId)
+        clearTurnCheckpoint()
+        activeStream = null
+        _steerableTurn.value = false
+        _steerNotice.value = null
+        clearPendingAsk(approvalStamp = "Resolved")
+        AppAnalytics.onStreamError()
     }
 
     /**
@@ -5826,6 +5891,7 @@ class ChatViewModel : ViewModel() {
         // but updates when the server sends message.started with its own ID.
         var currentMessageId = assistantMessageId
         var gatewayInterimSealedCurrentMessage = false
+        var gatewayInterimMessageId: String? = null
 
         // The SSE endpoint this turn actually dispatched on (null on a gateway
         // dispatch) — set by dispatchSse below. onErrorCb keys the dropped-
@@ -5924,7 +5990,17 @@ class ChatViewModel : ViewModel() {
                 handler.onTextDelta(currentMessageId, text)
             }
             handler.onTurnComplete(currentMessageId)
+            gatewayInterimMessageId = currentMessageId
             gatewayInterimSealedCurrentMessage = true
+            scheduleCheckpointWrite(immediate = true)
+        }
+        val onInterimReconciledCb = { text: String ->
+            streamDeltas.flushNow()
+            val interimId = gatewayInterimMessageId ?: currentMessageId
+            handler.reconcileInterimMessage(interimId, currentMessageId, text)
+            currentMessageId = interimId
+            gatewayInterimSealedCurrentMessage = false
+            updateTurnCheckpointAssistantId(interimId)
             scheduleCheckpointWrite(immediate = true)
         }
         val observedImageToolStates = mutableMapOf<String, String>()
@@ -6017,8 +6093,16 @@ class ChatViewModel : ViewModel() {
             cancelAnswerRecovery(settleUi = false)
             val completedTransport = dispatchedSseEndpoint
                 ?: if (activeStreamIsGateway) "gateway" else streamingEndpoint
-            finalizeTurnSideEffects(handler, currentMessageId)
-            AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
+            val turnErrored = handler.messages.value
+                .lastOrNull { it.id == currentMessageId }
+                ?.badges
+                ?.contains("Error") == true
+            if (turnErrored) {
+                finalizeFailedTurnSideEffects(handler, currentMessageId)
+            } else {
+                finalizeTurnSideEffects(handler, currentMessageId)
+                AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
+            }
 
             // Command catalog rides the now-live socket after the first real
             // gateway turn — never a cold /api/ws open at composition.
@@ -6048,9 +6132,6 @@ class ChatViewModel : ViewModel() {
             // message stays, the assistant error vanishes — the disappearing-reply
             // regression). Skip the message reconcile for errored turns — keep the
             // local error visible — but still refresh the drawer + drain the queue.
-            val turnErrored = handler.messages.value
-                .lastOrNull { it.id == currentMessageId }
-                ?.badges?.contains("Error") == true
             if (sid != null && (completedTransport == "sessions" || completedTransport == "gateway")) {
                 viewModelScope.launch {
                     if (!turnErrored && shouldReloadHistoryAfterSuccessfulTurn(
@@ -6480,6 +6561,7 @@ class ChatViewModel : ViewModel() {
                         onStart = { },
                         onTextDelta = onTextDeltaCb,
                         onInterimMessage = onInterimMessageCb,
+                        onInterimReconciled = onInterimReconciledCb,
                         onThinkingDelta = onThinkingDeltaCb,
                         onToolCallStart = onToolCallStartCb,
                         onToolCallDone = onToolCallDoneCb,
@@ -6523,7 +6605,9 @@ class ChatViewModel : ViewModel() {
                             // The server prefixes terminal failures with ❌ —
                             // stamp the turn so a failed reply doesn't read as
                             // a normal answer.
-                            if (text.trimStart().startsWith("❌")) {
+                            if (kind == GatewayEventMapper.ERROR_STATUS_KIND ||
+                                text.trimStart().startsWith("❌")
+                            ) {
                                 handler.markError(currentMessageId)
                             }
                         },

@@ -19,6 +19,7 @@ class GatewayEventMapperTest {
     private class Recorder {
         val textDeltas = mutableListOf<String>()
         val interimMessages = mutableListOf<Pair<String, Boolean>>()
+        val reconciledInterims = mutableListOf<String>()
         val thinkingDeltas = mutableListOf<String>()
         val toolStarts = mutableListOf<Pair<String, String>>()
         val toolDones = mutableListOf<Pair<String, String?>>()
@@ -45,6 +46,7 @@ class GatewayEventMapperTest {
             onStart = { starts++ },
             onTextDelta = { textDeltas += it },
             onInterimMessage = { text, alreadyStreamed -> interimMessages += text to alreadyStreamed },
+            onInterimReconciled = { text -> reconciledInterims += text },
             onThinkingDelta = { thinkingDeltas += it },
             onToolCallStart = { id, name -> toolStarts += id to name },
             onToolCallDone = { id, preview -> toolDones += id to preview },
@@ -228,6 +230,93 @@ class GatewayEventMapperTest {
 
         assertEquals(listOf("candidate answer" to false), r.interimMessages)
         assertEquals(listOf("final answer"), r.textDeltas)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `non-previewed complete equal to interim reconciles one bubble`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer"}"""),
+        )
+
+        assertEquals(listOf("candidate answer"), r.reconciledInterims)
+        assertTrue(r.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `non-previewed complete extending interim replaces it with full final`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer"}"""),
+        )
+
+        assertEquals(listOf("candidate answer"), r.reconciledInterims)
+        assertTrue(r.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `non-previewed truncated final replaces longer interim`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate"}"""),
+        )
+
+        assertEquals(listOf("candidate"), r.reconciledInterims)
+        assertTrue(r.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `terminal error complete preserves partial and reports failed status`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.complete",
+            obj(
+                """{"text":"partial answer","status":"error","error":"provider failed","partial":true,"recoverable":true}""",
+            ),
+        )
+
+        assertEquals(listOf("partial answer"), r.textDeltas)
+        assertEquals(listOf("error" to "provider failed"), r.statusUpdates)
+        assertEquals(1, r.completes)
+        assertTrue(mapper.turnEnded)
+    }
+
+    @Test
+    fun `terminal error complete without text renders error fallback`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"status":"error","error":"agent build failed","recoverable":true}"""),
+        )
+
+        assertEquals(listOf("Error: agent build failed"), r.textDeltas)
+        assertEquals(listOf("error" to "agent build failed"), r.statusUpdates)
         assertEquals(1, r.completes)
     }
 

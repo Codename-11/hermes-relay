@@ -801,6 +801,57 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_rendersAutoContinueAsNeutralSystemTimelineRow() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "continue-1",
+                    role = "user",
+                    content = JsonPrimitive("private continuation prompt"),
+                    displayKind = "auto_continue",
+                ),
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals(MessageRole.SYSTEM, msg.role)
+        assertEquals("Continued after an interrupted turn", msg.content)
+    }
+
+    @Test
+    fun reconcileInterimMessage_collapsesProvisionalFinalBubble() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "interim",
+                role = MessageRole.ASSISTANT,
+                content = "candidate",
+                timestamp = 1L,
+                isStreaming = false,
+            ),
+        )
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "provisional",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 2L,
+                isStreaming = true,
+            ),
+        )
+
+        handler.reconcileInterimMessage(
+            interimMessageId = "interim",
+            currentMessageId = "provisional",
+            content = "candidate answer",
+        )
+
+        val assistant = handler.messages.value.single()
+        assertEquals("interim", assistant.id)
+        assertEquals("candidate answer", assistant.content)
+        assertTrue(assistant.isStreaming)
+    }
+
+    @Test
     fun loadMessageHistory_skipsToolMessages() {
         val items = listOf(
             MessageItem(id = "1", role = "user", content = JsonPrimitive("Hello")),
