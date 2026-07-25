@@ -672,8 +672,8 @@
     <string name="settings_profile_lock_desc">アプリを 1 つのエージェント プロファイルに固定する</string>
     <string name="settings_quick_controls">クイックコントロール</string>
     <string name="settings_persistent_connection">永続的な接続</string>
-    <string name="settings_persistent_connection_desc">Hermes への接続をバッ​​クグラウンドで開いたままにします</string>
-    <string name="settings_connect_on_demand">オンデマンドのみに接続します · バッテリーを節約します</string>
+    <string name="settings_persistent_connection_desc">チャットが実行されていないときも接続を維持</string>
+    <string name="settings_connect_on_demand">アクティブなチャットは自動的に接続を維持 · アイドル時はバッテリー節約のため接続を閉じます</string>
     <string name="settings_turn_complete_alerts">チャット通知</string>
     <string name="settings_turn_complete_alerts_desc">バックグラウンドで Hermes が入力を必要としたとき、または完了したときに通知します</string>
     <string name="settings_turn_complete_alerts_off">バックグラウンドのチャット動作を通知しません</string>

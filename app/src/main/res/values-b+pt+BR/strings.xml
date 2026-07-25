@@ -631,8 +631,8 @@
     <string name="settings_profile_lock_desc">Fixe o app em um perfil de agente</string>
     <string name="settings_quick_controls">Controles rápidos</string>
     <string name="settings_persistent_connection">Conexão persistente</string>
-    <string name="settings_persistent_connection_desc">Mantém sua conexão com o Hermes aberta em segundo plano</string>
-    <string name="settings_connect_on_demand">Conectar somente quando necessário · economiza bateria</string>
+    <string name="settings_persistent_connection_desc">Manter a conexão mesmo sem nenhum chat em andamento</string>
+    <string name="settings_connect_on_demand">Chats ativos permanecem conectados automaticamente · a conexão ociosa é fechada para economizar bateria</string>
     <string name="settings_turn_complete_alerts">Alertas de chat</string>
     <string name="settings_turn_complete_alerts_desc">Notifique quando o Hermes precisar de uma resposta ou terminar em segundo plano</string>
     <string name="settings_turn_complete_alerts_off">Sem alertas para atividade de chat em segundo plano</string>

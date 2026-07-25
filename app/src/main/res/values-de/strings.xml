@@ -672,8 +672,8 @@
     <string name="settings_profile_lock_desc">App auf ein Agentenprofil festlegen</string>
     <string name="settings_quick_controls">Schnellsteuerung</string>
     <string name="settings_persistent_connection">Dauerhafte Verbindung</string>
-    <string name="settings_persistent_connection_desc">Verbindung zu Hermes im Hintergrund offen halten</string>
-    <string name="settings_connect_on_demand">Nur bei Bedarf verbinden · spart Akku</string>
+    <string name="settings_persistent_connection_desc">Auch ohne laufenden Chat verbunden bleiben</string>
+    <string name="settings_connect_on_demand">Aktive Chats bleiben automatisch verbunden · Leerlaufverbindung wird geschlossen, um Akku zu sparen</string>
     <string name="settings_turn_complete_alerts">Chat-Benachrichtigungen</string>
     <string name="settings_turn_complete_alerts_desc">Benachrichtigen, wenn Hermes Eingaben benötigt oder im Hintergrund fertig wird</string>
     <string name="settings_turn_complete_alerts_off">Keine Benachrichtigungen für Chat-Aktivität im Hintergrund</string>

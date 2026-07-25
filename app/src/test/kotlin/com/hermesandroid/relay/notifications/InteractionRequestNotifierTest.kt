@@ -83,15 +83,34 @@ class InteractionRequestNotifierTest {
 
         val notification = manager.activeNotifications.single().notification
         val privateText = notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+        val expandedText = notification.extras
+            .getCharSequence(Notification.EXTRA_BIG_TEXT)
+            .toString()
         val privateTitle = notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString()
         val publicText = notification.publicVersion.extras
             .getCharSequence(Notification.EXTRA_TEXT)
             .toString()
-        val visibleCopy = "$privateTitle $privateText $publicText"
+        val visibleCopy = "$privateTitle $privateText $expandedText $publicText"
         assertFalse(visibleCopy.contains(secret.text))
         assertFalse(visibleCopy.contains(secret.envVar!!))
         assertTrue(visibleCopy.contains("Open Hermes"))
+        assertTrue(expandedText.contains("Profile: Server default"))
+        assertEquals("Respond securely", notification.actions.single().title)
         assertEquals(Notification.VISIBILITY_PRIVATE, notification.visibility)
+    }
+
+    @Test
+    fun sameStoredSessionInTwoProfilesKeepsIndependentNotificationSlots() {
+        val ask = approval(command = "private")
+
+        assertTrue(post(ask, SESSION_ID, "victor"))
+        assertTrue(post(ask, SESSION_ID, "server-default"))
+
+        assertEquals(2, manager.activeNotifications.size)
+        assertEquals(
+            2,
+            manager.activeNotifications.map { it.tag }.distinct().size,
+        )
     }
 
     @Test

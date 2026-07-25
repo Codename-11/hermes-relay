@@ -245,16 +245,23 @@ A running Gateway chat keeps its event connection attached; if that connection
 drops, the app reconnects while the server continues working. Idle chats pre-warm
 when reopened so the next message is fast.
 
-If you want the connection to stay fully open even when the app is in the
-background, turn on **Settings → Quick Controls → Persistent connection** (off by
-default). It holds the app's connection to Hermes open via an ongoing
+While any chat is running, Hermes-Relay automatically uses an ongoing Android
+notification to keep the app and its connection active until every concurrent
+turn finishes or is interrupted. If a turn needs approval, clarification, or
+sensitive input, its separate alert reopens the exact profile and conversation.
+Expanding that alert shows safe session context, but never the requested command,
+question, password, secret, or environment-variable name.
+
+If you want the connection to stay fully open even when no chat is running,
+turn on **Settings → Quick Controls → Persistent connection** (off by default).
+It extends the same foreground protection to idle time via an ongoing
 notification, so messages and live features stay responsive; for relay-paired
 setups it also keeps device control and notification mirroring reachable. Tap
-**Turn off** on the notification, or flip the toggle, to stop. This uses more
+**Turn off always-on** on the notification, or flip the toggle, to stop the idle
+retention without interrupting active work. This uses more
 battery; swiping the app away from recents also ends it. It's the same approach
 apps like Home Assistant use to stay connected.
 
-Chat alerts do not require Persistent connection while an already-running turn
-is attached, but Android may stop an idle background app later. Enable
-Persistent connection when approval and other action-required alerts must
-remain reachable during long idle or Doze periods.
+Chat alerts and active-turn protection do not require Persistent connection.
+Enable it only when an idle connection or Relay-powered live features must
+remain reachable during long background or Doze periods.

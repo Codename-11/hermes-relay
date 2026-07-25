@@ -1,5 +1,24 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-25 — Active-turn retention and actionable interaction alerts
+
+Android now promotes user-started chat work to foreground execution until every
+connection/profile/session-scoped turn settles. Independent leases preserve
+concurrent detached Gateway sessions, track sessions paused for input, and
+prevent one completion from stopping protection for siblings. The existing
+Persistent connection switch now extends retention only to idle periods.
+
+The foreground notification reports active and waiting session counts.
+Interaction alerts add privacy-safe expanded profile/session context and an
+explicit review, answer, or secure-response action that deep-links to the exact
+conversation; commands, questions, passwords, secrets, and environment-variable
+names remain confined to the authenticated chat surface.
+
+Audited `ChatViewModel`, `ConnectionViewModel`, `GatewayChatClient`,
+`GatewayKeepAliveService`, `InteractionRequestNotifier`, the shared Android
+manifest, Android settings copy, chat user documentation, and Play foreground
+service declaration guidance.
+
 ## 2026-07-24 — Post-connect permission setup
 
 Android onboarding now finishes with a layered permission step after a
