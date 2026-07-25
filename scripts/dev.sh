@@ -37,6 +37,10 @@ case "${1:-help}" in
     echo "Running lint..."
     ./gradlew lint
     ;;
+  prepush)
+    echo "Running Android pre-push checks..."
+    python3 scripts/android-prepush.py
+    ;;
   clean)
     echo "Cleaning build..."
     ./gradlew clean
@@ -78,6 +82,7 @@ case "${1:-help}" in
     echo "  run        Build + install + launch + logcat"
     echo "  test       Run unit tests"
     echo "  lint       Run lint checks"
+    echo "  prepush    Run Android repository checks, lint, and focused CI tests"
     echo "  clean      Clean build outputs"
     echo "  devices    List connected devices"
     echo "  wireless   Pair for wireless debugging"
