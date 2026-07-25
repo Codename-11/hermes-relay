@@ -78,6 +78,12 @@ intentionally remain outside that code batch:
   public model-options payload identifies excluded and disabled providers.
   `include_unconfigured=1` currently re-adds indistinguishable setup rows, so
   empty models are not authoritative evidence that a provider should be hidden.
+- Keep persistent approval-mode writes for multiplexed non-launch profiles
+  read-only until upstream `config.get` / `config.set` bind an explicit
+  `profile` to that profile's `HERMES_HOME`. Gateway contract v3 currently
+  accepts `approvals.mode` but resolves it against the gateway process home;
+  Android may reconcile a selected profile's `session.info.approval_mode`, but
+  must not claim a profile-scoped write that upstream ignores.
 - Expand the desktop upstream-baseline workflow into a live mock-provider E2E
   once the harness can boot a credential-free upstream gateway deterministically.
   The initial `ci-desktop-upstream-baseline` gate only checks a clean vanilla

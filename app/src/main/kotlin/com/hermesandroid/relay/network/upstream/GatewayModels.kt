@@ -50,6 +50,29 @@ enum class GatewayConnectionState {
     Ready,
 }
 
+/** Profile-persisted approval policy introduced by upstream gateway contract v3. */
+enum class GatewayApprovalMode(val wireValue: String) {
+    Manual("manual"),
+    Smart("smart"),
+    Off("off");
+
+    companion object {
+        fun fromWire(value: String?): GatewayApprovalMode? = when (value?.trim()?.lowercase()) {
+            "manual" -> Manual
+            "smart" -> Smart
+            "off" -> Off
+            else -> null
+        }
+    }
+}
+
+/** Whether this gateway exposes the contract-v3 profile approval-mode RPCs. */
+enum class GatewayApprovalModeCapability {
+    Unknown,
+    Supported,
+    Unsupported,
+}
+
 /**
  * Streaming-endpoint resolution with the gateway tier — pure so the matrix
  * is unit-testable without an AndroidViewModel. ConnectionViewModel

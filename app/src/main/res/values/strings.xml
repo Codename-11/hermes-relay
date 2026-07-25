@@ -2462,7 +2462,19 @@
     <string name="conn_info_yes">Yes</string>
     <string name="conn_info_yes_hidden">Yes (hidden)</string>
     <string name="conn_info_yolo_mode_desc">Bypass approval prompts for tool calls.</string>
+    <string name="conn_info_yolo_mode_desc_ephemeral">Bypass approval prompts for this chat only. Resets when the session changes.</string>
+    <string name="conn_info_yolo_mode_profile_off">Profile approvals are Off, so this chat already bypasses prompts. Choose Manual or Smart before using the per-chat override.</string>
     <string name="conn_info_yolo_mode_title">YOLO mode</string>
+    <string name="conn_info_approval_mode_title">Profile approval mode</string>
+    <string name="conn_info_approval_mode_desc">Persistent policy for this Hermes profile. Applies across chats and devices.</string>
+    <string name="conn_info_approval_mode_unsupported">Update Hermes to choose a profile approval mode. Per-chat YOLO remains available.</string>
+    <string name="conn_info_approval_mode_profile_read_only">Read-only for this multiplexed profile. Its current mode appears after the profile session starts; changing it requires upstream profile-scoped config RPCs.</string>
+    <string name="conn_info_approval_mode_manual">Manual</string>
+    <string name="conn_info_approval_mode_manual_desc">Ask before every protected tool call.</string>
+    <string name="conn_info_approval_mode_smart">Smart</string>
+    <string name="conn_info_approval_mode_smart_desc">Ask only when Hermes detects elevated risk.</string>
+    <string name="conn_info_approval_mode_off">Off</string>
+    <string name="conn_info_approval_mode_off_desc">Persistently bypass approvals for this profile.</string>
 
     <!-- EndpointsCard -->
 

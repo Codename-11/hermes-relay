@@ -284,6 +284,14 @@ class GatewayChatClient(
     private val _serverYolo = MutableStateFlow<Boolean?>(null)
     val serverYolo: StateFlow<Boolean?> = _serverYolo.asStateFlow()
 
+    private val _serverApprovalMode = MutableStateFlow<GatewayApprovalMode?>(null)
+    val serverApprovalMode: StateFlow<GatewayApprovalMode?> = _serverApprovalMode.asStateFlow()
+
+    private val _approvalModeCapability =
+        MutableStateFlow(GatewayApprovalModeCapability.Unknown)
+    val approvalModeCapability: StateFlow<GatewayApprovalModeCapability> =
+        _approvalModeCapability.asStateFlow()
+
     private val _serverFast = MutableStateFlow<Boolean?>(null)
     val serverFast: StateFlow<Boolean?> = _serverFast.asStateFlow()
 
@@ -1378,6 +1386,84 @@ class GatewayChatClient(
     }
 
     /**
+     * Read the profile-persisted approval policy added in gateway contract v3.
+     * Older gateways either reject the key or return no recognized value; both
+     * downgrade this optional control without affecting chat or per-session YOLO.
+     */
+    suspend fun getApprovalMode(): Result<GatewayApprovalMode> {
+        if (_approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported) {
+            return Result.failure(approvalModeUnsupported())
+        }
+        if (currentSessionProfile() != null) {
+            return Result.failure(approvalModeRequiresLaunchProfile())
+        }
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val response = rpc(
+            "config.get",
+            buildJsonObject { put("key", "approvals.mode") },
+        )
+        response.exceptionOrNull()?.let { error ->
+            if (error.isApprovalModeUnsupported()) {
+                _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+            }
+            return Result.failure(error)
+        }
+        val mode = GatewayApprovalMode.fromWire(response.getOrThrow().stringField("value"))
+            ?: run {
+                _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+                return Result.failure(approvalModeUnsupported())
+            }
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+        _serverApprovalMode.value = mode
+        return Result.success(mode)
+    }
+
+    /** Persist the selected approval policy for the active gateway profile. */
+    suspend fun setApprovalMode(mode: GatewayApprovalMode): Result<GatewayApprovalMode> {
+        if (_approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported) {
+            return Result.failure(approvalModeUnsupported())
+        }
+        if (currentSessionProfile() != null) {
+            return Result.failure(approvalModeRequiresLaunchProfile())
+        }
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val response = rpc(
+            "config.set",
+            buildJsonObject {
+                put("key", "approvals.mode")
+                put("value", mode.wireValue)
+            },
+        )
+        response.exceptionOrNull()?.let { error ->
+            if (error.isApprovalModeUnsupported()) {
+                _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+            }
+            return Result.failure(error)
+        }
+        val authoritative =
+            GatewayApprovalMode.fromWire(response.getOrThrow().stringField("value"))
+                ?: run {
+                    _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+                    return Result.failure(approvalModeUnsupported())
+                }
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+        _serverApprovalMode.value = authoritative
+        return Result.success(authoritative)
+    }
+
+    /**
      * Toggle fast mode (priority service tier) via `config.set {key:"fast"}` —
      * desktop parity (`value` "fast"/"normal", session-scoped). Capability-gated
      * upstream: enabling fails (error 4002) when the current model has no fast
@@ -1452,6 +1538,7 @@ class GatewayChatClient(
     private suspend fun connectOnce() {
         val connectStart = System.nanoTime()
         _processCapability.value = GatewayProcessCapability.Unknown
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
             throw GatewayConnectAttemptException("ws-ticket mint failed: ${e.message}")
@@ -1541,6 +1628,14 @@ class GatewayChatClient(
      * session can paint its real model up front rather than waiting for a turn.
      */
     private fun applySessionInfo(info: JsonObject) {
+        val contract = (info["desktop_contract"] as? JsonPrimitive)?.intOrNull
+        if (contract != null && contract < 3) {
+            _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+        }
+        GatewayApprovalMode.fromWire(info.stringField("approval_mode"))?.let { mode ->
+            _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+            _serverApprovalMode.value = mode
+        }
         if (info.containsKey("personality")) {
             _serverPersonality.value =
                 (info.stringField("personality") ?: "").ifBlank { "none" }
@@ -1916,7 +2011,7 @@ class GatewayChatClient(
         // `/personality`, desktop, or TUI change keeps the app in sync. Falls
         // through to the turn dispatch below so an in-flight turn still sees it.
         if (type == "session.info" &&
-            (eventSessionId == null || liveSessionId == null || eventSessionId == liveSessionId)
+            (eventSessionId == null || eventSessionId == liveSessionId)
         ) {
             // Connection-level session info (model / provider / effort / persona /
             // yolo / fast / usage) — shared with the session.resume result via
@@ -2046,6 +2141,7 @@ class GatewayChatClient(
         attachMethodForSocket = null
         commandsCatalogCache = null
         _processCapability.value = GatewayProcessCapability.Unknown
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
@@ -2224,6 +2320,7 @@ class GatewayChatClient(
         attachMethodForSocket = null
         commandsCatalogCache = null
         _processCapability.value = GatewayProcessCapability.Unknown
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
     }
 
@@ -2797,6 +2894,29 @@ private fun Throwable?.isMethodNotFound(): Boolean {
     return msg.contains("method not found", ignoreCase = true) ||
         msg.contains("unknown method", ignoreCase = true)
 }
+
+private fun Throwable?.isApprovalModeUnsupported(): Boolean {
+    val rpcError = this as? GatewayRpcException ?: return false
+    val message = rpcError.message.orEmpty()
+    return rpcError.code == JSONRPC_METHOD_NOT_FOUND ||
+        rpcError.code == 4002 ||
+        message.contains("approval mode", ignoreCase = true) &&
+        (
+            message.contains("unknown", ignoreCase = true) ||
+                message.contains("unsupported", ignoreCase = true)
+        )
+}
+
+private fun approvalModeUnsupported(): GatewayRpcException =
+    GatewayRpcException(
+        "profile approval modes are not supported by this gateway",
+        JSONRPC_METHOD_NOT_FOUND,
+    )
+
+private fun approvalModeRequiresLaunchProfile(): GatewayRpcException =
+    GatewayRpcException(
+        "profile approval mode is read-only for multiplexed non-launch profiles",
+    )
 
 private fun JsonObject.stringField(key: String): String? =
     (get(key) as? JsonPrimitive)?.contentOrNull

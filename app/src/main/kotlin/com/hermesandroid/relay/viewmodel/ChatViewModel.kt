@@ -44,6 +44,8 @@ import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
 import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayAskExpiry
 import com.hermesandroid.relay.network.upstream.GatewayAskResponse
+import com.hermesandroid.relay.network.upstream.GatewayApprovalMode
+import com.hermesandroid.relay.network.upstream.GatewayApprovalModeCapability
 import com.hermesandroid.relay.network.upstream.GatewayBackgroundInteractionEvent
 import com.hermesandroid.relay.network.upstream.GatewayBackgroundTurnCompletion
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -520,6 +522,33 @@ class ChatViewModel : ViewModel() {
     private val _yoloEnabled = MutableStateFlow<Boolean?>(null)
     val yoloEnabled: StateFlow<Boolean?> = _yoloEnabled.asStateFlow()
 
+    /** Profile-persisted upstream approval policy; distinct from ephemeral session YOLO. */
+    private val _approvalMode = MutableStateFlow<GatewayApprovalMode?>(null)
+    val approvalMode: StateFlow<GatewayApprovalMode?> = _approvalMode.asStateFlow()
+
+    private val _approvalModeCapability =
+        MutableStateFlow(GatewayApprovalModeCapability.Unknown)
+    val approvalModeCapability: StateFlow<GatewayApprovalModeCapability> =
+        _approvalModeCapability.asStateFlow()
+
+    private val _approvalModeWritable = MutableStateFlow(false)
+    val approvalModeWritable: StateFlow<Boolean> = _approvalModeWritable.asStateFlow()
+
+    private val _approvalModeReadOnlyForProfile = MutableStateFlow(false)
+    val approvalModeReadOnlyForProfile: StateFlow<Boolean> =
+        _approvalModeReadOnlyForProfile.asStateFlow()
+
+    /** Invalidates stale get/set completions after profile, session, or connection changes. */
+    private val approvalModeRevision = AtomicLong(0)
+
+    private fun resetApprovalModeState() {
+        approvalModeRevision.incrementAndGet()
+        _approvalMode.value = null
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
+        _approvalModeWritable.value = false
+        _approvalModeReadOnlyForProfile.value = false
+    }
+
     /** Fast-mode (priority tier) state for the active gateway session; null = unknown. */
     private val _fastEnabled = MutableStateFlow<Boolean?>(null)
     val fastEnabled: StateFlow<Boolean?> = _fastEnabled.asStateFlow()
@@ -587,6 +616,95 @@ class ChatViewModel : ViewModel() {
                 },
                 onFailure = {
                     android.util.Log.w("ChatViewModel", "config.get reasoning failed: ${it.message}")
+                },
+            )
+        }
+    }
+
+    /** Probe and reconcile the active profile's persistent approval policy. */
+    fun refreshApprovalMode() {
+        val gateway = gatewayClient ?: run {
+            _approvalMode.value = null
+            _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
+            return
+        }
+        val launchProfileOwned = sessionProfileNameProvider() == null
+        _approvalModeWritable.value = launchProfileOwned
+        _approvalModeReadOnlyForProfile.value = !launchProfileOwned
+        if (!launchProfileOwned) {
+            // session.info remains authoritative for the selected multiplexed
+            // profile. Current upstream config RPCs do not bind params.profile,
+            // so probing here would read the launch profile instead.
+            return
+        }
+        val revision = approvalModeRevision.incrementAndGet()
+        val contextKey = activeProfileContextKey
+        viewModelScope.launch {
+            gateway.getApprovalMode().fold(
+                onSuccess = { mode ->
+                    if (
+                        gatewayClient === gateway &&
+                        activeProfileContextKey == contextKey &&
+                        approvalModeRevision.get() == revision
+                    ) {
+                        _approvalMode.value = mode
+                        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+                    }
+                },
+                onFailure = {
+                    if (
+                        gatewayClient === gateway &&
+                        activeProfileContextKey == contextKey &&
+                        approvalModeRevision.get() == revision
+                    ) {
+                        _approvalModeCapability.value = gateway.approvalModeCapability.value
+                        if (_approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported) {
+                            _approvalMode.value = null
+                        }
+                    }
+                },
+            )
+        }
+    }
+
+    /**
+     * Persist a profile approval policy. This is deliberately separate from
+     * [setYolo], which remains an ephemeral override for only the current chat.
+     */
+    fun setApprovalMode(mode: GatewayApprovalMode) {
+        val gateway = gatewayClient ?: return
+        if (
+            !_approvalModeWritable.value ||
+            _approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported
+        ) return
+        val previous = _approvalMode.value
+        val revision = approvalModeRevision.incrementAndGet()
+        val contextKey = activeProfileContextKey
+        _approvalMode.value = mode
+        viewModelScope.launch {
+            gateway.setApprovalMode(mode).fold(
+                onSuccess = { authoritative ->
+                    if (
+                        gatewayClient === gateway &&
+                        activeProfileContextKey == contextKey &&
+                        approvalModeRevision.get() == revision
+                    ) {
+                        _approvalMode.value = authoritative
+                        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+                    }
+                },
+                onFailure = { error ->
+                    if (
+                        gatewayClient === gateway &&
+                        activeProfileContextKey == contextKey &&
+                        approvalModeRevision.get() == revision
+                    ) {
+                        _approvalMode.value = previous
+                        _approvalModeCapability.value = gateway.approvalModeCapability.value
+                        chatHandler?.addSystemNotice(
+                            "Couldn't update profile approval mode: ${error.message ?: "gateway error"}",
+                        )
+                    }
                 },
             )
         }
@@ -943,6 +1061,7 @@ class ChatViewModel : ViewModel() {
         // the first turn.
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        resetApprovalModeState()
         pendingYolo = null
         // Reset the reasoning chip to UNKNOWN rather than optimistically fetching
         // it: a sessionless config.get right after clearSession reads the
@@ -1088,6 +1207,7 @@ class ChatViewModel : ViewModel() {
         }
         gatewayClient = client
         if (changed) {
+            resetApprovalModeState()
             gatewayProcessSource = client?.let(::GatewayChatProcessSource)
             gatewayProcessController.bind(
                 newSource = gatewayProcessSource,
@@ -1194,6 +1314,7 @@ class ChatViewModel : ViewModel() {
                 fetchServerCommands(client)
                 refreshModelOptions()
                 refreshReasoningSettings()
+                refreshApprovalMode()
                 // Seed the active personality over the already-ready socket so the
                 // picker reflects server truth without waiting for the first turn.
                 seedServerPersonality(client)
@@ -2078,6 +2199,27 @@ class ChatViewModel : ViewModel() {
                 }
             }
             launch {
+                client.approvalModeCapability.collect { capability ->
+                    if (gatewayClient !== client) return@collect
+                    _approvalModeCapability.value = capability
+                    if (capability == GatewayApprovalModeCapability.Unsupported) {
+                        approvalModeRevision.incrementAndGet()
+                        _approvalMode.value = null
+                    }
+                }
+            }
+            launch {
+                client.serverApprovalMode.collect { mode ->
+                    if (gatewayClient !== client || mode == null) return@collect
+                    approvalModeRevision.incrementAndGet()
+                    _approvalMode.value = mode
+                    _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+                    val launchProfileOwned = sessionProfileNameProvider() == null
+                    _approvalModeWritable.value = launchProfileOwned
+                    _approvalModeReadOnlyForProfile.value = !launchProfileOwned
+                }
+            }
+            launch {
                 client.serverFast.collect { value ->
                     if (gatewayClient !== client || value == null) return@collect
                     if (_fastEnabled.value != value) _fastEnabled.value = value
@@ -2485,6 +2627,7 @@ class ChatViewModel : ViewModel() {
                 _contextWindow.value = null
                 _yoloEnabled.value = null
                 _fastEnabled.value = null
+                resetApprovalModeState()
                 pendingYolo = null
                 // Effort + personality belong to the old connection's agent —
                 // reset to unknown/default so neither a stale chip nor a stale
@@ -2550,6 +2693,7 @@ class ChatViewModel : ViewModel() {
         _contextWindow.value = null
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        resetApprovalModeState()
         pendingYolo = null
         // SSE profile switch: reset the reasoning chip to unknown (a sessionless
         // config.get reads the wrong profile's effort) and the personality to
@@ -2804,6 +2948,7 @@ class ChatViewModel : ViewModel() {
             _pendingAsk.value = null
             _yoloEnabled.value = null
             _fastEnabled.value = null
+            approvalModeRevision.incrementAndGet()
             pendingYolo = null
             onSessionChanged?.invoke(null)
             AppAnalytics.onSessionCreated()
@@ -2843,6 +2988,7 @@ class ChatViewModel : ViewModel() {
                         _pendingAsk.value = null
                         _yoloEnabled.value = null
                         _fastEnabled.value = null
+                        approvalModeRevision.incrementAndGet()
                         // Drop any YOLO stashed for the previous draft so it
                         // can't apply to this fresh chat's session.
                         pendingYolo = null
@@ -2950,6 +3096,7 @@ class ChatViewModel : ViewModel() {
         _pendingAsk.value = null
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        approvalModeRevision.incrementAndGet()
         // The switched-to session owns its own YOLO state (session.info
         // reconciles) — drop any pick stashed for a different draft.
         pendingYolo = null
@@ -6032,6 +6179,7 @@ class ChatViewModel : ViewModel() {
             }
             if (streamingEndpoint == "gateway") {
                 refreshReasoningSettings()
+                refreshApprovalMode()
             }
 
             // Sessions SSE does not stream every persisted message boundary, so it
