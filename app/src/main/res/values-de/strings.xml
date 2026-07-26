@@ -2094,6 +2094,11 @@
     <string name="voice_overlay_expand_cd">Sprachsteuerung ausklappen</string>
     <string name="voice_overlay_exit_cd">Sprachmodus beenden</string>
     <string name="voice_overlay_focus">Fokus</string>
+    <string name="voice_overlay_conversation">Gespräch</string>
+    <string name="voice_overlay_image_ready">Bild bereit</string>
+    <string name="voice_overlay_rich_result_ready">Rich-Ergebnis bereit</string>
+    <string name="voice_overlay_rich_results_count">%1$d Ergebnisse bereit</string>
+    <string name="voice_overlay_view_conversation">Gespräch anzeigen</string>
     <string name="voice_overlay_overlay">Overlay</string>
     <string name="voice_overlay_exit">Beenden</string>
     <string name="voice_overlay_settings_cd">Spracheinstellungen</string>

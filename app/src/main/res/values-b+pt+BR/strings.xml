@@ -1999,6 +1999,11 @@
     <string name="voice_overlay_expand_cd">Expandir controles de voz</string>
     <string name="voice_overlay_exit_cd">Sair do modo de voz</string>
     <string name="voice_overlay_focus">Foco</string>
+    <string name="voice_overlay_conversation">Conversa</string>
+    <string name="voice_overlay_image_ready">Imagem pronta</string>
+    <string name="voice_overlay_rich_result_ready">Resultado avançado pronto</string>
+    <string name="voice_overlay_rich_results_count">%1$d resultados prontos</string>
+    <string name="voice_overlay_view_conversation">Ver conversa</string>
     <string name="voice_overlay_overlay">Sobreposição</string>
     <string name="voice_overlay_exit">Sair</string>
     <string name="voice_overlay_settings_cd">Configurações de voz</string>

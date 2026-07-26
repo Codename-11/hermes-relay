@@ -6,17 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [Android 1.5.1] - 2026-07-26
+
 ### Added
 
-- **Voice can speak only settled answers.** A global Voice setting keeps tool progress, service updates, and intermediate commentary visual while Standard and Realtime paths wait to speak the final Hermes answer.
+- **Voice supports focused and conversational layouts.** Focus keeps spoken turns, Markdown, tools, media, and actions in a compact voice surface, while Conversation opens the full Chat renderer without leaving the active voice session.
+- **Voice can speak only settled answers.** A global Voice setting keeps tool progress, service updates, and intermediate commentary visual while supported voice paths wait to speak the final Hermes answer.
 
 ### Changed
 
 - **Chat answers are easier to read in every theme.** Primary assistant text now uses the theme's full-contrast foreground, and chat prose uses a 15sp size with 21sp line height.
+- **Google Play builds target Android 16.** The app now targets API level 36 while retaining its existing minimum-device support.
 
 ### Fixed
 
-- **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+- **Completed streamed answers render their formatting without losing the reading position.** Markdown headings, lists, emphasis, and code blocks replace the live text renderer only after completion, then the measured trailing edge remains anchored at the bottom.
+- **Standard Voice speaks completed assistant replies again.** Session and message fences no longer suppress a valid final answer during the handoff from generation to narration.
+- **Realtime background work no longer blocks the active voice controls.** A promoted task releases the foreground spinner and microphone while its progress, tools, cancellation, and final result remain available in the owning chat.
 
 ## [Server 1.4.3] - 2026-07-22
 

@@ -1,5 +1,21 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-26 — Android 1.5.1 patch reconciliation
+
+Android 1.5.1 reconciles the post-1.5.0 voice and chat fixes into versionCode
+34. Voice now offers compact Focus and full Conversation presentation,
+Standard narration preserves valid completed replies, and promoted Realtime
+tasks release foreground voice controls while retaining progress and results.
+
+Completed streamed answers promote from the stable live text node to full
+Markdown only after completion. The measured Markdown row is then positioned
+by its trailing edge until deferred code and attachment measurement settles,
+preventing the LazyColumn from restoring the start of a tall response.
+
+The release also targets Android API level 36. Release notes, in-app What's
+New assets, localized Play notes, and the Play listing reference were updated
+for Android 1.5.1.
+
 ## 2026-07-25 — Immutable Android release dispatch repair
 
 Android approval now dispatches the current release workflow definition from

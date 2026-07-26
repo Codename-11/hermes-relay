@@ -2107,6 +2107,11 @@
     <string name="voice_overlay_expand_cd">音声コントロールを拡張する</string>
     <string name="voice_overlay_exit_cd">音声モードを終了する</string>
     <string name="voice_overlay_focus">集中</string>
+    <string name="voice_overlay_conversation">会話</string>
+    <string name="voice_overlay_image_ready">画像の準備ができました</string>
+    <string name="voice_overlay_rich_result_ready">リッチな結果の準備ができました</string>
+    <string name="voice_overlay_rich_results_count">結果が%1$d件準備できました</string>
+    <string name="voice_overlay_view_conversation">会話を表示</string>
     <string name="voice_overlay_overlay">かぶせる</string>
     <string name="voice_overlay_exit">出口</string>
     <string name="voice_overlay_settings_cd">音声設定</string>

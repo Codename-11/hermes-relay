@@ -2091,6 +2091,11 @@
     <string name="voice_overlay_expand_cd">展开语音控制</string>
     <string name="voice_overlay_exit_cd">退出语音模式</string>
     <string name="voice_overlay_focus">专注</string>
+    <string name="voice_overlay_conversation">对话</string>
+    <string name="voice_overlay_image_ready">图片已就绪</string>
+    <string name="voice_overlay_rich_result_ready">丰富结果已就绪</string>
+    <string name="voice_overlay_rich_results_count">%1$d 个结果已就绪</string>
+    <string name="voice_overlay_view_conversation">查看对话</string>
     <string name="voice_overlay_overlay">浮窗</string>
     <string name="voice_overlay_exit">退出</string>
     <string name="voice_overlay_settings_cd">语音设置</string>

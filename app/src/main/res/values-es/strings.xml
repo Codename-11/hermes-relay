@@ -1906,6 +1906,11 @@
     <string name="voice_overlay_expand_cd">Ampliar los controles de voz</string>
     <string name="voice_overlay_exit_cd">Salir del modo de voz</string>
     <string name="voice_overlay_focus">Enfocar</string>
+    <string name="voice_overlay_conversation">Conversación</string>
+    <string name="voice_overlay_image_ready">Imagen lista</string>
+    <string name="voice_overlay_rich_result_ready">Resultado enriquecido listo</string>
+    <string name="voice_overlay_rich_results_count">%1$d resultados listos</string>
+    <string name="voice_overlay_view_conversation">Ver conversación</string>
     <string name="voice_overlay_overlay">Cubrir</string>
     <string name="voice_overlay_exit">Salida</string>
     <string name="voice_overlay_settings_cd">Configuraciones de voz</string>
