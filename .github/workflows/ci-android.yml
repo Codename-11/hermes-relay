@@ -33,6 +33,9 @@ on:
       - "scripts/check-android-locales.py"
       - "scripts/android-locale-harness.py"
       - "scripts/check-android-collection-apis.py"
+      - "scripts/android-release-artifacts.py"
+      - "scripts/test_android_release_artifacts.py"
+      - "scripts/release-android.ps1"
       - ".github/workflows/ci-android.yml"
       - ".github/workflows/play-preflight-android.yml"
       - ".github/workflows/approve-release-android.yml"
@@ -72,6 +75,9 @@ jobs:
 
       - name: Reject unsafe Android collection APIs
         run: python3 scripts/check-android-collection-apis.py
+
+      - name: Validate immutable release artifact contract
+        run: python3 -m unittest scripts/test_android_release_artifacts.py
 
       - name: Run Android lint
         run: ./gradlew lint --console=plain

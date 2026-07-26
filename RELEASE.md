@@ -1,945 +1,360 @@
 # Releasing Hermes-Relay
 
-> The full recipe for cutting a new release. Read this end-to-end before
-> tagging your first release.
+Canonical release policy and operator recipe for Android, Server, and Desktop.
+Read [AGENTS.md](AGENTS.md) first. Android account setup, manual recovery, Play
+tracks, and signing troubleshooting live in
+[docs/release/android-operations.md](docs/release/android-operations.md).
 
-## Release Tracks And Versioning
+## Release invariants
 
-Hermes-Relay follows [SemVer](https://semver.org/): `MAJOR.MINOR.PATCH`,
-with optional prerelease identifiers.
+| Contract | Rule |
+|---|---|
+| Integration branch | `dev` |
+| Release branch | `main` |
+| Normal PR target | `dev`, including documentation-only changes |
+| Release PR | `dev` → `main`, merged with a merge commit / `--no-ff` |
+| Tag source | The new `main` tip after the release PR |
+| Staging source | An exact tested `dev` SHA or release-candidate tag |
+| Production source | Immutable `android-v*`, `server-v*`, or `desktop-v*` tag |
+| Hotfix base | The affected immutable production tag |
+| Back-merge | `main` → `dev` immediately after a hotfix |
 
-- `MAJOR` — breaking changes (protocol, settings schema, minimum OS)
-- `MINOR` — new features, backwards compatible
-- `PATCH` — bug fixes, backwards compatible
-- Prerelease suffixes: `-alpha`, `-beta`, `-rc.N` (e.g. `0.2.0-beta.1`)
+Feature completion means merged and verified on `dev`; it does not mean
+released. Staging is an environment, never a branch.
 
-Hermes-Relay ships three independently versioned production surfaces. Public
-GitHub Release titles use product names (`Hermes-Relay-Android`,
-`Hermes-Relay-Server`, `Hermes-Relay-Desktop`); immutable tag prefixes select
-the corresponding build and deployment lane.
+Never rewrite or move a production tag. If workflow code must be repaired after
+a tag exists, dispatch the current workflow from `main` while every job checks
+out and verifies the existing immutable tag.
 
-| Surface | Tag prefix | Version source | Bump script | Release workflow |
-|---|---|---|---|---|
-| Hermes-Relay-Android | `android-v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release-android.yml` |
-| Hermes-Relay-Server | `server-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-plugin-version.sh` | `.github/workflows/release-plugin.yml` |
-| Hermes-Relay-Desktop | `desktop-v*` | `desktop/package.json` | `cd desktop && npm version --no-git-tag-version <version>` | `.github/workflows/release-cli.yml` |
+## Version tracks
 
-This split is intentional. The plugin carries relay features for both Android
-and CLI clients, so plugin fixes can ship without forcing an Android app
-`versionCode` bump, and CLI alphas can continue on their own cadence. Historical
-Android releases before this naming split used bare `v*` tags. Historical
-plugin/server releases used `relay-v*` and `plugin-v*` tags. Historical
-desktop/CLI releases also include `cli-v*` tags. Those tags remain immutable;
-new releases use the canonical prefixes above.
+The surfaces version independently:
 
-### Android app versioning
-
-**Source of truth:** `gradle/libs.versions.toml`
-
-```toml
-[versions]
-appVersionName = "0.1.0"
-appVersionCode = "1"
-```
-
-- `appVersionName` is the user-visible SemVer string (what Play Store shows)
-- `appVersionCode` is an integer build number that **must increase
-  monotonically** with every upload to Play Console, even across prereleases
-
-Both are read by `app/build.gradle.kts` via `libs.versions.appVersionName.get()`
-and `libs.versions.appVersionCode.get().toInt()`.
-
-### versionCode progression
-
-| appVersionName | appVersionCode | Notes                       |
-|----------------|----------------|-----------------------------|
-| `0.1.0`        | `1`            | Initial Play Store release  |
-| `0.1.1`        | `2`            | Bug fix                     |
-| `0.2.0-beta.1` | `3`            | Prereleases bump code too   |
-| `0.2.0-beta.2` | `4`            |                             |
-| `0.2.0`        | `5`            | Stable release              |
-| `1.0.0-rc.1`   | `6`            |                             |
-| `1.0.0`        | `7`            |                             |
-
-Never decrement `appVersionCode` — Play Console rejects any upload whose
-code is lower than or equal to a previous upload on the same track. Confirm
-current values with `scripts\dev.bat version`.
-
-Always bump Android releases via:
-
-```bash
-bash scripts/bump-android-version.sh 0.6.2
-```
-
-`scripts/bump-version.sh` remains as a backward-compatible alias for the
-Android script.
-
-### Plugin / Python package versioning
-
-Plugin version metadata lives in these plugin-owned files and must stay in
-lockstep:
-
-| File | Line | Purpose |
+| Surface | Authoritative version source | Stable tag |
 |---|---|---|
-| `pyproject.toml` | `version = "..."` | Python package metadata |
-| `plugin/relay/__init__.py` | `__version__ = "..."` | runtime version reported by `/health` and `/relay/info` |
-| `plugin/plugin.yaml` | `version: ...` | Hermes plugin metadata |
-| `plugin/dashboard/manifest.json` | `"version": "..."` | Hermes dashboard plugin metadata |
-| `plugin/dashboard/package.json` | `"version": "..."` | dashboard build/package metadata |
-| `plugin/dashboard/package-lock.json` | `"version": "..."` | locked dashboard package metadata |
+| Android | `gradle/libs.versions.toml` (`appVersionName`, `appVersionCode`) | `android-vX.Y.Z` |
+| Server / plugin | `pyproject.toml` plus the server sync files checked by `scripts/check-server-version-sync.py` | `server-vX.Y.Z` |
+| Desktop / tray | `desktop/package.json` plus the files checked by `npm run check:version-sync` | `desktop-vX.Y.Z` |
 
-Always bump Server releases via:
+Use Semantic Versioning. Android `appVersionCode` must increase for every Play
+upload, including prereleases.
 
-```bash
-bash scripts/bump-plugin-version.sh 0.6.2
+Version bumps happen only during release preparation on `dev`. Feature, fix,
+documentation, and chore branches accumulate user-facing notes under
+`CHANGELOG.md` `[Unreleased]`; they do not independently bump application
+versions.
+
+## Normal flow
+
+```text
+branch from dev
+→ PR into dev
+→ CI
+→ merge commit / no-ff
+→ accumulate under CHANGELOG [Unreleased]
+→ release preparation on dev
+→ exact staging and release gates
+→ release PR dev → main
+→ tag the new main tip
+→ publish the affected surface
+→ verify artifacts and rollout
 ```
 
-Check the current metadata with:
+Every release train gets a dedicated Forge release issue/session. It owns:
+
+- affected-surface version and notes reconciliation;
+- exact tested staging SHA;
+- `dev` → `main` release PR;
+- immutable tag and artifacts;
+- deployment or rollout;
+- live verification.
+
+Feature sessions stop at verified `dev`; they do not inherit release authority.
+
+## Android stable release
+
+### 1. Prepare the version on `dev`
+
+Start from a clean, current `dev` branch:
 
 ```bash
-python scripts/check-plugin-version-sync.py
+git switch dev
+git pull --ff-only origin dev
+bash scripts/bump-android-version.sh X.Y.Z
 ```
 
-Check all release tracks at once with:
+Reconcile only Android-owned release content:
+
+- `gradle/libs.versions.toml`
+- `CHANGELOG.md`
+- `RELEASE_NOTES.md`
+- `app/src/main/assets/whats_new.txt`
+- `app/src/main/assets/changelog.json`
+- `app/src/googlePlay/play/release-notes/*/default.txt`
+- `docs/play-store-listing.md`
+- `docs/localization-status.json` when English source catalogs changed
+- `DEVLOG.md`
+
+Promote only Android bullets from `[Unreleased]`; leave Server and Desktop
+entries there for their own releases. Scrub public notes for personal names,
+private infrastructure, internal orchestration narration, and implementation
+noise.
+
+Run the fast local gates:
 
 ```bash
 python scripts/check-version-tracks.py
+python scripts/check-android-locales.py
+python scripts/check-android-collection-apis.py
+python scripts/check-privacy-policy.py --live
+python -m json.tool app/src/main/assets/changelog.json
+python -m unittest scripts/test_android_release_artifacts.py
 ```
 
-This aggregate check reports Android, Server, and Desktop versions
-side by side and validates that each track's own source files are internally
-consistent. It deliberately does not require all three tracks to share the same
-SemVer.
+Run focused Android tests appropriate to the changed surface. Full lint,
+strict focused tests, signed release construction, final DEX scanning, and Play
+draft upload are enforced by preflight.
 
-The `server-v*` release workflow validates the tag against the same metadata,
-runs plugin tests, builds a wheel and sdist, generates checksums, and
-publishes a `Hermes-Relay-Server vX.Y.Z` GitHub Release with the package
-artifacts.
+Commit the release preparation on a branch from `dev`, merge it into `dev`, and
+push the resulting `dev` tip. Use a conventional commit such as:
 
-### CLI / tray versioning
+```text
+release(android): android-vX.Y.Z
+```
 
-`desktop/package.json` is the Desktop/CLI release track's source of truth. Its version
-must match the generated CLI and native Windows systray metadata. The systray is
-a menu-only controller for the installed CLI; it has no application window,
-WebView, embedded terminal, or separate desktop product surface. The public
-release remains one `Hermes-Relay-Desktop` track containing CLI binaries plus the
-optional Windows installer.
+### 2. Publish with the orchestrator
 
-| File | Purpose |
-|---|---|
-| `desktop/package.json` | canonical CLI version |
-| `desktop/package-lock.json` | npm root/workspace package metadata |
-| `desktop/src/version.ts` | compiled CLI runtime version |
-| `desktop/tray/Cargo.toml` | native systray package version |
-| `desktop/tray/Cargo.lock` | locked systray package version |
-
-Prepare a new CLI version on `dev` without creating a tag or npm-generated
-commit:
+The prepared `dev` tip can be released end to end with:
 
 ```powershell
-cd desktop
-npm version --no-git-tag-version 0.4.0-alpha.2
-npm run check:version-sync
-npm run verify
+pwsh scripts/release-android.ps1 -Version X.Y.Z
 ```
 
-The npm `version` lifecycle runs `sync:version`, which copies the canonical
-version into the generated CLI and tray metadata. If `package.json` was edited
-manually, run `npm run sync:version` before checking. `npm run verify` is the
-single Windows release-parity gate: version sync, type-check, tests, TypeScript
-build, compiled CLI smoke, and tray formatting, Clippy, check, and tests. CI runs
-the portable portions on every desktop change and the Windows tray gates separately.
-
-## Branching policy
-
-> **Updated 2026-04-19:** moved from `main`-only to `main + dev`. See
-> `docs/decisions.md` §23 for the rationale.
-
-Hermes-Relay uses **`main` + `dev` with feature branches and no-ff
-merges**. `main` is **released state only** — every commit on `main`
-corresponds to a shipped version or a release-merge of `dev`. Day-to-day
-integration happens on `dev`.
-
-**Merging is decoupled from releasing.** Feature branches land on `dev`
-continuously as they go green in CI — there is no "one feature per
-release" rule. The `[Unreleased]` section of `CHANGELOG.md` on `dev` is
-the accumulator: every merged PR appends bullets there. A release is a
-separate act, taken when the accumulated state on `dev` is worth shipping
-(see "When to cut a release" below). Cutting a release means opening a
-surface-specific release PR from `dev` into `main`, merging it `--no-ff`,
-then tagging `main`. Feature completion means merged and verified on `dev`; it
-does not mean released.
-
-**Staging is an environment, not a branch.** Deploy an exact tested `dev` SHA or
-an immutable release-candidate tag to staging. Record that source in the Forge
-release issue/session. Never deploy a moving branch name as the source of record
-and never create a staging branch. Production deploys only immutable
-`android-v*`, `server-v*`, or `desktop-v*` tags cut from `main`.
-
-### Normal contribution and release flow
-
-1. Branch `feature/*`, `fix/*`, `docs/*`, or `chore/*` from `dev`.
-2. Open the PR into `dev` and require CI to pass.
-3. Merge with a merge commit/no-ff according to repository policy.
-4. Accumulate user-facing work under `CHANGELOG.md` `[Unreleased]`.
-5. Treat the feature as complete when it is merged and verified on `dev`.
-6. Start a separate Forge release issue/session when a release train is approved.
-7. Prepare the affected surface release on `dev`, including its version and notes.
-8. Open and approve the release PR from `dev` into `main`.
-9. Tag the new `main` tip with the affected surface prefix.
-10. Build and publish that surface's artifacts, roll out or deploy from the
-    immutable tag, and verify the release and live environment.
-
-### Branch names
-
-| Prefix | When | Example |
-|---|---|---|
-| `feature/<name>` | New feature (>1-2 commits) | `feature/bridge-scroll-tool` |
-| `fix/<name>` | Focused bug fix | `fix/media-projection-fgs` |
-| `docs/<name>` | Docs-only changes larger than a typo | `docs/sideload-guide` |
-| `chore/<name>` | Cleanup / refactor / tooling | `chore/sync-version-sources` |
-
-All of the above branch off `dev` and merge back to `dev`. There is no
-straight-to-main exemption — even single-file typos go through a feature
-branch and PR into `dev`.
-
-### Merge style: `--no-ff`
-
-Always merge with `git merge --no-ff <branch>` (or the "Create a merge
-commit" option in the GitHub PR UI). This applies at every level —
-feature → `dev`, and `dev` → `main` for release merges. `--no-ff`
-preserves the branch context as a visible merge commit in
-`git log --graph`, which is valuable when:
-
-- An agent team pushed several commits to a branch — the per-commit trail
-  is useful for "which agent did what"
-- `git bisect` needs to treat the whole branch as one unit
-- Someone reviews history in 6 months and wants to know "what was the
-  bundle of changes that introduced feature X"
-
-Squash merges lose that detail and are **not** the house style.
-
-### Version bumps happen at release-prep on `dev`, NOT on feature branches
-
-Feature branches **never** touch `gradle/libs.versions.toml`,
-plugin-owned version metadata, or `desktop/package.json`.
-If two feature branches both bumped a release version, they'd collide on
-version files and, for Android, on `appVersionCode` (which must be
-monotonic).
-
-Version-bump commits live on `dev` as the last commit of release-prep
-work. Android commits use `release(android): android-vX.Y.Z`; server commits
-use `release(server): server-vX.Y.Z`; desktop commits use
-`release(desktop): desktop-vX.Y.Z`. A release PR then merges `dev` →
-`main` with `--no-ff`, and the matching tag is cut from the resulting
-`main` tip.
-
-### Branch protection
-
-Repository files define the contract and CI, but GitHub owns the default branch,
-branch protection, rulesets, allowed merge methods, and required-check settings.
-Those settings require an operator or infrastructure automation.
-
-The intended settings are:
-
-- **`main`** — PRs required; `Required checks` required and current; force push
-  and deletion blocked. Normal work does not target this branch.
-- **`dev`** — PRs and `Required checks` required; force push and deletion
-  blocked. This is the normal contribution target.
-- **Merge policy** — merge commits allowed; squash and rebase merges disabled so
-  the no-ff contract cannot be bypassed in the GitHub UI.
-- **Default branch** — `main`, which remains the release-history branch and the
-  repository's canonical landing page. Normal contribution PRs must explicitly
-  target `dev`.
-
-As of the 2026-07-15 repository audit, the default branch was correctly `main`.
-The remaining GitHub-owned gaps were that `dev` had no protection, squash and
-rebase merges were enabled, and `main` protection did not apply to
-administrators. Those settings must be reconciled separately; this documentation
-PR does not mutate them.
-
-## One-time Setup
-
-### 1. Release signing keystore
-
-Generate a keystore with `keytool` (bundled with the JDK):
-
-```bash
-keytool -genkey -v -keystore release.keystore \
-  -alias hermes-relay -keyalg RSA -keysize 2048 -validity 10000
-```
-
-Answer the prompts (CN, OU, O, etc.) — these end up in the certificate
-Play Console pins to your app. **Back up the keystore file and its
-passwords.** Losing them means you can never ship another update to the
-same Play Store listing.
-
-#### Local builds
-
-Point `local.properties` at the keystore so `scripts\dev.bat release` and
-`scripts\dev.bat bundle` produce signed artifacts:
-
-```properties
-hermes.keystore.path=C:/path/to/release.keystore
-hermes.keystore.password=YOUR_STORE_PASSWORD
-hermes.key.alias=hermes-relay
-hermes.key.password=YOUR_KEY_PASSWORD
-```
-
-`local.properties`, `*.keystore`, and `*.jks` are already gitignored.
-Relative `hermes.keystore.path` values resolve from the repo root, so
-`release.keystore` works when the keystore lives beside this file.
-
-> If the keystore at `hermes.keystore.path` is missing, `app/build.gradle.kts`
-> silently falls back to debug signing. The build succeeds but Play Console
-> rejects the AAB — always verify with `keytool -printcert` (step 3
-> below).
-
-#### CI builds
-
-Encode the keystore as base64 and store it as a GitHub Secret:
-
-```bash
-base64 -w 0 release.keystore > release.keystore.b64   # Git Bash / WSL
-```
-
-On Windows PowerShell:
+To install a configuration-preserving development-signed build on the connected
+phone after publication:
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.keystore")) `
-  | Out-File -Encoding ascii release.keystore.b64
+pwsh scripts/release-android.ps1 -Version X.Y.Z -DeployPhone
 ```
 
-Paste the contents of `release.keystore.b64` into the
-`HERMES_KEYSTORE_BASE64` secret (see step 4 below). Delete the local `.b64`
-file afterward.
+Preview the command without GitHub or Play mutations:
 
-### 2. Google Play Console developer account
+```powershell
+pwsh scripts/release-android.ps1 -Version X.Y.Z -DryRun
+```
 
-Hermes-Relay ships under the **Axiom-Labs, LLC** Play Console account
-(D-U-N-S verified organization). The applicationId is
-`com.axiomlabs.hermesrelay` (googlePlay flavor) and
-`com.axiomlabs.hermesrelay.sideload` (sideload flavor — not shipped through
-Play at all). The Kotlin namespace / source tree stays at
-`com.hermesandroid.relay` for historical reasons; see `app/build.gradle.kts`
-for the decoupling rationale.
+The command requires:
 
-If you're setting up a fresh account (for a fork or a new downstream):
+- clean local `dev` exactly matching `origin/dev`;
+- prepared version metadata and changelog heading;
+- an unused `android-vX.Y.Z` tag;
+- authenticated `gh`;
+- configured GitHub release and Play secrets.
 
-1. Register at <https://play.google.com/console/signup> ($25 one-time fee).
-2. Complete identity verification (personal accounts need a government ID;
-   organization accounts need a D-U-N-S number).
-3. Create the app listing: name, language, free/paid, declarations.
+It then:
 
-**The 14-day closed-testing rule does NOT apply to Hermes-Relay.** Google
-requires *new personal* developer accounts to run an app in closed testing
-with ≥12 opted-in testers for 14 continuous days before promotion to
-production. Organization accounts with a verified D-U-N-S number are exempt
-from this policy, and Axiom-Labs is a D-U-N-S-verified org account. See
-[Google's policy](https://support.google.com/googleplay/android-developer/answer/14151465)
-for the full text.
+1. dispatches and awaits **Play Preflight — Android** on the exact `dev` tree;
+2. opens or reuses the `dev` → `main` release PR;
+3. awaits the required checks and merges with a merge commit;
+4. requires the new `main` tree to equal the preflighted `dev` tree;
+5. dispatches and awaits **Approve Android Release** from `main`;
+6. verifies the immutable tag and public GitHub Release;
+7. optionally installs and verifies the compatible phone build.
 
-> **Historical note (2026-04-13 migration):** v0.1.x through v0.3.0 shipped
-> on Internal testing under Bailey's personal Play Console account with
-> applicationId `com.hermesandroid.relay`. That listing was retired as part
-> of the org-account migration. Play Store package names are permanently
-> reserved once used — `com.hermesandroid.relay` can never be reclaimed —
-> so all releases from v0.3.1 onwards ship fresh under the new
-> `com.axiomlabs.hermesrelay` listing. The upload keystore identity is
-> unchanged (same `CN=Bailey Dixon, Codename-11` cert, same SHA256
-> fingerprint), so existing GitHub Secrets and the CI signing flow need no
-> changes. Google Play App Signing mints a new server-side app signing key
-> per listing — that's invisible to us since App Signing is enabled.
+Running this explicitly is production approval. Do not invoke it for a build
+that is not ready for Production.
 
-### 3. Play Developer API service account (optional)
+### 3. What preflight proves
 
-Required for automated upload (the `android-v*` workflow's Play step, or local
-`gradlew publishGooglePlayReleaseBundle`). Manual UI uploads work without this.
+`.github/workflows/play-preflight-android.yml` runs two parallel lanes:
 
-The service account is **created in Google Cloud Console** and then **authorized
-in Play Console** — two separate consoles. (Play Console's older "Setup > API
-access" page has been reorganized; there is no longer a "Setup" group. Use the
-paths below.)
+- strict Android lint and focused tests;
+- release metadata checks, release-signed APK/AAB build, final DEX scan, and
+  private Production-draft upload.
 
-1. **Create the service account (Google Cloud Console).** Open
-   <https://console.cloud.google.com/iam-admin/serviceaccounts>, pick the project
-   (any project works; if Play Console's **API access** page already names a linked
-   project, use that one). **Create service account** → name it e.g.
-   `hermes-relay-publisher` → **Done**. No project roles needed.
-2. **Create a JSON key.** On the new service account → **Keys** tab → **Add key >
-   Create new key > JSON** → download. This file's *contents* are the secret.
-3. **Authorize it in Play Console.** Open the Play Console account-level left
-   sidebar → **Users and permissions** → **Invite new users** → paste the service
-   account's email (`...@...iam.gserviceaccount.com`). Under **App permissions**
-   (for `com.axiomlabs.hermesrelay`) or **Account permissions**, grant the
-   **Release** permissions — "Release apps to testing tracks" and "Release to
-   production, exclude devices, and use Play App Signing" — plus "View app
-   information". (Granting **Admin (all permissions)** also works but is broader
-   than needed.) **Invite user**.
-4. **Use it.** For CI, paste the JSON contents into the `PLAY_SERVICE_ACCOUNT_JSON`
-   repo secret (step 4 / secrets table). For local publish, save the JSON as
-   `play-service-account.json` in the repo root (already in `.gitignore`).
-5. Verify locally with `gradlew bootstrapGooglePlayReleaseResources` — succeeds
-   without auth errors once permissions propagate (allow a few minutes).
+After Play accepts the draft, preflight stores a private 30-day Actions artifact
+named:
 
-### 4. GitHub Actions secrets
+```text
+play-preflight-X.Y.Z-<git-tree>
+```
 
-In the repo: **Settings > Secrets and variables > Actions > New repository
-secret.** Add all four (see the table in "Required Android Release Secrets"
-below).
+It contains:
 
-If `HERMES_KEYSTORE_BASE64` is missing, CI release builds fall back to
-debug signing and print a warning in the workflow summary — those
-artifacts will not be accepted by Play Console.
+- the signed sideload APK;
+- the exact Google Play AAB already uploaded as a draft;
+- `SHA256SUMS.txt`;
+- `play-preflight.json` with version, versionCode, commit, complete Git tree,
+  Play track/status, filenames, sizes, and hashes.
 
-## When to cut a release
+The artifact is useful only when its originating workflow run concluded
+successfully. The release PR, approval, and publication workflows all enforce
+that condition.
 
-Cut a release when **any of the following** is true:
+### 4. Release PR fast path
 
-- The `[Unreleased]` section of `CHANGELOG.md` has enough user-facing
-  change that a version number is worth attaching.
-- A user-facing bug is fixed and you want affected users to pick it up
-  via `hermes-relay-update` or a Play Store auto-update.
-- A regulatory / policy deadline applies (new Play Console target SDK,
-  etc).
-- You've been sitting on unreleased work for more than a couple of
-  weeks and the delta-from-last-release is growing faster than it
-  should.
+For the canonical `dev` → `main` PR, `.github/workflows/ci-required.yml` checks
+that:
 
-**Don't** cut a release just because a feature landed. If one feature
-isn't enough to justify a version bump, wait — merge the next one, let
-it sit alongside in `[Unreleased]`, and ship them together. A release
-is a statement to users that "this is a thing worth updating to," so
-the threshold is intent-driven, not event-driven.
+- the simulated merge tree is byte-for-byte equal to the `dev` tree;
+- a non-expired preflight artifact exists for that version and tree;
+- its originating preflight workflow succeeded.
 
-If you want to dogfood accumulated `main` state without declaring GA,
-tag a **pre-release** (`android-vX.Y.Z-rc.N`). Users can opt in via
-`hermes-relay-update --branch rc/vX.Y.Z-rc.N` without being auto-pushed
-the unstable build.
+That proof replaces the repeated Android lint/test/release-build matrix on the
+release PR. Other affected surfaces continue to run their selected checks. Any
+other PR targeting `main` receives normal full surface CI.
 
-## Release train ownership
+When this fast path is first introduced, the release PR may still use the older
+workflow definition from `main`; subsequent releases use the proof path.
 
-Every release train gets its own Forge release issue/session. That owner records
-the exact tested staging source, reconciles the affected surface version and
-notes on `dev`, owns the `dev` → `main` PR, tags the new `main` tip, observes the
-artifact workflow, performs the rollout or deployment, and captures live
-verification. Feature implementation sessions stop at merged and verified on
-`dev`; they do not inherit release authority.
+### 5. Approval and publication
 
-## Release Process
+`.github/workflows/approve-release-android.yml`:
 
-### 1. Bump the Android app version
+1. requires `main` and matching version metadata;
+2. verifies the successful exact-tree preflight artifact;
+3. creates `android-vX.Y.Z` at the current `main` tip;
+4. dispatches the immutable-tag release workflow;
+5. waits for that workflow and fails if publication fails.
 
-Use `scripts/bump-android-version.sh`. It rewrites
-`gradle/libs.versions.toml`, increments `appVersionCode` monotonically,
-and runs a sanity check. Don't edit the Android version files by hand.
+`.github/workflows/release-android.yml` then:
+
+1. verifies tag, version, changelog, privacy URL, and `main` ancestry;
+2. downloads the private preflight bundle;
+3. verifies every filename, size, SHA-256 digest, versionCode, and Git tree;
+4. promotes the existing Play Production draft to `completed`;
+5. publishes those exact APK/AAB bytes plus `SHA256SUMS.txt` to GitHub.
+
+Stable publication does not rebuild the application. Prerelease tags, which do
+not use stable Play preflight, retain their own focused CI and build path.
+
+Play review and storefront propagation remain asynchronous. With Managed
+Publishing disabled, an approved production change becomes available after
+Google review. If Managed Publishing is enabled, Play holds the approved change
+for a Console operator; keep it disabled for fully unattended releases.
+
+### 6. Phone verification and signing
+
+The public sideload APK is release-signed. A development-signed installation of
+the same package cannot be updated by that APK without uninstalling and erasing
+its app data.
+
+`-DeployPhone` deliberately builds the exact source tree as
+`sideloadDebug` and installs it with the compatible development signature. It
+verifies `versionName`, `versionCode`, and activity launch without deleting the
+phone configuration. To test the public APK itself, use a device installation
+already signed with the release key or perform an explicitly approved clean
+install.
+
+## Android prerelease
+
+Use `X.Y.Z-rc.N`, `-beta.N`, or another SemVer prerelease identifier. Prepare
+and merge it like a stable Android release, then create the immutable
+`android-vX.Y.Z-rc.N` tag from `main`.
+
+Prereleases do not use the stable Production-draft preflight. The release
+workflow runs focused CI, builds the artifacts, and marks the GitHub Release as
+a prerelease. Do not silently promote a prerelease to Production.
+
+## Server / plugin release
+
+Prepare on `dev`:
 
 ```bash
-bash scripts/bump-android-version.sh 0.6.2
-```
-
-Confirm the bump:
-
-```bat
-scripts\dev.bat version
-```
-
-The script's diff output should show `gradle/libs.versions.toml` carrying
-the new app version and a higher `appVersionCode`.
-
-### 2. Update release notes and changelog
-
-> Each surface has its own GitHub-Release-body file, all in the same format
-> (Summary + Added/Changed/Fixed + Install/Verify): `RELEASE_NOTES.md` (Android),
-> `PLUGIN_RELEASE_NOTES.md` (plugin), `CLI_RELEASE_NOTES.md` (CLI). This step covers
-> the Android artifacts; the plugin/CLI files are filled in their own release
-> sections below but follow the identical scrub and Keep-a-Changelog grouping.
-
-- `CHANGELOG.md` — promote the accumulated `[Unreleased]` block to a
-  versioned header. The block already exists: every feature PR has
-  been appending to it. All you do here is:
-  1. Change the `## [Unreleased]` header to `## [X.Y.Z] - YYYY-MM-DD`.
-  2. Insert a fresh empty `## [Unreleased]` header above it so the
-     next PR has a landing spot.
-  3. Skim the new versioned block and tighten / reorder if needed —
-     Keep-a-Changelog grouping (`Added` / `Changed` / `Fixed`) should
-     already be in place from the accumulator phase.
-  4. **Per-surface split.** `[Unreleased]` accumulates entries from *all
-     three* surfaces (Android + CLI + plugin), but releases are
-     per-surface. Move only the entries for the surface you're cutting into
-     the new versioned block, and leave the other surfaces' entries under
-     the fresh `[Unreleased]` for their own `desktop-v*` / `server-v*` cut.
-     (Those tracks' GitHub-Release bodies come from `CLI_RELEASE_NOTES.md` /
-     `PLUGIN_RELEASE_NOTES.md`, so the split here only governs this file's
-     historical record.)
-- `RELEASE_NOTES.md` — body of the GitHub Release for this version
-  (rewritten each release; the workflow uses this as-is). This is the
-  operator-facing summary, not the CHANGELOG mirror. Keep the
-  **Download** section near the top, in the required format (#144):
-  1. A lead callout naming the **one file most people want** —
-     "Installing on your phone? Download
-     `hermes-relay-<version>-sideload-release.apk` and tap it"
-     (full feature set), with the Play Store link for the
-     conservative build.
-  2. One explicit line that the `.aab` is a Play Console upload
-     bundle and **cannot** be installed by tapping it on a phone.
-  3. The `SHA256SUMS.txt` verify line + sideload-guide link.
-  No download table, no parity/testing artifacts: releases attach
-  exactly **two** app artifacts — the sideload APK and the googlePlay
-  AAB — plus `SHA256SUMS.txt` covering exactly those two (the 2-asset
-  policy in `.github/workflows/release-android.yml`; the parity twins
-  stay reproducible from the tag via CI but are not attached).
-  Every artifact is version-tagged as
-  `hermes-relay-<version>-<flavor>-<buildType>` via `archivesName`
-  in `app/build.gradle.kts`. Never rename the sideload APK — the
-  in-app update checker matches assets by `.apk` + `sideload` in the
-  name, and user-docs verify steps cite the filename.
-- `app/src/main/assets/whats_new.txt` — in-app "What's New" content
-  shown in the settings/about screen. Update with the version number
-  and a brief feature summary. Gets stale silently if forgotten
-  (v0.4.0 shipped with 0.1.0 content until caught post-release).
-- `app/src/googlePlay/play/release-notes/en-US/default.txt` — the Play
-  Console **"What's new"** text, which gradle-play-publisher reads at
-  upload to fill the Production-draft release notes. This is **separate**
-  from `RELEASE_NOTES.md` (that one is only the GitHub Release body) — if
-  this file is missing or stale, the Play draft ships with empty/wrong
-  notes (shipped empty in v1.1.0 until caught post-release). Keep it
-  **≤500 chars per language**, user-facing, Android-only.
-- `docs/play-store-listing.md` — Play Store listing copy. Update
-  the version reference and the "Release Notes" section that gets
-  pasted into the Play Console "What's new" field. Keep the Play
-  "What's new" within **500 characters** and framed around the
-  release's themes, not a feature dump.
-
-#### Scrub for public distribution
-
-This is a **public repo** and these four files are user-facing. Before
-promoting the `[Unreleased]` block and writing the notes, scrub the
-versioned CHANGELOG block and all three release-notes artifacts for
-wording that shouldn't ship publicly. The CHANGELOG accumulates in a
-dev-log voice during the iteration phase — release-prep is where it
-becomes public copy. Check for and remove/rewrite:
-
-- **Personal names / quoted asides** — `git grep -niE "bailey|: \"" CHANGELOG.md`
-  on the new block. Attribute fixes impersonally ("a user reported"),
-  not by name. (Author identity already lives in git + the signing cert.)
-- **Private infrastructure** — server hostnames/IPs, `~/SYSTEM.md`,
-  internal deployment names, anything that should stay in the operator's
-  environment and not the repo. `grep -niE "192\.168|10\.0\.|hermes-host|SYSTEM\.md"`.
-  (Example IPs like `192.168.1.100` in install docs are fine.)
-- **Fork / branch plumbing + internal nicknames** — references to private
-  fork branches, rollout channels, or in-team incident nicknames read as
-  internal. Keep the *what changed*, drop the *where we staged it*.
-- **Personal example data** — genericize sample profile/agent names to
-  neutral placeholders so the copy doesn't expose a specific setup.
-
-The goal is that someone who has never seen the repo can read the block
-and the release notes and learn only what the software does.
-
-### 3. Build and verify locally
-
-```bat
-scripts\dev.bat bundle
-keytool -printcert -jarfile app\build\outputs\bundle\googlePlayRelease\hermes-relay-*-googlePlay-release.aab
-```
-
-The `keytool` output must show your release certificate (the CN/OU/O
-values you entered during `keytool -genkey`). If it shows
-`CN=Android Debug, O=Android, C=US`, the keystore wasn't picked up —
-recheck `local.properties` before continuing.
-
-Product flavors (`googlePlay`, `sideload`) nest outputs under a flavor
-directory: APKs live in `app/build/outputs/apk/<flavor>/release/` and
-AABs live in `app/build/outputs/bundle/<flavor>Release/`. Every file is
-prefixed `hermes-relay-<version>-` via `archivesName` in
-`app/build.gradle.kts`.
-
-Optional device smoke test: `scripts\dev.bat release` then
-`adb install -r app\build\outputs\apk\sideload\release\hermes-relay-*-sideload-release.apk`.
-
-### 4. Run the private Play preflight from `dev`
-
-The release-prep commit lands on `dev` first. Before any public tag or GitHub
-Release exists, open **Actions → Play Preflight — Android**, choose **Run
-workflow**, select the final `dev` branch, and enter the prepared version.
-
-The preflight workflow:
-
-1. requires the workflow to run from `dev` or untagged `main` with matching
-   version metadata;
-2. runs the release metadata, locale, and Android collection-API checks;
-3. builds and release-signs the same APK/AAB variants used by the public release;
-4. scans the final minified APK DEX for unsupported collection calls;
-5. uploads the Google Play AAB as a private **Production draft**; and
-6. records a 30-day preflight proof keyed to the version and Git tree hash.
-
-No sideload APK or GitHub Release is published by preflight. A successful signed
-build, final DEX scan, and Production-draft upload is the automated Play release
-gate. Play Console pre-review and pre-launch reports are informational and
-non-blocking because their detailed results are not exposed through the release
-automation API. If the release source changes after preflight, rerun it—the
-approval workflow matches the complete Git tree, not just the version number.
-
-GitHub exposes manual workflows only after their workflow file exists on the
-default branch. For the first release that introduces this process, merge the
-release PR without creating a tag, run preflight from untagged `main`, and then
-use the approval workflow. This publishes no app artifacts before the automated
-Play upload gate.
-
-### 5. Merge to `main` and approve the public release
-
-After Play preflight passes, merge the release PR from `dev` to `main`
-with `--no-ff`. The merge commit may differ from the preflight commit, but its
-tree must be identical. If the merge changes the tree, rerun private preflight
-from untagged `main`:
-
-```bash
-# From a clean dev checkout:
-git checkout dev
+git switch dev
 git pull --ff-only origin dev
-
-git add gradle/libs.versions.toml RELEASE_NOTES.md CHANGELOG.md \
-        app/src/main/assets/whats_new.txt docs/play-store-listing.md
-git commit -m "release(android): android-v0.6.2"
-git push origin dev
-
-# Run Play Preflight — Android from dev and require a successful workflow.
-# Open the release PR (dev -> main) and merge with --no-ff.
+bash scripts/bump-server-version.sh X.Y.Z
+python scripts/check-server-version-sync.py --expect X.Y.Z
 ```
 
-Then open **Actions → Approve Android Release**, choose **Run workflow**, select
-`main`, and enter the version. Starting the workflow is the release approval. It
-verifies that `main` has the exact preflighted tree and creates the
-`android-v<version>` tag. Because tags created with `GITHUB_TOKEN` do not trigger
-another workflow, approval dispatches the current release workflow definition
-from `main`; every release job explicitly checks out and verifies the immutable
-`android-v<version>` tag. This lets release-workflow fixes apply without moving
-an existing tag or changing its artifact tree. Manual stable tags are still
-guarded by the same preflight proof in the tag workflow.
-
-The tag-triggered `.github/workflows/release-android.yml` rebuilds and scans the
-artifacts, changes the existing Play Production draft to `completed` (submitting
-it for review), and only after Play accepts that operation creates the public
-GitHub Release with the sideload APK. A missing preflight, changed release tree,
-missing Play credential, or Play submission failure prevents public GitHub
-publication.
-
-Plugin/Python version files are intentionally not part of an Android app
-release unless the plugin package itself is also being released.
-
-### Server / Python package release
-
-Use this when plugin or relay behavior changes independently of Android app
-delivery, for example CLI channel support, bridge routes, pairing server fixes,
-voice auth, dashboard plugin UI, or packaging changes.
-
-First **rewrite `PLUGIN_RELEASE_NOTES.md`** — it is the GitHub Release body for
-`server-v*` tags (the same role `RELEASE_NOTES.md` plays for Android). Fill the
-Summary and the Added/Changed/Fixed groups from the plugin-relevant bullets in the
-promoted `CHANGELOG.md` block, keep the `__VERSION__` token in the Install command
-(the workflow substitutes it), and apply the same public-distribution scrub as §2.
+Update `PLUGIN_RELEASE_NOTES.md` and promote only Server entries from
+`CHANGELOG.md` `[Unreleased]`. Merge the preparation into `dev`, open and merge
+the `dev` → `main` release PR, then tag the new `main` tip:
 
 ```bash
-git checkout dev
-git pull --ff-only origin dev
-
-bash scripts/bump-plugin-version.sh 0.6.2
-git add pyproject.toml plugin/relay/__init__.py plugin/plugin.yaml plugin/dashboard/manifest.json plugin/dashboard/package.json plugin/dashboard/package-lock.json CHANGELOG.md PLUGIN_RELEASE_NOTES.md
-git commit -m "release(server): server-v0.6.2"
-git push origin dev
-
-# Open the release PR (dev -> main) and merge with --no-ff.
-# After merge, tag from the new main tip:
-git checkout main
-git pull --ff-only origin main
-git tag server-v0.6.2
-git push origin server-v0.6.2
+git tag server-vX.Y.Z
+git push origin server-vX.Y.Z
 ```
 
-Pushing `server-v*` triggers `.github/workflows/release-plugin.yml`, which
-validates all plugin-owned version metadata with
-`scripts/check-plugin-version-sync.py`. Run
-`python scripts/check-version-tracks.py` locally before tagging when a change
-touches more than one release surface. The workflow also runs plugin tests,
-builds a wheel and sdist, generates `SHA256SUMS.txt`, and creates a GitHub
-Release named `Hermes-Relay-Server v<version>` for the server/plugin package.
+`.github/workflows/release-plugin.yml` verifies `main` ancestry and version
+agreement, runs plugin tests, builds the wheel/sdist, creates checksums, and
+publishes `Hermes-Relay-Server vX.Y.Z`.
 
-### CLI / Windows systray release
+Do not change Android or Desktop versions unless those surfaces are also being
+released.
 
-Use this when the standalone CLI, daemon, desktop tools, or Windows tray changes.
-Android and plugin versions do not need to move with it.
+## Desktop / tray release
 
-First rewrite `CLI_RELEASE_NOTES.md` for the new Desktop release and promote only
-CLI/tray-relevant changelog bullets into the release block. Then:
+Prepare on `dev`:
 
 ```powershell
 git switch dev
 git pull --ff-only origin dev
-
-cd desktop
-npm version --no-git-tag-version 0.4.0-alpha.2
+Set-Location desktop
+npm version --no-git-tag-version X.Y.Z
 npm run verify
-cd ..
-
-git add desktop/package.json desktop/package-lock.json desktop/src/version.ts `
-  desktop/tray/Cargo.toml desktop/tray/Cargo.lock CHANGELOG.md CLI_RELEASE_NOTES.md
-git commit -m "release(desktop): desktop-v0.4.0-alpha.2"
-git push origin dev
-
-# Open the release PR (dev -> main) and merge with --no-ff.
-# After merge, tag from main:
-git switch main
-git pull --ff-only origin main
-cd desktop
-npm run check:version-sync -- --expect 0.4.0-alpha.2
-cd ..
-git tag desktop-v0.4.0-alpha.2
-git push origin desktop-v0.4.0-alpha.2
+npm run check:version-sync -- --expect X.Y.Z
+Set-Location ..
 ```
 
-The tag workflow rejects version drift and tags whose commit is not in
-`origin/main`, reruns CLI tests, builds all four standalone binaries, tests and
-packages the Windows tray, generates checksums, and publishes the GitHub Release.
+Update `CLI_RELEASE_NOTES.md` and promote only Desktop entries from
+`CHANGELOG.md` `[Unreleased]`. Merge the preparation into `dev`, open and merge
+the `dev` → `main` release PR, then tag the new `main` tip:
 
-### 6. Play review and publishing behavior
-
-> **Stable Android releases require `PLAY_SERVICE_ACCOUNT_JSON`.** Preflight
-> uploads the Production draft; approval promotes that same version code to
-> `completed`. Play Console-only reports are informational and non-blocking.
-> Stable releases do not fall back to publishing GitHub first when Play
-> credentials or submission are unavailable.
->
-> This automated path is intentionally bundle-only. It uploads the
-> `googlePlayRelease` AAB and release-scoped "What's new" notes, but it does
-> not republish static listing assets such as screenshots, title, description,
-> icon, or feature graphic. Use the Play Store Listing workflow when those
-> assets change.
-
-If Play Console **Managed publishing** is enabled, an approved submission remains
-under **Changes ready to publish** until a Play Console user publishes it. If it
-is disabled, the production submission may become available after Google review.
-Either behavior begins only after the public-release approval described above.
-
-**Pick the track first.** The AAB is track-agnostic — the same
-`-googlePlay-release.aab` goes to whichever track you publish on. Choose by intent,
-not habit:
-
-- **Production** — the default for a stable GA release (`android-vX.Y.Z`). The
-  listing is live, so this is where real releases land. The org account is
-  D-U-N-S-verified, so the 14-day / 12-tester closed-testing gate does **not**
-  apply — you can publish straight to Production.
-- **Open / Closed testing** — only when you actually want a public/private beta
-  channel for this build.
-- **Internal testing** — only for a throwaway pre-release smoke check (e.g. a
-  prerelease tag), not for a GA. Don't default here.
-
-**Manual upload:**
-
-1. Download the file ending in `-googlePlay-release.aab` from the GitHub
-   Release assets (for example, `hermes-relay-1.0.0-googlePlay-release.aab`),
-   or use your local build at
-   `app\build\outputs\bundle\googlePlayRelease\hermes-relay-<version>-googlePlay-release.aab`.
-2. In Play Console, open the track you chose above — for a GA that's
-   **Release > Production**.
-3. **Create new release** > upload the AAB.
-4. Paste the Play "What's new" from `docs/play-store-listing.md` (≤500 chars) into
-   the release notes field. (`RELEASE_NOTES.md` is the GitHub-Release body, not the
-   Play field — don't paste that; it's over the limit.)
-5. **Review release** > **Start rollout** (set the staged-rollout percentage if you
-   want a gradual production ramp).
-
-**Automated upload (if `play-service-account.json` is configured):**
-
-```bat
-scripts\dev.bat bundle
-gradlew publishReleaseBundle --track=production
+```bash
+git tag desktop-vX.Y.Z
+git push origin desktop-vX.Y.Z
 ```
 
-The `play { }` block in `app/build.gradle.kts` defaults to the `internal` track
-with `DRAFT` status as a safety net for unattended runs, so pass `--track` explicitly
-for a real release: `--track=production` (GA), or `--track=alpha` (Closed) /
-`--track=beta` (Open) for a beta channel.
+`.github/workflows/release-cli.yml` verifies `main` ancestry and version
+agreement, builds the standalone binaries and Windows tray, creates checksums,
+and publishes the Desktop release.
 
-To promote an existing release between tracks without rebuilding:
+Do not change Android or Server versions unless those surfaces are also being
+released.
 
-```bat
-gradlew promoteReleaseArtifact --from-track=internal --promote-track=alpha
-```
+## After release
 
-### 7. Tracks (a menu, not a mandatory ladder)
+Verify the affected surface:
 
-The org account is exempt from the 14-day / 12-tester closed-testing rule, so a
-stable GA publishes **straight to Production** — there is no required promotion
-chain. The other tracks are opt-in tools, not steps you must climb:
+- immutable tag resolves to the intended `main` commit;
+- GitHub Release exists with expected names and checksums;
+- workflow summary reports the intended surface and version;
+- Play Production shows the Android versionCode with the expected status;
+- deployed or installed runtime reports the released version;
+- `dev` remains the integration source of truth.
 
-- **Production** — live on the Play Store. Where GA releases go.
-- **Open testing (beta)** — opt-in public beta channel.
-- **Closed testing (alpha)** — opt-in private beta (named tester lists).
-- **Internal testing** — throwaway smoke check (e.g. a prerelease tag), no tester
-  or time minimum.
+Release documentation, including `DEVLOG.md`, should already be part of release
+preparation. Do not create an untracked post-tag documentation delta merely to
+record that the release happened.
 
-If you *do* stage through tracks, promote an existing release without rebuilding via
-the Play Console UI or:
+## Required Android secrets
 
-```bat
-gradlew promoteReleaseArtifact --from-track=internal --promote-track=production
-```
+| Secret | Purpose |
+|---|---|
+| `HERMES_KEYSTORE_BASE64` | Release-signing keystore |
+| `HERMES_KEYSTORE_PASSWORD` | Keystore password |
+| `HERMES_KEY_ALIAS` | Signing alias |
+| `HERMES_KEY_PASSWORD` | Key password |
+| `PLAY_SERVICE_ACCOUNT_JSON` | Stable Play draft upload and promotion |
 
-### 8. After release
+All five are required for stable automated Android publication. See
+[Android release operations](docs/release/android-operations.md) for setup and
+recovery.
 
-- Verify the GitHub Release has APK, AAB, and `SHA256SUMS.txt` attached.
-- Confirm the release body includes the **Download** section that tells
-  users which asset to grab. If you kept the structure from
-  `RELEASE_NOTES.md` this will already be baked in. If for some reason
-  it's missing, edit the body with:
-  ```bash
-  gh release view android-vX.Y.Z --repo Codename-11/hermes-relay --json body --jq .body > /tmp/body.md
-  # edit /tmp/body.md to add/fix the Download section
-  gh release edit android-vX.Y.Z --repo Codename-11/hermes-relay --notes-file /tmp/body.md
-  ```
-  (This step was only needed as a retrofit for v0.1.0 — v0.1.1+ inherit
-  the Download section automatically from `RELEASE_NOTES.md`.)
-- Confirm Play Console shows the new versionCode on the target track.
-- Update `DEVLOG.md` with a short entry for the release.
+## Hotfix recipe
 
-## CI Behavior
+1. Identify the affected immutable production tag.
+2. Branch from that tag: `git switch -c fix/short-name <surface-tag>`.
+3. Make the smallest safe fix.
+4. Bump only the affected surface patch version during hotfix release prep.
+5. Update only that surface's changelog and release notes.
+6. Open a focused PR to `main` and merge with a merge commit.
+7. Tag the new `main` tip with the affected surface prefix.
+8. Verify artifacts, deployment or rollout, and live behavior.
+9. Immediately merge `main` back into `dev` with `--no-ff`.
 
-Android, Plugin, dashboard, and desktop now have separate CI/release lanes.
-This keeps a dashboard CSS fix from running the full server suite, and keeps
-plugin changes from forcing an Android app `versionCode` bump.
-
-On every push of a tag matching `android-v*`, `.github/workflows/release-android.yml`:
-
-1. Verifies the stable tag resolves to a commit contained in `main` and that the
-   tag matches `appVersionName` in
-   `gradle/libs.versions.toml` (mismatches fail the workflow).
-2. Runs the Android debug build and the stable sideload pairing/connection
-   regression slice with explicit timeouts.
-3. Decodes `HERMES_KEYSTORE_BASE64` into `$RUNNER_TEMP/release.keystore`
-   and exports `HERMES_KEYSTORE_PATH` (skipped if the secret is unset).
-4. Builds all four flavored release artifacts
-   (`./gradlew bundleRelease assembleRelease`); only the sideload APK and
-   googlePlay AAB are attached (see §Release assets).
-5. Generates `SHA256SUMS.txt` covering the two attached files.
-6. Promotes the exact preflighted Production draft to `completed`; a missing
-   credential or rejected Play edit fails before public GitHub publication.
-7. Creates a GitHub Release named `Hermes-Relay-Android v<version>` with `RELEASE_NOTES.md` as
-   the body. Attaches the APK, AAB, and `SHA256SUMS.txt`. Tags any version
-   containing a dash (e.g. `android-v0.2.0-beta.1`) as a prerelease automatically.
-8. Prints a `$GITHUB_STEP_SUMMARY` with the release and Play result.
-
-On every push of a tag matching `server-v*`,
-`.github/workflows/release-plugin.yml`:
-
-1. Verifies the tag commit is contained in `main`, validates the tag against
-   all server/plugin-owned version metadata checked by
-   `scripts/check-plugin-version-sync.py`, and requires the matching release
-   heading in `CHANGELOG.md`.
-2. Runs plugin syntax checks and the focused route/auth/session test slice.
-3. Builds the Python wheel and sdist with `python -m build`.
-4. Generates `dist/SHA256SUMS.txt`.
-5. Creates a GitHub Release named `Hermes-Relay-Server v<version>` with the wheel,
-   sdist, and checksum file attached.
-
-On every push of a tag matching `desktop-v*`,
-`.github/workflows/release-cli.yml` builds and publishes the CLI binaries and
-Windows tray installer. Its GitHub Release body comes from `CLI_RELEASE_NOTES.md`
-(rewritten per release — the CLI counterpart of `RELEASE_NOTES.md`); the workflow
-substitutes `__VERSION__` (bare, e.g. `0.3.0`) and `__TAG__` (full, e.g.
-`desktop-v0.3.0`) so the install/pin commands stay accurate. It rejects tags
-whose commit is not contained in `main`, whose version differs from
-`desktop/package.json`, or whose version has no `CHANGELOG.md` release heading.
-Fill its Summary and
-Added/Changed/Fixed groups at CLI release-prep and apply the §2 public scrub.
-Dashboard-only changes are covered by
-`.github/workflows/ci-dashboard.yml`, which builds the dashboard plugin,
-runs the dashboard API tests, and verifies the modal CSS markers are present
-in the built bundle.
-
-## Required Android Release Secrets
-
-| Secret                      | Purpose                             | How to populate                                  |
-|-----------------------------|-------------------------------------|--------------------------------------------------|
-| `HERMES_KEYSTORE_BASE64`    | Release keystore, base64-encoded    | `base64 -w 0 release.keystore`                   |
-| `HERMES_KEYSTORE_PASSWORD`  | Store password                      | Password set during `keytool -genkey`            |
-| `HERMES_KEY_ALIAS`          | Key alias                           | Alias set during `keytool -genkey`               |
-| `HERMES_KEY_PASSWORD`       | Key password                        | Usually the same as the store password          |
-| `PLAY_SERVICE_ACCOUNT_JSON` | Stable Play submission             | Paste the full Play Developer API service-account JSON (step 3) |
-
-Stable Android releases require `PLAY_SERVICE_ACCOUNT_JSON`. Preflight uploads
-the Production draft and the tag workflow promotes that exact version code to
-`completed`. The workflow does not fall back to manual upload or publish GitHub
-first. With Play Managed Publishing off, an approved release publishes
-automatically; with it on, Play holds the approved change for an operator action
-that the Developer API does not expose.
-
-## Hotfix Recipe
-
-When production has a bug, use the same invariant for every surface:
-
-1. Branch from the affected immutable `android-v*`, `server-v*`, or `desktop-v*`
-   production tag, never from the moving `main` or `dev` branch.
-2. Make the smallest safe fix and add focused verification.
-3. Bump only the affected surface's patch version and release notes.
-4. Open the focused hotfix PR into `main` and merge with a merge commit/no-ff.
-5. Tag the new `main` tip with the affected surface's patch tag.
-6. Verify the artifacts and production rollout or deployment.
-7. Merge `main` back into `dev` immediately so integration inherits the fix and
-   version history.
-
-For an Android app hotfix:
-
-1. `git checkout -b fix/short-name android-v0.6.1` — branch from the released
-   Android tag (not from `main` or `dev`).
-2. Apply the fix, add a test, commit.
-3. Run `bash scripts/bump-android-version.sh 0.6.2` to update
-   `gradle/libs.versions.toml`.
-4. Update `RELEASE_NOTES.md`, `CHANGELOG.md`, in-app What's New, and Play
-   listing notes as needed.
-5. Open a PR from `fix/short-name` into `main`, merge with `--no-ff`.
-6. `git tag android-v0.6.2` from the new `main` tip and `git push origin android-v0.6.2`
-   so Android release CI builds and publishes.
-7. Verify the automated Play submission, GitHub artifacts, and rollout.
-8. Merge `main` back into `dev` (`git checkout dev && git merge --no-ff main`)
-   so `dev` picks up the hotfix and the versionCode bump. Without this,
-   `dev`'s `appVersionCode` lags behind `main` and the next app release
-   bump collides.
-
-For a Server hotfix, branch from the affected `server-v*` tag, apply
-the fix, run `bash scripts/bump-plugin-version.sh <next-version>`, merge to
-`main`, tag `server-v<next-version>`, verify the package/deployment, and merge
-`main` back to `dev`. Do not touch
-`gradle/libs.versions.toml` unless an Android app release is also shipping.
-
-For a Desktop hotfix, branch from the affected `desktop-v*` tag, update only
-`desktop/package.json` and its generated lock/runtime/tray metadata, merge to
-`main`, tag `desktop-v<next-version>`, verify all binaries and the installer,
-then merge `main` back to `dev`.
-
-## Troubleshooting
-
-**`Tag version (X) does not match appVersionName (Y)` in CI validate step**
-You pushed a tag before bumping `gradle/libs.versions.toml`, or vice versa.
-Fix: update the file, commit, delete the remote tag
-(`git push --delete origin android-vX`), re-tag, and push again.
-
-**Play Console rejects the AAB as debug-signed**
-Run `keytool -printcert -jarfile <aab>` locally — if it shows
-`CN=Android Debug`, fix `local.properties` for local builds or
-`HERMES_KEYSTORE_BASE64` for CI. For CI, check the workflow summary; if it
-says "Debug-signed", one of the four `HERMES_*` secrets is missing or the
-base64 blob is malformed. Re-encode with `base64 -w 0` (the `-w 0` flag is
-required — without it, line breaks corrupt the secret).
-
-**Play Console: "Version code X has already been used"**
-Every upload must increment `appVersionCode`. Bump it and rebuild — you
-cannot reuse a code even after deleting a draft.
-
-**`gradle-play-publisher: No matching track found`**
-Use Play Console-compatible track names: `internal`, `alpha`, `beta`,
-`production`.
-
-**`gradlew publishReleaseBundle` fails with `FileNotFoundException:
-play-service-account.json`**
-The service account JSON is missing. Either complete the service account
-setup above or use the manual Play Console upload path.
+For Android, merge the focused hotfix PR to `main`, run signed preflight from
+that untagged `main` tip, then use **Approve Android Release** to create the patch
+tag and publish it. Approval still requires the exact-tree proof. Do not rewrite
+the affected historical tag.

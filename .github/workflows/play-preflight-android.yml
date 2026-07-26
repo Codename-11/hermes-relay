@@ -2,10 +2,10 @@
 #
 # Run manually from the final dev or untagged main tree before creating
 # android-v*. The job
-# builds the same signed release artifacts, scans final DEX, and uploads the
-# Google Play bundle as a production DRAFT. A successful upload is the automated
-# Play gate while no public GitHub Release or sideload APK exists. Console-only
-# pre-review and pre-launch reports are informational and do not block release.
+# builds the signed release artifacts once, scans final DEX, and uploads the
+# Google Play bundle as a production DRAFT. The signed APK/AAB and their manifest
+# remain private Actions artifacts until approval publishes those exact bytes.
+# Console-only pre-review and pre-launch reports are informational.
 
 name: Play Preflight — Android
 
@@ -25,6 +25,51 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quality:
+    name: Validate release quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: Validate translation catalogs and collection APIs
+        run: |
+          python3 scripts/check-android-locales.py
+          python3 scripts/check-android-collection-apis.py
+          python3 -m unittest scripts/test_android_release_artifacts.py
+
+      - name: Run strict Android lint and focused tests
+        run: |
+          ./gradlew lint :app:testSideloadDebugUnitTest \
+            --tests com.hermesandroid.relay.network.ArchitectureBoundaryTest \
+            --tests com.hermesandroid.relay.network.relay.RelayUrlDeriverTest \
+            --tests com.hermesandroid.relay.viewmodel.ConnectionSwitchTest \
+            --tests com.hermesandroid.relay.util.ServerAddressTest \
+            --tests com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest \
+            --tests com.hermesandroid.relay.data.AppLanguageTest \
+            --tests com.hermesandroid.relay.viewmodel.ChatStreamRecoveryTest \
+            --tests com.hermesandroid.relay.viewmodel.ChatViewModelRealtimeTurnTest \
+            --tests com.hermesandroid.relay.network.relay.RealtimeVoiceEventParsingTest \
+            --tests com.hermesandroid.relay.voice.VoiceCommandInterpreterTest \
+            --tests com.hermesandroid.relay.data.VoiceModePresetTest \
+            --tests com.hermesandroid.relay.ui.components.BackgroundTaskCardTest \
+            --tests com.hermesandroid.relay.ui.components.DotMatrixIndicatorTest \
+            --tests com.hermesandroid.relay.ui.components.AttachmentGalleryLayoutTest \
+            --tests com.hermesandroid.relay.ui.components.MarkdownStreamingParserTest \
+            --tests com.hermesandroid.relay.ui.screens.ChatUnreadStateTest \
+            --console=plain
+
   preflight:
     name: Build and upload private Play draft
     runs-on: ubuntu-latest
@@ -121,25 +166,27 @@ jobs:
             --resolution-strategy=ignore \
             --release-name="Hermes-Relay ${{ steps.metadata.outputs.version }}"
 
-      - name: Record successful preflight for the exact commit
+      - name: Package immutable preflight artifacts
         run: |
-          mkdir -p app/build/reports
-          cat > app/build/reports/play-preflight.json <<EOF
-          {
-            "version": "${{ steps.metadata.outputs.version }}",
-            "versionCode": "${{ steps.metadata.outputs.version_code }}",
-            "commit": "$GITHUB_SHA",
-            "tree": "${{ steps.metadata.outputs.tree }}",
-            "track": "production",
-            "status": "draft"
-          }
-          EOF
+          python3 scripts/android-release-artifacts.py package \
+            --version "${{ steps.metadata.outputs.version }}" \
+            --version-code "${{ steps.metadata.outputs.version_code }}" \
+            --commit "$GITHUB_SHA" \
+            --tree "${{ steps.metadata.outputs.tree }}" \
+            --sideload-apk app/build/outputs/apk/sideload/release/*.apk \
+            --google-play-aab app/build/outputs/bundle/googlePlayRelease/*.aab \
+            --output app/build/preflight-release
+          python3 scripts/android-release-artifacts.py verify \
+            --version "${{ steps.metadata.outputs.version }}" \
+            --version-code "${{ steps.metadata.outputs.version_code }}" \
+            --tree "${{ steps.metadata.outputs.tree }}" \
+            --directory app/build/preflight-release
 
-      - name: Upload preflight proof
+      - name: Upload private signed artifacts and proof
         uses: actions/upload-artifact@v7
         with:
           name: play-preflight-${{ steps.metadata.outputs.version }}-${{ steps.metadata.outputs.tree }}
-          path: app/build/reports/play-preflight.json
+          path: app/build/preflight-release/
           if-no-files-found: error
           retention-days: 30
 
@@ -152,4 +199,4 @@ jobs:
           echo "- Release tree: \`${{ steps.metadata.outputs.tree }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Play track/status: **Production draft**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "The signed build, DEX scan, and Play draft upload passed. Ensure this exact release tree is on main, then run **Approve Android Release** from main. Console-only reports are informational and non-blocking." >> "$GITHUB_STEP_SUMMARY"
+          echo "The signed build, DEX scan, strict quality gate, and Play draft upload passed. The private artifact contains the exact APK/AAB bytes that approval will publish. Ensure this release tree is on main, then run **Approve Android Release** from main." >> "$GITHUB_STEP_SUMMARY"

@@ -14,6 +14,8 @@ function classifyCiPaths(paths) {
       'build.gradle.kts', 'settings.gradle.kts', 'gradle.properties', 'gradlew', 'gradlew.bat',
       'scripts/check-android-locales.py', 'scripts/android-locale-harness.py',
       'scripts/check-android-collection-apis.py', '.github/workflows/ci-android.yml',
+      'scripts/android-release-artifacts.py', 'scripts/test_android_release_artifacts.py',
+      'scripts/release-android.ps1',
       '.github/workflows/play-preflight-android.yml',
       '.github/workflows/approve-release-android.yml',
       '.github/workflows/release-android.yml',

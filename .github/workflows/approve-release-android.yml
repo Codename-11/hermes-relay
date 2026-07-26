@@ -5,6 +5,7 @@
 # stable tag triggers Play submission first, then GitHub publication.
 
 name: Approve Android Release
+run-name: Approve Android ${{ inputs.version }}
 
 on:
   workflow_dispatch:
@@ -24,8 +25,9 @@ concurrency:
 
 jobs:
   approve:
-    name: Verify preflight and create release tag
+    name: Verify, tag, and observe public release
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,13 +58,25 @@ jobs:
           RELEASE_TREE: ${{ steps.metadata.outputs.tree }}
         run: |
           ARTIFACT_NAME="play-preflight-${VERSION}-${RELEASE_TREE}"
-          COUNT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" \
-            --jq '[.artifacts[] | select(.expired == false)] | length')
-          if [ "$COUNT" -lt 1 ]; then
+          ARTIFACT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last')
+          RUN_ID=$(jq -r '.workflow_run.id // empty' <<<"$ARTIFACT")
+          if [ -z "$RUN_ID" ]; then
             echo "::error::No successful Play preflight found for version $VERSION with tree $RELEASE_TREE"
             exit 1
           fi
-          echo "Verified Play preflight proof: $ARTIFACT_NAME"
+          RUN=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
+          CONCLUSION=$(jq -r '.conclusion' <<<"$RUN")
+          WORKFLOW_PATH=$(jq -r '.path' <<<"$RUN")
+          if [ "$WORKFLOW_PATH" != ".github/workflows/play-preflight-android.yml" ]; then
+            echo "::error::Artifact came from unexpected workflow ${WORKFLOW_PATH}"
+            exit 1
+          fi
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::Preflight workflow run ${RUN_ID} concluded ${CONCLUSION}"
+            exit 1
+          fi
+          echo "Verified successful Play preflight artifact: $ARTIFACT_NAME (run $RUN_ID)"
 
       - name: Ensure release tag does not already exist
         env:
@@ -83,18 +97,41 @@ jobs:
             -f ref="refs/tags/android-v${VERSION}" \
             -f sha="$GITHUB_SHA"
 
-      - name: Start the tag release workflow
+      - name: Start and observe the tag release workflow
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
+          DISPATCHED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           gh workflow run release-android.yml \
             --ref=main \
             -f version="$VERSION"
 
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list \
+              --workflow=release-android.yml \
+              --event=workflow_dispatch \
+              --limit=20 \
+              --json databaseId,headSha,createdAt \
+              --jq ".[] | select(.headSha == \"$GITHUB_SHA\" and .createdAt >= \"$DISPATCHED_AT\") | .databaseId" \
+              | head -n 1)
+            if [ -n "$RUN_ID" ]; then
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::Release workflow dispatch succeeded but its run could not be located"
+            exit 1
+          fi
+
+          echo "Observing Release Android run ${RUN_ID}"
+          gh run watch "$RUN_ID" --exit-status --interval 15
+
       - name: Approval summary
         run: |
-          echo "## Android release approved" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Android release complete" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Created \`android-v${{ steps.metadata.outputs.version }}\` from main at \`$GITHUB_SHA\`." >> "$GITHUB_STEP_SUMMARY"
-          echo "The current release workflow was dispatched from main and will check out that immutable tag. It will submit the preflighted Play draft before creating the public GitHub Release." >> "$GITHUB_STEP_SUMMARY"
+          echo "The immutable release workflow completed successfully: it promoted the preflighted Play draft and published the exact signed preflight artifacts." >> "$GITHUB_STEP_SUMMARY"

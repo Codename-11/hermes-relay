@@ -1,5 +1,21 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-26 — Android release fast path
+
+Stable Android preflight now retains the exact signed APK and Play AAB with a
+tree-bound manifest, sizes, and SHA-256 checksums. The release PR verifies that
+its simulated merge tree is unchanged and that the originating preflight run
+succeeded, while final publication downloads and verifies those private bytes
+instead of rebuilding them. Approval observes the immutable-tag release through
+Play promotion and GitHub publication.
+
+A PowerShell orchestrator provides the prepared-`dev` to Production path with a
+dry run and optional configuration-preserving phone deployment. The canonical
+release guide was reduced to policy and executable steps; Android account
+setup, emergency Play recovery, track selection, signing behavior, and
+troubleshooting moved to `docs/release/android-operations.md`. No application
+version changed for this release-engineering update.
+
 ## 2026-07-26 — Android 1.5.1 patch reconciliation
 
 Android 1.5.1 reconciles the post-1.5.0 voice and chat fixes into versionCode

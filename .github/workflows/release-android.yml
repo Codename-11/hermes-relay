@@ -2,10 +2,12 @@
 #
 # Triggered when an Android release tag (android-v*) is pushed.
 # Validates the tag matches the app version in libs.versions.toml,
-# runs focused Android checks, builds release APK/AAB artifacts, and creates a
-# GitHub Release. Server/Python package releases use server-v* tags.
+# reuses the exact private APK/AAB that passed stable Play preflight, and creates
+# a GitHub Release only after Play accepts the production promotion. Prerelease
+# tags still build fresh artifacts because they do not use the Play preflight.
 
 name: Release Android
+run-name: Release Android ${{ inputs.version != '' && inputs.version || github.ref_name }}
 
 on:
   push:
@@ -34,6 +36,8 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       version_code: ${{ steps.version.outputs.version_code }}
+      release_tree: ${{ steps.version.outputs.release_tree }}
+      preflight_artifact_id: ${{ steps.preflight.outputs.artifact_id }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -58,6 +62,7 @@ jobs:
           VERSION_CODE=$(grep -oP 'appVersionCode\s*=\s*"\K[^"]+' gradle/libs.versions.toml)
           echo "version=$REF_VERSION" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "release_tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
 
       - name: Verify version sync
         run: |
@@ -92,25 +97,41 @@ jobs:
           fi
 
       - name: Require successful Play preflight for this exact release tree
+        id: preflight
         if: ${{ !contains(steps.version.outputs.version, '-') }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TREE: ${{ steps.version.outputs.release_tree }}
         run: |
-          RELEASE_TREE=$(git rev-parse 'HEAD^{tree}')
           ARTIFACT_NAME="play-preflight-${VERSION}-${RELEASE_TREE}"
-          COUNT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" \
-            --jq '[.artifacts[] | select(.expired == false)] | length')
-          if [ "$COUNT" -lt 1 ]; then
+          ARTIFACT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last')
+          ARTIFACT_ID=$(jq -r '.id // empty' <<<"$ARTIFACT")
+          RUN_ID=$(jq -r '.workflow_run.id // empty' <<<"$ARTIFACT")
+          if [ -z "$ARTIFACT_ID" ] || [ -z "$RUN_ID" ]; then
             echo "::error::No successful Play preflight found for version $VERSION with tree $RELEASE_TREE"
             echo "Run Play Preflight from the final dev tree, merge that unchanged tree to main, then approve the release."
             exit 1
           fi
-          echo "Play preflight proof found: $ARTIFACT_NAME"
+          RUN=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
+          CONCLUSION=$(jq -r '.conclusion' <<<"$RUN")
+          WORKFLOW_PATH=$(jq -r '.path' <<<"$RUN")
+          if [ "$WORKFLOW_PATH" != ".github/workflows/play-preflight-android.yml" ]; then
+            echo "::error::Artifact came from unexpected workflow ${WORKFLOW_PATH}"
+            exit 1
+          fi
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::Preflight workflow run ${RUN_ID} concluded ${CONCLUSION}"
+            exit 1
+          fi
+          echo "artifact_id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+          echo "Play preflight artifact verified: $ARTIFACT_NAME (run $RUN_ID, artifact $ARTIFACT_ID)"
 
   ci:
-    name: CI Checks
+    name: CI Checks (prerelease only)
     needs: validate
+    if: ${{ contains(needs.validate.outputs.version, '-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -149,6 +170,7 @@ jobs:
   release:
     name: Build & Publish Release
     needs: [validate, ci]
+    if: ${{ always() && needs.validate.result == 'success' && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -167,54 +189,61 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: Decode release keystore
+      - name: Download exact stable preflight artifacts
+        if: ${{ !contains(needs.validate.outputs.version, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.validate.outputs.preflight_artifact_id }}
+        run: |
+          mkdir -p app/build/release-artifacts
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > "$RUNNER_TEMP/preflight.zip"
+          python3 scripts/android-release-artifacts.py extract \
+            --archive "$RUNNER_TEMP/preflight.zip" \
+            --output app/build/release-artifacts
+
+      - name: Verify exact stable preflight artifacts
+        if: ${{ !contains(needs.validate.outputs.version, '-') }}
+        run: |
+          python3 scripts/android-release-artifacts.py verify \
+            --version "${{ needs.validate.outputs.version }}" \
+            --version-code "${{ needs.validate.outputs.version_code }}" \
+            --tree "${{ needs.validate.outputs.release_tree }}" \
+            --directory app/build/release-artifacts
+
+      - name: Decode release keystore for prerelease build
         env:
           HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
-        if: env.HERMES_KEYSTORE_BASE64 != ''
+        if: ${{ contains(needs.validate.outputs.version, '-') && env.HERMES_KEYSTORE_BASE64 != '' }}
         run: |
           echo "$HERMES_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "HERMES_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
 
-      - name: Build release artifacts (APK + AAB)
+      - name: Build prerelease artifacts
+        if: ${{ contains(needs.validate.outputs.version, '-') }}
         env:
           HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
           HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
           HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
-        # `assembleRelease` and `bundleRelease` are flavor-wide task aliases
-        # (added by `flavorDimensions += "track"` in app/build.gradle.kts), so
-        # this one line builds ALL four artifacts at once. Filenames come from
-        # `archivesName` (set in app/build.gradle.kts) which injects the app
-        # version, so `<version>` below is `libs.versions.appVersionName`:
-        #   app/build/outputs/apk/googlePlay/release/hermes-relay-<version>-googlePlay-release.apk
-        #   app/build/outputs/apk/sideload/release/hermes-relay-<version>-sideload-release.apk
-        #   app/build/outputs/bundle/googlePlayRelease/hermes-relay-<version>-googlePlay-release.aab
-        #   app/build/outputs/bundle/sideloadRelease/hermes-relay-<version>-sideload-release.aab
-        run: ./gradlew bundleRelease assembleRelease
+        run: ./gradlew bundleRelease assembleRelease --console=plain
 
-      - name: Scan release DEX for unsupported collection APIs
+      - name: Scan prerelease DEX
+        if: ${{ contains(needs.validate.outputs.version, '-') }}
         run: |
           python3 scripts/check-android-collection-apis.py \
             --apk app/build/outputs/apk/googlePlay/release/*.apk \
             --apk app/build/outputs/apk/sideload/release/*.apk
 
-      - name: List produced artifacts (debug aid)
+      - name: Package prerelease artifacts
+        if: ${{ contains(needs.validate.outputs.version, '-') }}
         run: |
-          echo "=== APK outputs ==="
-          find app/build/outputs/apk -name '*.apk' -print 2>/dev/null || true
-          echo "=== AAB outputs ==="
-          find app/build/outputs/bundle -name '*.aab' -print 2>/dev/null || true
-
-      - name: Generate checksums
-        # Flavor dimension adds an extra path segment to the AGP output layout.
-        # APKs live under `apk/<flavor>/release/`, AABs under `bundle/<flavor>Release/`
-        # (note the concatenated camelCase — AGP path quirk, documented but
-        # different between APK and AAB). Checksums cover EXACTLY the files
-        # attached to the GitHub Release (see the 2-asset policy on the
-        # release step below) so SHA256SUMS.txt matches the assets 1:1.
-        run: |
-          cd app/build/outputs
-          sha256sum apk/sideload/release/*.apk bundle/googlePlayRelease/*.aab > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          python3 scripts/android-release-artifacts.py package \
+            --version "${{ needs.validate.outputs.version }}" \
+            --version-code "${{ needs.validate.outputs.version_code }}" \
+            --commit "$(git rev-parse HEAD)" \
+            --tree "${{ needs.validate.outputs.release_tree }}" \
+            --sideload-apk app/build/outputs/apk/sideload/release/*.apk \
+            --google-play-aab app/build/outputs/bundle/googlePlayRelease/*.aab \
+            --output app/build/release-artifacts
 
       - name: Require Play credentials for stable release
         env:
@@ -252,9 +281,9 @@ jobs:
           # Deliberate 2-asset policy (#144): attach ONLY the installable
           # sideload APK and Play AAB, plus checksums covering those files.
           files: |
-            app/build/outputs/apk/sideload/release/*.apk
-            app/build/outputs/bundle/googlePlayRelease/*.aab
-            app/build/outputs/SHA256SUMS.txt
+            app/build/release-artifacts/*.apk
+            app/build/release-artifacts/*.aab
+            app/build/release-artifacts/SHA256SUMS.txt
 
       - name: Release summary
         env:
@@ -262,7 +291,9 @@ jobs:
         run: |
           echo "## Hermes-Relay-Android v${{ needs.validate.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$HERMES_KEYSTORE_BASE64" ]; then
+          if [[ "${{ needs.validate.outputs.version }}" != *-* ]]; then
+            echo "✅ **Published the exact signed Play-preflight artifacts**" >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$HERMES_KEYSTORE_BASE64" ]; then
             echo "✅ **Signed with release keystore** — suitable for Play Store upload" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "⚠️ **Debug-signed** (no \`HERMES_KEYSTORE_BASE64\` secret) — NOT suitable for Play Store. Add the secret in repo settings to enable release signing." >> "$GITHUB_STEP_SUMMARY"
@@ -270,6 +301,5 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Artifacts" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          find app/build/outputs/apk -name '*.apk' -exec ls -la {} + >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-          find app/build/outputs/bundle -name '*.aab' -exec ls -la {} + >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          find app/build/release-artifacts -maxdepth 1 -type f -exec ls -la {} + >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"

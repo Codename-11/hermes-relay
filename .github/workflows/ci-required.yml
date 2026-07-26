@@ -12,6 +12,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
+  actions: read
   contents: read
   pull-requests: read
 
@@ -30,6 +31,7 @@ jobs:
       dashboard: ${{ steps.filter.outputs.dashboard }}
       contract: ${{ steps.filter.outputs.contract }}
       docs: ${{ steps.filter.outputs.docs }}
+      release_pr: ${{ steps.release.outputs.release_pr }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -38,6 +40,21 @@ jobs:
 
       - name: Test path classifier
         run: node .github/scripts/classify-ci-paths.test.cjs
+
+      - name: Detect canonical release PR
+        id: release
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$BASE_REF" = "main" ] &&
+             [ "$HEAD_REF" = "dev" ] &&
+             [ "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY" ]; then
+            echo "release_pr=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_pr=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Classify changed files
         id: filter
@@ -62,8 +79,65 @@ jobs:
 
   android:
     needs: changes
-    if: needs.changes.outputs.android == 'true'
+    if: needs.changes.outputs.android == 'true' && needs.changes.outputs.release_pr != 'true'
     uses: ./.github/workflows/ci-android.yml
+
+  release-proof:
+    name: Verify preflighted release tree
+    needs: changes
+    if: needs.changes.outputs.release_pr == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout simulated release merge
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Require unchanged successful Play preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_DEV_COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          MERGE_TREE=$(git rev-parse 'HEAD^{tree}')
+          DEV_COMMIT="$EXPECTED_DEV_COMMIT"
+          DEV_TREE=$(git rev-parse "${DEV_COMMIT}^{tree}")
+          if [ "$MERGE_TREE" != "$DEV_TREE" ]; then
+            echo "::error::The dev-to-main merge changes the preflighted tree ($DEV_TREE -> $MERGE_TREE)"
+            echo "Rerun Play Preflight from the simulated merge result before approval."
+            exit 1
+          fi
+
+          VERSION=$(grep -oP 'appVersionName\s*=\s*"\K[^"]+' gradle/libs.versions.toml)
+          ARTIFACT_NAME="play-preflight-${VERSION}-${DEV_TREE}"
+          ARTIFACT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last')
+          RUN_ID=$(jq -r '.workflow_run.id // empty' <<<"$ARTIFACT")
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::No Play preflight artifact exists for dev tree $DEV_TREE and version $VERSION"
+            exit 1
+          fi
+          RUN=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
+          CONCLUSION=$(jq -r '.conclusion' <<<"$RUN")
+          WORKFLOW_PATH=$(jq -r '.path' <<<"$RUN")
+          PREFLIGHT_COMMIT=$(jq -r '.head_sha' <<<"$RUN")
+          if [ "$WORKFLOW_PATH" != ".github/workflows/play-preflight-android.yml" ]; then
+            echo "::error::Artifact came from unexpected workflow ${WORKFLOW_PATH}"
+            exit 1
+          fi
+          if [ "$PREFLIGHT_COMMIT" != "$DEV_COMMIT" ]; then
+            echo "::error::Preflight commit ${PREFLIGHT_COMMIT} does not match release dev commit ${DEV_COMMIT}"
+            exit 1
+          fi
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::Play preflight run ${RUN_ID} concluded ${CONCLUSION}"
+            exit 1
+          fi
+
+          echo "Verified release PR:"
+          echo "  dev commit: $DEV_COMMIT"
+          echo "  unchanged tree: $DEV_TREE"
+          echo "  successful preflight run: $RUN_ID"
 
   desktop:
     needs: changes
@@ -110,11 +184,12 @@ jobs:
   guard:
     name: Required checks
     if: always()
-    needs: [changes, android, desktop, plugin, dashboard, contract, docs]
+    needs: [changes, android, release-proof, desktop, plugin, dashboard, contract, docs]
     runs-on: ubuntu-latest
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
       ANDROID_RESULT: ${{ needs.android.result }}
+      RELEASE_PROOF_RESULT: ${{ needs.release-proof.result }}
       DESKTOP_RESULT: ${{ needs.desktop.result }}
       PLUGIN_RESULT: ${{ needs.plugin.result }}
       DASHBOARD_RESULT: ${{ needs.dashboard.result }}
@@ -125,7 +200,7 @@ jobs:
         shell: bash
         run: |
           failed=0
-          for check in CHANGES ANDROID DESKTOP PLUGIN DASHBOARD CONTRACT DOCS; do
+          for check in CHANGES ANDROID RELEASE_PROOF DESKTOP PLUGIN DASHBOARD CONTRACT DOCS; do
             result_var="${check}_RESULT"
             result="${!result_var}"
             echo "$check: $result"
