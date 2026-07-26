@@ -1,11 +1,43 @@
 package com.hermesandroid.relay.ui.screens
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatScrollSnapshotTest {
+    @Test
+    fun `completion releases only the retained live tail`() {
+        assertNull(releaseRetainedLiveTail("assistant-live", "assistant-live"))
+        assertEquals(
+            "assistant-live",
+            releaseRetainedLiveTail("assistant-live", "different-message"),
+        )
+        assertNull(releaseRetainedLiveTail(null, "assistant-live"))
+    }
+
+    @Test
+    fun `tall markdown tail is positioned by its trailing edge`() {
+        assertEquals(
+            1_208,
+            tailEndScrollOffset(
+                tailSizePx = 2_400,
+                footerSizePx = 8,
+                viewportSizePx = 1_200,
+            ),
+        )
+        assertEquals(
+            0,
+            tailEndScrollOffset(
+                tailSizePx = 600,
+                footerSizePx = 8,
+                viewportSizePx = 1_200,
+            ),
+        )
+    }
+
     @Test
     fun `same-tail stream completion requests an atomic bottom anchor`() {
         val streaming = snapshot(isStreaming = true)

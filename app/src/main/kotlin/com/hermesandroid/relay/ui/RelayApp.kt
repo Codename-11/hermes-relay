@@ -108,6 +108,7 @@ import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.data.VoicePreferencesRepository
+import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.displayLabel
@@ -1919,6 +1920,14 @@ fun RelayApp() {
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
                         maxBubbleWidth = maxBubbleWidth,
+                        voicePresentationMode = VoicePresentationMode.fromStorage(
+                            voiceSettings.presentationMode,
+                        ),
+                        onVoicePresentationModeChange = { mode ->
+                            connectionSwitchScope.launch {
+                                voicePreferences.setPresentationMode(mode)
+                            }
+                        },
                         openAgentSheetOnEntry = openAgentSheetArg,
                         onAgentSheetArgConsumed = {
                             backStackEntry.arguments?.putBoolean(

@@ -1716,7 +1716,10 @@ override:
 **Protocol additions (relay <-> Android, additive).**
 
 - `hermes.run.promoted` - run moved to background; carries `run_id`,
-  `promote_after_ms`, `spoken_handoff`.
+  `promote_after_ms`, `spoken_handoff`. A false `spoken_handoff` is also the
+  foreground turn boundary; when true, the following `voice.response.done` is
+  the boundary. In both cases the background socket, task card, cancellation,
+  progress, and result delivery remain active.
 - `hermes.run.background_completed` - background run finished; precedes the
   provider/relay summary.
 - Extend `hermes.run.progress` with `tier` and `floor` so the client can render
