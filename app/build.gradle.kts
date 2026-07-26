@@ -37,7 +37,7 @@ android {
         // exempt from Play's 14-day closed-testing rule. See RELEASE.md.
         applicationId = "com.axiomlabs.hermesrelay"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = libs.versions.appVersionCode.get().toInt()
         versionName = libs.versions.appVersionName.get()
 
