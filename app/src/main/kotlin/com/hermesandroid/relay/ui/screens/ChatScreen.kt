@@ -282,6 +282,17 @@ internal fun ChatScrollSnapshot.isCompletionAfter(previous: ChatScrollSnapshot?)
         previous.messageCount == messageCount &&
         previous.lastMessageUiKey == lastMessageUiKey
 
+internal fun releaseRetainedLiveTail(
+    retainedUiKey: String?,
+    completedUiKey: String?,
+): String? = retainedUiKey?.takeUnless { it == completedUiKey }
+
+internal fun tailEndScrollOffset(
+    tailSizePx: Int,
+    footerSizePx: Int,
+    viewportSizePx: Int,
+): Int = (tailSizePx + footerSizePx - viewportSizePx).coerceAtLeast(0)
+
 private class ChatTailTransitionRef(
     var snapshot: ChatScrollSnapshot? = null,
 )
@@ -1153,10 +1164,12 @@ fun ChatScreen(
         derivedStateOf {
             val retainingVisibleTail = retainedLiveTailUiKey != null &&
                 messages.lastOrNull()?.uiKey == retainedLiveTailUiKey
+            val settlingVisibleTail = completionSettlingUiKey != null &&
+                messages.lastOrNull()?.uiKey == completionSettlingUiKey
             messages.isNotEmpty() &&
                 !isAtBottom &&
                 !programmaticBottomScroll &&
-                !((isStreaming || retainingVisibleTail) &&
+                !((isStreaming || retainingVisibleTail || settlingVisibleTail) &&
                     smoothAutoScroll &&
                     !userScrolledAway)
         }
@@ -1354,34 +1367,99 @@ fun ChatScreen(
     ) {
         val settlingKey = completionSettlingUiKey ?: return@LaunchedEffect
         if (!smoothAutoScroll || userScrolledAway || isUserDragging) {
+            // Retention is only a completion-transition aid. Never leave the
+            // finalized tail on the plain streaming renderer just because the
+            // user disabled follow-scroll or is reading above the bottom.
+            retainedLiveTailUiKey = releaseRetainedLiveTail(
+                retainedUiKey = retainedLiveTailUiKey,
+                completedUiKey = settlingKey,
+            )
             completionSettlingUiKey = null
             return@LaunchedEffect
         }
 
         var settledFrames = 0
-        repeat(6) {
+        var previousMarkdownTailSize: Int? = null
+        var previousMarkdownFooterSize: Int? = null
+        val markdownWasAlreadyReleased = retainedLiveTailUiKey != settlingKey
+        repeat(60) completionFrame@{
             withFrameNanos { }
             if (messages.lastOrNull()?.uiKey != settlingKey) {
                 completionSettlingUiKey = null
                 return@LaunchedEffect
             }
 
-            if (listState.canScrollForward) {
-                settledFrames = 0
-                val viewportHeight = listState.layoutInfo.viewportSize.height
-                if (viewportHeight > 0) {
-                    listState.scroll(MutatePriority.Default) {
-                        scrollBy(viewportHeight.toFloat())
+            if (!markdownWasAlreadyReleased && retainedLiveTailUiKey == settlingKey) {
+                if (listState.canScrollForward) {
+                    settledFrames = 0
+                    val viewportHeight = listState.layoutInfo.viewportSize.height
+                    if (viewportHeight > 0) {
+                        listState.scroll(MutatePriority.Default) {
+                            scrollBy(viewportHeight.toFloat())
+                        }
                     }
+                    return@completionFrame
                 }
-            } else {
+
                 settledFrames += 1
-                if (settledFrames >= 2) {
-                    completionSettlingUiKey = null
-                    return@LaunchedEffect
-                }
+                if (settledFrames < 2) return@completionFrame
+                retainedLiveTailUiKey = releaseRetainedLiveTail(
+                    retainedUiKey = retainedLiveTailUiKey,
+                    completedUiKey = settlingKey,
+                )
+                settledFrames = 0
+                return@completionFrame
+            }
+
+            // Once Markdown owns the row, position its measured trailing edge
+            // explicitly. `canScrollForward` is insufficient here: LazyColumn
+            // may preserve the leading edge of a tall item while reporting an
+            // otherwise valid item anchor. Repeating catches deferred parsing,
+            // highlighted code, and attachment measurement without competing
+            // with the ordinary streaming-growth coroutine.
+            val layout = listState.layoutInfo
+            val tailIndex = messages.size // header item + zero-based messages
+            val footerIndex = tailIndex + 1
+            val tailInfo = layout.visibleItemsInfo.firstOrNull { it.index == tailIndex }
+            val footerInfo = layout.visibleItemsInfo.firstOrNull { it.index == footerIndex }
+            if (tailInfo == null) {
+                listState.scrollToItem(tailIndex)
+                settledFrames = 0
+                return@completionFrame
+            }
+
+            val viewportHeight = layout.viewportSize.height
+            if (viewportHeight <= 0) return@completionFrame
+            val desiredOffset = tailEndScrollOffset(
+                tailSizePx = tailInfo.size,
+                footerSizePx = footerInfo?.size ?: 0,
+                viewportSizePx = viewportHeight,
+            )
+            if (desiredOffset == 0) {
+                listState.scrollToItem(footerIndex)
+            } else {
+                listState.scrollToItem(tailIndex, desiredOffset)
+            }
+            val footerSize = footerInfo?.size ?: 0
+            settledFrames = if (
+                previousMarkdownTailSize == tailInfo.size &&
+                previousMarkdownFooterSize == footerSize
+            ) {
+                settledFrames + 1
+            } else {
+                0
+            }
+            previousMarkdownTailSize = tailInfo.size
+            previousMarkdownFooterSize = footerSize
+            if (settledFrames >= 12) {
+                completionSettlingUiKey = null
+                return@LaunchedEffect
             }
         }
+        retainedLiveTailUiKey = releaseRetainedLiveTail(
+            retainedUiKey = retainedLiveTailUiKey,
+            completedUiKey = settlingKey,
+        )
         completionSettlingUiKey = null
     }
 
