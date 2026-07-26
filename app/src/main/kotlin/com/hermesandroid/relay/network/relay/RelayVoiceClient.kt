@@ -1824,6 +1824,28 @@ class RelayVoiceClient(
                     if (event.type == "hermes.run.promoted") {
                         longRunningTurn.set(true)
                         Log.i(TAG, "Realtime agent turn marked long-running (run promoted); relaxing idle guard")
+                        if (persistent &&
+                            event.spokenHandoff == false &&
+                            activeTurn.compareAndSet(true, false)
+                        ) {
+                            Log.i(
+                                TAG,
+                                "Realtime agent foreground turn ended at silent background promotion",
+                            )
+                            onTurnComplete(
+                                RealtimeVoiceSummary(
+                                    provider = event.provider ?: session.provider,
+                                    model = event.model ?: session.model,
+                                    voice = event.voice ?: session.voice,
+                                    sampleRate = session.sampleRate,
+                                    audioChunks = audioChunks,
+                                    audioBytes = audioBytes,
+                                    firstAudioMs = event.firstAudioMs,
+                                    responseDoneMs = event.responseDoneMs,
+                                    eventLogPath = event.eventLogPath ?: session.eventLogPath,
+                                )
+                            )
+                        }
                     }
                     if (event.isAudioDelta) {
                         audioChunks += 1
@@ -1849,13 +1871,12 @@ class RelayVoiceClient(
                             responseDoneMs = event.responseDoneMs,
                             eventLogPath = event.eventLogPath ?: session.eventLogPath,
                         )
-                        if (persistent) {
+                        if (persistent && activeTurn.compareAndSet(true, false)) {
                             // Turn boundary, not session boundary: keep the socket
                             // open for the next utterance.
-                            activeTurn.set(false)
                             longRunningTurn.set(false)
                             onTurnComplete(summary)
-                        } else {
+                        } else if (!persistent) {
                             if (claimTerminalSocket(
                                     webSocket,
                                     generation,
@@ -2986,6 +3007,9 @@ class RelayVoiceClient(
                 responseDoneMs = (metrics?.get("response_done_ms") as? JsonPrimitive)?.doubleOrNull,
                 tier = (obj["tier"] as? JsonPrimitive)?.contentOrNull,
                 floor = (obj["floor"] as? JsonPrimitive)?.contentOrNull,
+                spokenHandoff = (obj["spoken_handoff"] as? JsonPrimitive)
+                    ?.contentOrNull
+                    ?.toBooleanStrictOrNull(),
                 activeToolName = (obj["active_tool_name"] as? JsonPrimitive)?.contentOrNull,
                 completedToolCount = (obj["completed_tool_count"] as? JsonPrimitive)?.intOrNull
                     ?: (obj["tool_count"] as? JsonPrimitive)?.intOrNull,
@@ -3380,6 +3404,7 @@ data class RealtimeVoiceEvent(
     // ADR 33: background-run promotion fields.
     val tier: String? = null,
     val floor: String? = null,
+    val spokenHandoff: Boolean? = null,
     // hermes.run.progress extras — drive the live background-run chip.
     val activeToolName: String? = null,
     val completedToolCount: Int? = null,

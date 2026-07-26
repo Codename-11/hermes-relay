@@ -332,9 +332,8 @@ enum class BackgroundRunPhase {
     DONE,
 }
 
-internal fun realtimeTurnActiveAfterResponseDone(backgroundPhase: BackgroundRunPhase?): Boolean =
-    backgroundPhase == BackgroundRunPhase.RUNNING ||
-        backgroundPhase == BackgroundRunPhase.RECONNECTING
+internal fun realtimeTurnActiveAfterPromotion(spokenHandoff: Boolean?): Boolean =
+    spokenHandoff != false
 
 internal fun preserveRealtimeTurnOnStop(backgroundPhase: BackgroundRunPhase?): Boolean =
     backgroundPhase == BackgroundRunPhase.RUNNING ||
@@ -3435,9 +3434,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     if (suppressCommandResponse) {
                         if (event.type == "voice.response.done") {
-                            providerRealtimeAgentTurnActive.set(
-                                realtimeTurnActiveAfterResponseDone(_uiState.value.backgroundRun?.phase),
-                            )
+                            providerRealtimeAgentTurnActive.set(false)
                             suppressLocalCommandResponse = false
                             realtimeAudioSuppressed = false
                         }
@@ -3658,10 +3655,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "hermes.run.promoted" -> {
-                    providerRealtimeAgentTurnActive.set(true)
-                    // The run detached to the background; the provider speaks the
-                    // handoff. Surface a persistent chip so the user knows a long
-                    // task is still in flight (ADR 33 Tier B/C).
+                    providerRealtimeAgentTurnActive.set(
+                        realtimeTurnActiveAfterPromotion(event.spokenHandoff),
+                    )
+                    // The run detached to the background. A spoken handoff keeps
+                    // the foreground turn active until response.done; a silent
+                    // handoff ends it here. The task chip remains either way.
                     val tier = event.tier ?: "promoted"
                     Log.i(
                         TAG,
@@ -3865,9 +3864,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             hermesConfirmation = null,
                         )
                     }
-                    providerRealtimeAgentTurnActive.set(
-                        realtimeTurnActiveAfterResponseDone(_uiState.value.backgroundRun?.phase)
-                    )
+                    providerRealtimeAgentTurnActive.set(false)
                 }
                 "voice.error" -> {
                     realtimeConfirmationControl = null
