@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -64,5 +66,45 @@ class VoicePreferencesRepositoryTest {
         settings = repository.settings.first()
         assertEquals("grok-voice-think-fast-1.0", settings.realtimeModel)
         assertEquals("leo", settings.realtimeVoice)
+    }
+
+    @Test
+    fun finalAnswerOnlyPersistsGloballyAcrossProfileScopes() = runTest {
+        assertFalse(repository.settings.first().finalAnswerOnly)
+
+        repository.setFinalAnswerOnly(true)
+        assertTrue(repository.settings.first().finalAnswerOnly)
+
+        repository.setActiveScope("connection-a", "coder")
+        assertTrue(repository.settings.first().finalAnswerOnly)
+
+        repository.setActiveScope("connection-b", "writer")
+        assertTrue(repository.settings.first().finalAnswerOnly)
+    }
+
+    @Test
+    fun presentationModePersistsGloballyAcrossProfileScopes() = runTest {
+        assertEquals(
+            VoicePresentationMode.Focus.storageValue,
+            repository.settings.first().presentationMode,
+        )
+
+        repository.setPresentationMode(VoicePresentationMode.Conversation)
+        assertEquals(
+            VoicePresentationMode.Conversation.storageValue,
+            repository.settings.first().presentationMode,
+        )
+
+        repository.setActiveScope("connection-a", "coder")
+        assertEquals(
+            VoicePresentationMode.Conversation.storageValue,
+            repository.settings.first().presentationMode,
+        )
+    }
+
+    @Test
+    fun unknownPresentationModeFallsBackToFocus() {
+        assertEquals(VoicePresentationMode.Focus, VoicePresentationMode.fromStorage("unknown"))
+        assertEquals(VoicePresentationMode.Focus, VoicePresentationMode.fromStorage(null))
     }
 }

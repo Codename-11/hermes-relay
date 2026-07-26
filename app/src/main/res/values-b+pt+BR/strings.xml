@@ -1502,6 +1502,8 @@
     <string name="voice_settings_save_realtime_agent">Salvar agente em tempo real</string>
     <string name="voice_settings_global_controls_title">Controles globais de voz</string>
     <string name="voice_settings_global_controls_desc">Estas configurações se aplicam aos dois mecanismos de voz em todos os perfis.</string>
+    <string name="voice_settings_final_answer_only">Somente a resposta final</string>
+    <string name="voice_settings_final_answer_only_desc">Fala apenas a resposta concluída. O progresso das ferramentas, as atualizações de serviço e os comentários intermediários permanecem visuais.</string>
     <string name="voice_settings_interaction_mode">Modo de interação</string>
     <string name="voice_settings_interaction_tap">Tocar para falar</string>
     <string name="voice_settings_interaction_hold">Manter pressionado para falar</string>
@@ -1996,7 +1998,6 @@
     <string name="voice_overlay_collapse_cd">Recolher controles de voz</string>
     <string name="voice_overlay_expand_cd">Expandir controles de voz</string>
     <string name="voice_overlay_exit_cd">Sair do modo de voz</string>
-    <string name="voice_overlay_compact">Compacto</string>
     <string name="voice_overlay_focus">Foco</string>
     <string name="voice_overlay_overlay">Sobreposição</string>
     <string name="voice_overlay_exit">Sair</string>

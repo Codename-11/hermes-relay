@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Voice can speak only settled answers.** A global Voice setting keeps tool progress, service updates, and intermediate commentary visual while Standard and Realtime paths wait to speak the final Hermes answer.
+
+### Changed
+
+- **Chat answers are easier to read in every theme.** Primary assistant text now uses the theme's full-contrast foreground, and chat prose uses a 15sp size with 21sp line height.
+
 ### Fixed
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.

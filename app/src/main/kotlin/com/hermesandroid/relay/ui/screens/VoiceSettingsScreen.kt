@@ -3224,6 +3224,17 @@ private fun GlobalVoiceControlsCard(
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
+        SettingSwitchRow(
+            title = stringResource(R.string.voice_settings_final_answer_only),
+            detail = stringResource(R.string.voice_settings_final_answer_only_desc),
+            checked = voiceSettings.finalAnswerOnly,
+            onCheckedChange = { enabled ->
+                scope.launch { prefsRepo.setFinalAnswerOnly(enabled) }
+            },
+        )
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
         Text(
             text = stringResource(R.string.voice_settings_interaction_mode),
             style = MaterialTheme.typography.labelLarge,

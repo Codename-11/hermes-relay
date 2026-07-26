@@ -148,6 +148,28 @@ class RelayVoiceClientRoutingTest {
     }
 
     @Test
+    fun realtimeAgentSessionSendsFinalAnswerOnlyPolicy() = runTest {
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+        )
+
+        val result = client.runRealtimeAgent(
+            prompt = "Check Hermes quietly",
+            inputPcm = ByteArray(0),
+            finalAnswerOnly = true,
+        ) { _, _ -> }
+
+        assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
+        val request = lanServer.takeRequest(2, TimeUnit.SECONDS)
+            ?: error("missing realtime session request")
+        val payload = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("true", payload["final_answer_only"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun voiceOutputSessionResponseParsesResumeMetadata() {
         val response = Json.decodeFromString(
             VoiceOutputSessionResponse.serializer(),

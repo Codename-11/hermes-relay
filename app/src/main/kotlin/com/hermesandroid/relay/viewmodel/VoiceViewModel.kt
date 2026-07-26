@@ -111,7 +111,16 @@ internal data class AssistantSpeechBatch(
     val assistantMessages: List<ChatMessage>,
     val aggregateText: String,
     val hasTurnAssistant: Boolean,
-)
+) {
+    /** Last non-empty assistant bubble: the settled answer after any tool commentary. */
+    val finalAnswerText: String
+        get() = assistantMessages
+            .asReversed()
+            .firstOrNull { it.content.isNotBlank() }
+            ?.content
+            ?.trim()
+            .orEmpty()
+}
 
 /**
  * Per-voice-turn cursor over every assistant bubble created after the user
@@ -648,6 +657,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var voicePreferences: VoicePreferencesRepository? = null
     private var voicePreferencesJob: Job? = null
     private var voiceEngineMode: VoiceEngineMode = VoiceEngineMode.HermesVoiceOutput
+    private var finalAnswerOnly: Boolean = false
     private var realtimeTraceDetails: Boolean = false
     private var realtimePersistentSession: Boolean = true
     private var realtimeModel: String = ""
@@ -1368,10 +1378,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun applyVoiceSettingsSnapshot(settings: com.hermesandroid.relay.data.VoiceSettings) {
         val nextEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
+        val finalAnswerPolicyChanged = finalAnswerOnly != settings.finalAnswerOnly
         val realtimeSelectionChanged =
             realtimeModel != settings.realtimeModel || realtimeVoice != settings.realtimeVoice
         if (
             voiceEngineMode != nextEngineMode ||
+            finalAnswerPolicyChanged ||
             realtimeTraceDetails != settings.realtimeTraceDetails ||
             realtimeSelectionChanged
         ) {
@@ -1379,6 +1391,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 TAG,
                 "Voice prefs updated engine=${nextEngineMode.storageValue} " +
                     "interaction=${settings.interactionMode} " +
+                    "finalAnswerOnly=${settings.finalAnswerOnly} " +
                     "realtimeTraceDetails=${settings.realtimeTraceDetails} " +
                     "realtimeModel=${settings.realtimeModel.ifBlank { "relay-default" }} " +
                     "realtimeVoice=${settings.realtimeVoice.ifBlank { "relay-default" }}",
@@ -1390,11 +1403,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             (voiceEngineMode == VoiceEngineMode.RealtimeAgent &&
                 nextEngineMode != VoiceEngineMode.RealtimeAgent) ||
             (realtimePersistentSession && !settings.realtimePersistentSession) ||
+            finalAnswerPolicyChanged ||
             realtimeSelectionChanged
         ) {
             closeRealtimeSession()
         }
         voiceEngineMode = nextEngineMode
+        finalAnswerOnly = settings.finalAnswerOnly
         realtimeTraceDetails = settings.realtimeTraceDetails
         realtimePersistentSession = settings.realtimePersistentSession
         realtimeModel = settings.realtimeModel
@@ -3162,7 +3177,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         resumeWatchdog?.cancel(); resumeWatchdog = null
         clearSpokenChunksState()
 
-        prepareStandardSpeechStream()
+        if (!finalAnswerOnly) {
+            prepareStandardSpeechStream()
+        }
 
         // Kick off streaming observer BEFORE sending the message so we don't
         // miss early deltas that arrive synchronously from the callback.
@@ -3299,7 +3316,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
-            if (speak && (!audioSeen.get() || speakEvenAfterProviderAudio)) {
+            if (speak && !finalAnswerOnly && (!audioSeen.get() || speakEvenAfterProviderAudio)) {
                 // W3: per-turn throttle independent of the per-key dedupe above.
                 // Suppress the TTS enqueue (UI state + diagnostics already
                 // applied) when spoken status is too frequent or has hit the
@@ -3371,6 +3388,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 conversationContext = conversationContext,
                 model = realtimeModel,
                 voice = realtimeVoice,
+                finalAnswerOnly = finalAnswerOnly,
                 onHandoff = { event -> recordRealtimeVoiceHandoff(sessionGeneration, event) },
                 turnInputs = if (persistentOpen) realtimeTurnChannel else null,
                 onTurnComplete = { summary ->
@@ -4334,24 +4352,74 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     val batch = cursor.poll(messages)
-                    batch.deltas.forEach { update ->
-                        if (update.startsNewBubble) {
-                            beginAssistantSpeechBubble()
+                    if (finalAnswerOnly) {
+                        if (batch.deltas.isNotEmpty()) {
+                            onVisualStreamDelta(batch.aggregateText)
                         }
-                        onStreamDelta(update.text, batch.aggregateText)
+                    } else {
+                        batch.deltas.forEach { update ->
+                            if (update.startsNewBubble) {
+                                beginAssistantSpeechBubble()
+                            }
+                            onStreamDelta(update.text, batch.aggregateText)
+                        }
                     }
                     // Tool state can change without text growth.
-                    batch.assistantMessages.forEach(::observeHermesToolLoopForSpeech)
+                    if (!finalAnswerOnly) {
+                        batch.assistantMessages.forEach(::observeHermesToolLoopForSpeech)
+                    }
 
                     if (!runActive && batch.hasTurnAssistant) {
                         streamComplete = true
                         idleFlushJob?.cancel()
                         idleFlushJob = null
-                        if (!finishStandardSpeechStream()) flushRemainingBuffer()
+                        if (finalAnswerOnly) {
+                            speakSettledFinalAnswer(batch.finalAnswerText)
+                        } else if (!finishStandardSpeechStream()) {
+                            flushRemainingBuffer()
+                        }
                         streamObserverJob?.cancel()
                         scheduleAgentAudioCompletionCheck()
                     }
                 }
+        }
+    }
+
+    private fun onVisualStreamDelta(fullContent: String) {
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Thinking,
+                outputAudioActive = false,
+                responseText = fullContent,
+            )
+        }
+    }
+
+    /**
+     * Final-only mode deliberately trades streaming latency for a clean spoken
+     * result. The last non-empty assistant bubble is the settled answer; earlier
+     * bubbles and tool states remain visible in Chat but never enter TTS.
+     */
+    private fun speakSettledFinalAnswer(answer: String) {
+        val spoken = sanitizeForTts(answer)
+        if (spoken.isBlank()) return
+
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Speaking,
+                outputAudioActive = false,
+                responseText = answer,
+            )
+        }
+
+        prepareStandardSpeechStream()
+        if (offerStandardSpeechText(spoken)) {
+            finishStandardSpeechStream()
+        } else {
+            sentenceBuffer = StringBuilder()
+            pendingRawDelta = StringBuilder()
+            appendSanitizedDelta(spoken)
+            flushRemainingBuffer()
         }
     }
 
@@ -4393,7 +4461,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * device through the normal tool loop.
      */
     private fun observeHermesToolLoopForSpeech(message: ChatMessage) {
-        if (!_uiState.value.voiceMode || message.toolCalls.isEmpty()) return
+        if (finalAnswerOnly || !_uiState.value.voiceMode || message.toolCalls.isEmpty()) return
 
         var spokenForMessage = brokeredToolSpeechCounts[message.id] ?: 0
         message.toolCalls.forEach { tool ->

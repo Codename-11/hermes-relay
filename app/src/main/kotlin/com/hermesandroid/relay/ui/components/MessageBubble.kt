@@ -174,7 +174,7 @@ fun MessageBubble(
 
     val textColor = when (message.role) {
         MessageRole.USER -> MaterialTheme.colorScheme.onPrimary
-        MessageRole.ASSISTANT -> MaterialTheme.colorScheme.onSurfaceVariant
+        MessageRole.ASSISTANT -> MaterialTheme.colorScheme.onSurface
         MessageRole.SYSTEM -> MaterialTheme.colorScheme.onTertiaryContainer
     }
 
@@ -469,7 +469,10 @@ fun MessageBubble(
                         // Plain text for user and system messages
                         Text(
                             text = message.content,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 15.sp,
+                                lineHeight = 21.sp,
+                            ),
                             color = textColor
                         )
                     } else {

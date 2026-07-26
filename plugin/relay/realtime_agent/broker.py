@@ -259,6 +259,7 @@ class RealtimeAgentSession:
     # ADR 33 promotion state (populated from realtime_voice settings at create).
     promotion_enabled: bool = False
     promote_after_ms: int = 6000
+    final_answer_only: bool = False
     spoken_handoff: bool = True
     result_delivery: str = "speak_verbatim"
     promoted_transcript: str | None = None
@@ -402,6 +403,7 @@ class RealtimeAgentHandler:
             config=self.config,
         )
         context_messages = _parse_context_messages(payload.get("context_messages"))
+        final_answer_only = _bool_value(payload.get("final_answer_only")) is True
         fetch_context_messages = getattr(self.hermes, "fetch_context_messages", None)
         if not context_messages and chat_session_id and callable(fetch_context_messages):
             context_messages = await self.hermes.fetch_context_messages(
@@ -439,10 +441,19 @@ class RealtimeAgentHandler:
             ),
             promotion_enabled=bool(settings.get("promotion_enabled", False)),
             promote_after_ms=int(settings.get("promote_after_ms", 6000)),
-            spoken_handoff=bool(settings.get("spoken_handoff", True)),
-            result_delivery=str(settings.get("result_delivery", "speak_verbatim")),
+            final_answer_only=final_answer_only,
+            spoken_handoff=(
+                False if final_answer_only else bool(settings.get("spoken_handoff", True))
+            ),
+            result_delivery=(
+                "speak_verbatim"
+                if final_answer_only
+                else str(settings.get("result_delivery", "speak_verbatim"))
+            ),
             progress_spoken_after_seconds=(
-                max(0, int(settings.get("progress_spoken_after_ms", 0))) / 1000.0
+                0.0
+                if final_answer_only
+                else max(0, int(settings.get("progress_spoken_after_ms", 0))) / 1000.0
             ),
             progress_repeat_seconds=(
                 max(0, int(settings.get("progress_repeat_ms", 30000))) / 1000.0
@@ -4805,6 +4816,19 @@ def _native_instructions(session: RealtimeAgentSession) -> str:
     current_timezone = interface_context["current_timezone"]
     context_block = _provider_context_block(session.context_messages)
     profile_block = _profile_prompt_block(session.profile_prompt_context)
+    speech_policy = (
+        "Final-answer-only speech is enabled. Do not speak acknowledgements, "
+        "tool progress, service or status updates, or intermediate commentary. "
+        "Call Hermes silently and wait to speak until its settled final answer is "
+        "available. Approval or confirmation questions and blocking failures may "
+        "still be spoken because the user must act on them. "
+        if session.final_answer_only
+        else (
+            "You may speak one brief acknowledgement such as 'I'll check Hermes' "
+            "or 'I'll check that' before the tool call, then call hermes_run_task "
+            "immediately. The relay will provide restrained status while Hermes runs. "
+        )
+    )
     return (
         "You are the provider-native speech loop for Hermes Relay. Keep replies "
         "brief and conversational. Active interface: "
@@ -4842,11 +4866,9 @@ def _native_instructions(session: RealtimeAgentSession) -> str:
         "information beyond what was already delivered. If the needed context is "
         "missing, stale, or requires fresh data or verification you do not "
         "already have, call hermes_run_task before answering. Do not say you lack "
-        "context before a Hermes call. You "
-        "may speak one brief acknowledgement such as 'I'll check Hermes' or "
-        "'I'll check that' before the tool call, then call hermes_run_task "
-        "immediately. Do not give a substantive answer until Hermes returns. "
-        "The relay will provide restrained status while Hermes runs. "
+        "context before a Hermes call. "
+        f"{speech_policy}"
+        "Do not give a substantive answer until Hermes returns. "
         "Route through Hermes for latest/recent/versioned data, device/desktop/app "
         "state, personal/session/project context, side effects, high-stakes or "
         "precision-sensitive answers, explicit check/verify/look-up requests, and "

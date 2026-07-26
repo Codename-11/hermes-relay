@@ -1278,6 +1278,7 @@ class RelayVoiceClient(
         model: String? = null,
         voice: String? = null,
         sampleRate: Int? = null,
+        finalAnswerOnly: Boolean = false,
         onHandoff: (VoiceHandoffEvent) -> Unit = {},
         turnInputs: kotlinx.coroutines.channels.ReceiveChannel<RealtimeTurnInput>? = null,
         onTurnComplete: (RealtimeVoiceSummary) -> Unit = {},
@@ -1309,6 +1310,7 @@ class RelayVoiceClient(
             model = model,
             voice = voice,
             sampleRate = sampleRate,
+            finalAnswerOnly = finalAnswerOnly,
         )
         if (sessionResult.isFailure) {
             return@withContext Result.failure(sessionResult.exceptionOrNull() ?: IOException("Realtime agent session failed"))
@@ -2679,6 +2681,7 @@ class RelayVoiceClient(
         model: String? = null,
         voice: String? = null,
         sampleRate: Int? = null,
+        finalAnswerOnly: Boolean = false,
     ): Result<RealtimeSessionResponse> {
         val body = buildJsonObject {
             putProfile()
@@ -2693,6 +2696,9 @@ class RelayVoiceClient(
             }
             sampleRate?.takeIf { it > 0 }?.let {
                 put("sample_rate", JsonPrimitive(it))
+            }
+            if (finalAnswerOnly) {
+                put("final_answer_only", JsonPrimitive(true))
             }
             chatSessionId?.trim()?.takeIf { it.isNotBlank() }?.let {
                 put("chat_session_id", JsonPrimitive(it))

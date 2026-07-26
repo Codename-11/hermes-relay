@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -73,8 +74,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.ToolCall
+import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.LocalSnackbarHost
@@ -146,7 +149,8 @@ fun VoiceModeOverlay(
     voiceOutputEnabled: Boolean? = null,
     voiceOutputFallbackEnabled: Boolean? = null,
     onOverlayRequest: () -> Unit = {},
-    onCompactModeChange: (Boolean) -> Unit = {},
+    presentationMode: VoicePresentationMode = VoicePresentationMode.Focus,
+    onPresentationModeChange: (VoicePresentationMode) -> Unit = {},
     // === END PHASE3-voice-mode-transcript ===
     // === v0.4.1 JIT permission-denied chip ===
     // Tapped when the user clicks the permission-denied chip. Default no-op
@@ -159,22 +163,21 @@ fun VoiceModeOverlay(
     onBackgroundRunCancel: () -> Unit = {},
     onBackgroundRunTap: () -> Unit = {},
     onHermesConfirmationAnswer: (String) -> Unit = {},
+    onCardAction: (messageId: String, cardKey: String, action: HermesCardAction) -> Unit =
+        { _, _, _ -> },
+    onCardInput: (messageId: String, cardKey: String, value: String) -> Unit =
+        { _, _, _ -> },
     // === END v0.4.1 ===
 ) {
     val surface = MaterialTheme.colorScheme.surface
     val haptic = LocalHapticFeedback.current
 
     var controlsExpanded by remember { mutableStateOf(false) }
-    var focusMode by remember { mutableStateOf(true) }
+    val focusMode = presentationMode == VoicePresentationMode.Focus
     val setFocusMode: (Boolean) -> Unit = { focused ->
-        focusMode = focused
-        onCompactModeChange(!focused)
-    }
-
-    LaunchedEffect(uiState.voiceMode) {
-        if (!uiState.voiceMode) {
-            setFocusMode(true)
-        }
+        onPresentationModeChange(
+            if (focused) VoicePresentationMode.Focus else VoicePresentationMode.Conversation,
+        )
     }
 
     // Voice errors surface ONLY on the overlay's own inline top banner
@@ -193,7 +196,7 @@ fun VoiceModeOverlay(
             // chips, pill) didn't handle so stray taps/swipes don't fall
             // through to the chat + session drawer behind it. Children run on
             // the same Main pass leaf-first, so this only catches the gaps.
-            // In compact mode the overlay is intentionally transparent and the
+            // In Conversation the overlay is intentionally transparent and the
             // chat stays interactive, so no scrim is installed.
             .then(
                 if (focusMode) {
@@ -404,6 +407,11 @@ fun VoiceModeOverlay(
                                     message = msg,
                                     showThinking = showThinking,
                                     expanded = msg.id == latestId || msg.isStreaming,
+                                    onViewConversation = {
+                                        onPresentationModeChange(VoicePresentationMode.Conversation)
+                                    },
+                                    onCardAction = onCardAction,
+                                    onCardInput = onCardInput,
                                 )
                             }
                             if (pendingTranscriptText != null) {
@@ -418,6 +426,11 @@ fun VoiceModeOverlay(
                                         ),
                                         showThinking = showThinking,
                                         expanded = true,
+                                        onViewConversation = {
+                                            onPresentationModeChange(VoicePresentationMode.Conversation)
+                                        },
+                                        onCardAction = onCardAction,
+                                        onCardInput = onCardInput,
                                     )
                                 }
                             }
@@ -449,7 +462,7 @@ fun VoiceModeOverlay(
             }
         }
 
-        // Compact mode: the background-run chip must survive outside focus
+        // Conversation: the background-run chip must survive outside focus
         // mode too — a running task with no visible presence reads as lost
         // (the chip previously existed ONLY in the focus layout).
         AnimatedVisibility(
@@ -821,6 +834,15 @@ private fun VoiceSessionPill(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (!focusMode) {
+                    ConversationVoiceMicButton(
+                        uiState = uiState,
+                        onMicTap = onMicTap,
+                        onMicRelease = onMicRelease,
+                        onInterrupt = onInterrupt,
+                        onPauseAutoMode = onPauseAutoMode,
+                    )
+                }
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                     contentDescription = if (expanded) stringResource(R.string.voice_overlay_collapse_cd) else stringResource(R.string.voice_overlay_expand_cd),
@@ -855,10 +877,9 @@ private fun VoiceSessionPill(
                         .padding(top = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // Moved out of the collapsed header (4a): the current
-                    // interaction-mode pill plus the inline mic control. The
-                    // compact mic only appears in compact mode, where the
-                    // full-size bottom mic button is hidden.
+                    // The expanded body keeps the current interaction mode
+                    // visible; Conversation's persistent mic stays in the
+                    // collapsed header so it never disappears.
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -866,15 +887,6 @@ private fun VoiceSessionPill(
                     ) {
                         StatusPill(uiState.interactionMode.label())
                         Spacer(Modifier.weight(1f))
-                        if (!focusMode) {
-                            CompactVoiceMicButton(
-                                uiState = uiState,
-                                onMicTap = onMicTap,
-                                onMicRelease = onMicRelease,
-                                onInterrupt = onInterrupt,
-                                onPauseAutoMode = onPauseAutoMode,
-                            )
-                        }
                     }
 
                     Row(
@@ -915,7 +927,11 @@ private fun VoiceSessionPill(
                             modifier = Modifier.weight(1f),
                         ) {
                             Text(
-                                if (focusMode) stringResource(R.string.voice_overlay_compact) else stringResource(R.string.voice_overlay_focus),
+                                if (focusMode) {
+                                    stringResource(R.string.voice_overlay_conversation)
+                                } else {
+                                    stringResource(R.string.voice_overlay_focus)
+                                },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -958,7 +974,7 @@ private fun VoiceSessionPill(
 }
 
 @Composable
-private fun CompactVoiceMicButton(
+private fun ConversationVoiceMicButton(
     uiState: VoiceUiState,
     onMicTap: () -> Unit,
     onMicRelease: () -> Unit,
@@ -1224,6 +1240,9 @@ private fun CompactTranscriptRow(
     message: ChatMessage,
     showThinking: Boolean,
     expanded: Boolean,
+    onViewConversation: () -> Unit,
+    onCardAction: (messageId: String, cardKey: String, action: HermesCardAction) -> Unit,
+    onCardInput: (messageId: String, cardKey: String, value: String) -> Unit,
 ) {
     if (message.role == MessageRole.SYSTEM) return
 
@@ -1247,6 +1266,13 @@ private fun CompactTranscriptRow(
         isVoiceActionBubble -> MaterialTheme.colorScheme.tertiary
         message.role == MessageRole.USER -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.secondary
+    }
+    val (markdownBody, inlineImages) = remember(message.content, message.role) {
+        if (message.role == MessageRole.ASSISTANT) {
+            extractChatInlineImages(message.content)
+        } else {
+            message.content to emptyList()
+        }
     }
 
     Column(
@@ -1285,7 +1311,7 @@ private fun CompactTranscriptRow(
         }
         when {
             isVoiceActionBubble && hasText -> MarkdownContent(
-                content = message.content,
+                content = markdownBody,
                 textColor = MaterialTheme.colorScheme.onSurface,
             )
             message.role == MessageRole.USER && hasText -> Text(
@@ -1295,12 +1321,107 @@ private fun CompactTranscriptRow(
                 maxLines = if (expanded) Int.MAX_VALUE else 3,
                 overflow = TextOverflow.Ellipsis,
             )
-            hasText -> Text(
-                text = message.content,
-                style = MaterialTheme.typography.bodyMedium,
+            hasText -> MarkdownContent(
+                content = markdownBody,
+                textColor = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        message.cards.forEachIndexed { index, card ->
+            if (card.actions.isNotEmpty() || card.input != null) {
+                Spacer(Modifier.height(6.dp))
+                val cardKey = card.id ?: "idx:$index"
+                HermesCardBubble(
+                    card = card,
+                    cardKey = cardKey,
+                    dispatches = message.cardDispatches,
+                    onActionTap = { key, action ->
+                        onCardAction(message.id, key, action)
+                    },
+                    onInputSubmit = { key, value ->
+                        onCardInput(message.id, key, value)
+                    },
+                    maxWidth = 360.dp,
+                )
+            }
+        }
+        if (
+            message.attachments.isNotEmpty() ||
+            message.cards.any { it.actions.isEmpty() && it.input == null } ||
+            inlineImages.isNotEmpty()
+        ) {
+            Spacer(Modifier.height(6.dp))
+            VoiceRichResultAffordance(
+                message = message,
+                onViewConversation = onViewConversation,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VoiceRichResultAffordance(
+    message: ChatMessage,
+    onViewConversation: () -> Unit,
+) {
+    val inlineImages = remember(message.content) {
+        extractChatInlineImages(message.content).second
+    }
+    val previewModel = remember(message.attachments, inlineImages) {
+        message.attachments.firstOrNull { it.isImage && !it.cachedUri.isNullOrBlank() }?.cachedUri
+            ?: inlineImages.firstOrNull {
+                it.src.startsWith("https://") || it.src.startsWith("http://")
+            }?.src
+    }
+    val label = when {
+        message.attachments.size + inlineImages.size > 1 ->
+            stringResource(
+                R.string.voice_overlay_rich_results_count,
+                message.attachments.size + inlineImages.size,
+            )
+        message.attachments.isNotEmpty() || inlineImages.isNotEmpty() ->
+            stringResource(R.string.voice_overlay_image_ready)
+        else -> stringResource(R.string.voice_overlay_rich_result_ready)
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onViewConversation),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (previewModel != null) {
+                AsyncImage(
+                    model = previewModel,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(8.dp)),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.Image,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = if (expanded) Int.MAX_VALUE else 6,
-                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = stringResource(R.string.voice_overlay_view_conversation),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
             )
         }
     }
