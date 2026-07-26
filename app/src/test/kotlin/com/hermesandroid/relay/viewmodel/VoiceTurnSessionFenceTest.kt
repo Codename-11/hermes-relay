@@ -42,6 +42,15 @@ class VoiceTurnSessionFenceTest {
         assertFalse(fence.accepts(sessionId = "other", messages = emptyList()))
     }
 
+    @Test
+    fun `transient mismatch does not lose existing session binding`() {
+        val fence = VoiceTurnSessionFence(initialSessionId = "active")
+        fence.bindSubmittedUser("voice-user")
+
+        assertFalse(fence.accepts(sessionId = "other", messages = emptyList()))
+        assertTrue(fence.accepts(sessionId = "active", messages = emptyList()))
+    }
+
     private fun user(uiKey: String) = ChatMessage(
         id = "id-$uiKey",
         role = MessageRole.USER,

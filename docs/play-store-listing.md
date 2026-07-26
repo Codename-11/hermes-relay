@@ -14,9 +14,9 @@ It's not a hosted AI service. It's a companion app for the Hermes agent you run,
 
 QUICK START
 
-1. Run hermes-agent with its API server enabled on your computer or home server.
-2. Install Hermes-Relay and enter your server's address (for example [http://192.168.1.100:8642](http://192.168.1.100:8642)).
-3. The setup wizard checks what your server supports and shows a readiness card — then you're talking.
+1. Run hermes-agent with its Dashboard/Gateway enabled on your computer or home server.
+2. Install Hermes-Relay and select the nearby Dashboard, or enter its address and custom port.
+3. Sign in through the Dashboard when prompted. The setup wizard verifies Chat, sessions, Manage, and voice before finishing.
 
 No server yet? Tap "Try the demo" on the setup screen to explore the app offline — a sample conversation, no login or server required.
 
@@ -24,7 +24,7 @@ A plain Hermes install is enough. Chat, management, and voice all work with no p
 
 HOW IT WORKS
 
-Chat streams directly from your Hermes API Server in real time. Manage and voice use your Hermes dashboard with one sign-in. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
+Chat, sessions, Manage, and voice use the Hermes Dashboard/Gateway with one sign-in. A headless API server remains an automatic compatibility fallback. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
 
 GOOGLE PLAY BUILD
 
@@ -85,11 +85,12 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.9 - Clearer Hermes connections
+v1.5.0 - Hermes, always in reach
 
-* Connect through the Hermes dashboard with one sign-in.
-* Setup now explains nearby, remote, Tailscale, custom-port, and optional Relay paths.
-* Server default consistently displays Hermes' pinned active profile.
+* Secure Dashboard sign-in and a clearer Agent Passport.
+* Active background chats with actionable approval and question alerts.
+* Better attachments, image generation, voice, routing, and recovery.
+* Optional permission guidance that never blocks chat.
 ```
 
 ## Category

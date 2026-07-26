@@ -72,6 +72,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
@@ -261,8 +262,12 @@ fun AgentTextFlow(
     motionEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val flowStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
-    val flowColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val flowStyle = MaterialTheme.typography.bodyMedium.copy(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 15.sp,
+        lineHeight = 21.sp,
+    )
+    val flowColor = MaterialTheme.colorScheme.onSurface
 
     // Readable, non-faded mirror of the visible tail — used as the live-region
     // text on both paths so assistive tech hears the words.

@@ -156,7 +156,9 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.BackgroundTaskCard
@@ -439,6 +441,8 @@ fun ChatScreen(
     voiceViewModel: VoiceViewModel,
     voiceClient: RelayVoiceClient? = null,
     maxBubbleWidth: Dp = 300.dp,
+    voicePresentationMode: VoicePresentationMode = VoicePresentationMode.Focus,
+    onVoicePresentationModeChange: (VoicePresentationMode) -> Unit = {},
     // Deep-link nudge from Settings → Active Agent card: when `true`, the
     // AgentInfoSheet auto-opens on first composition and [onAgentSheetArgConsumed]
     // fires so the host can clear the nav arg (prevents re-open on tab
@@ -465,9 +469,10 @@ fun ChatScreen(
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
     val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
-    var voiceCompactMode by remember { mutableStateOf(false) }
     val chatAlpha by animateFloatAsState(
-        targetValue = if (voiceUiState.voiceMode && !voiceCompactMode) 0.4f else 1f,
+        targetValue = if (
+            voiceUiState.voiceMode && voicePresentationMode == VoicePresentationMode.Focus
+        ) 0.4f else 1f,
         animationSpec = tween(300),
         label = "chatAlpha",
     )
@@ -788,6 +793,25 @@ fun ChatScreen(
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val handleCardAction: (String, String, HermesCardAction) -> Unit =
+        remember(chatViewModel, context) {
+            { messageId, cardKey, action ->
+                if (action.mode == HermesCardAction.Modes.OPEN_URL) {
+                    chatViewModel.dispatchCardAction(messageId, cardKey, action)
+                    com.hermesandroid.relay.ui.components.handleCardActionExternally(
+                        context,
+                        action,
+                    )
+                } else {
+                    chatViewModel.dispatchCardAction(messageId, cardKey, action)
+                }
+            }
+        }
+    val handleCardInput: (String, String, String) -> Unit = remember(chatViewModel) {
+        { messageId, cardKey, value ->
+            chatViewModel.answerAsk(messageId, cardKey, value)
+        }
+    }
 
     // Ephemeral notices from the VM (model-switch warnings/errors, etc.) →
     // transient snackbar, never a chat bubble.
@@ -885,7 +909,6 @@ fun ChatScreen(
         if (!voiceUiState.voiceMode) {
             voiceOverlayHost.hide()
             pendingVoiceOverlayPermission = false
-            voiceCompactMode = false
         }
     }
 
@@ -2308,24 +2331,8 @@ fun ChatScreen(
                                     onAttachmentManualFetch = { msgId, idx ->
                                         chatViewModel.manualFetchAttachment(msgId, idx)
                                     },
-                                    onCardAction = { msgId, cardKey, action ->
-                                        // OPEN_URL is resolved at the UI layer
-                                        // because launching ACTION_VIEW needs a
-                                        // Context. Record the dispatch first so
-                                        // the card collapses even if launch fails.
-                                        if (action.mode == com.hermesandroid.relay.data.HermesCardAction.Modes.OPEN_URL) {
-                                            chatViewModel.dispatchCardAction(msgId, cardKey, action)
-                                            com.hermesandroid.relay.ui.components.handleCardActionExternally(
-                                                context,
-                                                action,
-                                            )
-                                        } else {
-                                            chatViewModel.dispatchCardAction(msgId, cardKey, action)
-                                        }
-                                    },
-                                    onCardInput = { msgId, cardKey, value ->
-                                        chatViewModel.answerAsk(msgId, cardKey, value)
-                                    },
+                                    onCardAction = handleCardAction,
+                                    onCardInput = handleCardInput,
                                     onEditMessage = if (
                                         isGatewayTransport &&
                                         !isStreaming &&
@@ -3184,14 +3191,13 @@ fun ChatScreen(
                 voiceConfigScope = activeVoiceScope,
                 voiceOutputEnabled = activeVoiceEnabled,
                 voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
+                presentationMode = voicePresentationMode,
+                onPresentationModeChange = onVoicePresentationModeChange,
                 onOverlayRequest = showVoiceSystemOverlay,
                 // Gear button in the overlay's expanded controls. The overlay
                 // exits voice mode before invoking this, so navigation lands
                 // on Voice Settings with no overlay left on top.
                 onOpenSettings = onNavigateToVoiceSettings,
-                onCompactModeChange = { compact ->
-                    voiceCompactMode = compact
-                },
                 // === v0.4.1 JIT permission-denied chip ===
                 // Tap deep-links to Settings → Apps → Hermes-Relay →
                 // Permissions for the running package. Use BuildConfig
@@ -3215,6 +3221,8 @@ fun ChatScreen(
                 onHermesConfirmationAnswer = { answer ->
                     voiceViewModel.answerHermesConfirmation(answer)
                 },
+                onCardAction = handleCardAction,
+                onCardInput = handleCardInput,
                 // === END v0.4.1 ===
             )
         }

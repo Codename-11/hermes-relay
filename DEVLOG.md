@@ -1,5 +1,32 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-25 — Immutable Android release dispatch repair
+
+Android approval now dispatches the current release workflow definition from
+`main`, while every release job explicitly checks out the immutable
+`android-v*` tag. Validation confirms the dispatched version resolves to that
+checked-out commit and accepts the repository's surface-qualified
+`[Android x.y.z]` changelog heading. Existing tags remain unchanged, and a
+workflow-only correction can resume a failed publication without rebuilding
+from a different application tree.
+
+Audited `.github/workflows/approve-release-android.yml`,
+`.github/workflows/release-android.yml`, `RELEASE.md`, and `DEVLOG.md`.
+
+## 2026-07-25 — Android 1.5.0 final release reconciliation
+
+The final Android 1.5.0 release tree reconciles the accumulated Dashboard-first
+connection, Gateway recovery, background delivery, Agent Passport, onboarding,
+voice, attachment, image-generation, security, localization, and Developer
+Options work into one public release narrative. Android remains version 1.5.0
+with monotonic versionCode 33 because that prepared version was not previously
+tagged or uploaded to production.
+
+Release notes, the in-app What's New assets, localized Play release notes, and
+the Play listing reference now describe the final tree rather than the earlier
+voice-focused candidate. The release train is gated by the exact-tree private
+Play preflight before the `dev` to `main` release merge and public tag.
+
 ## 2026-07-25 — Active-turn retention and actionable interaction alerts
 
 Android now promotes user-started chat work to foreground execution until every

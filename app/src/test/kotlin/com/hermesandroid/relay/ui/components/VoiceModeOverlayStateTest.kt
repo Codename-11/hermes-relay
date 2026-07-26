@@ -12,7 +12,7 @@ import com.hermesandroid.relay.viewmodel.VoiceUiState
 import com.hermesandroid.relay.viewmodel.backgroundRunAfterCancelRequest
 import com.hermesandroid.relay.viewmodel.preserveRealtimeTurnOnStop
 import com.hermesandroid.relay.viewmodel.realtimeTranscriptState
-import com.hermesandroid.relay.viewmodel.realtimeTurnActiveAfterResponseDone
+import com.hermesandroid.relay.viewmodel.realtimeTurnActiveAfterPromotion
 import com.hermesandroid.relay.viewmodel.voiceSessionExitState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -27,12 +27,10 @@ class VoiceModeOverlayStateTest {
     }
 
     @Test
-    fun responseDone_keepsLogicalTurnActiveOnlyWhileBackgroundRunIsLive() {
-        assertEquals(true, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.RUNNING))
-        assertEquals(true, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.RECONNECTING))
-        assertEquals(false, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.DELIVERING))
-        assertEquals(false, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.DONE))
-        assertEquals(false, realtimeTurnActiveAfterResponseDone(null))
+    fun promotion_keepsForegroundBusyOnlyForSpokenHandoff() {
+        assertEquals(false, realtimeTurnActiveAfterPromotion(spokenHandoff = false))
+        assertEquals(true, realtimeTurnActiveAfterPromotion(spokenHandoff = true))
+        assertEquals(true, realtimeTurnActiveAfterPromotion(spokenHandoff = null))
     }
 
     @Test

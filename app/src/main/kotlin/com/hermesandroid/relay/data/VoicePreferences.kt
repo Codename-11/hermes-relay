@@ -36,6 +36,14 @@ data class VoiceSettings(
     val audioRoute: String = VoiceAudioRoute.Auto.storageValue,
     val interactionMode: String = "tap",
     val silenceThresholdMs: Long = 1250L,
+    /**
+     * When true, voice keeps progress visual and waits for the settled Hermes
+     * answer before speaking. Tool status, service updates, and intermediate
+     * assistant commentary are not narrated.
+     */
+    val finalAnswerOnly: Boolean = false,
+    /** Presentation only; changing this never restarts or interrupts voice. */
+    val presentationMode: String = VoicePresentationMode.Focus.storageValue,
     val realtimeTraceDetails: Boolean = false,
     /**
      * When true (default), Realtime Agent keeps one provider session/socket open
@@ -122,6 +130,16 @@ enum class VoiceAudioRoute(val storageValue: String) {
     }
 }
 
+enum class VoicePresentationMode(val storageValue: String) {
+    Focus("focus"),
+    Conversation("conversation");
+
+    companion object {
+        fun fromStorage(value: String?): VoicePresentationMode =
+            values().firstOrNull { it.storageValue == value } ?: Focus
+    }
+}
+
 /**
  * Active scope for per-profile voice prefs.
  *
@@ -182,6 +200,8 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         // un-namespaced means switching profiles never churns these.
         private val KEY_INTERACTION_MODE = stringPreferencesKey("voice_interaction_mode")
         private val KEY_SILENCE_THRESHOLD_MS = longPreferencesKey("voice_silence_threshold_ms")
+        private val KEY_FINAL_ANSWER_ONLY = booleanPreferencesKey("voice_final_answer_only")
+        private val KEY_PRESENTATION_MODE = stringPreferencesKey("voice_presentation_mode")
         private val KEY_REALTIME_TRACE_DETAILS = booleanPreferencesKey("voice_realtime_trace_details")
         private val KEY_REALTIME_PERSISTENT_SESSION =
             booleanPreferencesKey("voice_realtime_persistent_session")
@@ -191,6 +211,8 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         const val DEFAULT_INTERACTION_MODE = "tap"
         // 1250 ms matches hermes-desktop voice_mode `silenceMs` end-of-speech.
         const val DEFAULT_SILENCE_THRESHOLD_MS = 1250L
+        const val DEFAULT_FINAL_ANSWER_ONLY = false
+        const val DEFAULT_PRESENTATION_MODE = "focus"
         const val DEFAULT_REALTIME_TRACE_DETAILS = false
         const val DEFAULT_REALTIME_PERSISTENT_SESSION = true
 
@@ -258,6 +280,10 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
             // --- global (shared across profiles) ---
             interactionMode = prefs[KEY_INTERACTION_MODE] ?: DEFAULT_INTERACTION_MODE,
             silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
+            finalAnswerOnly = prefs[KEY_FINAL_ANSWER_ONLY] ?: DEFAULT_FINAL_ANSWER_ONLY,
+            presentationMode = VoicePresentationMode.fromStorage(
+                prefs[KEY_PRESENTATION_MODE] ?: DEFAULT_PRESENTATION_MODE,
+            ).storageValue,
             realtimeTraceDetails = prefs[KEY_REALTIME_TRACE_DETAILS]
                 ?: DEFAULT_REALTIME_TRACE_DETAILS,
             realtimePersistentSession = prefs[KEY_REALTIME_PERSISTENT_SESSION]
@@ -365,6 +391,14 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
 
     suspend fun setSilenceThresholdMs(ms: Long) {
         dataStore.edit { it[KEY_SILENCE_THRESHOLD_MS] = ms.coerceAtLeast(500L) }
+    }
+
+    suspend fun setFinalAnswerOnly(enabled: Boolean) {
+        dataStore.edit { it[KEY_FINAL_ANSWER_ONLY] = enabled }
+    }
+
+    suspend fun setPresentationMode(mode: VoicePresentationMode) {
+        dataStore.edit { it[KEY_PRESENTATION_MODE] = mode.storageValue }
     }
 
     suspend fun setRealtimeTraceDetails(enabled: Boolean) {

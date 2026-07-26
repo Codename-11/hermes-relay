@@ -1579,6 +1579,8 @@
     <string name="voice_settings_save_realtime_agent">リアルタイムエージェントを保存する</string>
     <string name="voice_settings_global_controls_title">グローバル音声コントロール</string>
     <string name="voice_settings_global_controls_desc">これらの設定は、すべてのプロファイルの両方の音声エンジンに適用されます。</string>
+    <string name="voice_settings_final_answer_only">最終回答のみ</string>
+    <string name="voice_settings_final_answer_only_desc">確定した回答だけを読み上げます。ツールの進行状況、サービス更新、中間コメントは画面表示のみになります。</string>
     <string name="voice_settings_interaction_mode">インタラクションモード</string>
     <string name="voice_settings_interaction_tap">タップして話す</string>
     <string name="voice_settings_interaction_hold">押し続けて話す</string>
@@ -2104,7 +2106,6 @@
     <string name="voice_overlay_collapse_cd">音声コントロールを折りたたむ</string>
     <string name="voice_overlay_expand_cd">音声コントロールを拡張する</string>
     <string name="voice_overlay_exit_cd">音声モードを終了する</string>
-    <string name="voice_overlay_compact">コンパクト</string>
     <string name="voice_overlay_focus">集中</string>
     <string name="voice_overlay_overlay">かぶせる</string>
     <string name="voice_overlay_exit">出口</string>
