@@ -5922,6 +5922,13 @@ class ChatViewModel : ViewModel() {
                         queuedCount = event.queuedCount ?: 0,
                     ),
                 )
+                if (event.spokenHandoff == false) {
+                    // Silent promotion is the foreground turn boundary. The
+                    // background run keeps its owner/card and continues to
+                    // receive progress, cancellation, and delivery events.
+                    handler.onStreamComplete(assistantMessageId)
+                    activeStream = null
+                }
             }
             "hermes.run.queued" -> {
                 handler.updateBackgroundTask(assistantMessageId) { task ->

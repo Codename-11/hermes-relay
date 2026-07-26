@@ -717,9 +717,10 @@ Deferred:
 
 A 5-agent audit compared the chat surface to Discord/Telegram/Messenger/iMessage/
 GitHub-mobile. **Shipped this pass (pending on-device verification):** a chat-tuned
-`markdownTypography()` ramp (headings were falling through to M3 display roles —
-h1=`displayLarge` 57sp in this app's scale — so a `#` was a billboard; now h1≈20sp
-scaling down, list/paragraph unified to 14sp, inline+fenced code 13sp, `textLink`
+  `markdownTypography()` ramp (headings were falling through to M3 display roles —
+  h1=`displayLarge` 57sp in this app's scale — so a `#` was a billboard; now h1≈20sp
+  scaling down, list/paragraph unified to 15sp/21sp, primary assistant prose moved
+  to the theme's full-contrast `onSurface`, inline+fenced code 13sp, `textLink`
 accent+underline) in `MarkdownContent.kt`; timestamp gated to `isLastInGroup` (was on
 every bubble) + grouping breaks on a >5min gap (`GROUP_GAP_MS`) so a resumed
 conversation gets its own beat; long-press haptic on the action menu; streaming dots
@@ -731,10 +732,6 @@ gated to pre-first-token. Deferred:
   parses one full CommonMark document so global link references, indentation, and
   nested containers remain correct; the viewport now anchors that same remeasure.
   Verify lists, tables, quotes, HTML, nested fences, and reference links on-device.
-- **Bubble body 14sp → 15sp/21.** 14sp is the smallest body of the five reference
-  apps. Bump markdown paragraph/text/list + the two plain `Text` sites
-  (`MessageBubble.kt` user/system) together; keep ~1.4 leading so the ~272dp measure
-  stays ~36–38 chars/line. Debatable/broad — left out of the certain heading win.
 - **Tail-corner on last-in-group only (design decision).** The audit flagged the
   per-bubble bottom tail as "half-implemented," but it's a deliberate aesthetic
   (every bubble tails). Switching to iMessage-style "tail on the last bubble only"

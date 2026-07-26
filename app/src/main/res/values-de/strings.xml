@@ -1566,6 +1566,8 @@
     <string name="voice_settings_save_realtime_agent">Echtzeit-Agent speichern</string>
     <string name="voice_settings_global_controls_title">Globale Sprachsteuerung</string>
     <string name="voice_settings_global_controls_desc">Diese Einstellungen gelten für beide Sprach-Engines in jedem Profil.</string>
+    <string name="voice_settings_final_answer_only">Nur endgültige Antwort</string>
+    <string name="voice_settings_final_answer_only_desc">Spricht nur die abgeschlossene Antwort. Werkzeugfortschritt, Dienstmeldungen und Zwischenkommentare bleiben visuell.</string>
     <string name="voice_settings_interaction_mode">Interaktionsmodus</string>
     <string name="voice_settings_interaction_tap">Tippen zum Sprechen</string>
     <string name="voice_settings_interaction_hold">Halten zum Sprechen</string>
@@ -2091,8 +2093,12 @@
     <string name="voice_overlay_collapse_cd">Sprachsteuerung einklappen</string>
     <string name="voice_overlay_expand_cd">Sprachsteuerung ausklappen</string>
     <string name="voice_overlay_exit_cd">Sprachmodus beenden</string>
-    <string name="voice_overlay_compact">Kompakt</string>
     <string name="voice_overlay_focus">Fokus</string>
+    <string name="voice_overlay_conversation">Gespräch</string>
+    <string name="voice_overlay_image_ready">Bild bereit</string>
+    <string name="voice_overlay_rich_result_ready">Rich-Ergebnis bereit</string>
+    <string name="voice_overlay_rich_results_count">%1$d Ergebnisse bereit</string>
+    <string name="voice_overlay_view_conversation">Gespräch anzeigen</string>
     <string name="voice_overlay_overlay">Overlay</string>
     <string name="voice_overlay_exit">Beenden</string>
     <string name="voice_overlay_settings_cd">Spracheinstellungen</string>

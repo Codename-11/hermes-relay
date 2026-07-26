@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -76,6 +77,7 @@ fun DashboardSignInScreen(
     onAuthenticated: () -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val appContext = context.applicationContext
     val scope = rememberCoroutineScope()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
@@ -135,13 +137,13 @@ fun DashboardSignInScreen(
     LaunchedEffect(dashboardUrl, connectionId) {
         if (dashboardUrl.isBlank()) {
             loading = false
-            actionMessage = context.getString(R.string.dashboard_no_url_configured)
+            actionMessage = resources.getString(R.string.dashboard_no_url_configured)
             return@LaunchedEffect
         }
         val client = clientFactory()
         try {
             val status = client.getStatus().getOrElse {
-                actionMessage = it.message ?: context.getString(R.string.dashboard_request_failed)
+                actionMessage = it.message ?: resources.getString(R.string.dashboard_request_failed)
                 actionIsError = true
                 return@LaunchedEffect
             }
@@ -179,11 +181,11 @@ fun DashboardSignInScreen(
                     finishAuthentication()
                 } else {
                     actionMessage = result.exceptionOrNull()?.message
-                        ?: context.getString(R.string.dashboard_signin_no_session)
+                        ?: resources.getString(R.string.dashboard_signin_no_session)
                     actionIsError = true
                 }
             } catch (e: Exception) {
-                actionMessage = e.message ?: context.getString(R.string.dashboard_signin_failed)
+                actionMessage = e.message ?: resources.getString(R.string.dashboard_signin_failed)
                 actionIsError = true
             } finally {
                 actionInFlight = false
@@ -199,20 +201,20 @@ fun DashboardSignInScreen(
             return
         }
         if (!isNativeDashboardTransportEligible(dashboardUrl)) {
-            actionMessage = context.getString(R.string.dashboard_native_signin_requires_https)
+            actionMessage = resources.getString(R.string.dashboard_native_signin_requires_https)
             actionIsError = true
             return
         }
         val authClient = connectionViewModel.nativeDashboardAuthClientForActive(dashboardUrl)
         if (authClient == null) {
-            actionMessage = context.getString(R.string.dashboard_native_signin_unavailable)
+            actionMessage = resources.getString(R.string.dashboard_native_signin_unavailable)
             actionIsError = true
             return
         }
 
         actionInFlight = true
         actionIsError = false
-        actionMessage = context.getString(R.string.dashboard_native_signin_opening)
+        actionMessage = resources.getString(R.string.dashboard_native_signin_opening)
         nativeSignInJob = scope.launch {
             try {
                 NativeDashboardSignInCoordinator(authClient).signIn(provider.name) { authorizationUrl ->
@@ -228,19 +230,19 @@ fun DashboardSignInScreen(
                 }
                 if (session?.authenticated == true) {
                     actionMessage = session.provider?.let {
-                        context.getString(R.string.dashboard_signed_in_with, it)
-                    } ?: context.getString(R.string.dashboard_signed_in)
+                        resources.getString(R.string.dashboard_signed_in_with, it)
+                    } ?: resources.getString(R.string.dashboard_signed_in)
                     actionIsError = false
                     finishAuthentication()
                 } else {
-                    actionMessage = context.getString(R.string.dashboard_signin_no_session)
+                    actionMessage = resources.getString(R.string.dashboard_signin_no_session)
                     actionIsError = true
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 actionMessage = error.message
-                    ?: context.getString(R.string.dashboard_signin_failed)
+                    ?: resources.getString(R.string.dashboard_signin_failed)
                 actionIsError = true
             } finally {
                 actionInFlight = false
@@ -272,8 +274,8 @@ fun DashboardSignInScreen(
                         client.shutdown()
                     }
                     actionMessage = session.provider?.let {
-                        context.getString(R.string.dashboard_signed_in_with, it)
-                    } ?: context.getString(R.string.dashboard_signed_in)
+                        resources.getString(R.string.dashboard_signed_in_with, it)
+                    } ?: resources.getString(R.string.dashboard_signed_in)
                     finishAuthentication()
                 }
             },
@@ -327,7 +329,7 @@ fun DashboardSignInScreen(
                     onSignIn = ::submitPassword,
                     onOAuthSignIn = ::startRedirectSignIn,
                     onCancelNativeSignIn = {
-                        actionMessage = context.getString(R.string.dashboard_native_signin_cancelled)
+                        actionMessage = resources.getString(R.string.dashboard_native_signin_cancelled)
                         actionIsError = false
                         nativeSignInJob?.cancel()
                     },

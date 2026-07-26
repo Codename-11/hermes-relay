@@ -1682,6 +1682,8 @@
     <string name="voice_settings_save_realtime_agent">Save realtime agent</string>
     <string name="voice_settings_global_controls_title">Global Voice Controls</string>
     <string name="voice_settings_global_controls_desc">These settings apply to both voice engines, on every profile.</string>
+    <string name="voice_settings_final_answer_only">Final answer only</string>
+    <string name="voice_settings_final_answer_only_desc">Speak only the settled answer. Tool progress, service updates, and intermediate commentary stay visual.</string>
     <string name="voice_settings_interaction_mode">Interaction mode</string>
     <string name="voice_settings_interaction_tap">Tap to talk</string>
     <string name="voice_settings_interaction_hold">Hold to talk</string>
@@ -2211,8 +2213,12 @@
     <string name="voice_overlay_collapse_cd">Collapse voice controls</string>
     <string name="voice_overlay_expand_cd">Expand voice controls</string>
     <string name="voice_overlay_exit_cd">Exit voice mode</string>
-    <string name="voice_overlay_compact">Compact</string>
-    <string name="voice_overlay_focus">Focus</string>
+    <string name="voice_overlay_conversation">Conversation</string>
+    <string name="voice_overlay_focus">Voice focus</string>
+    <string name="voice_overlay_image_ready">Image ready</string>
+    <string name="voice_overlay_rich_result_ready">Rich result ready</string>
+    <string name="voice_overlay_rich_results_count">%1$d results ready</string>
+    <string name="voice_overlay_view_conversation">View conversation</string>
     <string name="voice_overlay_overlay">Overlay</string>
     <string name="voice_overlay_exit">Exit</string>
     <string name="voice_overlay_settings_cd">Voice settings</string>

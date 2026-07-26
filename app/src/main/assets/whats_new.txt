@@ -1,6 +1,6 @@
-v1.5.0 - Hermes, always in reach
+v1.5.1 - Voice and chat stay in place
 
-* Connect through secure Dashboard sign-in and switch profiles from the new Agent Passport.
-* Keep multiple background chats active and reopen the right session from approval or question alerts.
-* Follow richer attachments, image generation, model routing, Gateway recovery, and streaming voice.
-* Finish setup with clear, optional permission guidance that never blocks standard chat.
+* Choose a compact Voice Focus view or the complete Conversation renderer.
+* Hear Standard Voice replies reliably after generation completes.
+* Keep Realtime background work active without blocking voice controls.
+* Read formatted streamed answers without jumping back to their beginning.

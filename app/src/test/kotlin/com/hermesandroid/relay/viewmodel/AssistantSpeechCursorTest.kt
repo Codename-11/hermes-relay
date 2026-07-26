@@ -33,6 +33,19 @@ class AssistantSpeechCursorTest {
         assertEquals(listOf("The check is complete."), second.deltas.map { it.text })
         assertTrue(second.deltas.single().startsNewBubble)
         assertEquals("I'll check that.\n\nThe check is complete.", second.aggregateText)
+        assertEquals("The check is complete.", second.finalAnswerText)
+    }
+
+    @Test
+    fun `final answer skips blank tool bubbles and intermediate commentary`() {
+        val cursor = AssistantSpeechCursor(emptyList())
+        val interim = message("interim", MessageRole.ASSISTANT, "I'll check that.")
+        val toolOnly = message("tool", MessageRole.ASSISTANT, "   ")
+        val final = message("final", MessageRole.ASSISTANT, "  The settled answer.  ")
+
+        val batch = cursor.poll(listOf(interim, toolOnly, final))
+
+        assertEquals("The settled answer.", batch.finalAnswerText)
     }
 
     @Test

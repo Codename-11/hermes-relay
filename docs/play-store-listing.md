@@ -85,12 +85,12 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.5.0 - Hermes, always in reach
+v1.5.1 - Voice and chat stay in place
 
-* Secure Dashboard sign-in and a clearer Agent Passport.
-* Active background chats with actionable approval and question alerts.
-* Better attachments, image generation, voice, routing, and recovery.
-* Optional permission guidance that never blocks chat.
+* Voice Focus and full Conversation layouts.
+* Reliable Standard Voice narration after generation.
+* Realtime background work without blocked voice controls.
+* Formatted streamed answers stay at their completed end.
 ```
 
 ## Category

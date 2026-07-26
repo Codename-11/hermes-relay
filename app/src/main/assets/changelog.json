@@ -1,6 +1,34 @@
 {
  "versions": [
   {
+   "version": "1.5.1",
+   "title": "Voice and chat stay in place",
+   "date": "2026-07-26",
+   "sections": [
+    {
+     "header": "Voice at the right depth",
+     "bullets": [
+      "Use Voice Focus for a compact spoken-turn view or Conversation for the complete Chat renderer without leaving the active voice session.",
+      "Keep intermediate work visual while supported voice paths wait to speak the settled final response."
+     ]
+    },
+    {
+     "header": "Reliable narration and background work",
+     "bullets": [
+      "Standard Voice now speaks valid completed replies after generation hands off to narration.",
+      "Realtime background tasks release foreground voice controls while their progress and results remain reachable."
+     ]
+    },
+    {
+     "header": "Formatted answers stay readable",
+     "bullets": [
+      "Completed streams render headings, lists, emphasis, and code blocks without returning to the beginning of the answer.",
+      "Assistant text uses stronger theme contrast and a more comfortable chat reading scale."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.5.0",
    "title": "Hermes, always in reach",
    "date": "2026-07-25",

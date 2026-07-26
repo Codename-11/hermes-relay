@@ -156,7 +156,9 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.BackgroundTaskCard
@@ -279,6 +281,17 @@ internal fun ChatScrollSnapshot.isCompletionAfter(previous: ChatScrollSnapshot?)
         !isStreaming &&
         previous.messageCount == messageCount &&
         previous.lastMessageUiKey == lastMessageUiKey
+
+internal fun releaseRetainedLiveTail(
+    retainedUiKey: String?,
+    completedUiKey: String?,
+): String? = retainedUiKey?.takeUnless { it == completedUiKey }
+
+internal fun tailEndScrollOffset(
+    tailSizePx: Int,
+    footerSizePx: Int,
+    viewportSizePx: Int,
+): Int = (tailSizePx + footerSizePx - viewportSizePx).coerceAtLeast(0)
 
 private class ChatTailTransitionRef(
     var snapshot: ChatScrollSnapshot? = null,
@@ -439,6 +452,8 @@ fun ChatScreen(
     voiceViewModel: VoiceViewModel,
     voiceClient: RelayVoiceClient? = null,
     maxBubbleWidth: Dp = 300.dp,
+    voicePresentationMode: VoicePresentationMode = VoicePresentationMode.Focus,
+    onVoicePresentationModeChange: (VoicePresentationMode) -> Unit = {},
     // Deep-link nudge from Settings → Active Agent card: when `true`, the
     // AgentInfoSheet auto-opens on first composition and [onAgentSheetArgConsumed]
     // fires so the host can clear the nav arg (prevents re-open on tab
@@ -465,9 +480,10 @@ fun ChatScreen(
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
     val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
-    var voiceCompactMode by remember { mutableStateOf(false) }
     val chatAlpha by animateFloatAsState(
-        targetValue = if (voiceUiState.voiceMode && !voiceCompactMode) 0.4f else 1f,
+        targetValue = if (
+            voiceUiState.voiceMode && voicePresentationMode == VoicePresentationMode.Focus
+        ) 0.4f else 1f,
         animationSpec = tween(300),
         label = "chatAlpha",
     )
@@ -788,6 +804,25 @@ fun ChatScreen(
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val handleCardAction: (String, String, HermesCardAction) -> Unit =
+        remember(chatViewModel, context) {
+            { messageId, cardKey, action ->
+                if (action.mode == HermesCardAction.Modes.OPEN_URL) {
+                    chatViewModel.dispatchCardAction(messageId, cardKey, action)
+                    com.hermesandroid.relay.ui.components.handleCardActionExternally(
+                        context,
+                        action,
+                    )
+                } else {
+                    chatViewModel.dispatchCardAction(messageId, cardKey, action)
+                }
+            }
+        }
+    val handleCardInput: (String, String, String) -> Unit = remember(chatViewModel) {
+        { messageId, cardKey, value ->
+            chatViewModel.answerAsk(messageId, cardKey, value)
+        }
+    }
 
     // Ephemeral notices from the VM (model-switch warnings/errors, etc.) →
     // transient snackbar, never a chat bubble.
@@ -885,7 +920,6 @@ fun ChatScreen(
         if (!voiceUiState.voiceMode) {
             voiceOverlayHost.hide()
             pendingVoiceOverlayPermission = false
-            voiceCompactMode = false
         }
     }
 
@@ -1130,10 +1164,12 @@ fun ChatScreen(
         derivedStateOf {
             val retainingVisibleTail = retainedLiveTailUiKey != null &&
                 messages.lastOrNull()?.uiKey == retainedLiveTailUiKey
+            val settlingVisibleTail = completionSettlingUiKey != null &&
+                messages.lastOrNull()?.uiKey == completionSettlingUiKey
             messages.isNotEmpty() &&
                 !isAtBottom &&
                 !programmaticBottomScroll &&
-                !((isStreaming || retainingVisibleTail) &&
+                !((isStreaming || retainingVisibleTail || settlingVisibleTail) &&
                     smoothAutoScroll &&
                     !userScrolledAway)
         }
@@ -1331,34 +1367,99 @@ fun ChatScreen(
     ) {
         val settlingKey = completionSettlingUiKey ?: return@LaunchedEffect
         if (!smoothAutoScroll || userScrolledAway || isUserDragging) {
+            // Retention is only a completion-transition aid. Never leave the
+            // finalized tail on the plain streaming renderer just because the
+            // user disabled follow-scroll or is reading above the bottom.
+            retainedLiveTailUiKey = releaseRetainedLiveTail(
+                retainedUiKey = retainedLiveTailUiKey,
+                completedUiKey = settlingKey,
+            )
             completionSettlingUiKey = null
             return@LaunchedEffect
         }
 
         var settledFrames = 0
-        repeat(6) {
+        var previousMarkdownTailSize: Int? = null
+        var previousMarkdownFooterSize: Int? = null
+        val markdownWasAlreadyReleased = retainedLiveTailUiKey != settlingKey
+        repeat(60) completionFrame@{
             withFrameNanos { }
             if (messages.lastOrNull()?.uiKey != settlingKey) {
                 completionSettlingUiKey = null
                 return@LaunchedEffect
             }
 
-            if (listState.canScrollForward) {
-                settledFrames = 0
-                val viewportHeight = listState.layoutInfo.viewportSize.height
-                if (viewportHeight > 0) {
-                    listState.scroll(MutatePriority.Default) {
-                        scrollBy(viewportHeight.toFloat())
+            if (!markdownWasAlreadyReleased && retainedLiveTailUiKey == settlingKey) {
+                if (listState.canScrollForward) {
+                    settledFrames = 0
+                    val viewportHeight = listState.layoutInfo.viewportSize.height
+                    if (viewportHeight > 0) {
+                        listState.scroll(MutatePriority.Default) {
+                            scrollBy(viewportHeight.toFloat())
+                        }
                     }
+                    return@completionFrame
                 }
-            } else {
+
                 settledFrames += 1
-                if (settledFrames >= 2) {
-                    completionSettlingUiKey = null
-                    return@LaunchedEffect
-                }
+                if (settledFrames < 2) return@completionFrame
+                retainedLiveTailUiKey = releaseRetainedLiveTail(
+                    retainedUiKey = retainedLiveTailUiKey,
+                    completedUiKey = settlingKey,
+                )
+                settledFrames = 0
+                return@completionFrame
+            }
+
+            // Once Markdown owns the row, position its measured trailing edge
+            // explicitly. `canScrollForward` is insufficient here: LazyColumn
+            // may preserve the leading edge of a tall item while reporting an
+            // otherwise valid item anchor. Repeating catches deferred parsing,
+            // highlighted code, and attachment measurement without competing
+            // with the ordinary streaming-growth coroutine.
+            val layout = listState.layoutInfo
+            val tailIndex = messages.size // header item + zero-based messages
+            val footerIndex = tailIndex + 1
+            val tailInfo = layout.visibleItemsInfo.firstOrNull { it.index == tailIndex }
+            val footerInfo = layout.visibleItemsInfo.firstOrNull { it.index == footerIndex }
+            if (tailInfo == null) {
+                listState.scrollToItem(tailIndex)
+                settledFrames = 0
+                return@completionFrame
+            }
+
+            val viewportHeight = layout.viewportSize.height
+            if (viewportHeight <= 0) return@completionFrame
+            val desiredOffset = tailEndScrollOffset(
+                tailSizePx = tailInfo.size,
+                footerSizePx = footerInfo?.size ?: 0,
+                viewportSizePx = viewportHeight,
+            )
+            if (desiredOffset == 0) {
+                listState.scrollToItem(footerIndex)
+            } else {
+                listState.scrollToItem(tailIndex, desiredOffset)
+            }
+            val footerSize = footerInfo?.size ?: 0
+            settledFrames = if (
+                previousMarkdownTailSize == tailInfo.size &&
+                previousMarkdownFooterSize == footerSize
+            ) {
+                settledFrames + 1
+            } else {
+                0
+            }
+            previousMarkdownTailSize = tailInfo.size
+            previousMarkdownFooterSize = footerSize
+            if (settledFrames >= 12) {
+                completionSettlingUiKey = null
+                return@LaunchedEffect
             }
         }
+        retainedLiveTailUiKey = releaseRetainedLiveTail(
+            retainedUiKey = retainedLiveTailUiKey,
+            completedUiKey = settlingKey,
+        )
         completionSettlingUiKey = null
     }
 
@@ -2308,24 +2409,8 @@ fun ChatScreen(
                                     onAttachmentManualFetch = { msgId, idx ->
                                         chatViewModel.manualFetchAttachment(msgId, idx)
                                     },
-                                    onCardAction = { msgId, cardKey, action ->
-                                        // OPEN_URL is resolved at the UI layer
-                                        // because launching ACTION_VIEW needs a
-                                        // Context. Record the dispatch first so
-                                        // the card collapses even if launch fails.
-                                        if (action.mode == com.hermesandroid.relay.data.HermesCardAction.Modes.OPEN_URL) {
-                                            chatViewModel.dispatchCardAction(msgId, cardKey, action)
-                                            com.hermesandroid.relay.ui.components.handleCardActionExternally(
-                                                context,
-                                                action,
-                                            )
-                                        } else {
-                                            chatViewModel.dispatchCardAction(msgId, cardKey, action)
-                                        }
-                                    },
-                                    onCardInput = { msgId, cardKey, value ->
-                                        chatViewModel.answerAsk(msgId, cardKey, value)
-                                    },
+                                    onCardAction = handleCardAction,
+                                    onCardInput = handleCardInput,
                                     onEditMessage = if (
                                         isGatewayTransport &&
                                         !isStreaming &&
@@ -3184,14 +3269,13 @@ fun ChatScreen(
                 voiceConfigScope = activeVoiceScope,
                 voiceOutputEnabled = activeVoiceEnabled,
                 voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
+                presentationMode = voicePresentationMode,
+                onPresentationModeChange = onVoicePresentationModeChange,
                 onOverlayRequest = showVoiceSystemOverlay,
                 // Gear button in the overlay's expanded controls. The overlay
                 // exits voice mode before invoking this, so navigation lands
                 // on Voice Settings with no overlay left on top.
                 onOpenSettings = onNavigateToVoiceSettings,
-                onCompactModeChange = { compact ->
-                    voiceCompactMode = compact
-                },
                 // === v0.4.1 JIT permission-denied chip ===
                 // Tap deep-links to Settings → Apps → Hermes-Relay →
                 // Permissions for the running package. Use BuildConfig
@@ -3215,6 +3299,8 @@ fun ChatScreen(
                 onHermesConfirmationAnswer = { answer ->
                     voiceViewModel.answerHermesConfirmation(answer)
                 },
+                onCardAction = handleCardAction,
+                onCardInput = handleCardInput,
                 // === END v0.4.1 ===
             )
         }
