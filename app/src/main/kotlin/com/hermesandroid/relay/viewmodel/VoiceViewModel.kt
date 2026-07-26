@@ -3181,15 +3181,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             prepareStandardSpeechStream()
         }
 
-        // Kick off streaming observer BEFORE sending the message so we don't
-        // miss early deltas that arrive synchronously from the callback.
-        startStreamObserver(chatVm)
-
         // Route the transcribed text through the normal chat pipeline.
-        // This will create a user message + kick off the SSE stream.
+        // This creates the user row synchronously before kicking off the
+        // transport, so bind the turn before observing the replaying StateFlows.
+        // Starting the observer first leaves a small window where a legitimate
+        // session adoption can be rejected before the submitted user key exists.
+        // StateFlow replay preserves any assistant text that arrives before the
+        // observer starts.
         val submittedUserUiKey =
             chatVm.sendVoiceMessage(userText, STABLE_VOICE_INTERFACE_CONTEXT)
         voiceTurnSessionFence?.bindSubmittedUser(submittedUserUiKey)
+        startStreamObserver(chatVm)
     }
 
     private suspend fun runVoiceRelayPreflight(engineLabel: String): Boolean {
@@ -4346,8 +4348,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             ) { messages, runActive, sessionId -> Triple(messages, runActive, sessionId) }
                 .collect { (messages, runActive, sessionId) ->
                     if (!sessionFence.accepts(sessionId, messages)) {
-                        cancelStandardSpeechStream("chat session changed")
-                        streamObserverJob?.cancel()
+                        // Session id and message history are independent flows.
+                        // During session creation/adoption, combine can briefly
+                        // pair the new id with the old history (or vice versa).
+                        // Skip that inconsistent snapshot without permanently
+                        // killing narration; the next coherent emission is still
+                        // fenced by the submitted user row/session identity.
                         return@collect
                     }
 
