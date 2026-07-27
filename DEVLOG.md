@@ -1,5 +1,17 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-27 — Android replayed-message identity reconciliation
+
+Android history reconciliation now collapses reconnect/rejoin replays of the
+same persisted message ID before publishing the transcript to Compose. The
+latest repeated snapshot replaces the value at the message's first transcript
+position, preserving stable ordering, distinct messages, and the LazyColumn
+identity contract without index- or random-key fallbacks.
+
+Focused coverage reproduces the duplicate UUID condition and verifies that the
+authoritative final content wins while every rendered message keeps a unique
+stable UI key.
+
 ## 2026-07-26 — Android 1.5.1 patch reconciliation
 
 Android 1.5.1 reconciles the post-1.5.0 voice and chat fixes into versionCode

@@ -1518,6 +1518,49 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_coalescesReplayedDomainIdWithoutLosingOrderOrContent() {
+        val replayedId = "2c93af28-0b0b-436b-a112-7f164cac931d"
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "user-1",
+                    role = "user",
+                    content = JsonPrimitive("question"),
+                    timestamp = 1.0,
+                ),
+                MessageItem(
+                    id = replayedId,
+                    role = "assistant",
+                    content = JsonPrimitive("partial answer"),
+                    timestamp = 2.0,
+                ),
+                MessageItem(
+                    id = "system-1",
+                    role = "system",
+                    content = JsonPrimitive("distinct visible content"),
+                    timestamp = 3.0,
+                ),
+                // Rejoin replay of the same persisted message. The latest
+                // snapshot is authoritative, but its first transcript position
+                // and Compose identity must remain stable.
+                MessageItem(
+                    id = replayedId,
+                    role = "assistant",
+                    content = JsonPrimitive("final answer"),
+                    timestamp = 4.0,
+                ),
+            )
+        )
+
+        val messages = handler.messages.value
+        assertEquals(listOf("user-1", replayedId, "system-1"), messages.map { it.id })
+        assertEquals("final answer", messages[1].content)
+        assertEquals("distinct visible content", messages[2].content)
+        assertEquals(messages.size, messages.map { it.uiKey }.distinct().size)
+    }
+
+    @Test
     fun loadMessageHistory_secondReloadMatchesByIdAfterReconciliation() {
         // Once the first reload adopts the server id, subsequent reloads match by
         // id and update in place while keeping client-only state.
