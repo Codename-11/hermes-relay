@@ -2169,7 +2169,7 @@ An API endpoint or Relay can be added later without recreating the connection.
 
 ## ADR 39 — Android dashboard redirect auth uses native PKCE
 
-**Status:** Accepted (2026-07-25).
+**Status:** Superseded by ADR 40 (2026-07-27).
 
 **Context.** Android originally completed redirect-provider dashboard sign-in
 inside a WebView and imported cookies. Current upstream Gateway can advertise a
@@ -2202,3 +2202,43 @@ socket.
   is offered.
 - Older upstream versions remain usable through the explicitly identified
   WebView compatibility path.
+
+---
+
+## ADR 40 — Android dashboard redirect auth remains cookie/OIDC
+
+**Status:** Accepted (2026-07-27).
+
+**Context.** Upstream advertises `native_pkce` in `/api/status.auth_flows` for
+its desktop client. The corresponding `/auth/native/*` broker is explicitly a
+desktop system-browser flow: it redirects to a loopback listener owned by the
+desktop process and returns bearer tokens rather than dashboard cookies.
+Android incorrectly treated that server-wide capability as a platform-neutral
+mode selector, so redirect providers such as self-hosted OIDC were sent through
+the desktop loopback contract.
+
+**Decision.** Android redirect-provider sign-in always uses the upstream
+dashboard cookie flow:
+
+- open `/auth/login?provider=...&next=...` in the embedded sign-in WebView;
+- allow the provider to return through the dashboard's public
+  `/auth/callback`;
+- import only cookies observed on the configured dashboard origin;
+- verify the imported session through `/api/auth/me`;
+- reject a foreign `http://127.0.0.1`, `localhost`, or `[::1]` `/callback`
+  navigation instead of following or importing it.
+
+Android does not select `/auth/native/authorize` from `auth_flows`. Desktop
+native PKCE remains an upstream desktop capability and is unchanged. Existing
+encrypted native-token support is retained only so already-issued Android
+sessions can be cleared or age out safely; it is not a sign-in entry point.
+
+**Consequences.**
+
+- Self-hosted OIDC uses the same public callback registered for the dashboard.
+- Android Manage, Chat, Voice, and onboarding continue to share one verified
+  dashboard cookie session.
+- A server-wide desktop capability can no longer switch Android into a
+  loopback callback flow.
+- Android retains an embedded WebView for dashboard authentication; provider
+  compatibility and WebView security updates remain part of Android upkeep.
