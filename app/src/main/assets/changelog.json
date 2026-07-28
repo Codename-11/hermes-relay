@@ -1,6 +1,26 @@
 {
  "versions": [
   {
+   "version": "1.5.2",
+   "title": "Sign in without detours",
+   "date": "2026-07-28",
+   "sections": [
+    {
+     "header": "Provider-compatible sign-in",
+     "bullets": [
+      "Self-hosted OIDC returns through the dashboard callback, while Nous Portal opens securely in the system browser.",
+      "Private-LAN and Tailscale dashboard routes preserve the configured HTTPS callback and keep credentials scoped to the active connection."
+     ]
+    },
+    {
+     "header": "Stable conversation updates",
+     "bullets": [
+      "Replayed upstream chat events are coalesced before rendering so duplicate message identifiers do not destabilize the conversation list."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.5.1",
    "title": "Voice and chat stay in place",
    "date": "2026-07-26",

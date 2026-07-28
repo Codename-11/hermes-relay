@@ -1,1 +1,1 @@
-Choose compact Voice Focus or the complete Conversation layout. Standard Voice reliably speaks completed replies, Realtime background work no longer blocks voice controls, and streamed answers render Markdown while staying anchored at their completed end.
+Dashboard sign-in now completes reliably for self-hosted OIDC and Nous Portal, including private-LAN and Tailscale routes. Nous opens securely in the system browser, while compatible providers retain full-screen in-app sign-in. Replayed chat updates no longer duplicate conversation rows.

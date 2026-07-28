@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
+## [Android 1.5.2] - 2026-07-28
+
+### Fixed
+
+- **Dashboard sign-in completes across supported providers and network routes.** Self-hosted OIDC stays on the dashboard cookie flow, while Nous Portal opens in the system browser and completes standards-compatible PKCE through HTTPS, private-LAN, or Tailscale dashboard routes.
+- **Replayed chat updates no longer destabilize the conversation list.** Duplicate upstream message identifiers are coalesced before Compose renders them.
+
 ## [Android 1.5.1] - 2026-07-26
 
 ### Added

@@ -1,6 +1,6 @@
-v1.5.1 - Voice and chat stay in place
+v1.5.2 - Sign in without detours
 
-* Choose a compact Voice Focus view or the complete Conversation renderer.
-* Hear Standard Voice replies reliably after generation completes.
-* Keep Realtime background work active without blocking voice controls.
-* Read formatted streamed answers without jumping back to their beginning.
+* Complete self-hosted OIDC sign-in through the dashboard callback.
+* Open Nous Portal securely in the system browser.
+* Sign in over private-LAN and Tailscale dashboard routes.
+* Keep replayed chat updates from duplicating conversation rows.
