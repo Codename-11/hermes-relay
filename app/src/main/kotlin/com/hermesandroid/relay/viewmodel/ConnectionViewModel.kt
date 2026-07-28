@@ -212,9 +212,12 @@ internal fun resolveEffectiveDashboardUrl(
     endpoint?.dashboard?.url
         ?.takeIf { it.isNotBlank() }
         ?.let { return it }
-    endpoint?.api?.url
-        ?.let(Connection::deriveDefaultDashboardUrl)
-        ?.let { return it }
+    endpoint?.api?.url?.let { apiUrl ->
+        connection.dashboardUrl
+            ?.takeIf { it.isNotBlank() && Connection.urlsShareHost(it, apiUrl) }
+            ?.let { return it }
+        Connection.deriveDefaultDashboardUrl(apiUrl)?.let { return it }
+    }
     return connection.resolvedDashboardUrl
 }
 
@@ -788,6 +791,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             apiServerUrl = apiServerUrl,
             relayUrl = relayUrl,
             extraApiUrls = extraApiUrls,
+            dashboardUrl = activeConnection.value?.resolvedDashboardUrl,
         ),
         existing = activeConnection.value?.routeCandidates.orEmpty(),
     )
@@ -4686,17 +4690,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             } else {
                                 current.dashboardUrl
                             }
+                        val newRouteCandidates = Connection.reconcileDashboardRoutes(
+                            dashboardUrl = newDashboardUrl,
+                            candidates = payload.endpoints.orEmpty(),
+                        )
                         val needsUpdate = current.apiServerUrl != payload.serverUrl ||
                             current.relayUrl != newRelayUrl ||
                             current.dashboardUrl != newDashboardUrl ||
-                            current.routeCandidates != payload.endpoints.orEmpty()
+                            current.routeCandidates != newRouteCandidates
                         if (needsUpdate) {
                             connectionStore.updateConnection(
                                 current.copy(
                                     apiServerUrl = payload.serverUrl,
                                     relayUrl = newRelayUrl,
                                     dashboardUrl = newDashboardUrl,
-                                    routeCandidates = payload.endpoints.orEmpty(),
+                                    routeCandidates = newRouteCandidates,
                                     preferredRouteRole = current.preferredRouteRole
                                         ?.takeIf { preferred ->
                                             payload.endpoints.orEmpty().any {
@@ -4927,6 +4935,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     current.copy(
                         label = nextLabel,
                         dashboardUrl = normalized,
+                        routeCandidates = Connection.reconcileDashboardRoutes(
+                            dashboardUrl = normalized,
+                            candidates = current.routeCandidates.ifEmpty {
+                                listOfNotNull(
+                                    Connection.endpointCandidateFromDashboardUrl(
+                                        role = Connection.inferRouteRole(normalized),
+                                        priority = 0,
+                                        dashboardUrl = normalized,
+                                        apiServerUrl = current.apiServerUrl
+                                            .takeIf { it.isNotBlank() },
+                                        relayUrl = current.relayUrl
+                                            .takeIf { it.isNotBlank() },
+                                    ),
+                                )
+                            },
+                        ),
                     ),
                 )
                 probeStandardVoice()
@@ -6116,16 +6140,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     ) {
         val activeId = connectionStore.activeConnectionId.value ?: return
         val current = connectionStore.connections.value.firstOrNull { it.id == activeId } ?: return
-        val nextRouteCandidates = routeCandidates ?: current.routeCandidates
-        val nextPreferredRouteRole = when {
-            preferredRouteRole != null -> preferredRouteRole.takeIf { it.isNotBlank() }
-            routeCandidates != null &&
-                current.preferredRouteRole != null &&
-                nextRouteCandidates.none {
-                    it.role.equals(current.preferredRouteRole, ignoreCase = true)
-                } -> null
-            else -> current.preferredRouteRole
-        }
         val nextDashboardUrl = when {
             dashboardUrlOverride != null -> {
                 dashboardUrlOverride
@@ -6138,6 +6152,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 Connection.deriveDefaultDashboardUrl(apiServerUrl)
             }
             else -> current.dashboardUrl
+        }
+        val nextRouteCandidates = Connection.reconcileDashboardRoutes(
+            dashboardUrl = nextDashboardUrl,
+            candidates = routeCandidates ?: current.routeCandidates,
+        )
+        val nextPreferredRouteRole = when {
+            preferredRouteRole != null -> preferredRouteRole.takeIf { it.isNotBlank() }
+            routeCandidates != null &&
+                current.preferredRouteRole != null &&
+                nextRouteCandidates.none {
+                    it.role.equals(current.preferredRouteRole, ignoreCase = true)
+                } -> null
+            else -> current.preferredRouteRole
         }
         if (
             current.apiServerUrl == apiServerUrl &&

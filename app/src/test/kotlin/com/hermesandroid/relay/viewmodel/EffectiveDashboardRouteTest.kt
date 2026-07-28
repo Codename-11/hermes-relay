@@ -54,7 +54,25 @@ class EffectiveDashboardRouteTest {
     }
 
     @Test
-    fun `selected API-only route derives dashboard even when primary dashboard is explicit`() {
+    fun `selected API-only route keeps explicit same-host secure dashboard`() {
+        val connection = connection(
+            dashboardUrl = "https://hermes.example.com:443",
+            apiServerUrl = "https://hermes.example.com:8643",
+        )
+        val fallback = EndpointCandidate(
+            role = "public",
+            priority = 1,
+            api = ApiEndpoint("hermes.example.com", 8643, tls = true),
+        )
+
+        assertEquals(
+            "https://hermes.example.com:443",
+            resolveEffectiveDashboardUrl(connection, fallback),
+        )
+    }
+
+    @Test
+    fun `selected API-only route derives dashboard for a different route host`() {
         val connection = connection(
             dashboardUrl = "http://192.168.1.20:9119",
             apiServerUrl = "http://192.168.1.20:8642",

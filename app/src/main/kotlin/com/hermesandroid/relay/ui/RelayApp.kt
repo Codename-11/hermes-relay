@@ -35,6 +35,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -183,8 +184,8 @@ val LocalSnackbarHost = staticCompositionLocalOf<SnackbarHostState> {
 
 // Short-lived snackbar by default; retryable errors get Long so users have
 // time to tap the action before it auto-dismisses.
-suspend fun SnackbarHostState.showHumanError(err: HumanError) {
-    showSnackbar(
+suspend fun SnackbarHostState.showHumanError(err: HumanError): SnackbarResult {
+    return showSnackbar(
         message = err.body,
         actionLabel = err.actionLabel,
         duration = if (err.retryable) SnackbarDuration.Long else SnackbarDuration.Short,
@@ -1942,6 +1943,16 @@ fun RelayApp() {
                         },
                         onNavigateToConnect = {
                             navController.navigate(Screen.Pair.route()) {
+                                launchSingleTop = true
+                            }
+                        },
+                        onRepairConnection = {
+                            navController.navigate(
+                                Screen.Pair.route(
+                                    connectionId = activeConnectionId,
+                                    autoStart = "relay",
+                                ),
+                            ) {
                                 launchSingleTop = true
                             }
                         },
