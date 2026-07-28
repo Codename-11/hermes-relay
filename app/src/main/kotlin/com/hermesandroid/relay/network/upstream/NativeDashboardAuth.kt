@@ -108,13 +108,18 @@ class NativeDashboardAuthClient(
         provider: String? = null,
     ): NativeDashboardAuthorization {
         requireStrictLoopbackRedirect(redirectUri)
-        val verifier = randomBytes(32).base64Url()
+        // RFC 7636 uses unpadded Base64URL. Okio's base64Url() preserves
+        // trailing "=", which makes Hermes' standards-compliant S256
+        // comparison fail even though both sides hashed the same bytes.
+        val verifier = randomBytes(32).base64Url().trimEnd('=')
         val challenge = MessageDigest.getInstance("SHA-256")
             .digest(verifier.toByteArray(Charsets.US_ASCII))
             .toByteString()
             .base64Url()
+            .trimEnd('=')
         val state = randomBytes(24).base64Url()
-        val root = "$baseUrl/auth/native/authorize".toHttpUrlOrNull()
+        val authorizationBaseUrl = resolveAuthorizationBaseUrl(provider)
+        val root = "$authorizationBaseUrl/auth/native/authorize".toHttpUrlOrNull()
             ?: throw IOException("Dashboard URL is not a valid http(s) address")
         val url = root.newBuilder()
             .addQueryParameter("code_challenge", challenge)
@@ -128,6 +133,41 @@ class NativeDashboardAuthClient(
             tokenStore.coordinationKey,
         )
         return NativeDashboardAuthorization(url, verifier, state, generation)
+    }
+
+    /**
+     * A private-route dashboard may be configured with a canonical HTTPS
+     * callback origin for its provider. Starting the browser on the private
+     * origin would scope Hermes' temporary PKCE cookie to the wrong host, so
+     * discover the provider's declared callback and start native auth there.
+     * Token exchange still uses [baseUrl], keeping the resulting bearer bound
+     * to the active connection route.
+     */
+    private fun resolveAuthorizationBaseUrl(provider: String?): String {
+        val configured = baseUrl.toHttpUrlOrNull() ?: return baseUrl
+        if (
+            !provider.equals("nous", ignoreCase = true) ||
+            configured.scheme != "http" ||
+            !isPrivateNetworkLiteral(configured.host)
+        ) {
+            return baseUrl
+        }
+        val loginUrl = configured.newBuilder()
+            .addPathSegments("auth/login")
+            .addQueryParameter("provider", provider)
+            .addQueryParameter("next", "/")
+            .build()
+        val discoveryClient = client.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+        val location = discoveryClient.newCall(
+            Request.Builder().url(loginUrl).get().build(),
+        ).execute().use { response ->
+            if (response.code !in 300..399) null else response.header("Location")
+        }
+        return canonicalDashboardBaseFromNousRedirect(location)
+            ?: throw IOException("Dashboard did not advertise a secure Nous callback origin")
     }
 
     fun exchangeCallback(
@@ -280,7 +320,52 @@ internal class NativeDashboardCallbackException(
 internal fun isNativeDashboardTransportEligible(baseUrl: String): Boolean {
     val url = baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
     return url.scheme == "https" ||
-        (url.scheme == "http" && url.host == "127.0.0.1")
+        (
+            url.scheme == "http" &&
+                (url.host == "127.0.0.1" || isPrivateNetworkLiteral(url.host))
+            )
+}
+
+/**
+ * Hermes already permits explicitly configured HTTP dashboard sessions on
+ * local routes. The brokered flow is no less protected than that cookie flow,
+ * but remains unavailable to arbitrary cleartext Internet hosts.
+ */
+private fun isPrivateNetworkLiteral(host: String): Boolean {
+    val octets = host.split('.').mapNotNull(String::toIntOrNull)
+    if (octets.size != 4 || octets.any { it !in 0..255 }) return false
+    val first = octets[0]
+    val second = octets[1]
+    return first == 10 ||
+        (first == 172 && second in 16..31) ||
+        (first == 192 && second == 168) ||
+        (first == 100 && second in 64..127)
+}
+
+internal fun canonicalDashboardBaseFromNousRedirect(location: String?): String? {
+    val providerUrl = location?.toHttpUrlOrNull() ?: return null
+    if (
+        providerUrl.scheme != "https" ||
+        !providerUrl.host.equals("portal.nousresearch.com", ignoreCase = true)
+    ) {
+        return null
+    }
+    val callback = providerUrl.queryParameter("redirect_uri")
+        ?.toHttpUrlOrNull()
+        ?: return null
+    if (callback.scheme != "https") return null
+    val callbackSuffix = "/auth/callback"
+    if (!callback.encodedPath.endsWith(callbackSuffix)) return null
+    val basePath = callback.encodedPath
+        .removeSuffix(callbackSuffix)
+        .ifBlank { "/" }
+    return callback.newBuilder()
+        .encodedPath(basePath)
+        .query(null)
+        .fragment(null)
+        .build()
+        .toString()
+        .trimEnd('/')
 }
 
 /**

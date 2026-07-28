@@ -1,18 +1,19 @@
 package com.hermesandroid.relay.ui.screens
 
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -21,12 +22,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,7 +45,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.components.ConnectionSetupTimeline
 import com.hermesandroid.relay.ui.components.ConnectionSetupTimelineStep
@@ -50,10 +52,18 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardAuthProvider
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
+import com.hermesandroid.relay.network.upstream.DashboardRedirectAuthMode
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
+import com.hermesandroid.relay.network.upstream.NativeDashboardSignInCoordinator
+import com.hermesandroid.relay.network.upstream.androidDashboardRedirectAuthMode
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
+import com.hermesandroid.relay.network.upstream.isNativeDashboardTransportEligible
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
@@ -84,6 +94,10 @@ fun DashboardSignInScreen(
     var actionMessage by remember { mutableStateOf<String?>(null) }
     var actionIsError by remember { mutableStateOf(false) }
     var oauthProvider by remember { mutableStateOf<DashboardAuthProvider?>(null) }
+    var authFlows by remember(dashboardUrl, connectionId) {
+        mutableStateOf<List<String>>(emptyList())
+    }
+    var nativeSignInJob by remember(dashboardUrl, connectionId) { mutableStateOf<Job?>(null) }
     var authenticationComplete by remember { mutableStateOf(false) }
 
     val cookieStoreFactory = remember(appContext, connectionId) {
@@ -138,6 +152,7 @@ fun DashboardSignInScreen(
             providers = client.getAuthProviders().getOrNull()
                 ?.takeIf { it.isNotEmpty() }
                 ?: status.authProviderDetails
+            authFlows = status.authFlows
             val session = if (status.authRequired) client.currentSession().getOrNull() else null
             connectionViewModel.recordDashboardStatus(
                 status = status,
@@ -183,14 +198,70 @@ fun DashboardSignInScreen(
 
     fun startRedirectSignIn(provider: DashboardAuthProvider) {
         if (actionInFlight || dashboardUrl.isBlank()) return
-        // `native_pkce` is an upstream desktop capability. Android owns the
-        // dashboard cookie flow so the provider returns to the public
-        // /auth/callback, whose cookies are then verified via /api/auth/me.
-        oauthProvider = provider
+        if (
+            androidDashboardRedirectAuthMode(provider.name, authFlows) ==
+            DashboardRedirectAuthMode.WebView
+        ) {
+            oauthProvider = provider
+            return
+        }
+        if (!isNativeDashboardTransportEligible(dashboardUrl)) {
+            actionMessage = resources.getString(R.string.dashboard_native_signin_requires_https)
+            actionIsError = true
+            return
+        }
+        val authClient = connectionViewModel.nativeDashboardAuthClientForActive(dashboardUrl)
+        if (authClient == null) {
+            actionMessage = resources.getString(R.string.dashboard_native_signin_unavailable)
+            actionIsError = true
+            return
+        }
+
+        actionInFlight = true
+        actionIsError = false
+        actionMessage = resources.getString(R.string.dashboard_native_signin_opening)
+        nativeSignInJob = scope.launch {
+            try {
+                NativeDashboardSignInCoordinator(authClient).signIn(provider.name) { authorizationUrl ->
+                    withContext(Dispatchers.Main.immediate) {
+                        launchNativeDashboardAuthorization(context, authorizationUrl)
+                    }
+                }
+                val client = clientFactory()
+                val session = try {
+                    verifyAndRecord(client)
+                } finally {
+                    client.shutdown()
+                }
+                if (session?.authenticated == true) {
+                    actionMessage = session.provider?.let {
+                        resources.getString(R.string.dashboard_signed_in_with, it)
+                    } ?: resources.getString(R.string.dashboard_signed_in)
+                    actionIsError = false
+                    finishAuthentication()
+                } else {
+                    actionMessage = resources.getString(R.string.dashboard_signin_no_session)
+                    actionIsError = true
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                actionMessage = error.message
+                    ?: resources.getString(R.string.dashboard_signin_failed)
+                actionIsError = true
+            } finally {
+                actionInFlight = false
+                nativeSignInJob = null
+            }
+        }
+    }
+
+    DisposableEffect(dashboardUrl, connectionId) {
+        onDispose { nativeSignInJob?.cancel() }
     }
 
     oauthProvider?.let { provider ->
-        DashboardOAuthDialog(
+        DashboardOAuthScreen(
             dashboardUrl = dashboardUrl,
             provider = provider,
             cookieStoreFactory = cookieStoreFactory,
@@ -216,6 +287,7 @@ fun DashboardSignInScreen(
                 actionIsError = true
             },
         )
+        return
     }
 
     Scaffold(
@@ -252,8 +324,14 @@ fun DashboardSignInScreen(
                     actionInFlight = actionInFlight,
                     actionMessage = actionMessage,
                     actionIsError = actionIsError,
+                    nativeSignInInFlight = nativeSignInJob != null,
                     onSignIn = ::submitPassword,
                     onOAuthSignIn = ::startRedirectSignIn,
+                    onCancelNativeSignIn = {
+                        actionMessage = resources.getString(R.string.dashboard_native_signin_cancelled)
+                        actionIsError = false
+                        nativeSignInJob?.cancel()
+                    },
                 )
             }
         }
@@ -319,8 +397,10 @@ private fun DashboardSignInForm(
     actionInFlight: Boolean,
     actionMessage: String?,
     actionIsError: Boolean,
+    nativeSignInInFlight: Boolean,
     onSignIn: (String, String, String) -> Unit,
     onOAuthSignIn: (DashboardAuthProvider) -> Unit,
+    onCancelNativeSignIn: () -> Unit,
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -350,6 +430,14 @@ private fun DashboardSignInForm(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.dashboard_signin_with_provider, provider.displayName ?: provider.name))
+        }
+    }
+    if (nativeSignInInFlight) {
+        Button(
+            onClick = onCancelNativeSignIn,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.dashboard_cancel))
         }
     }
     if (passwordProvider != null || providers.isEmpty()) {
@@ -390,8 +478,9 @@ private fun DashboardSignInForm(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DashboardOAuthDialog(
+private fun DashboardOAuthScreen(
     dashboardUrl: String,
     provider: DashboardAuthProvider,
     cookieStoreFactory: () -> DashboardCookieStore,
@@ -408,6 +497,8 @@ private fun DashboardOAuthDialog(
     val verifyFailedStatus = stringResource(R.string.dashboard_oauth_verify_failed)
     var statusText by remember(initialStatus) { mutableStateOf(initialStatus) }
     var checking by remember { mutableStateOf(false) }
+    var pageProgress by remember { mutableStateOf(0) }
+    var webView by remember { mutableStateOf<WebView?>(null) }
     val loginUrl = remember(dashboardUrl, provider.name) {
         DashboardApiClient.authLoginUrl(
             baseUrl = dashboardUrl,
@@ -456,49 +547,113 @@ private fun DashboardOAuthDialog(
         }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Card(modifier = Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dashboard_close_signin))
-                }
-                Text(statusText, style = MaterialTheme.typography.bodySmall)
-                AndroidView(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    factory = { viewContext ->
-                        CookieManager.getInstance().setAcceptCookie(true)
-                        WebView(viewContext).apply {
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            webViewClient = object : WebViewClient() {
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView,
-                                    request: WebResourceRequest,
-                                ): Boolean {
-                                    val target = request.url.toString()
-                                    if (
-                                        dashboardWebViewAuthNavigation(dashboardUrl, target) ==
-                                        DashboardWebViewAuthNavigation.RejectLoopbackCallback
-                                    ) {
-                                        handleNavigation(target)
-                                        return true
-                                    }
-                                    return false
-                                }
+    BackHandler(onBack = onDismiss)
 
-                                override fun onPageFinished(view: WebView, url: String?) {
-                                    super.onPageFinished(view, url)
-                                    handleNavigation(url)
-                                }
-                            }
-                            loadUrl(loginUrl)
-                        }
-                    },
+    DisposableEffect(Unit) {
+        onDispose {
+            webView?.stopLoading()
+            webView?.destroy()
+            webView = null
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = stringResource(
+                                R.string.dashboard_signin_with_provider,
+                                provider.displayName ?: provider.name,
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = statusText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.dashboard_back),
+                        )
+                    }
+                },
+            )
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+        ) {
+            if (pageProgress in 0..99) {
+                LinearProgressIndicator(
+                    progress = { pageProgress / 100f },
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                factory = { viewContext ->
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    WebView(viewContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                                pageProgress = newProgress
+                            }
+                        }
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(
+                                view: WebView,
+                                request: WebResourceRequest,
+                            ): Boolean {
+                                val target = request.url.toString()
+                                if (
+                                    dashboardWebViewAuthNavigation(dashboardUrl, target) ==
+                                    DashboardWebViewAuthNavigation.RejectLoopbackCallback
+                                ) {
+                                    handleNavigation(target)
+                                    return true
+                                }
+                                return false
+                            }
+
+                            override fun onReceivedError(
+                                view: WebView,
+                                request: WebResourceRequest,
+                                error: WebResourceError,
+                            ) {
+                                super.onReceivedError(view, request, error)
+                                if (request.isForMainFrame) {
+                                    val message = error.description?.toString()
+                                        ?.takeIf { it.isNotBlank() }
+                                        ?: verifyFailedStatus
+                                    statusText = message
+                                    onError(message)
+                                }
+                            }
+
+                            override fun onPageFinished(view: WebView, url: String?) {
+                                super.onPageFinished(view, url)
+                                handleNavigation(url)
+                            }
+                        }
+                        webView = this
+                        loadUrl(loginUrl)
+                    }
+                },
+            )
         }
     }
 }
