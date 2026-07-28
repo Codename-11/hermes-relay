@@ -1,5 +1,23 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-28 — Android 1.5.2 production release
+
+Android 1.5.2 shipped from the approved `dev` to `main` release tree as
+versionCode 35. The release adds provider-aware Dashboard sign-in: Nous uses
+the advertised native PKCE system-browser flow, while compatible self-hosted
+providers retain cookie-backed full-page Dashboard authentication. Callback
+origin discovery remains server-driven, private-network HTTP compatibility is
+preserved, and arbitrary public HTTP redirects remain rejected.
+
+The private Play preflight validated the exact application tree before release
+PR #265 merged. The immutable `android-v1.5.2` tag resolves to the resulting
+`main` tip, the production workflow promoted versionCode 35 to the completed
+Google Play production track, and the public GitHub release contains the
+signed AAB, sideload APK, and SHA-256 manifest. The published sideload APK
+checksum was independently verified; replacing the debug-signed phone build
+with the release-signed artifact requires an uninstall because Android
+correctly rejects cross-signature in-place updates.
+
 ## 2026-07-27 — Android replayed-message identity reconciliation
 
 Android history reconciliation now collapses reconnect/rejoin replays of the
