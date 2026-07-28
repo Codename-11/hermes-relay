@@ -170,16 +170,21 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
-Dashboard/Gateway redirect providers use the upstream native PKCE contract when
-`GET /api/status` advertises `native_pkce`. Android opens the selected provider
-in a Custom Tab and owns a single ephemeral callback on
-`http://127.0.0.1:<os-assigned-port>/callback`. PKCE verifier and CSRF state
-exist only for that sign-in coroutine. Access and refresh tokens are encrypted
-per connection and are attached only to the exact trusted dashboard base for
-Manage, Gateway tickets, and standard voice. Native exchange is allowed only
-for HTTPS dashboard addresses (plus literal loopback for development). A
-gateway without the capability uses the legacy cookie/WebView flow; a failed
-native attempt never silently downgrades.
+Dashboard/Gateway redirect authentication is provider-compatible. Nous Portal,
+which relies on a challenge that rejects embedded Android WebViews, uses the
+upstream brokered `native_pkce` flow in a system Custom Tab when the dashboard
+advertises it. The app owns an ephemeral loopback callback and stores the
+resulting bearer session only for that connection and exact dashboard origin.
+Self-hosted OIDC remains on the dashboard cookie flow: Android opens
+`/auth/login` in a full-screen embedded browser destination, lets the provider
+return through the public `/auth/callback`, imports only same-origin cookies,
+and verifies them through `/api/auth/me`. HTTPS is required on public routes;
+explicit private-LAN and Tailscale-IP dashboards may use their existing HTTP
+transport. When such a private route advertises a canonical HTTPS Nous callback,
+Android starts the browser on that canonical origin so Hermes' temporary PKCE
+cookie and the provider callback remain same-origin, then exchanges the
+one-time code through the active private route. The verified session is shared
+by Manage, Gateway tickets, and standard voice.
 
 Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (plus the API server credentials and optional dashboard URL) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 

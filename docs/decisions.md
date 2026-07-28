@@ -2169,7 +2169,7 @@ An API endpoint or Relay can be added later without recreating the connection.
 
 ## ADR 39 — Android dashboard redirect auth uses native PKCE
 
-**Status:** Accepted (2026-07-25).
+**Status:** Superseded by ADR 40 (2026-07-27).
 
 **Context.** Android originally completed redirect-provider dashboard sign-in
 inside a WebView and imported cookies. Current upstream Gateway can advertise a
@@ -2202,3 +2202,55 @@ socket.
   is offered.
 - Older upstream versions remain usable through the explicitly identified
   WebView compatibility path.
+
+---
+
+## ADR 40 — Android dashboard redirect auth is provider-compatible
+
+**Status:** Amended (2026-07-28).
+
+**Context.** Upstream advertises `native_pkce` in `/api/status.auth_flows` for
+its desktop client. The corresponding `/auth/native/*` broker is explicitly a
+desktop system-browser flow: it redirects to a loopback listener owned by the
+desktop process and returns bearer tokens rather than dashboard cookies.
+Android incorrectly treated that server-wide capability as a platform-neutral
+mode selector, so redirect providers such as self-hosted OIDC were sent through
+the desktop loopback contract.
+
+**Decision.** Android redirect-provider sign-in uses the upstream dashboard
+cookie flow by default:
+
+- open `/auth/login?provider=...&next=...` in a full-screen embedded sign-in
+  destination with a normal app bar rather than a modal WebView;
+- allow the provider to return through the dashboard's public
+  `/auth/callback`;
+- import only cookies observed on the configured dashboard origin;
+- verify the imported session through `/api/auth/me`;
+- reject a foreign `http://127.0.0.1`, `localhost`, or `[::1]` `/callback`
+  navigation instead of following or importing it.
+
+Android does not select `/auth/native/authorize` merely because it appears in
+`auth_flows`. Self-hosted OIDC remains on the cookie contract above. Nous Portal
+is the narrow exception: its Cloudflare Turnstile challenge rejects embedded
+Android WebViews, so Android uses the gateway-brokered native PKCE route for
+that provider when advertised and opens it in a system Custom Tab. The
+ephemeral loopback listener, S256 verifier, state validation, encrypted bearer
+store, and exact-origin attachment remain app-owned. Public cleartext
+dashboards are rejected; explicitly configured RFC 1918 and Tailscale-IP
+dashboard routes retain the same HTTP allowance as their existing cookie
+sessions. If the provider redirect from a private route declares a canonical
+HTTPS dashboard callback, Android begins browser authorization on that
+canonical origin so the temporary PKCE cookie and callback remain same-origin;
+the one-time code exchange and resulting exact-origin bearer stay bound to the
+active private route.
+
+**Consequences.**
+
+- Self-hosted OIDC uses the same public callback registered for the dashboard.
+- Android Manage, Chat, Voice, and onboarding continue to share one verified
+  dashboard cookie session.
+- A server-wide desktop capability can no longer switch Android into a
+  loopback callback flow.
+- Android retains a full-screen embedded WebView for compatible dashboard
+  cookie providers, while providers that prohibit embedding use the explicit
+  brokered native route.

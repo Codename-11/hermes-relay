@@ -1223,6 +1223,14 @@ class ChatHandler {
         // so we can attach results back to the originating assistant message's ToolCall
         val toolResults = items.filter { it.role == "tool" }
             .associateBy { it.toolCallId }
+        // A reconnect/rejoin history response can repeat a persisted message row.
+        // Chat's LazyColumn renders domain ids as stable keys (via ChatMessage.uiKey),
+        // so allowing both copies through would crash Compose before either copy
+        // could be reconciled. A domain id identifies one persisted message: retain
+        // its first transcript position while adopting the latest repeated snapshot.
+        // Rows without ids remain independent, and tool/hidden rows keep their
+        // separate handling above/below.
+        val renderedItems = coalesceRenderedHistoryItems(items)
 
         // Accumulator for media markers we find in loaded content — fired AFTER
         // the wholesale `_messages.value = ...` assignment so the ViewModel's
@@ -1240,8 +1248,8 @@ class ChatHandler {
         // silently misses those rows, so a gateway turn's tokens/badges survived
         // only if a content match happened to cover them. See
         // [reconcileLiveIdsToServer].
-        val serverItemIds = items.mapNotNullTo(HashSet()) { it.id }
-        val idRemap = reconcileLiveIdsToServer(items, serverItemIds)
+        val serverItemIds = renderedItems.mapNotNullTo(HashSet()) { it.id }
+        val idRemap = reconcileLiveIdsToServer(renderedItems, serverItemIds)
 
         // Carry CLIENT-ONLY enrichment forward across the reload, keyed by the
         // RECONCILED message id. The server transcript (MessageItem) rebuilds
@@ -1278,7 +1286,7 @@ class ChatHandler {
         // clientOnly bubbles (same exchange, pre-sync copy).
         val syncedRealtimeTurnContents = mutableSetOf<String>()
 
-        val loaded = items.mapNotNull { item ->
+        val loaded = renderedItems.mapNotNull { item ->
             val displayKind = item.displayKind?.trim()?.lowercase()
             if (displayKind == "hidden") return@mapNotNull null
             val role = when {
@@ -1538,6 +1546,34 @@ class ChatHandler {
         for ((messageId, path) in pendingPersistedUserImages) {
             onPersistedUserImageRequested(messageId, path)
         }
+    }
+
+    /**
+     * Collapse replayed visible history rows by their authoritative message id.
+     *
+     * Replacing the value at its first-seen slot preserves transcript ordering;
+     * the last repeated value wins so a later, more complete snapshot is not lost.
+     * Null ids cannot be proven identical and therefore remain separate rows.
+     */
+    private fun coalesceRenderedHistoryItems(items: List<MessageItem>): List<MessageItem> {
+        val firstSlotById = HashMap<String, Int>()
+        val coalesced = ArrayList<MessageItem>(items.size)
+        for (item in items) {
+            if (renderedRoleOf(item) == null) continue
+            val id = item.id
+            if (id == null) {
+                coalesced += item
+                continue
+            }
+            val existingSlot = firstSlotById[id]
+            if (existingSlot == null) {
+                firstSlotById[id] = coalesced.size
+                coalesced += item
+            } else {
+                coalesced[existingSlot] = item
+            }
+        }
+        return coalesced
     }
 
     /** One adoptable server row during id reconciliation. `taken` enforces consume-once. */

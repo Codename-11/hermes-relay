@@ -68,8 +68,34 @@ class NativeDashboardAuthTest {
         assertEquals("http://127.0.0.1:43123/callback", query["redirect_uri"])
         assertEquals("nous", query["provider"])
         assertTrue(query.getValue("state").length >= 32)
-        assertTrue(query.getValue("code_challenge").length >= 43)
+        assertEquals(43, query.getValue("code_challenge").length)
+        assertFalse(query.getValue("code_challenge").contains('='))
         assertNotEquals(query["state"], query["code_challenge"])
+    }
+
+    @Test
+    fun canonicalNousCallbackBase_usesSecurePublicOriginAndPreservesPrefix() {
+        val location = "https://portal.nousresearch.com/oauth/authorize" +
+            "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fgateway%2Fauth%2Fcallback"
+
+        assertEquals(
+            "https://hermes.example.test/gateway",
+            canonicalDashboardBaseFromNousRedirect(location),
+        )
+        assertEquals(
+            null,
+            canonicalDashboardBaseFromNousRedirect(
+                "https://portal.nousresearch.com/oauth/authorize" +
+                    "?redirect_uri=http%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback",
+            ),
+        )
+        assertEquals(
+            null,
+            canonicalDashboardBaseFromNousRedirect(
+                "https://attacker.example/oauth/authorize" +
+                    "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback",
+            ),
+        )
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -103,6 +129,7 @@ class NativeDashboardAuthTest {
             .digest(verifier.toByteArray(Charsets.US_ASCII))
             .toByteString()
             .base64Url()
+            .trimEnd('=')
         val authorizeChallenge = java.net.URI(authorization.authorizationUrl).rawQuery
             .split("&")
             .first { it.startsWith("code_challenge=") }

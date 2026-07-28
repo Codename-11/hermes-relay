@@ -34,6 +34,24 @@ internal fun dashboardRedirectAuthMode(authFlows: List<String>): DashboardRedire
     }
 
 /**
+ * Nous Portal uses Cloudflare Turnstile and does not support embedded Android
+ * WebViews. Keep self-hosted OIDC on the dashboard cookie flow, but use the
+ * gateway's brokered system-browser flow for Nous when it is advertised.
+ */
+internal fun androidDashboardRedirectAuthMode(
+    providerName: String,
+    authFlows: List<String>,
+): DashboardRedirectAuthMode =
+    if (
+        providerName.equals("nous", ignoreCase = true) &&
+        dashboardRedirectAuthMode(authFlows) == DashboardRedirectAuthMode.NativePkce
+    ) {
+        DashboardRedirectAuthMode.NativePkce
+    } else {
+        DashboardRedirectAuthMode.WebView
+    }
+
+/**
  * Owns one native dashboard sign-in attempt.
  *
  * The listener and PKCE authorization are both local to [signIn], so leaving

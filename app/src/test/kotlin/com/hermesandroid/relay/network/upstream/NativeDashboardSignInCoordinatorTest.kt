@@ -115,7 +115,28 @@ class NativeDashboardSignInCoordinatorTest {
         )
         assertTrue(isNativeDashboardTransportEligible("https://hermes.example.test/prefix"))
         assertTrue(isNativeDashboardTransportEligible("http://127.0.0.1:9119"))
+        assertTrue(isNativeDashboardTransportEligible("http://172.16.24.250:9119"))
+        assertTrue(isNativeDashboardTransportEligible("http://100.71.8.56:9119"))
         assertFalse(isNativeDashboardTransportEligible("http://hermes.local:9119"))
+        assertFalse(isNativeDashboardTransportEligible("http://203.0.113.10:9119"))
+    }
+
+    @Test
+    fun androidRedirectMode_usesBrowserForNous_andCookieFlowForSelfHostedOidc() {
+        val flows = listOf("cookie", "native_pkce")
+
+        assertEquals(
+            DashboardRedirectAuthMode.NativePkce,
+            androidDashboardRedirectAuthMode("nous", flows),
+        )
+        assertEquals(
+            DashboardRedirectAuthMode.WebView,
+            androidDashboardRedirectAuthMode("oidc", flows),
+        )
+        assertEquals(
+            DashboardRedirectAuthMode.WebView,
+            androidDashboardRedirectAuthMode("nous", listOf("cookie")),
+        )
     }
 
     private suspend fun completeSignIn(
