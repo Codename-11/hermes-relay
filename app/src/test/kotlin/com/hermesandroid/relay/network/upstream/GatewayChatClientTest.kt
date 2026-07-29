@@ -9,6 +9,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -65,6 +66,7 @@ class GatewayClientHarness(
     var recoveryInflightStreaming: Boolean? = null
     var recoveryInflightError: String? = null
     var recoveryInflightRecoverable: Boolean = false
+    var recoveryInflightCorrections: List<String> = emptyList()
     var recoveryAutoContinueAttempt: Int? = null
 
     @Volatile
@@ -111,6 +113,9 @@ class GatewayClientHarness(
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
     val methodNotFound: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /** Methods answered with a caller-selected structured JSON-RPC error. */
+    val rpcErrors = ConcurrentHashMap<String, Pair<Int, String>>()
+
     /** One withheld JSON-RPC ack, capturable for delayed release via [releaseAck]. */
     class PendingAck(val ws: WebSocket, val method: String, val id: Long)
 
@@ -135,6 +140,19 @@ class GatewayClientHarness(
             if (!autoRespondEnabled) return
             if (method in suppressAckMethods) {
                 pendingAcks.add(PendingAck(webSocket, method, id.toLong()))
+                return
+            }
+            rpcErrors[method]?.let { (code, message) ->
+                webSocket.send(
+                    buildJsonObject {
+                        put("jsonrpc", "2.0")
+                        put("id", id.toLong())
+                        put("error", buildJsonObject {
+                            put("code", code)
+                            put("message", message)
+                        })
+                    }.toString(),
+                )
                 return
             }
             if (method in methodNotFound) {
@@ -343,6 +361,12 @@ class GatewayClientHarness(
                 put("user", "research this")
                 put("assistant", recoveryAssistant)
                 put("streaming", inflightStreaming)
+                if (recoveryInflightCorrections.isNotEmpty()) {
+                    put(
+                        "corrections",
+                        JsonArray(recoveryInflightCorrections.map(::JsonPrimitive)),
+                    )
+                }
                 recoveryInflightError?.let { error ->
                     put("status", "error")
                     put("error", error)
@@ -1940,6 +1964,37 @@ class GatewayChatClientTest {
         assertFalse(submit.containsKey("truncate_before_user_ordinal"))
     }
 
+    @Test
+    fun `queued follow-up marker rides only explicit queue drains`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "run this next",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            queuedFollowUp = true,
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        val submit = harness.awaitRpc("prompt.submit")
+        assertEquals(true, (submit["queued"] as? JsonPrimitive)?.booleanOrNull)
+    }
+
+    @Test
+    fun `active session cap rejection surfaces error without preflight fallback`() {
+        val message = "Active session limit reached; close the session held by another client"
+        harness.rpcErrors["prompt.submit"] = 4090 to message
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitRpc("prompt.submit")
+
+        waitUntil { r.errors.isNotEmpty() }
+        assertEquals(listOf(message), r.errors.toList())
+        assertTrue("authoritative rejection must not trigger SSE fallback", r.preflightFailures.isEmpty())
+        assertEquals(1, harness.rpcLog.count { it.first == "prompt.submit" })
+    }
+
     // --- HRUI-016: long / fire-and-forget prompt.submit ack semantics.
     // Upstream treats prompt.submit as a long-running RPC (desktop passes a
     // 30-min PROMPT_SUBMIT_REQUEST_TIMEOUT_MS at every call site) because the
@@ -2000,6 +2055,7 @@ class GatewayChatClientTest {
     fun `recoverTurn activates exact live session and continues deltas and tool events`() {
         harness.recoveryRunning = true
         harness.recoveryAssistant = "partial answer"
+        harness.recoveryInflightCorrections = listOf("Check the release branch", "Focus on Android")
         val recorder = Recorder()
 
         val recovery = runBlocking {
@@ -2013,6 +2069,10 @@ class GatewayChatClientTest {
         assertTrue(recovery.running)
         assertEquals("live-original", recovery.liveSessionId)
         assertEquals("partial answer", recovery.inflight?.assistant)
+        assertEquals(
+            listOf("Check the release branch", "Focus on Android"),
+            recovery.inflight?.corrections,
+        )
         assertNotNull(recovery.handle)
         assertEquals(1, harness.rpcLog.count { it.first == "session.activate" })
         assertEquals(0, harness.rpcLog.count { it.first == "session.resume" })

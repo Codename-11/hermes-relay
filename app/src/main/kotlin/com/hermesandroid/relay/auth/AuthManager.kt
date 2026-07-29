@@ -19,6 +19,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -48,6 +50,7 @@ data class ConnectionAuthSecrets(
     val refreshToken: String? = null,
     val deviceId: String? = null,
     val apiKey: String? = null,
+    val profileApiKeys: Map<String, String> = emptyMap(),
     val pairedSessionMetaJson: String? = null,
 )
 
@@ -114,6 +117,7 @@ class AuthManager(
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_API_KEY = "api_server_key"
+        private const val KEY_PROFILE_API_KEYS = "profile_api_server_keys"
         private const val HINT_API_KEY_PRESENT = "api_key_present"
         private const val KEY_PAIRED_META = "paired_session_meta_json"
         // Marker (in the connection-0 token store) recording that the one-shot
@@ -131,6 +135,29 @@ class AuthManager(
          * a real connection id through.
          */
         const val CONNECTION_ID_LEGACY: String = "legacy"
+
+        internal fun encodeProfileApiKeys(keys: Map<String, String>): String =
+            Json.encodeToString(
+                keys.mapNotNull { (profile, key) ->
+                    val normalizedProfile = profile.trim()
+                    val normalizedKey = key.trim()
+                    if (normalizedProfile.isBlank() || normalizedKey.isBlank()) null
+                    else normalizedProfile to normalizedKey
+                }.toMap(),
+            )
+
+        internal fun decodeProfileApiKeys(raw: String?): Map<String, String> {
+            if (raw.isNullOrBlank()) return emptyMap()
+            return runCatching { Json.decodeFromString<Map<String, String>>(raw) }
+                .getOrDefault(emptyMap())
+                .mapNotNull { (profile, key) ->
+                    val normalizedProfile = profile.trim()
+                    val normalizedKey = key.trim()
+                    if (normalizedProfile.isBlank() || normalizedKey.isBlank()) null
+                    else normalizedProfile to normalizedKey
+                }
+                .toMap()
+        }
 
         internal fun shouldPreservePairedSessionOnAuthFail(
             currentState: AuthState,
@@ -173,6 +200,7 @@ class AuthManager(
                 refreshToken = store.getString(KEY_REFRESH_TOKEN),
                 deviceId = store.getString(KEY_DEVICE_ID),
                 apiKey = store.getString(KEY_API_KEY),
+                profileApiKeys = decodeProfileApiKeys(store.getString(KEY_PROFILE_API_KEYS)),
                 pairedSessionMetaJson = store.getString(KEY_PAIRED_META),
             )
         }
@@ -188,6 +216,11 @@ class AuthManager(
                 writeOrRemove(store, KEY_REFRESH_TOKEN, secrets.refreshToken)
                 writeOrRemove(store, KEY_DEVICE_ID, secrets.deviceId)
                 writeOrRemove(store, KEY_API_KEY, secrets.apiKey)
+                writeOrRemove(
+                    store,
+                    KEY_PROFILE_API_KEYS,
+                    secrets.profileApiKeys.takeIf { it.isNotEmpty() }?.let(::encodeProfileApiKeys),
+                )
                 writeOrRemove(store, KEY_PAIRED_META, secrets.pairedSessionMetaJson)
             }
         }
@@ -290,6 +323,7 @@ class AuthManager(
 
     private var _store: SessionTokenStore? = null
     private val storeMutex = Mutex()
+    private val profileApiKeysMutex = Mutex()
 
     /**
      * The encrypted-store filename for this connection — shared by [store]
@@ -416,6 +450,7 @@ class AuthManager(
             KEY_REFRESH_TOKEN,
             KEY_DEVICE_ID,
             KEY_API_KEY,
+            KEY_PROFILE_API_KEYS,
             KEY_PAIRED_META,
         )
         var migrated = false
@@ -945,6 +980,27 @@ class AuthManager(
     suspend fun clearApiKey() {
         store().remove(KEY_API_KEY)
         recordApiKeyHint(false)
+    }
+
+    suspend fun getProfileApiKey(profileName: String): String? =
+        decodeProfileApiKeys(store().getString(KEY_PROFILE_API_KEYS))[profileName.trim()]
+
+    suspend fun setProfileApiKey(profileName: String, key: String) {
+        val normalizedProfile = profileName.trim()
+        require(normalizedProfile.isNotBlank()) { "Profile name must not be blank" }
+        profileApiKeysMutex.withLock {
+            val tokenStore = store()
+            val keys = decodeProfileApiKeys(tokenStore.getString(KEY_PROFILE_API_KEYS)).toMutableMap()
+            val normalizedKey = key.trim()
+            if (normalizedKey.isBlank()) keys.remove(normalizedProfile)
+            else keys[normalizedProfile] = normalizedKey
+            if (keys.isEmpty()) tokenStore.remove(KEY_PROFILE_API_KEYS)
+            else tokenStore.putString(KEY_PROFILE_API_KEYS, encodeProfileApiKeys(keys))
+        }
+    }
+
+    suspend fun clearProfileApiKey(profileName: String) {
+        setProfileApiKey(profileName, "")
     }
 
     val isPaired: Boolean

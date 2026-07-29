@@ -1322,7 +1322,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // initialize() collector; the explicit re-read below guarantees the
         // engine mode is correct even before that collector is rescheduled.
         applyVoicePrefsScope(normalized)
-        maybeNoteStandardVoiceProfileLimitation(normalized)
+        noteStandardVoiceProfileRoute(normalized)
     }
 
     /**
@@ -1435,27 +1435,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Standard (no-plugin dashboard) voice rides upstream `POST /api/audio/speak`,
-     * which is text-only GLOBAL TTS: `TTSSpeakRequest` has no profile field and
-     * `text_to_speech_tool` has no profile scope (web_server.py) — so switching
-     * the chat profile does NOT change the spoken voice on standard-only installs.
-     * The RELAY voice path IS profile-aware, so this notice is scoped strictly to
-     * the EFFECTIVE Standard route + a non-default profile (the [profileName] arg
-     * is already null for the default/launch profile). Quiet by design: a Voice
-     * diagnostics line, not an interrupting toast.
+     * Current upstream dashboard audio routes accept the active profile as a
+     * query parameter. Record that scope when Standard voice is effective so
+     * diagnostics no longer claim the host-global limitation that older Hermes
+     * had. Quiet by design: a Voice diagnostics line, not an interrupting toast.
      */
-    private fun maybeNoteStandardVoiceProfileLimitation(profileName: String?) {
+    private fun noteStandardVoiceProfileRoute(profileName: String?) {
         val profile = profileName ?: return
-        // Only when standard voice is what a call would actually use — never
-        // claim the relay path has this limitation.
+        // Only when Standard voice is what a call would actually use.
         if (voiceAudioClient?.effectiveRoute != VoiceAudioRoute.Standard) return
         DiagnosticsLog.record(
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Info,
             title = getApplication<Application>().getString(R.string.voice_status_standard_tts),
-            detail = "Profile \"$profile\" changes the chat agent, but standard " +
-                "(no-plugin) voice speaks with the host's global TTS config, not " +
-                "the profile's voice. Pair the Relay plugin for profile-aware voice.",
+            detail = "Standard voice is routed through Hermes profile \"$profile\" " +
+                "for speech, transcription, streaming playback, and voice catalogs.",
         )
     }
 

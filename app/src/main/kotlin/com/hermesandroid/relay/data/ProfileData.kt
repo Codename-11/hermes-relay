@@ -47,9 +47,10 @@ import kotlinx.serialization.Serializable
  *
  * **Hermes profile API metadata.** A relay can advertise an isolated
  * profile API server without exposing its secret. When [apiServerUrl] is
- * present, Android routes chat/session traffic to that URL and reuses the
- * active connection's stored API key. Operators that use distinct API keys
- * per profile should pair those profile API servers as separate connections.
+ * present, Android routes chat/session traffic to that URL using the active
+ * connection credential. A positively identified shared multiplex
+ * `/p/<profile>` route instead uses a separately encrypted profile credential;
+ * the root connection key is never reused for that route.
  */
 @Serializable
 data class Profile(

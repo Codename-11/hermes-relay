@@ -188,7 +188,7 @@
     <string name="conn_detail_no_paired_session">No hay sesión emparejada o código de par pendiente</string>
     <string name="conn_detail_no_api_client">No hay ningún API client configurado</string>
     <string name="voice_status_mode_switched">Modo de voz cambiado</string>
-    <string name="voice_status_standard_tts">La voz Vanilla Hermes utiliza el TTS global del host</string>
+    <string name="voice_status_standard_tts">La voz Vanilla Hermes sigue el perfil activo</string>
     <string name="voice_status_capture_ignored">Captura de voz ignorada</string>
     <string name="voice_status_no_speech">No se detectó voz</string>
     <string name="voice_status_test_started">Se inició la prueba del agente en tiempo real</string>
@@ -1335,7 +1335,8 @@
     <string name="voice_settings_back">Atrás</string>
     <string name="voice_settings_scope_label">Alcance de voz</string>
     <string name="voice_settings_global_voice">Voz global</string>
-    <string name="voice_settings_standard_scope_body">Esta conexión habla a través de los TTS y STT configurados de su servidor Hermes (config.yaml en el servidor, o la configuración de audio del tablero): es en todo el host, no por perfil. Empareja Relay para elegir proveedores, modelos y voces del teléfono y llevarlos por perfil.</string>
+    <string name="voice_settings_profile_aware">Según el perfil</string>
+    <string name="voice_settings_standard_scope_body">La voz estándar enruta el habla, la transcripción, la reproducción en streaming y los catálogos de voces mediante el perfil Hermes activo. Relay aún puede añadir voces específicas del proveedor sin reemplazar la configuración del host.</string>
     <string name="voice_settings_scope_resolving">Resolviendo el alcance de la voz del perfil activo...</string>
     <string name="voice_settings_label_profile">Perfil</string>
     <string name="voice_settings_label_scope">Alcance</string>
@@ -3086,4 +3087,13 @@
     <string name="conn_info_approval_mode_smart_desc">Preguntar solo cuando Hermes detecte un riesgo elevado.</string>
     <string name="conn_info_approval_mode_off">Desactivado</string>
     <string name="conn_info_approval_mode_off_desc">Omitir permanentemente las aprobaciones para este perfil.</string>
+    <string name="conn_info_profile_api_key_title">Clave API del perfil</string>
+    <string name="conn_info_profile_api_key_hint">Se usa solo para la alternativa de API multiplexada compartida de este perfil. Se guarda cifrada; la clave de conexión nunca se reutiliza.</string>
+    <string name="conn_info_profile_api_key_stored">Hay una clave guardada</string>
+    <string name="conn_info_profile_api_key_not_stored">No hay clave guardada</string>
+    <string name="conn_info_profile_api_key_save">Guardar clave</string>
+    <string name="conn_info_profile_api_key_clear">Borrar</string>
+    <string name="conn_info_profile_api_key_saved">Clave API del perfil guardada</string>
+    <string name="conn_info_profile_api_key_cleared">Clave API del perfil borrada</string>
+    <string name="conn_info_profile_api_key_save_failed">No se pudo guardar la clave API del perfil</string>
 </resources>

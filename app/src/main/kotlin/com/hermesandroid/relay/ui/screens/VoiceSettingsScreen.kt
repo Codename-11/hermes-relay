@@ -146,8 +146,8 @@ internal enum class VoiceSettingsSection { Output, Listening, Advanced }
  *   1. Profile summary          — active profile + resolved voice line
  *   2. Voice scope banner        — the SINGLE home for "Profile / Scope"; on a
  *                                  Standard (no-Relay) connection it honestly
- *                                  reads "Global voice" (upstream profiles have
- *                                  no voice field — voice is host-wide).
+ *                                  shows that upstream audio follows the active
+ *                                  Hermes profile.
  *   3. Voice for this profile    — engine + STT/TTS route; these are persisted
  *                                  per-profile (WP-V2 scope-aware prefs).
  *   4. Text-to-Speech            — merged streaming output + basic-synthesize
@@ -492,6 +492,7 @@ fun VoiceSettingsScreen(
                     if (dashboardConfigClient != null) {
                         StandardVoiceServerConfigCard(
                             client = dashboardConfigClient,
+                            profileName = AgentDisplay.profileRequestName(selectedProfile?.name),
                             onOpenManage = onOpenManage,
                             onMessage = { message ->
                                 scope.launch { snackbarHost.showSnackbar(message) }
@@ -549,7 +550,8 @@ internal fun VoiceSettingsTabs(
 
 // ---------------------------------------------------------------------------
 // Voice scope banner — the single home for Profile / Scope (WP-V3 dedupe).
-// On Standard it honestly reads "Global voice" (WP-V4).
+// Standard and Relay both follow the selected Hermes profile; Relay can still
+// add provider-specific overrides without replacing the host configuration.
 // ---------------------------------------------------------------------------
 
 @Composable
@@ -571,9 +573,9 @@ private fun VoiceScopeBanner(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             if (!relayVoiceReady) {
-                // Standard (no-Relay): upstream /api/profiles/* has no voice
-                // field and /api/audio/* is host-global, so voice can't carry
-                // per-profile here. Label it honestly.
+                // Standard (no-Relay): current upstream audio routes accept the
+                // active profile explicitly, so TTS/STT resolve through the
+                // same Hermes home as chat.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -583,7 +585,7 @@ private fun VoiceScopeBanner(
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    ExperimentalBadge(stringResource(R.string.voice_settings_global_voice))
+                    ExperimentalBadge(stringResource(R.string.voice_settings_profile_aware))
                 }
                 Text(
                     text = stringResource(R.string.voice_settings_standard_scope_body),
@@ -3627,8 +3629,8 @@ private fun TestCurrentEngineCard(
 // Edits the host's tts.*/stt.* config via the dashboard /api/config surface —
 // the same config.yaml the dashboard's own Audio settings write, and the same
 // values the standard (no-Relay) /api/audio/* voice path reads. Standard voice
-// is host-global (see VoiceScopeBanner), so writes target the launch profile's
-// config (profile = null). Schema (/api/config/schema) drives field rendering;
+// follows the selected profile for audio-route catalogs; config writes retain
+// their existing explicit scope. Schema (/api/config/schema) drives rendering;
 // values (/api/config) seed current state; PUT writes the whole tree back with
 // the edited leaves merged in. Includes the ElevenLabs voice picker — the one
 // genuine desktop voice feature the app previously lacked.
@@ -3638,6 +3640,7 @@ private fun TestCurrentEngineCard(
 @Composable
 private fun StandardVoiceServerConfigCard(
     client: DashboardApiClient,
+    profileName: String?,
     onOpenManage: (() -> Unit)?,
     onMessage: (String) -> Unit,
 ) {
@@ -3660,7 +3663,7 @@ private fun StandardVoiceServerConfigCard(
     val signInRequiredMsg = stringResource(R.string.voice_settings_signin_required)
     val couldNotLoadConfigMsg = stringResource(R.string.voice_settings_could_not_load_config)
 
-    LaunchedEffect(client, reloadNonce) {
+    LaunchedEffect(client, profileName, reloadNonce) {
         loading = true
         error = null
         signInRequired = false
@@ -3671,7 +3674,7 @@ private fun StandardVoiceServerConfigCard(
             fields = voiceConfigFields(parseConfigSchema(sch.getOrNull() ?: JsonObject(emptyMap())))
             edits = emptyMap()
             // Best-effort; only consulted when the TTS provider is elevenlabs.
-            elevenVoices = client.getElevenLabsVoices().getOrNull()
+            elevenVoices = client.getElevenLabsVoices(profileName).getOrNull()
             // Best-effort runtime provider registry. Newer upstream builds
             // include command and plugin providers that the static config
             // schema cannot enumerate.

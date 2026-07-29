@@ -219,7 +219,7 @@
 
     <!-- VoiceViewModel status -->
     <string name="voice_status_mode_switched">音声モードが切り替わりました</string>
-    <string name="voice_status_standard_tts">バニラ Hermes 音声はホストのグローバル TTS を使用します</string>
+    <string name="voice_status_standard_tts">バニラ Hermes 音声はアクティブなプロファイルに従います</string>
     <string name="voice_status_capture_ignored">音声キャプチャは無視されました</string>
     <string name="voice_status_no_speech">音声が検出されませんでした</string>
     <string name="voice_status_test_started">リアルタイムエージェントテスト開始</string>
@@ -1472,7 +1472,8 @@
     <string name="voice_settings_back">戻る</string>
     <string name="voice_settings_scope_label">音声スコープ</string>
     <string name="voice_settings_global_voice">グローバルな声</string>
-    <string name="voice_settings_standard_scope_body">この接続は、Hermes サーバーの構成された TTS および STT (サーバー上の config.yaml またはダッシュボードのオーディオ設定) を通じて通信されます。プロファイルごとではなくホスト全体です。 Relay をペアリングして、電話機からプロバイダー、モデル、音声を選択し、プロファイルごとにそれらを転送します。</string>
+    <string name="voice_settings_profile_aware">プロファイル対応</string>
+    <string name="voice_settings_standard_scope_body">標準音声は、音声合成、文字起こし、ストリーミング再生、音声カタログをアクティブな Hermes プロファイル経由で処理します。Relay はホスト設定を置き換えずにプロバイダー固有の音声を追加できます。</string>
     <string name="voice_settings_scope_resolving">アクティブなプロファイルの音声スコープを解決しています…</string>
     <string name="voice_settings_label_profile">プロフィール</string>
     <string name="voice_settings_label_scope">範囲</string>
@@ -3400,4 +3401,13 @@
     <string name="conn_info_approval_mode_smart_desc">Hermesが高いリスクを検出した場合にのみ確認します。</string>
     <string name="conn_info_approval_mode_off">オフ</string>
     <string name="conn_info_approval_mode_off_desc">このプロフィールの承認を常に省略します。</string>
+    <string name="conn_info_profile_api_key_title">プロファイル API キー</string>
+    <string name="conn_info_profile_api_key_hint">このプロファイルの共有マルチプレックス API フォールバックでのみ使用します。暗号化して保存され、接続キーは再利用されません。</string>
+    <string name="conn_info_profile_api_key_stored">キーが保存されています</string>
+    <string name="conn_info_profile_api_key_not_stored">キーは保存されていません</string>
+    <string name="conn_info_profile_api_key_save">キーを保存</string>
+    <string name="conn_info_profile_api_key_clear">消去</string>
+    <string name="conn_info_profile_api_key_saved">プロファイル API キーを保存しました</string>
+    <string name="conn_info_profile_api_key_cleared">プロファイル API キーを消去しました</string>
+    <string name="conn_info_profile_api_key_save_failed">プロファイル API キーを保存できませんでした</string>
 </resources>

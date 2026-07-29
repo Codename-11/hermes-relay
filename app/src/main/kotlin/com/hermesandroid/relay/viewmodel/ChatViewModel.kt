@@ -4167,7 +4167,7 @@ class ChatViewModel : ViewModel() {
                     "exec", "plugin" ->
                         handler.addSystemNotice(result.stringValue("output") ?: "(no output)")
                     "skill" ->
-                        handler.addSystemNotice(result.stringValue("message") ?: "(no output)")
+                        handler.addSystemNotice(safeGatewayCommandDisplay(result, commandLine))
                     "alias" -> {
                         val target = result.stringValue("target")
                         if (target != null) {
@@ -4177,7 +4177,18 @@ class ChatViewModel : ViewModel() {
                     }
                     "send" -> {
                         result.stringValue("notice")?.let { handler.addSystemNotice(it) }
-                        result.stringValue("message")?.let { sendMessage(it) }
+                        result.stringValue("message")?.let { expandedMessage ->
+                            // The corrected gateway supplies a bounded literal
+                            // display alongside the expanded skill/send body.
+                            // Execute the expansion but keep it out of local UI,
+                            // checkpoints, titles, diagnostics, and retry text.
+                            sendMessageInternal(
+                                client = apiClient,
+                                handler = handler,
+                                text = safeGatewayCommandDisplay(result, commandLine),
+                                transportText = expandedMessage,
+                            )
+                        }
                     }
                     "prefill" -> {
                         result.stringValue("notice")?.let { handler.addSystemNotice(it) }
@@ -4713,6 +4724,7 @@ class ChatViewModel : ViewModel() {
                 handler.restoreInFlightTurn(
                     checkpoint = checkpoint,
                     upstreamAssistantText = visibleText,
+                    corrections = retainedFailure.corrections,
                 )
                 finalizeFailedTurnSideEffects(handler, checkpoint.assistant.id)
                 refreshSessions()
@@ -4729,6 +4741,7 @@ class ChatViewModel : ViewModel() {
                     handler.restoreInFlightTurn(
                         checkpoint = checkpoint,
                         upstreamAssistantText = recovery.inflight?.assistant,
+                        corrections = recovery.inflight?.corrections.orEmpty(),
                     )
                     handler.setTurnStatus(
                         if (recovery.autoContinue != null) {
@@ -5221,11 +5234,19 @@ class ChatViewModel : ViewModel() {
         if (streamingEndpoint == "gateway" && gatewayClient == null && client == null) return
         val next = _queuedMessages.value.firstOrNull() ?: return
         _queuedMessages.update { it.drop(1) }
-        sendMessageInternal(client, handler, next)
+        sendMessageInternal(client, handler, next, queuedFollowUp = true)
     }
 
-    private fun sendMessageInternal(client: HermesApiClient?, handler: ChatHandler, text: String) {
+    private fun sendMessageInternal(
+        client: HermesApiClient?,
+        handler: ChatHandler,
+        text: String,
+        transportText: String = text,
+        queuedFollowUp: Boolean = false,
+    ) {
         AppAnalytics.onMessageSent()
+        val displayText = text.trim()
+        val outboundText = transportText.trim()
         val interfaceContextPrompt = nextInterfaceContextPrompt
         nextInterfaceContextPrompt = null
 
@@ -5240,12 +5261,12 @@ class ChatViewModel : ViewModel() {
             ChatMessage(
                 id = messageId,
                 role = MessageRole.USER,
-                content = text.trim(),
+                content = displayText,
                 timestamp = System.currentTimeMillis(),
                 attachments = attachments ?: emptyList()
             )
         )
-        handler.setLastSentMessage(text.trim())
+        handler.setLastSentMessage(displayText)
 
         val assistantMessageId = UUID.randomUUID().toString()
         val sessionId = handler.currentSessionId.value
@@ -5264,7 +5285,7 @@ class ChatViewModel : ViewModel() {
                     .map { it.sessionId }
                     .toSet()
                 creatingThread = CreatingThread(pending.chatId, pending.name, knownIds)
-                send(text.trim(), pending.chatId, null, messageId)
+                send(outboundText, pending.chatId, null, messageId)
                 switchToCreatedThread()
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
@@ -5284,7 +5305,7 @@ class ChatViewModel : ViewModel() {
             val send = onProactiveReply
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
-                send(text.trim(), threadChatIds[activeThread.sessionId], null, messageId)
+                send(outboundText, threadChatIds[activeThread.sessionId], null, messageId)
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
             }
@@ -5298,7 +5319,7 @@ class ChatViewModel : ViewModel() {
         sessionId?.takeIf { it.isNotBlank() }?.let { sid ->
             val row = handler.sessions.value.firstOrNull { it.sessionId == sid }
             if (row != null && (row.title.isNullOrBlank() || row.title == "New Chat")) {
-                val preview = text.trim().take(50).let { if (text.trim().length > 50) "$it…" else it }
+                val preview = displayText.take(50).let { if (displayText.length > 50) "$it…" else it }
                 if (preview.isNotBlank()) handler.renameSessionLocal(sid, preview)
             }
         }
@@ -5311,22 +5332,26 @@ class ChatViewModel : ViewModel() {
                 client,
                 handler,
                 sessionId ?: "",
-                text.trim(),
+                outboundText,
                 assistantMessageId,
                 messageId,
                 attachments,
                 interfaceContextPrompt,
+                queuedFollowUp,
+                displayText,
             )
         } else if (sessionId != null) {
             startStream(
                 client,
                 handler,
                 sessionId,
-                text.trim(),
+                outboundText,
                 assistantMessageId,
                 messageId,
                 attachments,
                 interfaceContextPrompt,
+                queuedFollowUp,
+                displayText,
             )
         } else {
             if (client == null) {
@@ -5361,16 +5386,18 @@ class ChatViewModel : ViewModel() {
                             client,
                             handler,
                             session.id,
-                            text.trim(),
+                            outboundText,
                             assistantMessageId,
                             messageId,
                             attachments,
                             interfaceContextPrompt,
+                            queuedFollowUp,
+                            displayText,
                         )
 
                         // Auto-title: use first ~50 chars of user message
-                        val autoTitle = text.trim().take(50).let {
-                            if (text.length > 50) "$it..." else it
+                        val autoTitle = displayText.take(50).let {
+                            if (displayText.length > 50) "$it..." else it
                         }
                         client.renameSession(session.id, autoTitle)
                         handler.renameSessionLocal(session.id, autoTitle)
@@ -6212,6 +6239,8 @@ class ChatViewModel : ViewModel() {
         userMessageId: String,
         attachments: List<Attachment>? = null,
         interfaceContextPrompt: String? = null,
+        queuedFollowUp: Boolean = false,
+        checkpointUserText: String = message,
     ) {
         // Resolve the active profile pick once — used below for both
         // modelOverride and the system_message precedence rule.
@@ -6273,7 +6302,7 @@ class ChatViewModel : ViewModel() {
             sessionId = sessionId,
             transport = streamingEndpoint,
             userMessageId = userMessageId,
-            userText = message,
+            userText = checkpointUserText,
             assistantMessageId = assistantMessageId,
             assistantTimestamp = assistantTimestamp,
         )
@@ -7060,6 +7089,7 @@ class ChatViewModel : ViewModel() {
                     attachments = attachments.orEmpty()
                         .map { it.toGatewayAttachment() },
                     truncateBeforeUserOrdinal = truncateOrdinal,
+                    queuedFollowUp = queuedFollowUp,
                     onPreflightFailure = {
                         _steerableTurn.value = false
                         if (intentionallyCancelled) {
@@ -8059,10 +8089,21 @@ private fun summarizeToolPreviewObject(obj: JsonObject): String? {
     return if (keys.isBlank()) null else "Structured result: $keys"
 }
 
+internal fun safeGatewayCommandDisplay(result: JsonObject, literalInvocation: String): String {
+    val literal = literalInvocation.trim().ifBlank { "Command completed." }
+    return (result["display"] as? JsonPrimitive)
+        ?.contentOrNull
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?.take(MAX_GATEWAY_COMMAND_DISPLAY_CHARS)
+        ?: literal.take(MAX_GATEWAY_COMMAND_DISPLAY_CHARS)
+}
+
 private fun JsonObject.stringValue(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
 
 private const val RECENT_PROMPTS_LIMIT = 15
+private const val MAX_GATEWAY_COMMAND_DISPLAY_CHARS = 2_000
 private const val DEFAULT_REASONING_EFFORT = "medium"
 private val VALID_REASONING_EFFORTS = setOf("none", "minimal", "low", "medium", "high", "xhigh")
 
