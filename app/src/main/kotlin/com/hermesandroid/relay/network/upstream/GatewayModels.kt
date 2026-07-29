@@ -122,6 +122,8 @@ data class GatewayInflightTurn(
     val user: String,
     val assistant: String,
     val streaming: Boolean,
+    /** Accepted active-turn redirects in display order; additive on newer Hermes. */
+    val corrections: List<String> = emptyList(),
     val status: String? = null,
     val error: String? = null,
     val recoverable: Boolean = false,

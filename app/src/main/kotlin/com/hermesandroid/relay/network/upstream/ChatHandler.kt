@@ -957,6 +957,7 @@ class ChatHandler {
     fun restoreInFlightTurn(
         checkpoint: ChatTurnCheckpoint,
         upstreamAssistantText: String? = null,
+        corrections: List<String> = emptyList(),
     ) {
         val user = checkpoint.user
         val assistant = checkpoint.assistant
@@ -1085,13 +1086,53 @@ class ChatHandler {
                     timestamp = user.timestamp,
                 )
             }
-            val insertBeforeAsk = withUser.indexOfFirst {
+            // Newer gateways retain the original prompt in inflight.user and
+            // expose every accepted active-turn redirect separately. Restore
+            // those corrections as ordinary user bubbles before the assistant
+            // row. Consume matching already-present rows first so repeated
+            // resume/checkpoint passes cannot duplicate them.
+            val originalUserIndex = withUser.indexOfFirst { it.id == user.id }
+                .takeIf { it >= 0 }
+                ?: withUser.indexOfFirst {
+                    it.role == MessageRole.USER && it.content.trim() == user.content.trim()
+                }
+            val existingAfterOriginal = withUser
+                .drop((originalUserIndex + 1).coerceAtLeast(0))
+                .filter { it.role == MessageRole.USER }
+                .map { it.content.trim() }
+                .toMutableList()
+            val restoredCorrections = corrections
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .mapIndexedNotNull { index, correction ->
+                    val existingIndex = existingAfterOriginal.indexOf(correction)
+                    if (existingIndex >= 0) {
+                        existingAfterOriginal.removeAt(existingIndex)
+                        null
+                    } else {
+                        ChatMessage(
+                            id = "${user.id}-correction-${index + 1}",
+                            role = MessageRole.USER,
+                            content = correction,
+                            timestamp = user.timestamp + index + 1L,
+                        )
+                    }
+                }
+            val firstAskIndex = withUser.indexOfFirst {
+                it.clientOnly && it.id.startsWith("ask-")
+            }
+            val withCorrections = if (firstAskIndex >= 0) {
+                withUser.toMutableList().apply { addAll(firstAskIndex, restoredCorrections) }
+            } else {
+                withUser + restoredCorrections
+            }
+            val insertBeforeAsk = withCorrections.indexOfFirst {
                 it.clientOnly && it.id.startsWith("ask-")
             }
             val restored = if (insertBeforeAsk >= 0) {
-                withUser.toMutableList().apply { add(insertBeforeAsk, restoredAssistant) }
+                withCorrections.toMutableList().apply { add(insertBeforeAsk, restoredAssistant) }
             } else {
-                withUser + restoredAssistant
+                withCorrections + restoredAssistant
             }
             restored.let { list ->
                 if (list.size > MAX_MESSAGES) list.drop(list.size - MAX_MESSAGES) else list

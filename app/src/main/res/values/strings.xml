@@ -221,7 +221,7 @@
 
     <!-- VoiceViewModel status -->
     <string name="voice_status_mode_switched">Voice mode switched</string>
-    <string name="voice_status_standard_tts">Vanilla Hermes voice uses the host\'s global TTS</string>
+    <string name="voice_status_standard_tts">Vanilla Hermes voice follows the active profile</string>
     <string name="voice_status_capture_ignored">Voice capture ignored</string>
     <string name="voice_status_no_speech">No speech detected</string>
     <string name="voice_status_test_started">Realtime Agent test started</string>
@@ -1564,7 +1564,8 @@
     <string name="voice_settings_back">Back</string>
     <string name="voice_settings_scope_label">Voice scope</string>
     <string name="voice_settings_global_voice">Global voice</string>
-    <string name="voice_settings_standard_scope_body">Standard voice follows this Hermes host\'s existing TTS, STT, and voice configuration. These settings are shared across profiles; Relay can add profile-specific voice choices without replacing the host setup.</string>
+    <string name="voice_settings_profile_aware">Profile aware</string>
+    <string name="voice_settings_standard_scope_body">Standard voice routes speech, transcription, streaming playback, and voice catalogs through the active Hermes profile. Relay can still add provider-specific voice choices without replacing the host setup.</string>
     <string name="voice_settings_scope_resolving">Resolving the active profile\'s voice scope…</string>
     <string name="voice_settings_label_profile">Profile</string>
     <string name="voice_settings_label_scope">Scope</string>
@@ -3407,4 +3408,13 @@
     <string name="diag_no" translatable="false">no</string>
     <string name="dashboard_nous_terminal_warning" translatable="false">The Nous provider login needs attention on the Hermes host. This is separate from Manage sign-in; chat can continue through another configured provider.</string>
     <string name="dashboard_gateway_topology" translatable="false">Gateway: %1$s · Profiles: %2$s · Ports: %3$s</string>
+    <string name="conn_info_profile_api_key_title">Profile API key</string>
+    <string name="conn_info_profile_api_key_hint">Used only for this profile’s shared multiplex API fallback. Stored encrypted; the connection key is never reused.</string>
+    <string name="conn_info_profile_api_key_stored">A key is stored</string>
+    <string name="conn_info_profile_api_key_not_stored">No key stored</string>
+    <string name="conn_info_profile_api_key_save">Save key</string>
+    <string name="conn_info_profile_api_key_clear">Clear</string>
+    <string name="conn_info_profile_api_key_saved">Profile API key saved</string>
+    <string name="conn_info_profile_api_key_cleared">Profile API key cleared</string>
+    <string name="conn_info_profile_api_key_save_failed">Could not save the profile API key</string>
 </resources>

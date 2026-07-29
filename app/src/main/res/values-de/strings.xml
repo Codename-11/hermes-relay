@@ -219,7 +219,7 @@
 
     <!-- VoiceViewModel status -->
     <string name="voice_status_mode_switched">Sprachmodus gewechselt</string>
-    <string name="voice_status_standard_tts">Standard-Hermes-Sprache verwendet die globale TTS des Hosts</string>
+    <string name="voice_status_standard_tts">Standard-Hermes-Sprache folgt dem aktiven Profil</string>
     <string name="voice_status_capture_ignored">Sprachaufnahme ignoriert</string>
     <string name="voice_status_no_speech">Keine Sprache erkannt</string>
     <string name="voice_status_test_started">Test des Echtzeit-Agenten gestartet</string>
@@ -1459,7 +1459,8 @@
     <string name="voice_settings_back">Zurück</string>
     <string name="voice_settings_scope_label">Sprachumfang</string>
     <string name="voice_settings_global_voice">Globale Sprache</string>
-    <string name="voice_settings_standard_scope_body">Diese Verbindung spricht über die auf deinem Hermes-Server konfigurierte TTS und STT (config.yaml auf dem Server oder Audioeinstellungen des Dashboards) — hostweit, nicht pro Profil. Kopple Relay, um Anbieter, Modelle und Stimmen auf dem Smartphone pro Profil auszuwählen.</string>
+    <string name="voice_settings_profile_aware">Profilbezogen</string>
+    <string name="voice_settings_standard_scope_body">Standard-Sprache leitet Sprachausgabe, Transkription, Streaming-Wiedergabe und Stimmenkataloge über das aktive Hermes-Profil. Relay kann weiterhin anbieterspezifische Stimmen ergänzen, ohne die Host-Konfiguration zu ersetzen.</string>
     <string name="voice_settings_scope_resolving">Sprachumfang des aktiven Profils wird ermittelt…</string>
     <string name="voice_settings_label_profile">Profil</string>
     <string name="voice_settings_label_scope">Umfang</string>
@@ -3401,4 +3402,13 @@
     <string name="conn_info_approval_mode_smart_desc">Nur nachfragen, wenn Hermes ein erhöhtes Risiko erkennt.</string>
     <string name="conn_info_approval_mode_off">Aus</string>
     <string name="conn_info_approval_mode_off_desc">Bestätigungen für dieses Profil dauerhaft umgehen.</string>
+    <string name="conn_info_profile_api_key_title">Profil-API-Schlüssel</string>
+    <string name="conn_info_profile_api_key_hint">Wird nur für den gemeinsamen Multiplex-API-Fallback dieses Profils verwendet. Verschlüsselt gespeichert; der Verbindungsschlüssel wird nie wiederverwendet.</string>
+    <string name="conn_info_profile_api_key_stored">Ein Schlüssel ist gespeichert</string>
+    <string name="conn_info_profile_api_key_not_stored">Kein Schlüssel gespeichert</string>
+    <string name="conn_info_profile_api_key_save">Schlüssel speichern</string>
+    <string name="conn_info_profile_api_key_clear">Löschen</string>
+    <string name="conn_info_profile_api_key_saved">Profil-API-Schlüssel gespeichert</string>
+    <string name="conn_info_profile_api_key_cleared">Profil-API-Schlüssel gelöscht</string>
+    <string name="conn_info_profile_api_key_save_failed">Profil-API-Schlüssel konnte nicht gespeichert werden</string>
 </resources>

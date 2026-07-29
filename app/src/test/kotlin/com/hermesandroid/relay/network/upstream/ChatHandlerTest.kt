@@ -2082,9 +2082,26 @@ class ChatHandlerTest {
             updatedAt = 8L,
         )
 
-        handler.restoreInFlightTurn(checkpoint, upstreamAssistantText = "I am checking the tests")
+        val corrections = listOf("Check the release branch", "Focus on Android")
+        handler.restoreInFlightTurn(
+            checkpoint,
+            upstreamAssistantText = "I am checking the tests",
+            corrections = corrections,
+        )
+        // Recovery can be applied more than once while the socket and
+        // checkpoint settle; accepted corrections must remain exactly-once.
+        handler.restoreInFlightTurn(
+            checkpoint,
+            upstreamAssistantText = "I am checking the tests",
+            corrections = corrections,
+        )
 
-        assertEquals(2, handler.messages.value.count { it.role == MessageRole.USER })
+        assertEquals(
+            listOf("Earlier", "Run the checks", "Check the release branch", "Focus on Android"),
+            handler.messages.value
+                .filter { it.role == MessageRole.USER }
+                .map { it.content },
+        )
         val restored = handler.messages.value.single { it.id == "assistant-live" }
         assertEquals("I am checking the tests", restored.content)
         assertEquals("Inspect the project first", restored.thinkingContent)

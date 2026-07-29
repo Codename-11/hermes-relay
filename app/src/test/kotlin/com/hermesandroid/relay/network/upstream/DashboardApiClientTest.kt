@@ -911,9 +911,12 @@ class DashboardApiClientTest {
         )
 
         val client = DashboardApiClient(baseUrl = server.url("/").toString())
-        val result = client.getElevenLabsVoices().getOrThrow()
+        val result = client.getElevenLabsVoices("research profile").getOrThrow()
 
-        assertEquals("/api/audio/elevenlabs/voices", server.takeRequest().path)
+        assertEquals(
+            "/api/audio/elevenlabs/voices?profile=research%20profile",
+            server.takeRequest().path,
+        )
         assertTrue(result.available)
         assertEquals(2, result.voices.size)
         assertEquals("pNInz6obpgDQGcFmaJgB", result.voices[0].voiceId)

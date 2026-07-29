@@ -501,6 +501,10 @@ class GatewayChatClient(
      *   into the session's USER messages (counted from the first user
      *   message). The server drops that message and everything after it
      *   before running [text] as a fresh turn.
+     * @param queuedFollowUp true only when Android is draining a prompt the
+     *   user explicitly queued behind an active turn. Newer gateways use the
+     *   additive `queued:true` marker to preserve run-after semantics while
+     *   the previous turn is still settling; older gateways ignore it.
      * @param onPreflightFailure invoked INSTEAD of starting the turn when the
      *   gateway could not be reached / authenticated / the prompt could not
      *   be submitted — i.e. nothing started server-side, so the caller can
@@ -514,6 +518,7 @@ class GatewayChatClient(
         callbacks: GatewayTurnCallbacks,
         attachments: List<GatewayAttachment> = emptyList(),
         truncateBeforeUserOrdinal: Int? = null,
+        queuedFollowUp: Boolean = false,
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
         val turn = GatewayTurn(dispatchOn(callbacks))
@@ -550,6 +555,7 @@ class GatewayChatClient(
                         put("session_id", liveSessionId ?: error("no live session"))
                         put("text", text)
                         truncateBeforeUserOrdinal?.let { put("truncate_before_user_ordinal", it) }
+                        if (queuedFollowUp) put("queued", true)
                     },
                     // Long-running RPC, not a generic 15s ack — see the
                     // constant's doc. The idle watchdog (armed above, reset by
@@ -573,8 +579,22 @@ class GatewayChatClient(
                     }
                     if (activeTurn === turn) activeTurn = null
                     turn.disarmWatchdog()
+                    val submitError = submitted.exceptionOrNull()
+                    if ((submitError as? GatewayRpcException)?.code == ACTIVE_SESSION_CAP_REJECTION) {
+                        // Authoritative policy rejection: the gateway received
+                        // the prompt and deliberately refused to create the
+                        // first turn. Falling back to SSE would bypass the cap
+                        // and duplicate the optimistic user turn on another
+                        // transport. Surface the holder-aware upstream message
+                        // through the normal failed-turn callback instead.
+                        turn.tracer.done("submit-rejected")
+                        turn.callbacks.onError(
+                            submitError.message ?: "Hermes rejected the new session",
+                        )
+                        return@launch
+                    }
                     throw GatewayPreflightException(
-                        submitted.exceptionOrNull()?.message ?: "prompt.submit failed",
+                        submitError?.message ?: "prompt.submit failed",
                     )
                 }
                 turn.tracer.mark("submit")
@@ -881,6 +901,16 @@ class GatewayChatClient(
                     user = value.stringField("user").orEmpty(),
                     assistant = value.stringField("assistant").orEmpty(),
                     streaming = value.booleanField("streaming") == true,
+                    corrections = (value["corrections"] as? JsonArray)
+                        ?.mapNotNull { correction ->
+                            (correction as? JsonPrimitive)
+                                ?.contentOrNull
+                                ?.trim()
+                                ?.takeIf { it.isNotBlank() }
+                                ?.take(MAX_RECOVERED_CORRECTION_CHARS)
+                        }
+                        ?.take(MAX_RECOVERED_CORRECTIONS)
+                        .orEmpty(),
                     status = value.stringField("status"),
                     error = value.stringField("error"),
                     recoverable = value.booleanField("recoverable") == true,
@@ -2931,6 +2961,9 @@ internal class GatewayConnectAttemptException(message: String) : Exception(messa
 internal class GatewayRpcException(message: String, val code: Int? = null) : Exception(message)
 
 private const val JSONRPC_METHOD_NOT_FOUND = -32601
+private const val ACTIVE_SESSION_CAP_REJECTION = 4090
+private const val MAX_RECOVERED_CORRECTIONS = 32
+private const val MAX_RECOVERED_CORRECTION_CHARS = 32_768
 
 data class GatewayCompressResult(
     val status: String,

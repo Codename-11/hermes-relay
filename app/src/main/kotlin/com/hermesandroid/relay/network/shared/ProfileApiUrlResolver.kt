@@ -65,13 +65,14 @@ object ProfileApiUrlResolver {
         val dedicated = resolveForConnection(profileApiUrl, base)
         if (dedicated != null) return dedicated
 
-        val profile = selectedProfileName
-            ?.trim()
-            ?.takeIf { it.isNotBlank() && !it.equals("default", ignoreCase = true) }
-            ?: return base
-        val isKnownMultiplexProfile = gatewayMode.equals("multiplex", ignoreCase = true) &&
-            servedProfiles.any { it.equals(profile, ignoreCase = false) }
-        if (!isKnownMultiplexProfile) return base
+        val profile = selectedProfileName?.trim() ?: return base
+        if (!usesMultiplexProfileKey(
+                profileApiUrl = profileApiUrl,
+                selectedProfileName = profile,
+                gatewayMode = gatewayMode,
+                servedProfiles = servedProfiles,
+            )
+        ) return base
 
         val root = base?.toHttpUrlOrNull() ?: return base
         return root.newBuilder()
@@ -80,6 +81,27 @@ object ProfileApiUrlResolver {
             .build()
             .toString()
             .trimEnd('/')
+    }
+
+    /**
+     * A profile-specific credential is required only for the positively
+     * identified shared `/p/<profile>` mirror. Dedicated profile APIs retain
+     * the connection credential contract, while default/legacy/unknown routes
+     * stay on the root client.
+     */
+    fun usesMultiplexProfileKey(
+        profileApiUrl: String?,
+        selectedProfileName: String?,
+        gatewayMode: String?,
+        servedProfiles: Collection<String>,
+    ): Boolean {
+        if (normalize(profileApiUrl) != null) return false
+        val profile = selectedProfileName
+            ?.trim()
+            ?.takeIf { it.isNotBlank() && !it.equals("default", ignoreCase = true) }
+            ?: return false
+        return gatewayMode.equals("multiplex", ignoreCase = true) &&
+            servedProfiles.any { it == profile }
     }
 
     private fun isLocalBindHost(host: String): Boolean {

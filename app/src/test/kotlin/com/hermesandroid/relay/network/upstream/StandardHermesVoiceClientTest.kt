@@ -61,6 +61,19 @@ class StandardHermesVoiceClientTest {
     }
 
     @Test
+    fun speakAndTranscribeRoutesCarrySelectedProfile() {
+        val base = "https://hermes.example.test"
+
+        val speak = standardHermesAudioUrl(base, "/api/audio/speak", "research")
+        val transcribe = standardHermesAudioUrl(base, "/api/audio/transcribe", "research")
+
+        assertEquals("/api/audio/speak", speak?.encodedPath)
+        assertEquals("research", speak?.queryParameter("profile"))
+        assertEquals("/api/audio/transcribe", transcribe?.encodedPath)
+        assertEquals("research", transcribe?.queryParameter("profile"))
+    }
+
+    @Test
     fun speechStreamUsesFreshTicketBuffersUntilOpenAndCarriesOddPcmByte() = runTest {
         server.enqueue(ticketResponse())
         lateinit var listener: WebSocketListener
@@ -68,7 +81,7 @@ class StandardHermesVoiceClientTest {
         lateinit var socket: RecordingWebSocket
         val pcm = mutableListOf<ByteArray>()
         val formats = mutableListOf<Pair<Int, Int>>()
-        val client = testClient { request, capturedListener ->
+        val client = testClient(profile = "research") { request, capturedListener ->
             websocketRequest = request
             listener = capturedListener
             RecordingWebSocket(request).also { socket = it }
@@ -103,6 +116,7 @@ class StandardHermesVoiceClientTest {
         assertEquals("/api/auth/ws-ticket", ticketRequest.path)
         assertEquals("/api/audio/speak-stream", websocketRequest.url.encodedPath)
         assertEquals("ticket-1", websocketRequest.url.queryParameter("ticket"))
+        assertEquals("research", websocketRequest.url.queryParameter("profile"))
     }
 
     @Test
@@ -149,11 +163,13 @@ class StandardHermesVoiceClientTest {
     }
 
     private fun testClient(
+        profile: String? = null,
         socketFactory: (Request, WebSocketListener) -> WebSocket,
     ): StandardHermesVoiceClient = StandardHermesVoiceClient(
         context = mockk<Context>(relaxed = true),
         dashboardHttpClientProvider = { DashboardApiClient.defaultClient() },
         dashboardUrlProvider = { server.url("/").toString() },
+        profileProvider = { profile },
         webSocketFactory = socketFactory,
     )
 

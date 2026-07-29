@@ -315,6 +315,12 @@ internal fun preserveStandardConnectionWhileApplyingRelay(
     ),
 )
 
+internal fun profileApiCredential(
+    usesMultiplexProfileKey: Boolean,
+    profileKey: String?,
+    connectionKey: String,
+): String = if (usesMultiplexProfileKey) profileKey.orEmpty() else connectionKey
+
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
     private val ctx: Context get() = getApplication()
@@ -5398,6 +5404,47 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     suspend fun getApiKey(): String? = authManager.getApiKey()
 
+    suspend fun getProfileApiKey(profileName: String): String? =
+        authManager.getProfileApiKey(profileName)
+
+    fun selectedProfileUsesMultiplexApiKey(): Boolean {
+        val selectedProfile = profileController.selectedProfile.value
+        val activeConnectionId = connectionStore.activeConnectionId.value
+        val topology = connectionStore.connections.value
+            .firstOrNull { it.id == activeConnectionId }
+            ?.dashboardLastStatus
+        val liveTopology = topologyConnectionId == activeConnectionId
+        return ProfileApiUrlResolver.usesMultiplexProfileKey(
+            profileApiUrl = selectedProfile?.apiServerUrl,
+            selectedProfileName = selectedProfile?.name,
+            gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode,
+            servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty(),
+        )
+    }
+
+    fun updateProfileApiKey(
+        profileName: String,
+        key: String,
+        onComplete: (Boolean) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                authManager.setProfileApiKey(profileName, key)
+                rebuildChatApiClient()
+            }.onSuccess {
+                onComplete(true)
+            }.onFailure {
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Api,
+                    severity = DiagnosticSeverity.Error,
+                    title = ctx.getString(R.string.conn_info_profile_api_key_save_failed),
+                    detail = it.message,
+                )
+                onComplete(false)
+            }
+        }
+    }
+
     /**
      * The bearer key for client construction, WITHOUT paying the Keystore
      * decrypt when this connection is known key-less (the common local
@@ -5520,15 +5567,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             .firstOrNull { it.id == activeConnectionId }
             ?.dashboardLastStatus
         val liveTopology = topologyConnectionId == activeConnectionId
+        val gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode
+        val servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty()
+        val usesMultiplexProfileKey = ProfileApiUrlResolver.usesMultiplexProfileKey(
+            profileApiUrl = selectedProfile?.apiServerUrl,
+            selectedProfileName = selectedProfile?.name,
+            gatewayMode = gatewayMode,
+            servedProfiles = servedProfiles,
+        )
         val profileApiUrl = ProfileApiUrlResolver.resolveChatBase(
             profileApiUrl = selectedProfile?.apiServerUrl,
             baseApiUrl = baseApiUrl,
             selectedProfileName = selectedProfile?.name,
-            gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode,
-            servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty(),
+            gatewayMode = gatewayMode,
+            servedProfiles = servedProfiles,
         )
         val baseClient = _apiClient.value
-        val key = apiKeyForClientBuild()
+        val profileKey = if (usesMultiplexProfileKey) {
+            selectedProfile?.name?.let { authManager.getProfileApiKey(it) }.orEmpty()
+        } else {
+            null
+        }
+        val connectionKey = if (usesMultiplexProfileKey) "" else apiKeyForClientBuild()
+        val key = profileApiCredential(
+            usesMultiplexProfileKey = usesMultiplexProfileKey,
+            profileKey = profileKey,
+            connectionKey = connectionKey,
+        )
 
         if (profileApiUrl == null || profileApiUrl == baseApiUrl) {
             val oldProfileClient = profileChatApiClient

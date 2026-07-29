@@ -3,7 +3,9 @@ package com.hermesandroid.relay.network.shared
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProfileApiUrlResolverTest {
@@ -176,5 +178,41 @@ class ProfileApiUrlResolverTest {
         }
 
         assertEquals(paths.map { "/p/coder$it" }, encodedPaths)
+    }
+
+    @Test
+    fun multiplexProfileCredential_isScopedToKnownSharedProfileRoute() {
+        assertTrue(
+            ProfileApiUrlResolver.usesMultiplexProfileKey(
+                profileApiUrl = null,
+                selectedProfileName = "coder",
+                gatewayMode = "multiplex",
+                servedProfiles = listOf("default", "coder"),
+            ),
+        )
+        assertFalse(
+            ProfileApiUrlResolver.usesMultiplexProfileKey(
+                profileApiUrl = "https://hermes.example.test:8647",
+                selectedProfileName = "coder",
+                gatewayMode = "multiplex",
+                servedProfiles = listOf("default", "coder"),
+            ),
+        )
+        assertFalse(
+            ProfileApiUrlResolver.usesMultiplexProfileKey(
+                profileApiUrl = null,
+                selectedProfileName = "default",
+                gatewayMode = "multiplex",
+                servedProfiles = listOf("default", "coder"),
+            ),
+        )
+        assertFalse(
+            ProfileApiUrlResolver.usesMultiplexProfileKey(
+                profileApiUrl = null,
+                selectedProfileName = "coder",
+                gatewayMode = "single",
+                servedProfiles = listOf("default", "coder"),
+            ),
+        )
     }
 }

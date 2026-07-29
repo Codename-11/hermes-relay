@@ -91,6 +91,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import com.hermesandroid.relay.R
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -1938,6 +1940,24 @@ private fun LegacyAgentInfoSheet(
 
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    var profileApiKeyInput by remember(activeConnectionId, selectedProfile?.name) {
+        mutableStateOf("")
+    }
+    var profileApiKeyStored by remember(activeConnectionId, selectedProfile?.name) {
+        mutableStateOf(false)
+    }
+    var profileApiKeyVisible by remember(activeConnectionId, selectedProfile?.name) {
+        mutableStateOf(false)
+    }
+    var profileApiKeySaving by remember(activeConnectionId, selectedProfile?.name) {
+        mutableStateOf(false)
+    }
+
+    LaunchedEffect(activeConnectionId, selectedProfile?.name) {
+        profileApiKeyStored = selectedProfile?.name
+            ?.let { connectionViewModel.getProfileApiKey(it) }
+            ?.isNotBlank() == true
+    }
 
     // Pre-resolve strings for non-composable contexts (toast function)
     val usingServerDefaultToast = stringResource(R.string.conn_info_using_server_default)
@@ -1950,6 +1970,10 @@ private fun LegacyAgentInfoSheet(
     val switchedToConnectionToast = stringResource(R.string.conn_info_switched_to_connection)
     val copyPairingCodeDesc = stringResource(R.string.conn_info_copy_pairing_code)
     val pairingCodeLabel = stringResource(R.string.conn_info_pairing_code)
+    val profileApiKeySavedToast = stringResource(R.string.conn_info_profile_api_key_saved)
+    val profileApiKeyClearedToast = stringResource(R.string.conn_info_profile_api_key_cleared)
+    val profileApiKeySaveFailedToast =
+        stringResource(R.string.conn_info_profile_api_key_save_failed)
 
     // Transient confirmation when the user picks a different profile or
     // personality from inside the sheet. Routed to the top info-banner
@@ -2296,6 +2320,127 @@ private fun LegacyAgentInfoSheet(
                         Spacer(modifier = Modifier.size(8.dp))
                         Text(stringResource(R.string.conn_info_manage_profiles))
                     }
+
+                    selectedProfile
+                        ?.takeIf {
+                            it.apiServerKeyPresent &&
+                                connectionViewModel.selectedProfileUsesMultiplexApiKey()
+                        }
+                        ?.let { profile ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.conn_info_profile_api_key_title),
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Text(
+                                    text = stringResource(R.string.conn_info_profile_api_key_hint),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                OutlinedTextField(
+                                    value = profileApiKeyInput,
+                                    onValueChange = { profileApiKeyInput = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    enabled = !profileApiKeySaving,
+                                    label = {
+                                        Text(
+                                            stringResource(
+                                                if (profileApiKeyStored) {
+                                                    R.string.conn_info_profile_api_key_stored
+                                                } else {
+                                                    R.string.conn_info_profile_api_key_not_stored
+                                                },
+                                            ),
+                                        )
+                                    },
+                                    visualTransformation = if (profileApiKeyVisible) {
+                                        VisualTransformation.None
+                                    } else {
+                                        PasswordVisualTransformation()
+                                    },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = {
+                                                profileApiKeyVisible = !profileApiKeyVisible
+                                            },
+                                        ) {
+                                            Icon(
+                                                imageVector = if (profileApiKeyVisible) {
+                                                    Icons.Filled.VisibilityOff
+                                                } else {
+                                                    Icons.Filled.Visibility
+                                                },
+                                                contentDescription = null,
+                                            )
+                                        }
+                                    },
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (profileApiKeyStored) {
+                                        TextButton(
+                                            enabled = !profileApiKeySaving,
+                                            onClick = {
+                                                profileApiKeySaving = true
+                                                connectionViewModel.updateProfileApiKey(
+                                                    profileName = profile.name,
+                                                    key = "",
+                                                ) { success ->
+                                                    profileApiKeySaving = false
+                                                    if (success) {
+                                                        profileApiKeyStored = false
+                                                        profileApiKeyInput = ""
+                                                        toast(profileApiKeyClearedToast)
+                                                    } else {
+                                                        toast(profileApiKeySaveFailedToast)
+                                                    }
+                                                }
+                                            },
+                                        ) {
+                                            Text(stringResource(R.string.conn_info_profile_api_key_clear))
+                                        }
+                                    }
+                                    TextButton(
+                                        enabled = profileApiKeyInput.isNotBlank() &&
+                                            !profileApiKeySaving,
+                                        onClick = {
+                                            profileApiKeySaving = true
+                                            connectionViewModel.updateProfileApiKey(
+                                                profileName = profile.name,
+                                                key = profileApiKeyInput,
+                                            ) { success ->
+                                                profileApiKeySaving = false
+                                                if (success) {
+                                                    profileApiKeyStored = true
+                                                    profileApiKeyInput = ""
+                                                    toast(profileApiKeySavedToast)
+                                                } else {
+                                                    toast(profileApiKeySaveFailedToast)
+                                                }
+                                            }
+                                        },
+                                    ) {
+                                        if (profileApiKeySaving) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                strokeWidth = 2.dp,
+                                            )
+                                        } else {
+                                            Text(stringResource(R.string.conn_info_profile_api_key_save))
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                     val inspectProfileText = stringResource(R.string.conn_info_inspect_profile)
                     val inspectorTarget = resolvedDisplayProfile

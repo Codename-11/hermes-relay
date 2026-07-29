@@ -219,7 +219,7 @@
 
     <!-- VoiceViewModel 状态 -->
     <string name="voice_status_mode_switched">语音模式已切换</string>
-    <string name="voice_status_standard_tts">Vanilla Hermes 语音使用主机的全局 TTS</string>
+    <string name="voice_status_standard_tts">Vanilla Hermes 语音跟随当前配置文件</string>
     <string name="voice_status_capture_ignored">语音捕获已忽略</string>
     <string name="voice_status_no_speech">未检测到语音</string>
     <string name="voice_status_test_started">Realtime Agent 测试开始</string>
@@ -1456,7 +1456,8 @@
     <string name="voice_settings_back">返回</string>
     <string name="voice_settings_scope_label">语音范围</string>
     <string name="voice_settings_global_voice">全局语音</string>
-    <string name="voice_settings_standard_scope_body">此连接通过您的 Hermes 服务器配置的 TTS 和 STT（服务器上的 config.yaml，或仪表板的音频设置）说话——它是主机级的，不按个人资料区分。配对 Relay 即可从手机选择提供商、模型和语音，并按个人资料携带。</string>
+    <string name="voice_settings_profile_aware">配置文件感知</string>
+    <string name="voice_settings_standard_scope_body">标准语音会通过当前 Hermes 配置文件处理语音合成、转录、流式播放和语音目录。Relay 仍可添加提供商专用语音，而无需替换主机设置。</string>
     <string name="voice_settings_scope_resolving">正在解析当前个人资料的语音范围……</string>
     <string name="voice_settings_label_profile">个人资料</string>
     <string name="voice_settings_label_scope">范围</string>
@@ -3334,4 +3335,13 @@
     <string name="conn_info_approval_mode_smart_desc">仅在 Hermes 检测到较高风险时询问。</string>
     <string name="conn_info_approval_mode_off">关闭</string>
     <string name="conn_info_approval_mode_off_desc">始终跳过此配置文件的批准。</string>
+    <string name="conn_info_profile_api_key_title">配置文件 API 密钥</string>
+    <string name="conn_info_profile_api_key_hint">仅用于此配置文件的共享多路复用 API 回退。密钥会加密存储，绝不会复用连接密钥。</string>
+    <string name="conn_info_profile_api_key_stored">已存储密钥</string>
+    <string name="conn_info_profile_api_key_not_stored">未存储密钥</string>
+    <string name="conn_info_profile_api_key_save">保存密钥</string>
+    <string name="conn_info_profile_api_key_clear">清除</string>
+    <string name="conn_info_profile_api_key_saved">已保存配置文件 API 密钥</string>
+    <string name="conn_info_profile_api_key_cleared">已清除配置文件 API 密钥</string>
+    <string name="conn_info_profile_api_key_save_failed">无法保存配置文件 API 密钥</string>
 </resources>
