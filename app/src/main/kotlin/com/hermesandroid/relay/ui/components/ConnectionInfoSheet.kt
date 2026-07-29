@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Bolt
@@ -74,13 +75,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -674,6 +671,7 @@ fun AgentInfoSheet(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val resolvedProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
+    val profilePresentation by connectionViewModel.profilePresentation.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val isProfileLocked by connectionViewModel.isProfileLocked.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
@@ -708,6 +706,7 @@ fun AgentInfoSheet(
     var expandedSection by remember { mutableStateOf<String?>(null) }
     var profilePickerExpanded by remember { mutableStateOf(false) }
     var showIdentityEditor by remember { mutableStateOf(false) }
+    var showProfileManager by remember { mutableStateOf(false) }
 
     val activeConnection = remember(allConnections, activeConnectionId) {
         allConnections.firstOrNull { it.id == activeConnectionId }
@@ -757,23 +756,8 @@ fun AgentInfoSheet(
     }
 
     val passportScrollState = rememberScrollState()
-    val passportNestedScrollConnection = remember(passportScrollState) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                val isDownwardBodyDrag =
-                    source == NestedScrollSource.UserInput &&
-                        available.y > 0f &&
-                        passportScrollState.value == 0
-                return if (isDownwardBodyDrag) {
-                    Offset(x = 0f, y = available.y)
-                } else {
-                    Offset.Zero
-                }
-            }
-        }
+    LaunchedEffect(showIdentityEditor) {
+        passportScrollState.scrollTo(0)
     }
 
     ModalBottomSheet(
@@ -792,7 +776,6 @@ fun AgentInfoSheet(
     ) {
         Column(
             modifier = Modifier
-                .nestedScroll(passportNestedScrollConnection)
                 .verticalScroll(
                     state = passportScrollState,
                     overscrollEffect = null,
@@ -801,23 +784,38 @@ fun AgentInfoSheet(
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = stringResource(R.string.conn_info_agent_passport),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            AgentPassportHeader(
-                agentName = agentName,
-                profileLabel = profileLabel,
-                modelLabel = modelLabel,
-                providerLabel = providerLabel,
-                connected = connected,
-                routeLabel = routeLabel,
-                messageCount = messages.size,
-                contextLabel = contextLabel,
-                onProfileClick = { profilePickerExpanded = !profilePickerExpanded },
-            )
-            if (profilePickerExpanded) {
+            if (showIdentityEditor) {
+                AgentPassportIdentityEditor(
+                    connectionViewModel = connectionViewModel,
+                    profileDisplayAlias = profileDisplayAlias,
+                    fallbackName = agentName,
+                    selectedProfile = selectedProfile,
+                    hasProfiles = agentProfiles.isNotEmpty(),
+                    onBack = { showIdentityEditor = false },
+                    onManageProfiles = { showProfileManager = true },
+                    onInspectProfile = { profile ->
+                        onDismiss()
+                        onNavigateToProfileInspector(profile.name)
+                    },
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.conn_info_agent_passport),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                AgentPassportHeader(
+                    agentName = agentName,
+                    profileLabel = profileLabel,
+                    modelLabel = modelLabel,
+                    providerLabel = providerLabel,
+                    connected = connected,
+                    routeLabel = routeLabel,
+                    messageCount = messages.size,
+                    contextLabel = contextLabel,
+                    onProfileClick = { profilePickerExpanded = !profilePickerExpanded },
+                )
+                if (profilePickerExpanded) {
                 Surface(
                     shape = RoundedCornerShape(20.dp),
                     color = MaterialTheme.colorScheme.surfaceContainer,
@@ -853,20 +851,20 @@ fun AgentInfoSheet(
                                         profilePickerExpanded = false
                                     },
                                 )
-                            }
+                        }
                     }
                 }
-            }
+                }
 
-            AgentPassportTabs(
-                selected = selectedTab,
-                onSelected = {
-                    selectedTab = it
-                    expandedSection = null
-                },
-            )
+                AgentPassportTabs(
+                    selected = selectedTab,
+                    onSelected = {
+                        selectedTab = it
+                        expandedSection = null
+                    },
+                )
 
-            if (selectedTab == 0) {
+                if (selectedTab == 0) {
                 Surface(
                     shape = RoundedCornerShape(22.dp),
                     color = MaterialTheme.colorScheme.surfaceContainer,
@@ -1087,42 +1085,13 @@ fun AgentInfoSheet(
 
                 TextButton(
                     modifier = Modifier.fillMaxWidth(),
-                    onClick = { showIdentityEditor = !showIdentityEditor },
+                    onClick = { showIdentityEditor = true },
                 ) {
                     Icon(Icons.Filled.Edit, contentDescription = null)
                     Spacer(Modifier.size(8.dp))
                     Text(stringResource(R.string.conn_info_customize_identity))
                 }
-                if (showIdentityEditor) {
-                    Surface(
-                        shape = RoundedCornerShape(22.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            DisplayAliasSection(
-                                currentAlias = profileDisplayAlias,
-                                fallbackName = agentName,
-                                onSave = connectionViewModel::setProfileDisplayAlias,
-                            )
-                            AgentIconRow(connectionViewModel)
-                            selectedProfile?.let { profile ->
-                                TextButton(
-                                    onClick = {
-                                        onDismiss()
-                                        onNavigateToProfileInspector(profile.name)
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text(stringResource(R.string.conn_info_manage_profiles))
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
+                } else {
                 AgentPassportSessionTab(
                     currentSessionLabel = currentSession?.title
                         ?.takeIf { it.isNotBlank() }
@@ -1143,7 +1112,95 @@ fun AgentInfoSheet(
                         onNavigateToConnections()
                     },
                 )
+                }
             }
+        }
+    }
+
+    if (showProfileManager) {
+        ProfileDisplayManagerDialog(
+            profiles = agentProfiles,
+            presentation = profilePresentation,
+            selectedProfileName = selectedProfile?.name,
+            onMove = connectionViewModel::moveProfile,
+            onHiddenChange = connectionViewModel::setProfileHidden,
+            onReset = connectionViewModel::resetProfilePresentation,
+            onDismiss = { showProfileManager = false },
+        )
+    }
+}
+
+@Composable
+private fun AgentPassportIdentityEditor(
+    connectionViewModel: ConnectionViewModel,
+    profileDisplayAlias: String?,
+    fallbackName: String,
+    selectedProfile: Profile?,
+    hasProfiles: Boolean,
+    onBack: () -> Unit,
+    onManageProfiles: () -> Unit,
+    onInspectProfile: (Profile) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = stringResource(R.string.settings_back),
+            )
+        }
+        Text(
+            text = stringResource(R.string.conn_info_customize_identity),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            DisplayAliasSection(
+                currentAlias = profileDisplayAlias,
+                fallbackName = fallbackName,
+                onSave = connectionViewModel::setProfileDisplayAlias,
+            )
+            AgentIconRow(connectionViewModel)
+        }
+    }
+
+    if (hasProfiles) {
+        OutlinedButton(
+            onClick = onManageProfiles,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(imageVector = Icons.Filled.Tune, contentDescription = null)
+            Spacer(modifier = Modifier.size(8.dp))
+            Text(stringResource(R.string.conn_info_manage_profiles))
+        }
+    }
+
+    selectedProfile?.let { profile ->
+        TextButton(
+            onClick = { onInspectProfile(profile) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                stringResource(
+                    R.string.conn_info_inspect_profile,
+                    AgentDisplay.profileDisplayName(profile) ?: profile.name,
+                ),
+            )
         }
     }
 }
