@@ -543,29 +543,6 @@ class ConnectionStore private constructor(
         }
     }
 
-    private fun Connection.withDashboardDefaults(): Connection {
-        val derivedDashboardUrl = Connection.deriveDefaultDashboardUrl(apiServerUrl)
-        val normalizedRoutes = routeCandidates.ifEmpty {
-            Connection.buildRouteCandidates(apiServerUrl, relayUrl)
-        }
-        val normalizedPreferredRouteRole = preferredRouteRole?.takeIf { preferred ->
-            normalizedRoutes.any { it.role.equals(preferred, ignoreCase = true) }
-        }
-        return if (
-            (dashboardUrl.isNullOrBlank() && derivedDashboardUrl != null) ||
-            normalizedRoutes != routeCandidates ||
-            normalizedPreferredRouteRole != preferredRouteRole
-        ) {
-            copy(
-                dashboardUrl = dashboardUrl?.takeIf { it.isNotBlank() } ?: derivedDashboardUrl,
-                routeCandidates = normalizedRoutes,
-                preferredRouteRole = normalizedPreferredRouteRole,
-            )
-        } else {
-            this
-        }
-    }
-
     companion object {
         private const val TAG = "ConnectionStore"
 
@@ -583,5 +560,42 @@ class ConnectionStore private constructor(
         // a fresh install would.
         private const val DEFAULT_API_URL = "http://localhost:8642"
         private const val DEFAULT_RELAY_URL = "ws://localhost:8767"
+    }
+}
+
+/**
+ * Restore route defaults after loading a serialized connection. This remains
+ * internal so focused persistence tests can exercise the same normalization
+ * path used by [ConnectionStore].
+ */
+internal fun Connection.withDashboardDefaults(): Connection {
+    val derivedDashboardUrl = Connection.deriveDefaultDashboardUrl(apiServerUrl)
+    val effectiveDashboardUrl = dashboardUrl?.takeIf { it.isNotBlank() } ?: derivedDashboardUrl
+    val storedOrDefaultRoutes = routeCandidates.ifEmpty {
+        Connection.buildRouteCandidates(
+            apiServerUrl = apiServerUrl,
+            relayUrl = relayUrl,
+            dashboardUrl = effectiveDashboardUrl,
+        )
+    }
+    val normalizedRoutes = Connection.reconcileDashboardRoutes(
+        dashboardUrl = effectiveDashboardUrl,
+        candidates = storedOrDefaultRoutes,
+    )
+    val normalizedPreferredRouteRole = preferredRouteRole?.takeIf { preferred ->
+        normalizedRoutes.any { it.role.equals(preferred, ignoreCase = true) }
+    }
+    return if (
+        dashboardUrl != effectiveDashboardUrl ||
+        normalizedRoutes != routeCandidates ||
+        normalizedPreferredRouteRole != preferredRouteRole
+    ) {
+        copy(
+            dashboardUrl = effectiveDashboardUrl,
+            routeCandidates = normalizedRoutes,
+            preferredRouteRole = normalizedPreferredRouteRole,
+        )
+    } else {
+        this
     }
 }
