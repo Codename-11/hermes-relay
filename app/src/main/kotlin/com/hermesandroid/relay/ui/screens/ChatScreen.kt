@@ -139,6 +139,7 @@ import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
@@ -206,6 +207,7 @@ import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
+import com.hermesandroid.relay.util.HumanErrorAction
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import kotlin.math.abs
 import com.hermesandroid.relay.ui.theme.relayGridTexture
@@ -466,6 +468,7 @@ fun ChatScreen(
     // don't wire navigation.
     onNavigateToConnections: () -> Unit = {},
     onNavigateToConnect: () -> Unit = onNavigateToConnections,
+    onRepairConnection: () -> Unit = onNavigateToConnect,
     // Offline demo entry, surfaced on the empty-chat "needs connection" card so a
     // skipped / never-connected first run can explore without a server. null hides it.
     onTryDemo: (() -> Unit)? = null,
@@ -493,7 +496,13 @@ fun ChatScreen(
     val snackbarHost = LocalSnackbarHost.current
     LaunchedEffect(chatViewModel) {
         chatViewModel.errorEvents.collect { err ->
-            snackbarHost.showHumanError(err)
+            val result = snackbarHost.showHumanError(err)
+            if (
+                result == SnackbarResult.ActionPerformed &&
+                err.action == HumanErrorAction.Repair
+            ) {
+                onRepairConnection()
+            }
         }
     }
 

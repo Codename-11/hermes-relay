@@ -247,6 +247,7 @@ data class Connection(
             apiServerUrl: String,
             relayUrl: String,
             extraApiUrls: List<Pair<String, String>> = emptyList(),
+            dashboardUrl: String? = null,
         ): List<EndpointCandidate> {
             val routes = buildList {
                 endpointCandidateFromApiUrl(
@@ -255,6 +256,7 @@ data class Connection(
                     apiServerUrl = apiServerUrl,
                     relayUrl = relayUrl.takeIf { it.isNotBlank() }
                         ?: deriveDefaultRelayUrl(apiServerUrl).orEmpty(),
+                    dashboardUrl = dashboardUrl,
                 )?.let(::add)
 
                 extraApiUrls
@@ -266,6 +268,7 @@ data class Connection(
                             priority = index + 1,
                             apiServerUrl = url,
                             relayUrl = deriveDefaultRelayUrl(url).orEmpty(),
+                            dashboardUrl = dashboardUrl,
                         )?.let(::add)
                     }
             }
@@ -340,6 +343,7 @@ data class Connection(
             priority: Int,
             apiServerUrl: String,
             relayUrl: String,
+            dashboardUrl: String? = null,
         ): EndpointCandidate? {
             val uri = runCatching { URI(apiServerUrl.trim().trimEnd('/')) }.getOrNull()
                 ?: return null
@@ -363,10 +367,60 @@ data class Connection(
                 role = role.ifBlank { inferRouteRole(apiServerUrl) },
                 priority = priority,
                 api = ApiEndpoint(host = host, port = port, tls = tls),
-                dashboard = deriveDefaultDashboardUrl(apiServerUrl)
+                dashboard = dashboardUrl
+                    ?.trim()
+                    ?.trimEnd('/')
+                    ?.takeIf { it.isNotBlank() && urlsShareHost(it, apiServerUrl) }
+                    ?.let { DashboardEndpoint(url = it) }
+                    ?: deriveDefaultDashboardUrl(apiServerUrl)
                     ?.let { DashboardEndpoint(url = it) },
                 relay = RelayEndpoint(url = resolvedRelayUrl, transportHint = transportHint),
             )
+        }
+
+        /**
+         * Reconcile stored API-derived routes with the Dashboard origin that
+         * was actually verified during setup. Older app versions synthesized
+         * `:9119` for every API route, even when the same host was reached
+         * through an HTTPS reverse proxy on 443. Replace only that conventional
+         * synthesized value (or a missing value); preserve explicit and
+         * different-host LAN/Tailscale routes.
+         */
+        fun reconcileDashboardRoutes(
+            dashboardUrl: String?,
+            candidates: List<EndpointCandidate>,
+        ): List<EndpointCandidate> {
+            val explicitDashboard = dashboardUrl
+                ?.trim()
+                ?.trimEnd('/')
+                ?.takeIf { it.isNotBlank() }
+                ?: return candidates
+            return candidates.map { candidate ->
+                val apiUrl = candidate.api?.url ?: return@map candidate
+                if (!urlsShareHost(explicitDashboard, apiUrl)) return@map candidate
+
+                val currentDashboard = candidate.dashboard?.url
+                val derivedDashboard = deriveDefaultDashboardUrl(apiUrl)
+                val canReplace = currentDashboard.isNullOrBlank() ||
+                    (
+                        derivedDashboard != null &&
+                            currentDashboard.trim().trimEnd('/')
+                                .equals(derivedDashboard, ignoreCase = true)
+                    )
+                if (canReplace) {
+                    candidate.copy(dashboard = DashboardEndpoint(url = explicitDashboard))
+                } else {
+                    candidate
+                }
+            }
+        }
+
+        fun urlsShareHost(leftUrl: String, rightUrl: String): Boolean {
+            val leftHost = runCatching { URI(leftUrl.trim()) }.getOrNull()?.host
+            val rightHost = runCatching { URI(rightUrl.trim()) }.getOrNull()?.host
+            return !leftHost.isNullOrBlank() &&
+                !rightHost.isNullOrBlank() &&
+                leftHost.equals(rightHost, ignoreCase = true)
         }
 
         /**

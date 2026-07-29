@@ -4,6 +4,7 @@ import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -60,6 +61,15 @@ class RelayErrorClassifierTest {
 
         assertEquals("Session expired", err.title)
         assertTrue(err.body.contains("re-pair", ignoreCase = true))
+        assertEquals(HumanErrorAction.Repair, err.action)
+    }
+
+    @Test
+    fun certificateMismatchExposesRepairAction() {
+        val err = classifyError(SSLException("certificate changed"))
+
+        assertEquals("Certificate mismatch", err.title)
+        assertEquals(HumanErrorAction.Repair, err.action)
     }
 
     @Test

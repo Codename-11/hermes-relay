@@ -22,11 +22,16 @@ import javax.net.ssl.SSLPeerUnverifiedException
  * showHumanError in RelayApp.kt.
  */
 
+enum class HumanErrorAction {
+    Repair,
+}
+
 data class HumanError(
     val title: String,
     val body: String,
     val retryable: Boolean = false,
     val actionLabel: String? = null,
+    val action: HumanErrorAction? = null,
 )
 
 private fun titlePrefix(context: String?, ctx: Context?): String = ctx?.let { c ->
@@ -116,6 +121,7 @@ private fun classifyIoMessage(msg: String, context: String?, ctx: Context?): Hum
             body = "Your session is no longer valid — re-pair this device",
             retryable = false,
             actionLabel = ctx?.getString(R.string.error_classify_repair) ?: "Re-pair",
+            action = HumanErrorAction.Repair,
         )
         "403" in msg || "forbidden" in msg -> HumanError(
             title = ctx?.getString(R.string.error_classify_not_allowed) ?: "Not allowed",
@@ -271,6 +277,7 @@ private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?
             body = "The server certificate changed since you paired — re-pair to trust it",
             retryable = false,
             actionLabel = ctx?.getString(R.string.error_classify_repair) ?: "Re-pair",
+            action = HumanErrorAction.Repair,
         )
         is SecurityException -> HumanError(
             title = ctx?.getString(R.string.error_classify_perm_needed) ?: "Permission needed",
