@@ -142,6 +142,19 @@
             android:permission="android.permission.BIND_VOICE_INTERACTION"
             android:process=":assistant_session" />
 
+        <!-- Required companion component for VoiceInteractionService metadata.
+             Hermes session transcription remains owned by the existing voice
+             pipeline; this service does not open a second microphone stream. -->
+        <service
+            android:name=".assistant.HermesRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".assistant.AssistantSessionStateReceiver"
             android:exported="false"
