@@ -3721,7 +3721,10 @@ private fun WakeWordCard(
 
             Spacer(Modifier.height(8.dp))
             Text(
-                text = stringResource(R.string.wake_word_sensitivity),
+                text = stringResource(
+                    R.string.wake_word_sensitivity_value,
+                    sensitivityDraft,
+                ),
                 style = MaterialTheme.typography.labelLarge,
             )
             Text(

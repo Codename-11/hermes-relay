@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - **Voice interruption covers the complete active response.** One calibrated VAD listener spans generation and playback on Standard and Realtime paths, rejects stale callbacks and speaker bleed, and keeps promoted background tasks alive when speech alone is stopped.
+- **Experimental wake-word tuning starts at a more practical strictness.** New installations default to `0.3`, and Voice settings show the exact value while it is adjusted; existing saved choices remain unchanged.
 
 ### Fixed
 

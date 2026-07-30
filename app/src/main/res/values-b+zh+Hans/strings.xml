@@ -3367,6 +3367,7 @@
     <string name="wake_word_installing">正在下载并验证设备端英语模型（约 6 MB）…</string>
     <string name="wake_word_unsupported_abi">唤醒词需要 arm64-v8a、armeabi-v7a、x86_64 或 x86 设备。</string>
     <string name="wake_word_sensitivity">严格程度</string>
+    <string name="wake_word_sensitivity_value">严格程度：%1$.1f</string>
     <string name="wake_word_sensitivity_desc">数值越高，判定越严格、误唤醒越少，但可能无法检测较轻的语音。</string>
     <string name="wake_word_confirmation_frames">确认：%1$d</string>
     <string name="wake_word_confirmation_frames_desc">值越高，本机解码器所需的尾随确认越多，可减少误触发。</string>

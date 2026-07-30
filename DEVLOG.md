@@ -6827,3 +6827,9 @@ After:  Phone (HTTP/SSE) → API Server (:8642)          [chat — direct]
 - Deploy docs site (GitHub Pages or similar)
 - Phase 2: Terminal channel (xterm.js in WebView, tmux integration)
 - Phase 3: Bridge channel migration
+
+# 2026-07-30 — Wake-word strictness tuning
+
+- Lowered the unset Android wake-word strictness default from `0.6` to `0.3` after physical-device testing showed reliable activation only at the lower slider positions.
+- Added the live numeric strictness value to Voice settings so tuning is observable.
+- Preserved saved user values and the existing three-frame confirmation default; this adjustment does not migrate working installations or broaden the detector acceptance window beyond the selected threshold.

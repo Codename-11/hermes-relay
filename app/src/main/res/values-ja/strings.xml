@@ -3433,6 +3433,7 @@
     <string name="wake_word_installing">端末内の英語モデルをダウンロードして検証しています（約 6 MB）…</string>
     <string name="wake_word_unsupported_abi">ウェイクワードには arm64-v8a、armeabi-v7a、x86_64、または x86 端末が必要です。</string>
     <string name="wake_word_sensitivity">判定の厳しさ</string>
+    <string name="wake_word_sensitivity_value">判定の厳しさ：%1$.1f</string>
     <string name="wake_word_sensitivity_desc">値を高くすると誤検出は減りますが、小さな声を検出できない場合があります。</string>
     <string name="wake_word_confirmation_frames">確認: %1$d</string>
     <string name="wake_word_confirmation_frames_desc">値を高くすると、端末上のデコーダーでより長い後続確認が必要になり、誤作動を減らせます。</string>
