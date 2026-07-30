@@ -15,7 +15,9 @@ diagnostic and return voice to its ready state with a retry hint rather than
 surfacing the provider's HTTP error. Other transcription failures retain the
 existing error path. Foreground-service behavior is documented explicitly:
 background detections remain pending behind the notification until Hermes is
-visible; Android default-assistant integration is a separate mode.
+visible; Android default-assistant integration is a separate mode. Opening the
+visible Voice settings screen also reconciles an enabled listener after package
+replacement or process death without adding boot/background auto-start.
 
 Focused wake preferences/core and no-speech classification tests pass.
 Sideload lint, sideload debug packaging, and Google Play debug Kotlin

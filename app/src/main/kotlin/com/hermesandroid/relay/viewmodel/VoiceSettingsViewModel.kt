@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -85,6 +86,22 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
 
     private val bargeInRepo = BargeInPreferencesRepository(application)
     private val wakeWordRepo = WakeWordPreferencesRepository(application)
+
+    init {
+        viewModelScope.launch {
+            val preferences = wakeWordRepo.flow.first()
+            if (preferences.enabled &&
+                WakeWordForegroundService.runtimeState.value ==
+                WakeWordRuntimeState.Stopped &&
+                WakeWordModelInstaller(application).installedFiles() != null
+            ) {
+                // Entering the visible Voice settings screen is a permitted
+                // foreground restart after package replacement/process death.
+                // This is deliberately not a boot or background auto-start.
+                WakeWordForegroundService.start(application)
+            }
+        }
+    }
 
     /** Current barge-in preferences — mirrors [BargeInPreferencesRepository.flow]. */
     val bargeInPrefs: StateFlow<BargeInPreferences> = bargeInRepo.flow.stateIn(
