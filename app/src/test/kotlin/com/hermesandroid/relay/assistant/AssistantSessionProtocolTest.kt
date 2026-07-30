@@ -10,6 +10,13 @@ import org.junit.Test
 
 class AssistantSessionProtocolTest {
     @Test
+    fun assistAction_routesIntoSystemSessionActivation() {
+        assertTrue(AssistantSessionProtocol.isAssistAction("android.intent.action.ASSIST"))
+        assertFalse(AssistantSessionProtocol.isAssistAction("android.intent.action.MAIN"))
+        assertFalse(AssistantSessionProtocol.isAssistAction(null))
+    }
+
+    @Test
     fun voiceState_mapsToSystemSessionPresentation() {
         val listening = AssistantSessionProtocol.snapshotFromVoiceState(
             VoiceUiState(

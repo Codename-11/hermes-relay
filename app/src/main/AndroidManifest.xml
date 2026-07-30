@@ -48,6 +48,12 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Some Android OEM assistant pickers enumerate ACTION_ASSIST
+                 activities in addition to VoiceInteractionService providers. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!-- AppCompat persists in-app language choices on Android 12 and lower.
