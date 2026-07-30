@@ -117,6 +117,7 @@ object AssistantSessionProtocol {
         startNewSession: Boolean = true,
     ) =
         Intent(context, com.hermesandroid.relay.MainActivity::class.java).apply {
+            action = Intent.ACTION_ASSIST
             putExtra(EXTRA_ASSISTANT_SESSION, true)
             putExtra(EXTRA_ACTIVATION_ID, activationId)
             putExtra(EXTRA_START_NEW_SESSION, startNewSession)
