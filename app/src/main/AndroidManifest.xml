@@ -53,6 +53,7 @@
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.VOICE" />
             </intent-filter>
         </activity>
 
