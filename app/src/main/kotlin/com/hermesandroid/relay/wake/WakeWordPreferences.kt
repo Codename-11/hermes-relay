@@ -40,7 +40,7 @@ data class WakeWordPreferences(
     val assistantEnabled: Boolean = false,
     val phrase: String = DEFAULT_WAKE_PHRASE,
     /** Higher is stricter (fewer false activations), matching upstream. */
-    val sensitivity: Float = 0.6f,
+    val sensitivity: Float = 0.3f,
     val confirmationFrames: Int = 3,
     val startNewSession: Boolean = true,
     val profileRouting: WakeWordProfileRouting = WakeWordProfileRouting(),
@@ -93,7 +93,7 @@ class WakeWordPreferencesRepository(
                 // Only one phrase has been validated. Ignore stale/future values
                 // until the product actually exposes multi-phrase support.
                 phrase = DEFAULT_WAKE_PHRASE,
-                sensitivity = (prefs[KEY_SENSITIVITY] ?: 0.6f).coerceIn(0.2f, 0.9f),
+                sensitivity = (prefs[KEY_SENSITIVITY] ?: 0.3f).coerceIn(0.2f, 0.9f),
                 confirmationFrames = (prefs[KEY_CONFIRMATION_FRAMES] ?: 3).coerceIn(1, 5),
                 startNewSession = prefs[KEY_START_NEW_SESSION] ?: true,
                 profileRouting = WakeWordProfileRouting(

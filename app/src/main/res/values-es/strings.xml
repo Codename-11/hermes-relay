@@ -3119,6 +3119,7 @@
     <string name="wake_word_installing">Descargando y verificando el modelo de inglés en el dispositivo (unos 6 MB)…</string>
     <string name="wake_word_unsupported_abi">La palabra de activación requiere un dispositivo arm64-v8a, armeabi-v7a, x86_64 o x86.</string>
     <string name="wake_word_sensitivity">Rigor</string>
+    <string name="wake_word_sensitivity_value">Rigor: %1$.1f</string>
     <string name="wake_word_sensitivity_desc">Los valores más altos son más estrictos y reducen las activaciones falsas, pero pueden omitir voces más bajas.</string>
     <string name="wake_word_confirmation_frames">Confirmación: %1$d</string>
     <string name="wake_word_confirmation_frames_desc">Los valores más altos exigen más confirmación posterior en el decodificador local y pueden reducir activaciones falsas.</string>

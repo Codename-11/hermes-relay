@@ -3440,6 +3440,7 @@
     <string name="wake_word_installing">Downloading and verifying the on-device English model (about 6 MB)…</string>
     <string name="wake_word_unsupported_abi">Wake word requires an arm64-v8a, armeabi-v7a, x86_64, or x86 device.</string>
     <string name="wake_word_sensitivity">Strictness</string>
+    <string name="wake_word_sensitivity_value">Strictness: %1$.1f</string>
     <string name="wake_word_sensitivity_desc">Higher values are stricter and reduce false activations, but may miss quieter speech.</string>
     <string name="wake_word_confirmation_frames">Confirmation: %1$d</string>
     <string name="wake_word_confirmation_frames_desc">Higher values require more trailing confirmation inside the on-device decoder and may reduce false activations.</string>

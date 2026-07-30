@@ -48,7 +48,7 @@ class WakeWordPreferencesTest {
         assertFalse(preferences.enabled)
         assertFalse(preferences.assistantEnabled)
         assertEquals(DEFAULT_WAKE_PHRASE, preferences.phrase)
-        assertEquals(0.6f, preferences.sensitivity)
+        assertEquals(0.3f, preferences.sensitivity)
         assertEquals(3, preferences.confirmationFrames)
         assertTrue(preferences.startNewSession)
         assertEquals(WakeWordProfileRouteMode.Active, preferences.profileRouting.mode)
