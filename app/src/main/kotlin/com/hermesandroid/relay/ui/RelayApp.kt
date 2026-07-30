@@ -1248,13 +1248,25 @@ fun RelayApp() {
             com.hermesandroid.relay.wake.WakeWordActivationCoordinator.pending.collectAsState()
         val appIsForeground by
             com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
+        val assistantSessionActive by
+            com.hermesandroid.relay.assistant.AssistantAppSessionState.active.collectAsState()
+        val assistantCancelRequest by
+            com.hermesandroid.relay.assistant.AssistantVoiceCommandCoordinator.cancelRequest
+                .collectAsState()
 
         // A background detection stays pending behind the actionable
         // notification. Only a visible Hermes activity may enter voice.
         LaunchedEffect(wakeActivation?.id, appIsForeground) {
             val activation = wakeActivation ?: return@LaunchedEffect
             if (!appIsForeground) return@LaunchedEffect
-            com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
+            if (activation.source ==
+                com.hermesandroid.relay.wake.WakeWordActivationSource.SystemAssistant
+            ) {
+                com.hermesandroid.relay.assistant.HermesVoiceInteractionService
+                    .setVoiceSessionActive(true)
+            } else {
+                com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
+            }
             if (activation.startNewSession) {
                 chatViewModel.createNewChat()
             }
@@ -1273,6 +1285,39 @@ fun RelayApp() {
             com.hermesandroid.relay.wake.WakeWordForegroundService.setVoiceSessionActive(
                 voiceUiState.voiceMode
             )
+        }
+        LaunchedEffect(
+            assistantSessionActive,
+            voiceUiState.voiceMode,
+            voiceUiState.state,
+            voiceUiState.transcribedText,
+            voiceUiState.responseText,
+            voiceUiState.error,
+        ) {
+            if (assistantSessionActive) {
+                if (voiceUiState.voiceMode) {
+                    com.hermesandroid.relay.assistant.AssistantAppSessionState
+                        .markVoiceStarted()
+                }
+                if (voiceUiState.voiceMode ||
+                    com.hermesandroid.relay.assistant.AssistantAppSessionState.hasVoiceStarted()
+                ) {
+                    com.hermesandroid.relay.assistant.AssistantSessionProtocol.publish(
+                        mediaContext,
+                        voiceUiState,
+                    )
+                } else {
+                    com.hermesandroid.relay.assistant.AssistantSessionProtocol.publish(
+                        mediaContext,
+                        com.hermesandroid.relay.assistant.AssistantSessionSnapshot(),
+                    )
+                }
+            }
+        }
+        LaunchedEffect(assistantCancelRequest) {
+            val request = assistantCancelRequest ?: return@LaunchedEffect
+            voiceViewModel.exitVoiceMode()
+            com.hermesandroid.relay.assistant.AssistantVoiceCommandCoordinator.consume(request)
         }
         val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()

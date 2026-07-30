@@ -39,6 +39,23 @@ Android-test Kotlin compilation pass. The existing full-overlay instrumentation
 fixture remains blocked by its continuously animating surface never reaching
 Compose idleness.
 
+## 2026-07-30 — Opt-in Android Digital Assistant mode
+
+Android now declares an explicit `VoiceInteractionService` and separately
+processed `VoiceInteractionSessionService`. Only Android's user-confirmed
+Assistant role activates the integration. Optional background “Hey Hermes”
+detection reuses the local sherpa model and tuning, releases its recorder before
+the system session opens the existing voice flow, and resumes after session
+exit. Package-scoped lifecycle messages reconcile prompt/listen state,
+transcript/response presentation, cancellation, errors, and process recreation.
+
+The Digital Assistant listener and the existing experimental microphone
+foreground service are separate, mutually exclusive opt-ins. Both retain local
+pre-activation privacy and the shared one-microphone contract. Standard voice
+continues through the upstream Dashboard audio surface. Voice settings include
+role status, setup, removal, runtime status, and the limitation that third-party
+assistants do not receive Google's low-power hotword hardware.
+
 ## 2026-07-29 — Full-turn voice interruption and local wake-word preview
 
 Android barge-in now owns one microphone/VAD listener from response generation

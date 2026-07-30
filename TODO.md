@@ -1102,6 +1102,15 @@ and whether the agent is waiting on the user.
   expose profile-specific phrases until routing and acoustic behavior are
   implemented and validated.
 
+- **Android Digital Assistant — on-device validation.** On a physical device,
+  select and remove Hermes through the system Assistant role; verify gesture,
+  power-button, screen-off, credential-lock, and unlocked “Hey Hermes”
+  invocation; confirm the system session appears without overlay/full-screen
+  permissions; exercise cancel, back, microphone denial, network failure,
+  process kill/recreation, and wake→voice→wake resumption. Measure idle battery
+  drain because third-party assistants do not receive Google's dedicated
+  low-power hotword hardware.
+
 - **Audio quality guardrails** — normalize output volume across realtime and
 
 fallback TTS providers, keep pronunciation hints/profile voice tuning, and

@@ -21,6 +21,8 @@ import com.hermesandroid.relay.wake.WakeWordPreferences
 import com.hermesandroid.relay.wake.WakeWordPreferencesRepository
 import com.hermesandroid.relay.wake.WakeWordRuntimeState
 import com.hermesandroid.relay.wake.WakeWordTestState
+import com.hermesandroid.relay.assistant.AssistantWakeRuntimeState
+import com.hermesandroid.relay.assistant.HermesVoiceInteractionService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -120,6 +122,8 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
         WakeWordForegroundService.runtimeState
     val wakeWordTestState: StateFlow<WakeWordTestState> =
         WakeWordForegroundService.testState
+    val assistantWakeRuntimeState: StateFlow<AssistantWakeRuntimeState> =
+        HermesVoiceInteractionService.runtimeState
 
     private val _wakeWordInstallState = MutableStateFlow(WakeWordInstallUiState())
     val wakeWordInstallState: StateFlow<WakeWordInstallUiState> =
@@ -194,6 +198,40 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
                 },
                 onFailure = { error ->
                     wakeWordRepo.setEnabled(false)
+                    _wakeWordInstallState.value = WakeWordInstallUiState(
+                        error = error.message ?: "Could not install the wake-word model",
+                    )
+                },
+            )
+        }
+    }
+
+    fun setAssistantWakeEnabled(enabled: Boolean) {
+        if (!enabled) {
+            viewModelScope.launch { wakeWordRepo.setAssistantEnabled(false) }
+            _wakeWordInstallState.value = WakeWordInstallUiState()
+            return
+        }
+        if (_wakeWordInstallState.value.installing) return
+        _wakeWordInstallState.value = WakeWordInstallUiState(installing = true)
+        viewModelScope.launch {
+            val result = WakeWordModelInstaller(getApplication()).ensureInstalled()
+            result.fold(
+                onSuccess = {
+                    runCatching {
+                        WakeWordForegroundService.stop(getApplication())
+                        wakeWordRepo.setAssistantEnabled(true)
+                    }.onSuccess {
+                        _wakeWordInstallState.value = WakeWordInstallUiState()
+                    }.onFailure { error ->
+                        wakeWordRepo.setAssistantEnabled(false)
+                        _wakeWordInstallState.value = WakeWordInstallUiState(
+                            error = error.message ?: "Could not enable assistant wake listening",
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    wakeWordRepo.setAssistantEnabled(false)
                     _wakeWordInstallState.value = WakeWordInstallUiState(
                         error = error.message ?: "Could not install the wake-word model",
                     )

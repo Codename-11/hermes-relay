@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Hermes can be selected as Android’s default Digital Assistant.** The opt-in system role adds a genuine `VoiceInteractionService`/system-session path for background and locked-screen “Hey Hermes” activation, while keeping local wake audio private and Standard voice upstream-only.
 - **Android can opt into an experimental local “Hey Hermes” wake word.** A user-started microphone foreground service performs sherpa-onnx detection on the phone, keeps pre-activation audio local, shows an ongoing Stop notification, and safely hands microphone ownership to the existing voice flow.
 
 ### Changed

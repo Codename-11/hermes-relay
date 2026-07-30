@@ -113,6 +113,38 @@
             android:foregroundServiceType="microphone"
             android:stopWithTask="false" />
 
+        <!-- Explicitly opt-in Android Digital Assistant integration. Android
+             binds this only after the user selects Hermes for ROLE_ASSISTANT. -->
+        <service
+            android:name=".assistant.HermesVoiceInteractionService"
+            android:exported="true"
+            android:label="@string/assistant_service_label"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+        </service>
+
+        <!-- Heavy assistant UI is isolated from the always-running interaction
+             service, matching the platform lifecycle guidance. -->
+        <service
+            android:name=".assistant.HermesVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:process=":assistant_session" />
+
+        <receiver
+            android:name=".assistant.AssistantSessionStateReceiver"
+            android:exported="false"
+            android:process=":assistant_session" />
+
+        <receiver
+            android:name=".assistant.AssistantSessionLifecycleReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>
