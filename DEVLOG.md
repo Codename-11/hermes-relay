@@ -6838,3 +6838,4 @@ After:  Phone (HTTP/SSE) → API Server (:8642)          [chat — direct]
 
 - Added the standard `android.intent.action.ASSIST` activity filter because some OEM assistant pickers enumerate Assist activities even when a valid `VoiceInteractionService` is present.
 - Routed activity-based Assist invocations through the existing system-assistant activation protocol so both Android entry points share microphone ownership and session lifecycle behavior.
+- Added the required `recognitionService` metadata and a bounded recognition component after device validation showed Samsung could grant the package role while leaving the active voice-interaction service empty. The component does not open the microphone; Hermes assistant sessions continue to use the established transcription pipeline.
