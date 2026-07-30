@@ -1,5 +1,28 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-30 — Foreground wake-word diagnostics and recovery
+
+The Android-local sherpa listener now treats each non-empty keyword result as a
+completed KWS event, resets the stream immediately, and maps the stored
+confirmation setting to sherpa's native trailing-blank confirmation instead of
+requiring an already-completed result to recur across application frames. Voice
+settings can arm a ten-second test against the same foreground service,
+microphone owner, installed model, and current tuning; it displays live input
+level and reports detection without opening voice or transmitting audio.
+
+Expected empty-transcript responses after activation now record a no-speech
+diagnostic and return voice to its ready state with a retry hint rather than
+surfacing the provider's HTTP error. Other transcription failures retain the
+existing error path. Foreground-service behavior is documented explicitly:
+background detections remain pending behind the notification until Hermes is
+visible; Android default-assistant integration is a separate mode.
+
+Focused wake preferences/core and no-speech classification tests pass.
+Sideload lint, sideload debug packaging, and Google Play debug Kotlin
+compilation pass. This batch adds no model, native library, ABI, permission, or
+network dependency; the existing approximately 6 MB downloaded model and
+packaged sherpa ABI footprint are unchanged.
+
 ## 2026-07-29 — Full-turn voice interruption and local wake-word preview
 
 Android barge-in now owns one microphone/VAD listener from response generation

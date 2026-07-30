@@ -57,14 +57,18 @@ class WakeWordCoreTest {
     }
 
     @Test
-    fun confirmationGate_firesOnceAfterRequiredConsecutiveFrames() {
-        val gate = WakeWordConfirmationGate(requiredFrames = 3)
-        assertFalse(gate.update(true))
-        assertFalse(gate.update(false))
-        assertFalse(gate.update(true))
-        assertFalse(gate.update(true))
-        assertTrue(gate.update(true))
-        assertFalse(gate.update(true))
+    fun confirmationFrames_mapToSherpaTrailingBlanksAndClamp() {
+        assertEquals(1, WakeWordTuning.trailingBlanks(-1))
+        assertEquals(3, WakeWordTuning.trailingBlanks(3))
+        assertEquals(5, WakeWordTuning.trailingBlanks(9))
+    }
+
+    @Test
+    fun completedKeyword_matchesNormalizedDefaultPhrase() {
+        assertTrue(WakeWordTuning.matchesConfiguredPhrase("HEY_HERMES"))
+        assertTrue(WakeWordTuning.matchesConfiguredPhrase("  Hey   Hermes "))
+        assertFalse(WakeWordTuning.matchesConfiguredPhrase("Hey Herpes"))
+        assertFalse(WakeWordTuning.matchesConfiguredPhrase(""))
     }
 
     @Test
@@ -72,5 +76,12 @@ class WakeWordCoreTest {
         assertTrue(WakeWordTuning.threshold(0.8f) > WakeWordTuning.threshold(0.3f))
         assertEquals(0.2f, WakeWordTuning.threshold(-1f))
         assertEquals(0.9f, WakeWordTuning.threshold(2f))
+    }
+
+    @Test
+    fun inputLevel_reportsPeakAndHandlesEmptyFrames() {
+        assertEquals(0f, wakeWordInputLevel(shortArrayOf(), 0))
+        assertEquals(0.5f, wakeWordInputLevel(shortArrayOf(0, 16_384, -4_000), 3))
+        assertEquals(1f, wakeWordInputLevel(shortArrayOf(Short.MIN_VALUE), 1))
     }
 }

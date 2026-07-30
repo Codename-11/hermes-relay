@@ -2296,10 +2296,15 @@ couple Standard voice to non-standard server behavior.
   recorder before entering the existing voice flow and resumes only after voice
   exits. There is no boot receiver or server wake-listener control.
 - The KWS model is downloaded and SHA-256 verified on first enable. Preferences
-  store enabled state, fixed phrase, strictness, confirmation frames,
+  store enabled state, fixed phrase, strictness, decoder confirmation,
   start-new-session behavior, and a future-safe profile-routing shape. Only
   active-profile preservation is implemented; profile-specific phrases are
   intentionally not claimed.
+- sherpa owns temporal confirmation through `numTrailingBlanks`. Android treats
+  each non-empty keyword result as a completed event, resets the native stream
+  immediately, and does not require the same completed result to recur. Voice
+  settings can arm a bounded real-microphone test; test detections report
+  success without entering voice or acquiring a second microphone owner.
 
 **Consequences.**
 
@@ -2311,3 +2316,7 @@ couple Standard voice to non-standard server behavior.
 - Continuous wake listening has visible microphone and battery cost and
   requires explicit device/acoustic validation before the experimental label
   can be reconsidered.
+- The ordinary foreground-service mode may continue listening in the
+  background, but it does not launch an activity from the background. It holds
+  a detection behind an actionable notification until Hermes is visible.
+  Default-assistant integration is a separate Android system role and lifecycle.

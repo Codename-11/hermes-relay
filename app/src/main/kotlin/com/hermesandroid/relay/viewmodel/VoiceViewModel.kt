@@ -101,6 +101,15 @@ private enum class StandardSpeechStreamState {
 internal fun shouldFallbackStandardSpeech(outcome: VoiceSpeechStreamOutcome): Boolean =
     !outcome.audioStarted && outcome.status != VoiceSpeechStreamStatus.Stopped
 
+internal fun isNoSpeechTranscriptionFailure(error: Throwable?): Boolean =
+    generateSequence(error) { it.cause }
+        .mapNotNull { it.message?.lowercase() }
+        .any { message ->
+            "empty transcript" in message ||
+                "no speech detected" in message ||
+                "no speech was detected" in message
+        }
+
 internal data class AssistantSpeechDelta(
     val message: ChatMessage,
     val text: String,
@@ -2971,6 +2980,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             responseInterruptedForVoiceCommand = false
             val err = transcribeResult.exceptionOrNull()
             Log.w(TAG, "transcribe failed: ${err?.message}")
+            if (isNoSpeechTranscriptionFailure(err)) {
+                handleNoSpeechDetected(err?.message)
+                return
+            }
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Error,
@@ -2983,12 +2996,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val userText = transcribeResult.getOrNull().orEmpty()
         if (userText.isBlank()) {
             responseInterruptedForVoiceCommand = false
-            DiagnosticsLog.record(
-                category = DiagnosticCategory.Voice,
-                severity = DiagnosticSeverity.Warning,
-                title = getApplication<Application>().getString(R.string.voice_status_no_speech),
-            )
-            setError("No speech detected")
+            handleNoSpeechDetected()
             return
         }
         // Record successful STT in the voiceStats snapshot.
@@ -6143,6 +6151,27 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(state = VoiceState.Error, error = msg, amplitude = 0f, outputAudioActive = false)
         }
+    }
+
+    private fun handleNoSpeechDetected(detail: String? = null) {
+        val context = getApplication<Application>()
+        val message = context.getString(R.string.voice_no_speech_try_again)
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Voice,
+            severity = DiagnosticSeverity.Warning,
+            title = context.getString(R.string.voice_status_no_speech),
+            detail = detail,
+        )
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Idle,
+                amplitude = 0f,
+                outputAudioActive = false,
+                error = null,
+                transcribedText = null,
+            )
+        }
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
     /**

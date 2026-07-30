@@ -1095,7 +1095,10 @@ and whether the agent is waiting on the user.
   notification/microphone permission variants, background-start restrictions,
   task recreation from the detection notification, acoustic false-positive and
   false-negative rates, battery impact, stop action, and wake→voice→wake
-  microphone handoff. The first release remains fixed to “Hey Hermes”; do not
+  microphone handoff. Voice settings now provide a bounded real-microphone/model
+  test with an input meter; use it to distinguish audio capture from KWS tuning
+  before testing the full activation flow. The first release remains fixed to
+  “Hey Hermes”; do not
   expose profile-specific phrases until routing and acoustic behavior are
   implemented and validated.
 

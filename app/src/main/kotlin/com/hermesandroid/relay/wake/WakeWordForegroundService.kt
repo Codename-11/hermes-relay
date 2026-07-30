@@ -31,7 +31,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 enum class WakeWordRuntimeState {
     Stopped,
@@ -40,6 +42,28 @@ enum class WakeWordRuntimeState {
     PausedForVoice,
     AwaitingUser,
     Error,
+}
+
+enum class WakeWordTestPhase {
+    Idle,
+    Listening,
+    Detected,
+    TimedOut,
+    Unavailable,
+}
+
+data class WakeWordTestState(
+    val phase: WakeWordTestPhase = WakeWordTestPhase.Idle,
+    val inputLevel: Float = 0f,
+)
+
+internal fun wakeWordInputLevel(samples: ShortArray, count: Int): Float {
+    if (count <= 0) return 0f
+    var peak = 0
+    for (index in 0 until count.coerceAtMost(samples.size)) {
+        peak = maxOf(peak, abs(samples[index].toInt()))
+    }
+    return (peak / 32768f).coerceIn(0f, 1f)
 }
 
 /**
@@ -59,6 +83,7 @@ class WakeWordForegroundService : Service() {
     private var microphoneLease: MicrophoneLease? = null
     @Volatile private var voiceSessionActive = false
     @Volatile private var currentPreferences = WakeWordPreferences()
+    private var testTimeoutJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -72,6 +97,7 @@ class WakeWordForegroundService : Service() {
         startForegroundNotification(runtimeState.value)
         when (intent?.action) {
             ACTION_STOP -> {
+                finishWakeWordTest(WakeWordTestPhase.Idle)
                 stopRecognition()
                 setRuntimeState(WakeWordRuntimeState.Stopped)
                 scope.launch {
@@ -89,6 +115,7 @@ class WakeWordForegroundService : Service() {
 
     override fun onDestroy() {
         stopRecognition()
+        finishWakeWordTest(WakeWordTestPhase.Idle)
         if (runningInstance === this) runningInstance = null
         _runtimeState.value = WakeWordRuntimeState.Stopped
         scope.cancel()
@@ -134,6 +161,7 @@ class WakeWordForegroundService : Service() {
         stopRequested.set(false)
         recognitionJob = scope.launch {
             var detected = false
+            var testDetection = false
             var unattachedDetector: WakeWordDetector? = null
             try {
                 val createdDetector = SherpaWakeWordDetector(
@@ -178,8 +206,15 @@ class WakeWordForegroundService : Service() {
                 while (!stopRequested.get()) {
                     val count = createdRecorder.read(samples, 0, samples.size)
                     if (count < 0) throw IllegalStateException("Wake-word microphone read failed: $count")
+                    if (_testState.value.phase == WakeWordTestPhase.Listening) {
+                        _testState.value = _testState.value.copy(
+                            inputLevel = wakeWordInputLevel(samples, count),
+                        )
+                    }
                     if (count > 0 && createdDetector.accept(samples, count)) {
                         detected = true
+                        testDetection =
+                            _testState.value.phase == WakeWordTestPhase.Listening
                         break
                     }
                 }
@@ -194,9 +229,43 @@ class WakeWordForegroundService : Service() {
                 recognitionJob = null
             }
             if (detected && !stopRequested.get()) {
-                onWakeDetected(preferences)
+                if (testDetection) {
+                    Log.i(TAG, "wake-word microphone test detected the configured phrase")
+                    finishWakeWordTest(WakeWordTestPhase.Detected)
+                    if (!voiceSessionActive && currentPreferences.enabled) {
+                        startRecognition(currentPreferences)
+                    }
+                } else {
+                    onWakeDetected(preferences)
+                }
             }
         }
+    }
+
+    private fun startWakeWordTest() {
+        if (voiceSessionActive ||
+            runtimeState.value != WakeWordRuntimeState.Listening ||
+            recognitionJob?.isActive != true
+        ) {
+            finishWakeWordTest(WakeWordTestPhase.Unavailable)
+            return
+        }
+        testTimeoutJob?.cancel()
+        _testState.value = WakeWordTestState(phase = WakeWordTestPhase.Listening)
+        Log.i(TAG, "wake-word microphone test armed")
+        testTimeoutJob = scope.launch {
+            delay(TEST_DURATION_MS)
+            if (_testState.value.phase == WakeWordTestPhase.Listening) {
+                Log.i(TAG, "wake-word microphone test timed out")
+                finishWakeWordTest(WakeWordTestPhase.TimedOut)
+            }
+        }
+    }
+
+    private fun finishWakeWordTest(phase: WakeWordTestPhase) {
+        testTimeoutJob?.cancel()
+        testTimeoutJob = null
+        _testState.value = WakeWordTestState(phase = phase)
     }
 
     /**
@@ -205,6 +274,9 @@ class WakeWordForegroundService : Service() {
      */
     private fun pauseForVoice() {
         voiceSessionActive = true
+        if (_testState.value.phase == WakeWordTestPhase.Listening) {
+            finishWakeWordTest(WakeWordTestPhase.Unavailable)
+        }
         stopRecognition()
         setRuntimeState(WakeWordRuntimeState.PausedForVoice)
     }
@@ -231,6 +303,7 @@ class WakeWordForegroundService : Service() {
     }
 
     private fun reloadSettings() {
+        finishWakeWordTest(WakeWordTestPhase.Idle)
         val previousJob = recognitionJob
         stopRecognition()
         scope.launch {
@@ -273,6 +346,7 @@ class WakeWordForegroundService : Service() {
 
     private fun onWakeDetected(preferences: WakeWordPreferences) {
         // releaseRecognitionResources() has completed before this callback.
+        Log.i(TAG, "wake phrase detected; microphone released before activation")
         WakeWordActivationCoordinator.request(
             WakeWordActivation(
                 startNewSession = preferences.startNewSession,
@@ -382,9 +456,12 @@ class WakeWordForegroundService : Service() {
         const val ACTION_STOP = "com.hermesandroid.relay.wake.STOP"
         private const val SAMPLE_RATE = 16_000
         private const val FRAME_SAMPLES = 1_600
+        private const val TEST_DURATION_MS = 10_000L
 
         private val _runtimeState = MutableStateFlow(WakeWordRuntimeState.Stopped)
         val runtimeState: StateFlow<WakeWordRuntimeState> = _runtimeState.asStateFlow()
+        private val _testState = MutableStateFlow(WakeWordTestState())
+        val testState: StateFlow<WakeWordTestState> = _testState.asStateFlow()
 
         @Volatile
         private var runningInstance: WakeWordForegroundService? = null
@@ -401,6 +478,7 @@ class WakeWordForegroundService : Service() {
                 Intent(context.applicationContext, WakeWordForegroundService::class.java)
             )
             _runtimeState.value = WakeWordRuntimeState.Stopped
+            _testState.value = WakeWordTestState()
         }
 
         fun prepareForVoice() {
@@ -413,6 +491,15 @@ class WakeWordForegroundService : Service() {
 
         fun reloadSettings() {
             runningInstance?.reloadSettings()
+        }
+
+        fun startTest() {
+            runningInstance?.startWakeWordTest()
+                ?: run {
+                    _testState.value = WakeWordTestState(
+                        phase = WakeWordTestPhase.Unavailable,
+                    )
+                }
         }
     }
 }
