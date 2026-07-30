@@ -20,6 +20,7 @@
          for the device-control bridge service; the merger dedups.) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -103,6 +104,14 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps user-started Hermes turns connected until they finish or need input, and optionally keeps idle connections responsive when the user enables Persistent connection." />
         </service>
+
+        <!-- Experimental, explicitly user-started on-device wake-word listener.
+             Audio remains local and the service is never boot/restart started. -->
+        <service
+            android:name=".wake.WakeWordForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="false" />
 
     </application>
 

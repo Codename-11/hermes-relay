@@ -3,6 +3,7 @@ package com.hermesandroid.relay.audio
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
+import com.hermesandroid.relay.wake.MicrophoneOwnershipCoordinator
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -54,6 +55,7 @@ class BargeInListenerTest {
 
     @Before
     fun setUp() {
+        MicrophoneOwnershipCoordinator.resetForTest()
         // android.util.Log + android.media.audiofx.* are JVM-side stubs on
         // the unit-test classpath — their native methods throw "Method not
         // mocked" unless explicitly stubbed. [BargeInListener] touches
@@ -78,19 +80,19 @@ class BargeInListenerTest {
 
     @After
     fun tearDown() {
+        MicrophoneOwnershipCoordinator.resetForTest()
         unmockkStatic(Log::class)
         unmockkStatic(AcousticEchoCanceler::class)
         unmockkStatic(NoiseSuppressor::class)
     }
 
     @Test
-    fun `bargeInDetected fires when VadEngine reports speech`() = runTest {
+    fun `bargeInDetected fires after sustained model speech crosses RMS window`() = runTest {
         val vadEngine = mockk<VadEngine>()
-        every { vadEngine.analyze(any()) } returnsMany listOf(
-            VadResult(isSpeech = true, probability = 1f),
-        )
+        every { vadEngine.analyze(any()) } returns
+            VadResult(isSpeech = true, probability = 1f)
 
-        val source = ScriptedAudioSource(listOf(makeFrame()))
+        val source = ScriptedAudioSource(List(10) { makeFrame(3_000) })
         val listener = BargeInListener(
             audioSource = source,
             vadEngine = vadEngine,
@@ -101,6 +103,7 @@ class BargeInListenerTest {
         val collector = listener.bargeInDetected.asCollector(this)
 
         listener.start(this)
+        listener.markPlaybackStarted(nowMs = 0L, graceMs = 0L)
         // Advance enough for the single frame to be read + analyzed + emitted.
         // Bounded advance rather than advanceUntilIdle: the reader loops on
         // delay(5) after the scripted frames are drained, which would make
@@ -113,7 +116,7 @@ class BargeInListenerTest {
         runCurrent()
 
         assertEquals(
-            "bargeInDetected should fire exactly once for a single-frame speech verdict",
+            "bargeInDetected should fire once the 300ms majority window is satisfied",
             1,
             collector.events.get(),
         )
@@ -133,7 +136,7 @@ class BargeInListenerTest {
         every { vadEngine.analyze(any()) } returns
             VadResult(isSpeech = false, probability = 1f)
 
-        val source = ScriptedAudioSource(listOf(makeFrame()))
+        val source = ScriptedAudioSource(listOf(makeFrame(3_000)))
         val listener = BargeInListener(
             audioSource = source,
             vadEngine = vadEngine,
@@ -145,6 +148,7 @@ class BargeInListenerTest {
         val bargeCollector = listener.bargeInDetected.asCollector(this)
 
         listener.start(this)
+        listener.markPlaybackStarted(nowMs = 0L, graceMs = 0L)
         advanceTimeBy(50)
         runCurrent()
 
@@ -167,18 +171,22 @@ class BargeInListenerTest {
     }
 
     @Test
-    fun `scripted speech silence speech cadence fires bargeInDetected twice`() = runTest {
-        // 5-frame script: speech, silence, silence, speech, silence.
+    fun `window tolerates short dips and still fires`() = runTest {
         val vadEngine = mockk<VadEngine>()
         every { vadEngine.analyze(any()) } returnsMany listOf(
             VadResult(isSpeech = true, probability = 1f),
-            VadResult(isSpeech = false, probability = 0f),
-            VadResult(isSpeech = false, probability = 0f),
+            VadResult(isSpeech = true, probability = 1f),
+            VadResult(isSpeech = true, probability = 1f),
             VadResult(isSpeech = true, probability = 1f),
             VadResult(isSpeech = false, probability = 0f),
+            VadResult(isSpeech = true, probability = 1f),
+            VadResult(isSpeech = true, probability = 1f),
+            VadResult(isSpeech = true, probability = 1f),
+            VadResult(isSpeech = false, probability = 0f),
+            VadResult(isSpeech = true, probability = 1f),
         )
 
-        val frames = List(5) { makeFrame() }
+        val frames = List(10) { makeFrame(3_000) }
         val source = ScriptedAudioSource(frames)
         val listener = BargeInListener(
             audioSource = source,
@@ -190,7 +198,8 @@ class BargeInListenerTest {
         val bargeCollector = listener.bargeInDetected.asCollector(this)
 
         listener.start(this)
-        // 5 scripted frames consumed + tail delay loop. Bounded advance so
+        listener.markPlaybackStarted(nowMs = 0L, graceMs = 0L)
+        // Scripted frames consumed + tail delay loop. Bounded advance so
         // the subsequent delay(5) retry loop doesn't spin forever.
         advanceTimeBy(100)
         runCurrent()
@@ -200,8 +209,8 @@ class BargeInListenerTest {
         runCurrent()
 
         assertEquals(
-            "two scripted speech frames → two barge-in events",
-            2,
+            "80% speech across the decision window should trigger once",
+            1,
             bargeCollector.events.get(),
         )
 
@@ -229,11 +238,11 @@ class BargeInListenerTest {
         runCurrent()
         assertTrue("reader should have issued at least one read()", source.readCount.get() > 0)
 
-        listener.stop()
-        // Within the 500 ms plan budget — we use virtual time so this is
-        // deterministic rather than wall-clock.
-        advanceTimeBy(500)
-        runCurrent()
+        val stoppedReader = listener.stop()
+        // stop() is deliberately non-blocking for production callers. Joining
+        // the returned reader job proves its finally block completes promptly
+        // and makes the ownership-release assertion deterministic.
+        stoppedReader?.join()
 
         // After stop(), the finally block must have released the source.
         assertTrue("source should have been released by stop()", source.released)
@@ -285,7 +294,8 @@ class BargeInListenerTest {
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     /** A zero-filled PCM frame at the VadEngine's required length. */
-    private fun makeFrame(): ShortArray = ShortArray(VadEngine.FRAME_SIZE_SAMPLES)
+    private fun makeFrame(amplitude: Int = 0): ShortArray =
+        ShortArray(VadEngine.FRAME_SIZE_SAMPLES) { amplitude.toShort() }
 
     /**
      * Hand-rolled SharedFlow collector for the test's TestScope. Using a

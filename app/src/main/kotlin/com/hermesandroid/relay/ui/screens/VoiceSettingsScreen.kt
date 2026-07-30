@@ -2,6 +2,11 @@
 
 package com.hermesandroid.relay.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -89,6 +94,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BargeInPreferences
@@ -135,6 +141,8 @@ import com.hermesandroid.relay.viewmodel.VoiceSettingsViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoicePreviewUiState
+import com.hermesandroid.relay.wake.WakeWordPreferences
+import com.hermesandroid.relay.wake.WakeWordRuntimeState
 import kotlinx.coroutines.launch
 
 internal enum class VoiceSettingsSection { Output, Listening, Advanced }
@@ -201,6 +209,53 @@ fun VoiceSettingsScreen(
 
     val bargeInPrefs by settingsViewModel.bargeInPrefs.collectAsState()
     val aecAvailable = settingsViewModel.aecAvailable
+    val wakeWordPrefs by settingsViewModel.wakeWordPrefs.collectAsState()
+    val wakeWordRuntimeState by settingsViewModel.wakeWordRuntimeState.collectAsState()
+    val wakeWordInstallState by settingsViewModel.wakeWordInstallState.collectAsState()
+
+    var wakeWordPermissionError by remember { mutableStateOf<String?>(null) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            wakeWordPermissionError = null
+            settingsViewModel.setWakeWordEnabled(true)
+        } else {
+            wakeWordPermissionError =
+                context.getString(R.string.wake_word_notification_permission_required)
+        }
+    }
+    val microphonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            wakeWordPermissionError =
+                context.getString(R.string.wake_word_microphone_permission_required)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            wakeWordPermissionError = null
+            settingsViewModel.setWakeWordEnabled(true)
+        }
+    }
+    val requestWakeWordEnable: () -> Unit = {
+        when {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED ->
+                microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED ->
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            else -> {
+                wakeWordPermissionError = null
+                settingsViewModel.setWakeWordEnabled(true)
+            }
+        }
+    }
 
     // Authoritative relay voice config now lives in the VM (WP-V3). The screen
     // just observes it; the editor cards push saves back through the VM.
@@ -444,6 +499,19 @@ fun VoiceSettingsScreen(
                         voiceSettings = voiceSettings,
                         prefsRepo = prefsRepo,
                         voiceViewModel = voiceViewModel,
+                    )
+                    WakeWordCard(
+                        preferences = wakeWordPrefs,
+                        runtimeState = wakeWordRuntimeState,
+                        installing = wakeWordInstallState.installing,
+                        error = wakeWordPermissionError ?: wakeWordInstallState.error,
+                        onEnable = requestWakeWordEnable,
+                        onDisable = { settingsViewModel.setWakeWordEnabled(false) },
+                        onSensitivityChange = settingsViewModel::setWakeWordSensitivity,
+                        onConfirmationFramesChange =
+                            settingsViewModel::setWakeWordConfirmationFrames,
+                        onStartNewSessionChange =
+                            settingsViewModel::setWakeWordStartNewSession,
                     )
                     BargeInCard(
                         bargeInPrefs = bargeInPrefs,
@@ -3296,6 +3364,188 @@ private fun GlobalVoiceControlsCard(
             },
             valueRange = 750f..5000f,
             steps = 16,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Experimental local wake word.
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun WakeWordCard(
+    preferences: WakeWordPreferences,
+    runtimeState: WakeWordRuntimeState,
+    installing: Boolean,
+    error: String?,
+    onEnable: () -> Unit,
+    onDisable: () -> Unit,
+    onSensitivityChange: (Float) -> Unit,
+    onConfirmationFramesChange: (Int) -> Unit,
+    onStartNewSessionChange: (Boolean) -> Unit,
+) {
+    val abiSupported = Build.SUPPORTED_ABIS.any {
+        it == "arm64-v8a" || it == "armeabi-v7a" || it == "x86_64" || it == "x86"
+    }
+    var sensitivityDraft by remember(preferences.sensitivity) {
+        mutableStateOf(preferences.sensitivity)
+    }
+    var confirmationFramesDraft by remember(preferences.confirmationFrames) {
+        mutableStateOf(preferences.confirmationFrames)
+    }
+    SectionCard(
+        title = stringResource(R.string.wake_word_title),
+        badge = stringResource(R.string.voice_settings_experimental),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.wake_word_enable),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    text = stringResource(R.string.wake_word_enable_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (installing) {
+                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+            } else {
+                Switch(
+                    checked = preferences.enabled,
+                    enabled = abiSupported,
+                    onCheckedChange = { enabled ->
+                        if (enabled) onEnable() else onDisable()
+                    },
+                )
+            }
+        }
+
+        if (!abiSupported) {
+            Text(
+                text = stringResource(R.string.wake_word_unsupported_abi),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (installing) {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Text(
+                text = stringResource(R.string.wake_word_installing),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        error?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
+        if (preferences.enabled) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            ProviderRow(
+                label = stringResource(R.string.wake_word_phrase),
+                value = preferences.phrase,
+            )
+            ProviderRow(
+                label = stringResource(R.string.wake_word_status),
+                value = when (runtimeState) {
+                    WakeWordRuntimeState.Stopped ->
+                        stringResource(R.string.wake_word_status_stopped)
+                    WakeWordRuntimeState.Starting ->
+                        stringResource(R.string.wake_word_status_starting)
+                    WakeWordRuntimeState.Listening ->
+                        stringResource(R.string.wake_word_status_listening)
+                    WakeWordRuntimeState.PausedForVoice ->
+                        stringResource(R.string.wake_word_status_paused)
+                    WakeWordRuntimeState.AwaitingUser ->
+                        stringResource(R.string.wake_word_status_detected)
+                    WakeWordRuntimeState.Error ->
+                        stringResource(R.string.wake_word_status_error)
+                },
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.wake_word_sensitivity),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                text = stringResource(R.string.wake_word_sensitivity_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Slider(
+                value = sensitivityDraft,
+                onValueChange = { sensitivityDraft = it },
+                onValueChangeFinished = { onSensitivityChange(sensitivityDraft) },
+                valueRange = 0.2f..0.9f,
+                steps = 6,
+            )
+
+            Text(
+                text = stringResource(
+                    R.string.wake_word_confirmation_frames,
+                    confirmationFramesDraft,
+                ),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                text = stringResource(R.string.wake_word_confirmation_frames_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Slider(
+                value = confirmationFramesDraft.toFloat(),
+                onValueChange = {
+                    confirmationFramesDraft = it.toInt().coerceIn(1, 5)
+                },
+                onValueChangeFinished = {
+                    onConfirmationFramesChange(confirmationFramesDraft)
+                },
+                valueRange = 1f..5f,
+                steps = 3,
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.wake_word_new_session),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = stringResource(R.string.wake_word_new_session_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = preferences.startNewSession,
+                    onCheckedChange = onStartNewSessionChange,
+                )
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Text(
+            text = stringResource(R.string.wake_word_privacy_battery),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

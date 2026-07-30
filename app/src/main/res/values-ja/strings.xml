@@ -3410,4 +3410,39 @@
     <string name="conn_info_profile_api_key_saved">プロファイル API キーを保存しました</string>
     <string name="conn_info_profile_api_key_cleared">プロファイル API キーを消去しました</string>
     <string name="conn_info_profile_api_key_save_failed">プロファイル API キーを保存できませんでした</string>
+
+    <!-- 実験的な端末内ウェイクワード -->
+    <string name="wake_word_title">ウェイクワード</string>
+    <string name="wake_word_enable">「Hey Hermes」を検出</string>
+    <string name="wake_word_enable_desc">この端末内だけで動作する、実験的なオプトイン検出機能です。</string>
+    <string name="wake_word_phrase">フレーズ</string>
+    <string name="wake_word_status">状態</string>
+    <string name="wake_word_status_stopped">停止中</string>
+    <string name="wake_word_status_starting">起動中…</string>
+    <string name="wake_word_status_listening">端末内で検出中</string>
+    <string name="wake_word_status_paused">音声機能の使用中は一時停止</string>
+    <string name="wake_word_status_detected">検出しました — 通知を開いてください</string>
+    <string name="wake_word_status_error">確認が必要です</string>
+    <string name="wake_word_installing">端末内の英語モデルをダウンロードして検証しています（約 6 MB）…</string>
+    <string name="wake_word_unsupported_abi">ウェイクワードには arm64-v8a、armeabi-v7a、x86_64、または x86 端末が必要です。</string>
+    <string name="wake_word_sensitivity">判定の厳しさ</string>
+    <string name="wake_word_sensitivity_desc">値を高くすると誤検出は減りますが、小さな声を検出できない場合があります。</string>
+    <string name="wake_word_confirmation_frames">確認フレーム数: %1$d</string>
+    <string name="wake_word_confirmation_frames_desc">有効化する前に、より多くのデコーダーフレームでフレーズを確認します。</string>
+    <string name="wake_word_new_session">新しいセッションを開始</string>
+    <string name="wake_word_new_session_desc">音声機能を開く前に新しいチャットを作成します。選択中のプロファイルの現在のセッションを続けるにはオフにします。</string>
+    <string name="wake_word_privacy_battery">有効化前のマイク音声はこの端末内に留まり、ウェイクワード検出によってアップロードされることはありません。常時検出はバッテリーを多く消費します。Android は停止操作付きのマイク通知を常時表示します。</string>
+    <string name="wake_word_microphone_permission_required">ウェイクワードの検出にはマイクの権限が必要です。</string>
+    <string name="wake_word_notification_permission_required">Android がマイクのプライバシー操作を常時表示するには、通知の権限が必要です。</string>
+    <string name="wake_word_notification_channel">ウェイクワード用マイク</string>
+    <string name="wake_word_notification_channel_desc">実験的なウェイクワード検出中に、プライバシーと停止の操作を常時表示します。</string>
+    <string name="wake_word_notification_title">「Hey Hermes」を検出中</string>
+    <string name="wake_word_notification_starting">端末内の検出機能を起動しています…</string>
+    <string name="wake_word_notification_listening">端末内で検出中です。音声はアップロードされません。</string>
+    <string name="wake_word_notification_paused">Hermes の音声セッションがマイクを使用しているため一時停止中です。</string>
+    <string name="wake_word_notification_detected">フレーズを検出しました。タップして Hermes の音声機能を開きます。</string>
+    <string name="wake_word_notification_error">ウェイクワード検出を確認してください。音声設定を開いてください。</string>
+    <string name="wake_word_notification_stopped">ウェイクワード検出を停止しています。</string>
+    <string name="wake_word_notification_stop">停止</string>
+    <string name="wake_word_notification_open">音声機能を開く</string>
 </resources>

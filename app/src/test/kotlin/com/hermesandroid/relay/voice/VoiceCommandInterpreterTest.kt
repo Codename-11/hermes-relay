@@ -70,6 +70,50 @@ class VoiceCommandInterpreterTest {
     }
 
     @Test
+    fun `bare stop is accepted only after an active response barge in`() {
+        assertEquals(
+            VoiceCommandAction.StopResponse,
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "stop",
+                VoiceCommandContext(
+                    responseActive = true,
+                    interruptedActiveResponse = true,
+                ),
+            ),
+        )
+        assertNull(
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "stop",
+                VoiceCommandContext(responseActive = true),
+            ),
+        )
+        assertNull(
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "stop the container",
+                VoiceCommandContext(
+                    responseActive = true,
+                    interruptedActiveResponse = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `bare pause after barge in pauses continuous mode in generation or playback`() {
+        assertEquals(
+            VoiceCommandAction.PauseContinuousListening,
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "pause",
+                VoiceCommandContext(
+                    responseActive = true,
+                    interruptedActiveResponse = true,
+                    continuousModeSelected = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `state gates stop and background cancellation`() {
         assertNull(
             VoiceCommandInterpreter.interpretFinalTranscript(

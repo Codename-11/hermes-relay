@@ -177,7 +177,11 @@ These controls always show and apply to both engines:
 
 ### Barge-in
 
-New as of 2026-04-17. Lets you interrupt the agent by speaking while it's replying — the same turn-taking pattern ChatGPT and Siri use. **Default off** because echo-cancellation quality varies widely across Android phones; opt in once and the setting persists.
+Lets you interrupt the agent by speaking while it is thinking or talking. One
+listener stays active across the whole response, so the microphone does not
+re-arm between generation and playback. **Default off** because
+echo-cancellation quality varies across Android phones; opt in once and the
+setting persists.
 
 - **Interrupt when I speak** — master toggle. Default off.
 - **Sensitivity** — `Off / Low / Default / High`. Higher values fire on quieter / shorter speech. Start with Default; drop to Low if your phone false-triggers on its own TTS, raise to High if you find yourself having to speak up.
@@ -185,7 +189,40 @@ New as of 2026-04-17. Lets you interrupt the agent by speaking while it's replyi
 
 **Device compatibility.** If your phone doesn't support hardware echo cancellation (`AcousticEchoCanceler`), you'll see a warning badge next to the master toggle: *"Your device may have limited echo cancellation. Barge-in quality will vary."* You can still enable barge-in, but expect more false triggers from the phone's own speaker feeding back into the mic. **Using headphones fixes this entirely** — the mic never hears the TTS output, so VAD has nothing to confuse.
 
-**How it feels in practice.** As soon as you start speaking, the agent's voice briefly ducks in volume (about 30 %) — that's the app acknowledging "I think I heard something" before committing. If you keep speaking, it stops entirely within a fraction of a second and you're back in recording mode. If it was a false trigger (one stray frame of background noise), the volume pops back up to full after ~500 ms with no interruption.
+Before playback, the app samples the room noise and freezes that calibration so
+the phone's speaker cannot teach the detector the wrong noise floor. Playback
+also has a short grace period. As soon as you start speaking, the agent's voice
+briefly ducks in volume (about 30%). Sustained, model-confirmed speech stops the
+active generation or playback and captures your replacement request. A false
+trigger returns to full volume after about 500 ms.
+
+After an interruption, exact “stop” or “pause” utterances control the active
+voice response. Longer requests such as “stop the container” still go to the
+agent normally. Stopping speech does not cancel a promoted background task; use
+the task's explicit cancel action or say the explicit background-task
+cancellation command.
+
+### Experimental wake word
+
+Under **Voice Settings → Listening**, enable **Listen for “Hey Hermes”** to use
+the Android-local wake-word preview. It is off by default. The first enable
+downloads and verifies an English keyword model of about 6 MB. The APK includes
+the sherpa-onnx runtime but not the model.
+
+Detection runs on the phone: microphone audio is not uploaded before the phrase
+activates voice. Android requires a user-started microphone foreground service,
+shows an ongoing privacy notification, and provides a **Stop** action. The
+listener does not start at boot. When the phrase is detected, the wake listener
+releases the microphone before the normal voice flow records anything, stays
+paused for the voice session, then resumes after voice exits.
+
+The initial preview supports one phrase, “Hey Hermes.” **Strictness** controls
+false activations (higher is stricter), **Confirmation frames** controls how
+many matching decoder frames are required, and **Start a new session** chooses
+between a fresh chat and the selected profile's current session.
+Profile-specific wake phrases and routing are not supported yet. Continuous
+local listening uses additional battery and still needs device-specific
+acoustic testing.
 
 ### Hermes Chat + Voice Output
 

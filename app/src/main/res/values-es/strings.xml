@@ -3096,4 +3096,39 @@
     <string name="conn_info_profile_api_key_saved">Clave API del perfil guardada</string>
     <string name="conn_info_profile_api_key_cleared">Clave API del perfil borrada</string>
     <string name="conn_info_profile_api_key_save_failed">No se pudo guardar la clave API del perfil</string>
+
+    <!-- Palabra de activación experimental en el dispositivo -->
+    <string name="wake_word_title">Palabra de activación</string>
+    <string name="wake_word_enable">Detectar “Hey Hermes”</string>
+    <string name="wake_word_enable_desc">Detección experimental y opcional que se ejecuta íntegramente en este teléfono.</string>
+    <string name="wake_word_phrase">Frase</string>
+    <string name="wake_word_status">Estado</string>
+    <string name="wake_word_status_stopped">Detenido</string>
+    <string name="wake_word_status_starting">Iniciando…</string>
+    <string name="wake_word_status_listening">Escuchando localmente</string>
+    <string name="wake_word_status_paused">En pausa mientras la voz está activa</string>
+    <string name="wake_word_status_detected">Detectado — abre la notificación</string>
+    <string name="wake_word_status_error">Requiere atención</string>
+    <string name="wake_word_installing">Descargando y verificando el modelo de inglés en el dispositivo (unos 6 MB)…</string>
+    <string name="wake_word_unsupported_abi">La palabra de activación requiere un dispositivo arm64-v8a, armeabi-v7a, x86_64 o x86.</string>
+    <string name="wake_word_sensitivity">Rigor</string>
+    <string name="wake_word_sensitivity_desc">Los valores más altos son más estrictos y reducen las activaciones falsas, pero pueden omitir voces más bajas.</string>
+    <string name="wake_word_confirmation_frames">Fotogramas de confirmación: %1$d</string>
+    <string name="wake_word_confirmation_frames_desc">Exige la frase en más fotogramas del decodificador antes de la activación.</string>
+    <string name="wake_word_new_session">Iniciar una sesión nueva</string>
+    <string name="wake_word_new_session_desc">Crea un chat nuevo antes de abrir la voz. Desactívalo para continuar la sesión actual del perfil seleccionado.</string>
+    <string name="wake_word_privacy_battery">El audio del micrófono permanece en este teléfono antes de la activación y la detección nunca lo sube. La escucha continua consume más batería. Android muestra una notificación permanente del micrófono con una acción para detenerla.</string>
+    <string name="wake_word_microphone_permission_required">Se requiere permiso para usar el micrófono al detectar la palabra de activación.</string>
+    <string name="wake_word_notification_permission_required">Se requiere permiso para mostrar notificaciones a fin de que Android muestre el control permanente de privacidad del micrófono.</string>
+    <string name="wake_word_notification_channel">Micrófono de la palabra de activación</string>
+    <string name="wake_word_notification_channel_desc">Controles permanentes de privacidad y detención mientras la detección experimental está activa.</string>
+    <string name="wake_word_notification_title">Detectando “Hey Hermes”</string>
+    <string name="wake_word_notification_starting">Iniciando el detector en el dispositivo…</string>
+    <string name="wake_word_notification_listening">Escuchando localmente. El audio no se sube.</string>
+    <string name="wake_word_notification_paused">En pausa mientras una sesión de voz de Hermes usa el micrófono.</string>
+    <string name="wake_word_notification_detected">Frase detectada. Toca para abrir la voz de Hermes.</string>
+    <string name="wake_word_notification_error">La detección de la palabra de activación requiere atención. Abre los ajustes de Voz.</string>
+    <string name="wake_word_notification_stopped">La detección de la palabra de activación se está deteniendo.</string>
+    <string name="wake_word_notification_stop">Detener</string>
+    <string name="wake_word_notification_open">Abrir voz</string>
 </resources>

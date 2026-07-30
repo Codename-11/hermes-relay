@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android can opt into an experimental local “Hey Hermes” wake word.** A user-started microphone foreground service performs sherpa-onnx detection on the phone, keeps pre-activation audio local, shows an ongoing Stop notification, and safely hands microphone ownership to the existing voice flow.
+
+### Changed
+
+- **Voice interruption covers the complete active response.** One calibrated VAD listener spans generation and playback on Standard and Realtime paths, rejects stale callbacks and speaker bleed, and keeps promoted background tasks alive when speech alone is stopped.
+
 ### Fixed
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.

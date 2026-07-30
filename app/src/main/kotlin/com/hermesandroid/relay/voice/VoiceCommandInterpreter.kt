@@ -22,6 +22,7 @@ internal enum class VoiceCommandAction {
 /** State gates that keep an exact command phrase from becoming a global hotword. */
 internal data class VoiceCommandContext(
     val responseActive: Boolean = false,
+    val interruptedActiveResponse: Boolean = false,
     val backgroundTaskActive: Boolean = false,
     val backgroundAnswerAvailable: Boolean = false,
     val continuousModeSelected: Boolean = false,
@@ -40,6 +41,7 @@ internal data class VoiceCommandContext(
  */
 internal object VoiceCommandInterpreter {
     private val stopResponsePhrases = setOf(
+        "stop",
         "stop speaking",
         "stop talking",
         "stop the response",
@@ -84,8 +86,13 @@ internal object VoiceCommandInterpreter {
         return when {
             context.backgroundTaskActive && phrase in cancelBackgroundTaskPhrases ->
                 VoiceCommandAction.CancelBackgroundTask
-            context.responseActive && phrase in stopResponsePhrases ->
+            context.responseActive &&
+                phrase in stopResponsePhrases &&
+                (phrase != "stop" || context.interruptedActiveResponse) ->
                 VoiceCommandAction.StopResponse
+            context.continuousModeSelected &&
+                context.interruptedActiveResponse &&
+                phrase in pauseContinuousPhrases -> VoiceCommandAction.PauseContinuousListening
             context.continuousModeSelected &&
                 context.continuousListeningActive &&
                 phrase in pauseContinuousPhrases -> VoiceCommandAction.PauseContinuousListening
