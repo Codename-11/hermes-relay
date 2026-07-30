@@ -53,11 +53,18 @@ Google Play build:
 | `INTERNET` | Connect to your Hermes servers |
 | `ACCESS_NETWORK_STATE` | Detect connectivity changes for reconnect behavior |
 | `CAMERA` | Optional QR code scanning for server pairing (`required="false"`) |
-| `RECORD_AUDIO` | Optional Voice mode microphone capture, requested when you use the mic |
+| `RECORD_AUDIO` | Optional Voice mode capture and opt-in local “Hey Hermes” detection. Pre-activation wake audio stays on the phone. |
 | `MODIFY_AUDIO_SETTINGS` | Voice playback and audio-session behavior |
 | Android Notification Access | Optional system setting for the notification companion; forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay |
 
 Sideload builds may additionally request permissions needed for Device Control, including overlay, foreground-service, wake-lock, screenshot, contacts, location, SMS, and call capabilities. Those permissions are not present in the Google Play manifest.
+
+If you select Hermes as Android's default Digital Assistant and separately
+enable background “Hey Hermes,” Android keeps the assistant service available
+and local sherpa-onnx keyword spotting uses the microphone while the mode is
+enabled. Wake audio is not sent to Hermes or Relay before activation. The
+Digital Assistant listener and the notification-based experimental listener
+cannot be enabled at the same time.
 
 ## Notification Companion
 

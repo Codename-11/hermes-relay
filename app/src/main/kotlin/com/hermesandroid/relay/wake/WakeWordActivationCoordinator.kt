@@ -9,7 +9,13 @@ data class WakeWordActivation(
     val id: String = UUID.randomUUID().toString(),
     val startNewSession: Boolean,
     val profileRouting: WakeWordProfileRouting,
+    val source: WakeWordActivationSource = WakeWordActivationSource.ForegroundService,
 )
+
+enum class WakeWordActivationSource {
+    ForegroundService,
+    SystemAssistant,
+}
 
 /**
  * Durable-within-process handoff between the microphone service and Compose.

@@ -37,6 +37,7 @@ data class WakeWordProfileRouting(
 
 data class WakeWordPreferences(
     val enabled: Boolean = false,
+    val assistantEnabled: Boolean = false,
     val phrase: String = DEFAULT_WAKE_PHRASE,
     /** Higher is stricter (fewer false activations), matching upstream. */
     val sensitivity: Float = 0.6f,
@@ -45,6 +46,28 @@ data class WakeWordPreferences(
     val profileRouting: WakeWordProfileRouting = WakeWordProfileRouting(),
 )
 
+internal enum class WakeWordListenerMode {
+    ForegroundService,
+    SystemAssistant,
+}
+
+internal data class WakeWordListenerFlags(
+    val foregroundService: Boolean,
+    val systemAssistant: Boolean,
+)
+
+internal fun flagsForWakeWordMode(mode: WakeWordListenerMode): WakeWordListenerFlags =
+    when (mode) {
+        WakeWordListenerMode.ForegroundService -> WakeWordListenerFlags(
+            foregroundService = true,
+            systemAssistant = false,
+        )
+        WakeWordListenerMode.SystemAssistant -> WakeWordListenerFlags(
+            foregroundService = false,
+            systemAssistant = true,
+        )
+    }
+
 class WakeWordPreferencesRepository(
     private val dataStore: DataStore<Preferences>,
 ) {
@@ -52,6 +75,7 @@ class WakeWordPreferencesRepository(
 
     private companion object {
         val KEY_ENABLED = booleanPreferencesKey("wake_word_enabled")
+        val KEY_ASSISTANT_ENABLED = booleanPreferencesKey("assistant_wake_word_enabled")
         val KEY_PHRASE = stringPreferencesKey("wake_word_phrase")
         val KEY_SENSITIVITY = floatPreferencesKey("wake_word_sensitivity")
         val KEY_CONFIRMATION_FRAMES = intPreferencesKey("wake_word_confirmation_frames")
@@ -65,6 +89,7 @@ class WakeWordPreferencesRepository(
             val routeMode = WakeWordProfileRouteMode.fromStorage(prefs[KEY_PROFILE_ROUTE_MODE])
             WakeWordPreferences(
                 enabled = prefs[KEY_ENABLED] ?: false,
+                assistantEnabled = prefs[KEY_ASSISTANT_ENABLED] ?: false,
                 // Only one phrase has been validated. Ignore stale/future values
                 // until the product actually exposes multi-phrase support.
                 phrase = DEFAULT_WAKE_PHRASE,
@@ -83,8 +108,27 @@ class WakeWordPreferencesRepository(
 
     suspend fun setEnabled(enabled: Boolean) {
         dataStore.edit {
-            it[KEY_ENABLED] = enabled
-            if (enabled) it[KEY_PHRASE] = DEFAULT_WAKE_PHRASE
+            if (enabled) {
+                val flags = flagsForWakeWordMode(WakeWordListenerMode.ForegroundService)
+                it[KEY_ENABLED] = flags.foregroundService
+                it[KEY_ASSISTANT_ENABLED] = flags.systemAssistant
+                it[KEY_PHRASE] = DEFAULT_WAKE_PHRASE
+            } else {
+                it[KEY_ENABLED] = false
+            }
+        }
+    }
+
+    suspend fun setAssistantEnabled(enabled: Boolean) {
+        dataStore.edit {
+            if (enabled) {
+                val flags = flagsForWakeWordMode(WakeWordListenerMode.SystemAssistant)
+                it[KEY_ENABLED] = flags.foregroundService
+                it[KEY_ASSISTANT_ENABLED] = flags.systemAssistant
+                it[KEY_PHRASE] = DEFAULT_WAKE_PHRASE
+            } else {
+                it[KEY_ASSISTANT_ENABLED] = false
+            }
         }
     }
 

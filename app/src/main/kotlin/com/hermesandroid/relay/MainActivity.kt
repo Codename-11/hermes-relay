@@ -5,8 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.os.Build
 import android.util.Log
 import android.view.View
+import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,6 +17,7 @@ import androidx.activity.viewModels
 import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
 import com.hermesandroid.relay.bridge.BridgeForegroundService
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
@@ -24,6 +27,8 @@ import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.NavRouteRequest
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 
 class MainActivity : AppCompatActivity() {
 
@@ -88,6 +93,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         super.onCreate(savedInstanceState)
+        configureAssistantWindow(intent)
+        lifecycleScope.launch {
+            com.hermesandroid.relay.assistant.AssistantAppSessionState.active.collect { active ->
+                if (!active) clearAssistantWindow()
+            }
+        }
         enableEdgeToEdge()
 
         // === PHASE3-bridge-ui-followup: install MediaProjection requester ===
@@ -114,6 +125,14 @@ class MainActivity : AppCompatActivity() {
         // in RelayApp's NavRouteRequest collector — we just pump the request
         // into the SharedFlow here.
         consumeNavRouteIntent(intent)
+        val consumedAssistantActivation =
+            com.hermesandroid.relay.assistant.AssistantSessionProtocol.consumeActivation(
+                this,
+                intent,
+            )
+        if (!consumedAssistantActivation) {
+            com.hermesandroid.relay.assistant.AssistantSessionProtocol.restoreActivation(this)
+        }
         // === END PHASE3-safety-rails-followup ===
         setContent {
             RelayApp()
@@ -122,6 +141,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        configureAssistantWindow(intent)
         // === PHASE3-safety-rails-followup: deep-link nav route on re-launch ===
         // Same as onCreate but for the singleTask / FLAG_ACTIVITY_CLEAR_TOP
         // path: when the app is already running and the foreground service's
@@ -129,6 +149,7 @@ class MainActivity : AppCompatActivity() {
         // instead of onCreate. RelayApp's collector handles both cases.
         setIntent(intent)
         consumeNavRouteIntent(intent)
+        com.hermesandroid.relay.assistant.AssistantSessionProtocol.consumeActivation(this, intent)
         // === END PHASE3-safety-rails-followup ===
     }
 
@@ -136,6 +157,40 @@ class MainActivity : AppCompatActivity() {
         val route = intent?.getStringExtra(EXTRA_NAV_ROUTE) ?: return
         if (route.isBlank()) return
         NavRouteRequest.tryRequest(route)
+    }
+
+    private fun configureAssistantWindow(intent: Intent?) {
+        if (
+            intent?.getBooleanExtra(
+                com.hermesandroid.relay.assistant.AssistantSessionProtocol.EXTRA_ASSISTANT_SESSION,
+                false,
+            ) == true ||
+            com.hermesandroid.relay.assistant.AssistantSessionPersistence.isActive(this)
+        ) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+            } else {
+                @Suppress("DEPRECATION")
+                window.addFlags(
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                )
+            }
+        }
+    }
+
+    private fun clearAssistantWindow() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(false)
+            setTurnScreenOn(false)
+        } else {
+            @Suppress("DEPRECATION")
+            window.clearFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
     }
 
     override fun onResume() {

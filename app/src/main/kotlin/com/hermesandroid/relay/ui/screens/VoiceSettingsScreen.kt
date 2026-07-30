@@ -94,6 +94,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AgentDisplay
@@ -145,6 +148,9 @@ import com.hermesandroid.relay.wake.WakeWordPreferences
 import com.hermesandroid.relay.wake.WakeWordRuntimeState
 import com.hermesandroid.relay.wake.WakeWordTestPhase
 import com.hermesandroid.relay.wake.WakeWordTestState
+import com.hermesandroid.relay.assistant.AssistantRole
+import com.hermesandroid.relay.assistant.AssistantRoleStatus
+import com.hermesandroid.relay.assistant.AssistantWakeRuntimeState
 import kotlinx.coroutines.launch
 
 internal enum class VoiceSettingsSection { Output, Listening, Advanced }
@@ -214,6 +220,23 @@ fun VoiceSettingsScreen(
     val wakeWordPrefs by settingsViewModel.wakeWordPrefs.collectAsState()
     val wakeWordRuntimeState by settingsViewModel.wakeWordRuntimeState.collectAsState()
     val wakeWordInstallState by settingsViewModel.wakeWordInstallState.collectAsState()
+    val assistantWakeRuntimeState by settingsViewModel.assistantWakeRuntimeState.collectAsState()
+    var assistantRoleStatus by remember { mutableStateOf(AssistantRole.status(context)) }
+    val voiceSettingsLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(voiceSettingsLifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                assistantRoleStatus = AssistantRole.status(context)
+            }
+        }
+        voiceSettingsLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { voiceSettingsLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val assistantRoleLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        assistantRoleStatus = AssistantRole.status(context)
+    }
 
     var wakeWordPermissionError by remember { mutableStateOf<String?>(null) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -243,6 +266,28 @@ fun VoiceSettingsScreen(
             settingsViewModel.setWakeWordEnabled(true)
         }
     }
+    val assistantMicrophonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            wakeWordPermissionError = null
+            settingsViewModel.setAssistantWakeEnabled(true)
+        } else {
+            wakeWordPermissionError =
+                context.getString(R.string.wake_word_microphone_permission_required)
+        }
+    }
+    val assistantRoleMicrophonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            wakeWordPermissionError = null
+            AssistantRole.selectionIntent(context)?.let(assistantRoleLauncher::launch)
+        } else {
+            wakeWordPermissionError =
+                context.getString(R.string.wake_word_microphone_permission_required)
+        }
+    }
     val requestWakeWordEnable: () -> Unit = {
         when {
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
@@ -256,6 +301,32 @@ fun VoiceSettingsScreen(
                 wakeWordPermissionError = null
                 settingsViewModel.setWakeWordEnabled(true)
             }
+        }
+    }
+    val requestAssistantWakeEnable: () -> Unit = {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            assistantMicrophonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            wakeWordPermissionError = null
+            settingsViewModel.setAssistantWakeEnabled(true)
+        }
+    }
+    val requestAssistantRole: () -> Unit = {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            assistantRoleMicrophonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            AssistantRole.selectionIntent(context)?.let(assistantRoleLauncher::launch)
+        }
+    }
+    LaunchedEffect(assistantRoleStatus, wakeWordPrefs.assistantEnabled) {
+        if (assistantRoleStatus != AssistantRoleStatus.Selected &&
+            wakeWordPrefs.assistantEnabled
+        ) {
+            settingsViewModel.setAssistantWakeEnabled(false)
         }
     }
 
@@ -504,6 +575,21 @@ fun VoiceSettingsScreen(
                     )
                     val wakeWordTestState by
                         settingsViewModel.wakeWordTestState.collectAsState()
+                    DigitalAssistantCard(
+                        preferences = wakeWordPrefs,
+                        roleStatus = assistantRoleStatus,
+                        runtimeState = assistantWakeRuntimeState,
+                        installing = wakeWordInstallState.installing,
+                        error = wakeWordPermissionError ?: wakeWordInstallState.error,
+                        onChooseAssistant = requestAssistantRole,
+                        onManageAssistant = {
+                            AssistantRole.managementIntent(context)?.let(assistantRoleLauncher::launch)
+                        },
+                        onEnableWake = requestAssistantWakeEnable,
+                        onDisableWake = {
+                            settingsViewModel.setAssistantWakeEnabled(false)
+                        },
+                    )
                     WakeWordCard(
                         preferences = wakeWordPrefs,
                         runtimeState = wakeWordRuntimeState,
@@ -3377,6 +3463,112 @@ private fun GlobalVoiceControlsCard(
 // ---------------------------------------------------------------------------
 // Experimental local wake word.
 // ---------------------------------------------------------------------------
+
+@Composable
+private fun DigitalAssistantCard(
+    preferences: WakeWordPreferences,
+    roleStatus: AssistantRoleStatus,
+    runtimeState: AssistantWakeRuntimeState,
+    installing: Boolean,
+    error: String?,
+    onChooseAssistant: () -> Unit,
+    onManageAssistant: () -> Unit,
+    onEnableWake: () -> Unit,
+    onDisableWake: () -> Unit,
+) {
+    val selected = roleStatus == AssistantRoleStatus.Selected
+    SectionCard(title = stringResource(R.string.assistant_mode_title)) {
+        Text(
+            text = stringResource(R.string.assistant_mode_description),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.height(8.dp))
+        ProviderRow(
+            label = stringResource(R.string.assistant_mode_role_status),
+            value = when (roleStatus) {
+                AssistantRoleStatus.Selected ->
+                    stringResource(R.string.assistant_mode_role_selected)
+                AssistantRoleStatus.NotSelected ->
+                    stringResource(R.string.assistant_mode_role_not_selected)
+                AssistantRoleStatus.Unavailable ->
+                    stringResource(R.string.assistant_mode_role_unavailable)
+            },
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onChooseAssistant,
+                enabled = roleStatus != AssistantRoleStatus.Unavailable && !selected,
+            ) {
+                Text(stringResource(R.string.assistant_mode_choose))
+            }
+            OutlinedButton(
+                onClick = onManageAssistant,
+                enabled = roleStatus != AssistantRoleStatus.Unavailable,
+            ) {
+                Text(stringResource(R.string.assistant_mode_manage))
+            }
+        }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.assistant_mode_wake_enable),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    stringResource(R.string.assistant_mode_wake_enable_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (installing && !preferences.enabled) {
+                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+            } else {
+                Switch(
+                    checked = preferences.assistantEnabled,
+                    enabled = selected || preferences.assistantEnabled,
+                    onCheckedChange = { if (it) onEnableWake() else onDisableWake() },
+                )
+            }
+        }
+        if (preferences.assistantEnabled) {
+            ProviderRow(
+                label = stringResource(R.string.wake_word_status),
+                value = when (runtimeState) {
+                    AssistantWakeRuntimeState.Stopped ->
+                        stringResource(R.string.wake_word_status_stopped)
+                    AssistantWakeRuntimeState.Starting ->
+                        stringResource(R.string.wake_word_status_starting)
+                    AssistantWakeRuntimeState.Listening ->
+                        stringResource(R.string.wake_word_status_listening)
+                    AssistantWakeRuntimeState.PausedForVoice ->
+                        stringResource(R.string.wake_word_status_paused)
+                    AssistantWakeRuntimeState.AwaitingSession ->
+                        stringResource(R.string.assistant_mode_status_session)
+                    AssistantWakeRuntimeState.Error ->
+                        stringResource(R.string.wake_word_status_error)
+                },
+            )
+        }
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error)
+        }
+        Text(
+            text = stringResource(R.string.assistant_mode_removal),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = stringResource(R.string.assistant_mode_battery),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 @Composable
 private fun WakeWordCard(

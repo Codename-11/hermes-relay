@@ -2320,3 +2320,50 @@ couple Standard voice to non-standard server behavior.
   background, but it does not launch an activity from the background. It holds
   a detection behind an actionable notification until Hermes is visible.
   Default-assistant integration is a separate Android system role and lifecycle.
+
+---
+
+## ADR 42 — Full assistant wake uses Android's selected VoiceInteractionService
+
+**Status:** Accepted (2026-07-30).
+
+**Context.** The microphone foreground-service preview can detect in the
+background, but Android correctly prevents an ordinary background app from
+presenting its Activity immediately. Queuing the activation behind a
+notification is therefore not equivalent to a default digital assistant.
+Accessibility, overlays, full-screen intents, or server-side microphones would
+either bypass platform policy, weaken privacy, or break the vanilla-Hermes
+boundary.
+
+**Decision.**
+
+- Hermes declares a `VoiceInteractionService` and associated
+  `VoiceInteractionSessionService`. Android activates it only after the user
+  confirms Hermes as the Assistant role; the app never silently takes the role.
+- The always-running interaction service remains lightweight and owns only
+  opt-in Android-local sherpa-onnx KWS. Session UI and lifecycle work run in a
+  separate process. The system session opens the existing app voice flow with
+  `startVoiceActivity`, including the keyguard-supported platform path.
+- Assistant KWS and the experimental microphone foreground service are separate,
+  mutually exclusive modes. Both use the same model, tuning, privacy boundary,
+  and one-microphone handoff. Voice capture, barge-in, and diagnostics retain
+  their existing process-wide lease.
+- Session state crosses the process boundary through explicit, package-scoped
+  broadcasts. Exit/cancel tears down the existing voice flow, finishes the
+  system session, and retries local wake ownership only after the microphone is
+  free. Process recreation creates a fresh activation rather than relying on an
+  in-memory Activity reference.
+- Standard voice remains dashboard-backed and upstream-only. Assistant mode adds
+  an Android invocation surface; it does not add or require a Relay/server wake
+  endpoint.
+
+**Consequences.**
+
+- Background and locked-screen invocation is mediated by Android's selected
+  assistant UI/session rather than an ordinary background Activity launch.
+- Users can leave Hermes selected for gesture/power-button invocation while
+  turning continuous KWS off, or remove Hermes through Android's Assistant
+  settings.
+- Android does not grant third-party assistants Google's dedicated low-power
+  hotword DSP integration. Local sherpa inference keeps pre-activation audio
+  private but can consume materially more battery than the built-in assistant.

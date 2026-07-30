@@ -46,10 +46,15 @@ class WakeWordCoreTest {
             id = "activation-1",
             startNewSession = true,
             profileRouting = WakeWordProfileRouting(),
+            source = WakeWordActivationSource.SystemAssistant,
         )
         WakeWordActivationCoordinator.request(activation)
 
         assertEquals(activation, WakeWordActivationCoordinator.pending.value)
+        assertEquals(
+            WakeWordActivationSource.SystemAssistant,
+            WakeWordActivationCoordinator.pending.value?.source,
+        )
         assertFalse(WakeWordActivationCoordinator.consume("other"))
         assertEquals(activation, WakeWordActivationCoordinator.pending.value)
         assertTrue(WakeWordActivationCoordinator.consume("activation-1"))

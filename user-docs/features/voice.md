@@ -202,6 +202,40 @@ agent normally. Stopping speech does not cancel a promoted background task; use
 the task's explicit cancel action or say the explicit background-task
 cancellation command.
 
+### Android Digital Assistant
+
+Hermes can optionally become Android's default Digital Assistant, similar to
+Home Assistant's assistant integration. This is the supported path for
+system-mediated background and locked-screen invocation.
+
+1. Open **Settings → Voice → Listening**.
+2. Under **Android Digital Assistant**, tap **Choose Hermes**.
+3. Grant microphone permission and confirm Hermes in Android's role dialog.
+4. Return to Voice settings and enable **Background “Hey Hermes”** if you want
+   continuous wake detection.
+
+Hermes never changes the default assistant silently. Once selected, the system
+assistant gesture or power-button shortcut can open a Hermes session even when
+continuous wake is off. Android presents a real assistant session and hands it
+to the existing voice flow; Standard voice still uses the upstream Dashboard
+audio routes and does not require Relay.
+
+The optional background listener uses the same Android-local sherpa model and
+keeps pre-activation audio on the phone. It releases the microphone before the
+assistant session starts listening and resumes after the session closes. It is
+separate from the experimental notification-based listener below; enabling
+either wake mode disables the other.
+
+To pause continuous listening but keep gesture invocation, turn off
+**Background “Hey Hermes”**. To remove Hermes as the default assistant, tap
+**Android settings** and choose another assistant or **None**.
+
+Third-party assistants do not receive Google's dedicated low-power hotword
+hardware. Continuous local microphone and CPU use can therefore have a
+noticeable battery cost; leave background wake off if gesture-only invocation
+is enough. The integration does not use accessibility, overlay permission,
+full-screen intents, server wake listeners, or Picovoice credentials.
+
 ### Experimental wake word
 
 Under **Voice Settings → Listening**, enable **Listen for “Hey Hermes”** to use

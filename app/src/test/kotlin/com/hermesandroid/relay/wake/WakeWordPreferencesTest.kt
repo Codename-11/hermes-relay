@@ -46,6 +46,7 @@ class WakeWordPreferencesTest {
     fun defaults_areOptInAndUseOnlyValidatedPhrase() = runTest {
         val preferences = repository.flow.first()
         assertFalse(preferences.enabled)
+        assertFalse(preferences.assistantEnabled)
         assertEquals(DEFAULT_WAKE_PHRASE, preferences.phrase)
         assertEquals(0.6f, preferences.sensitivity)
         assertEquals(3, preferences.confirmationFrames)
@@ -59,6 +60,26 @@ class WakeWordPreferencesTest {
         repository.setEnabled(true)
         val preferences = repository.flow.first()
         assertTrue(preferences.enabled)
+    }
+
+    @Test
+    fun assistantWake_roundTripsAndDisablesForegroundByDefault() = runTest {
+        repository.setAssistantEnabled(true)
+        val preferences = repository.flow.first()
+        assertTrue(preferences.assistantEnabled)
+        assertFalse(preferences.enabled)
+    }
+
+    @Test
+    fun foregroundAndAssistantWakeModes_areMutuallyExclusive() {
+        assertEquals(
+            WakeWordListenerFlags(foregroundService = true, systemAssistant = false),
+            flagsForWakeWordMode(WakeWordListenerMode.ForegroundService),
+        )
+        assertEquals(
+            WakeWordListenerFlags(foregroundService = false, systemAssistant = true),
+            flagsForWakeWordMode(WakeWordListenerMode.SystemAssistant),
+        )
     }
 
     @Test
