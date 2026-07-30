@@ -1244,6 +1244,36 @@ fun RelayApp() {
         // bottom navigation bar so the voice overlay can own the entire screen
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
+        val wakeActivation by
+            com.hermesandroid.relay.wake.WakeWordActivationCoordinator.pending.collectAsState()
+        val appIsForeground by
+            com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
+
+        // A background detection stays pending behind the actionable
+        // notification. Only a visible Hermes activity may enter voice.
+        LaunchedEffect(wakeActivation?.id, appIsForeground) {
+            val activation = wakeActivation ?: return@LaunchedEffect
+            if (!appIsForeground) return@LaunchedEffect
+            com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
+            if (activation.startNewSession) {
+                chatViewModel.createNewChat()
+            }
+            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                launchSingleTop = true
+            }
+            voiceViewModel.enterVoiceMode()
+            // Let the existing RelayApp initialization and Chat destination
+            // settle before opening VoiceRecorder on a cold task recreation.
+            delay(120L)
+            voiceViewModel.startListening()
+            com.hermesandroid.relay.wake.WakeWordActivationCoordinator.consume(activation.id)
+        }
+
+        LaunchedEffect(voiceUiState.voiceMode) {
+            com.hermesandroid.relay.wake.WakeWordForegroundService.setVoiceSessionActive(
+                voiceUiState.voiceMode
+            )
+        }
         val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
         val activeConnection by connectionViewModel.activeConnection.collectAsState()

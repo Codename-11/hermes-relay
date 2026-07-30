@@ -160,6 +160,40 @@ class VoiceViewModelBargeInTest {
     }
 
     // -------------------------------------------------------------------
+    // Full-turn ownership — Thinking -> Speaking uses one listener
+    // -------------------------------------------------------------------
+
+    @Test
+    fun `one listener spans Thinking into Speaking without rearm`() = runTest {
+        val vm = buildViewModel()
+
+        vm.beginBargeInTurnForTest()
+        runCurrent()
+        assertEquals(VoiceState.Thinking, vm.uiState.value.state)
+        verify(exactly = 1) { bargeInListener.start(any()) }
+
+        vm.markBargeInPlaybackStartedForTest()
+        runCurrent()
+        assertEquals(VoiceState.Speaking, vm.uiState.value.state)
+        verify(exactly = 1) { bargeInListener.start(any()) }
+        verify(exactly = 1) { bargeInListener.markPlaybackStarted(any(), any()) }
+    }
+
+    @Test
+    fun `bargeInDetected during Thinking interrupts generation and captures replacement`() = runTest {
+        val vm = buildViewModel()
+        vm.beginBargeInTurnForTest()
+        runCurrent()
+
+        bargeInFlow.emit(Unit)
+        runCurrent()
+
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+        verify(atLeast = 1) { chatViewModel.cancelStream() }
+        verify(atLeast = 1) { recorder.startRecording() }
+    }
+
+    // -------------------------------------------------------------------
     // Test 1 — bargeInDetected while Speaking → interrupt + Listening
     // -------------------------------------------------------------------
 

@@ -15,6 +15,11 @@ import com.hermesandroid.relay.network.relay.VoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
+import com.hermesandroid.relay.wake.WakeWordForegroundService
+import com.hermesandroid.relay.wake.WakeWordModelInstaller
+import com.hermesandroid.relay.wake.WakeWordPreferences
+import com.hermesandroid.relay.wake.WakeWordPreferencesRepository
+import com.hermesandroid.relay.wake.WakeWordRuntimeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -62,6 +67,11 @@ data class VoiceConfigUiState(
     val realtimeOptionsStatus: String? = null,
 )
 
+data class WakeWordInstallUiState(
+    val installing: Boolean = false,
+    val error: String? = null,
+)
+
 /**
  * View-model backing the Voice Settings screen.
  *
@@ -73,6 +83,7 @@ data class VoiceConfigUiState(
 class VoiceSettingsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val bargeInRepo = BargeInPreferencesRepository(application)
+    private val wakeWordRepo = WakeWordPreferencesRepository(application)
 
     /** Current barge-in preferences — mirrors [BargeInPreferencesRepository.flow]. */
     val bargeInPrefs: StateFlow<BargeInPreferences> = bargeInRepo.flow.stateIn(
@@ -80,6 +91,19 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = BargeInPreferences(),
     )
+
+    val wakeWordPrefs: StateFlow<WakeWordPreferences> = wakeWordRepo.flow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = WakeWordPreferences(),
+    )
+
+    val wakeWordRuntimeState: StateFlow<WakeWordRuntimeState> =
+        WakeWordForegroundService.runtimeState
+
+    private val _wakeWordInstallState = MutableStateFlow(WakeWordInstallUiState())
+    val wakeWordInstallState: StateFlow<WakeWordInstallUiState> =
+        _wakeWordInstallState.asStateFlow()
 
     /**
      * One-shot probe of [AcousticEchoCanceler.isAvailable] captured at VM
@@ -121,6 +145,66 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
 
     fun setResumeAfterInterruption(enabled: Boolean) {
         viewModelScope.launch { bargeInRepo.setResumeAfterInterruption(enabled) }
+    }
+
+    fun setWakeWordEnabled(enabled: Boolean) {
+        if (!enabled) {
+            viewModelScope.launch { wakeWordRepo.setEnabled(false) }
+            WakeWordForegroundService.stop(getApplication())
+            _wakeWordInstallState.value = WakeWordInstallUiState()
+            return
+        }
+        if (_wakeWordInstallState.value.installing) return
+        _wakeWordInstallState.value = WakeWordInstallUiState(installing = true)
+        viewModelScope.launch {
+            val result = WakeWordModelInstaller(getApplication()).ensureInstalled()
+            result.fold(
+                onSuccess = {
+                    runCatching {
+                        wakeWordRepo.setEnabled(true)
+                        WakeWordForegroundService.start(getApplication())
+                    }.onSuccess {
+                        _wakeWordInstallState.value = WakeWordInstallUiState()
+                    }.onFailure { error ->
+                        wakeWordRepo.setEnabled(false)
+                        _wakeWordInstallState.value = WakeWordInstallUiState(
+                            error = error.message ?: "Could not start wake-word listening",
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    wakeWordRepo.setEnabled(false)
+                    _wakeWordInstallState.value = WakeWordInstallUiState(
+                        error = error.message ?: "Could not install the wake-word model",
+                    )
+                },
+            )
+        }
+    }
+
+    fun setWakeWordSensitivity(value: Float) {
+        viewModelScope.launch {
+            wakeWordRepo.setSensitivity(value)
+            WakeWordForegroundService.reloadSettings()
+        }
+    }
+
+    fun setWakeWordConfirmationFrames(value: Int) {
+        viewModelScope.launch {
+            wakeWordRepo.setConfirmationFrames(value)
+            WakeWordForegroundService.reloadSettings()
+        }
+    }
+
+    fun setWakeWordStartNewSession(enabled: Boolean) {
+        viewModelScope.launch {
+            wakeWordRepo.setStartNewSession(enabled)
+            WakeWordForegroundService.reloadSettings()
+        }
+    }
+
+    fun clearWakeWordError() {
+        _wakeWordInstallState.update { it.copy(error = null) }
     }
 
     /**

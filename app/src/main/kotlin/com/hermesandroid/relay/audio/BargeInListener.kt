@@ -8,11 +8,16 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
+import com.hermesandroid.relay.wake.MicrophoneLease
+import com.hermesandroid.relay.wake.MicrophoneOwner
+import com.hermesandroid.relay.wake.MicrophoneOwnershipCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,23 +27,26 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlin.math.max
 
 /**
  * Duplex audio capture for voice barge-in (plan unit B3).
  *
- * While TTS is playing, this listener continuously pulls 32 ms / 512-sample
- * PCM frames off the microphone and feeds them to [VadEngine]. It emits two
- * SharedFlows that B4 will wire into the voice state machine:
+ * During response generation and playback, this listener continuously pulls
+ * 32 ms / 512-sample PCM frames off the microphone and feeds them to
+ * [VadEngine]. One instance owns the full active turn. It emits two
+ * SharedFlows wired into the voice state machine:
  *
  *  - [maybeSpeech] fires on the **first** positive raw-VAD frame — before the
  *    second-layer debouncer latches. B4 uses this to softly [VoicePlayer.duck]
  *    the TTS so the user's voice has acoustic headroom while we decide whether
  *    to cut off.
  *
- *  - [bargeInDetected] fires when [VadEngine] confirms speech post-hysteresis.
- *    B4 uses this to call `interruptSpeaking()` and flip state to Listening.
+ *  - [bargeInDetected] fires when [VadEngine] confirms speech post-hysteresis
+ *    and the calibrated RMS majority gate accepts it. The owner uses this to
+ *    interrupt generation/playback and flip state to Listening.
  *
  * ### Acoustic echo cancellation
  *
@@ -140,8 +148,28 @@ class BargeInListener internal constructor(
     private val frameBuffer: ShortArray = ShortArray(VadEngine.FRAME_SIZE_SAMPLES)
 
     @Volatile private var readerJob: Job? = null
+    @Volatile private var microphoneLease: MicrophoneLease? = null
     @Volatile private var aec: AcousticEchoCanceler? = null
     @Volatile private var noiseSuppressor: NoiseSuppressor? = null
+    private val rmsGate = RmsBargeInGate()
+    @Volatile private var playbackGraceMs: Long = RmsBargeInGate.DEFAULT_PLAYBACK_GRACE_MS
+
+    /** Apply the user-facing barge-in sensitivity to the quiet-room RMS gate. */
+    fun setThresholdMultiplier(multiplier: Float) {
+        rmsGate.thresholdMultiplier = multiplier
+    }
+
+    /**
+     * Freeze quiet-room calibration and begin the playback-only grace window.
+     * Idempotent so every renderer may call it at its first audible chunk.
+     */
+    fun markPlaybackStarted(
+        nowMs: Long = System.currentTimeMillis(),
+        graceMs: Long = RmsBargeInGate.DEFAULT_PLAYBACK_GRACE_MS,
+    ) {
+        playbackGraceMs = graceMs.coerceAtLeast(0L)
+        rmsGate.markPlaybackStarted(nowMs)
+    }
 
     /**
      * Allocate the audio pipeline and begin reading frames into [vadEngine].
@@ -163,6 +191,12 @@ class BargeInListener internal constructor(
             return
         }
 
+        val lease = MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.BargeIn)
+        if (lease == null) {
+            Log.i(TAG, "Barge-in listener inactive — microphone is owned by another voice surface")
+            return
+        }
+        microphoneLease = lease
         if (!audioSource.initialize()) {
             Log.w(
                 TAG,
@@ -170,11 +204,15 @@ class BargeInListener internal constructor(
                     "(missing RECORD_AUDIO permission or mic busy) — listener inactive",
             )
             _aecAttached.value = false
+            MicrophoneOwnershipCoordinator.release(lease)
+            microphoneLease = null
             return
         }
 
         _aecAttached.value = false
+        rmsGate.reset()
         readerJob = scope.launch(readerDispatcher) {
+            var effectsJob: Job? = null
             try {
                 try {
                     audioSource.start()
@@ -185,7 +223,10 @@ class BargeInListener internal constructor(
                     return@launch
                 }
                 Log.i(TAG, "Barge-in AudioRecord reader started")
-                maybeAttachEffects()
+                // Do not block generation-phase listening while waiting for an
+                // AudioTrack session that does not exist until playback. The
+                // effects attach races harmlessly beside the reader.
+                effectsJob = launch { maybeAttachEffects() }
 
                 while (isActive) {
                     val read = try {
@@ -222,10 +263,17 @@ class BargeInListener internal constructor(
                         Log.w(TAG, "VadEngine.analyze failed; stopping reader: ${t.message}")
                         break
                     }
-                    if (result.probability > 0f) {
+                    val gated = rmsGate.observe(
+                        frame = frameBuffer,
+                        rawSpeech = result.probability > 0f,
+                        nowMs = System.currentTimeMillis(),
+                        playbackGraceMs = playbackGraceMs,
+                        confirmedSpeech = result.isSpeech,
+                    )
+                    if (gated.maybeSpeech) {
                         _maybeSpeech.tryEmit(Unit)
                     }
-                    if (result.isSpeech) {
+                    if (gated.detected) {
                         _bargeInDetected.tryEmit(Unit)
                     }
                     // Give the dispatcher a chance to observe cancellation
@@ -237,11 +285,19 @@ class BargeInListener internal constructor(
                     yield()
                 }
             } finally {
+                // The reader reaches this block with its Job cancelled.
+                // Teardown still has to wait for the sibling AEC poll before
+                // releasing the AudioRecord and microphone lease.
+                withContext(NonCancellable) {
+                    effectsJob?.cancelAndJoin()
+                }
                 // Release effects + AudioRecord in the reverse of attach order
                 // so the AudioSessionId is still valid when AEC teardown runs.
                 releaseEffects()
                 runCatching { audioSource.stop() }
                 runCatching { audioSource.release() }
+                microphoneLease?.let(MicrophoneOwnershipCoordinator::release)
+                microphoneLease = null
                 _aecAttached.value = false
             }
         }
@@ -258,8 +314,16 @@ class BargeInListener internal constructor(
         if (job?.isActive == true) {
             Log.i(TAG, "Stopping barge-in AudioRecord reader")
         }
+        // AudioRecord.read() may be blocked in native code, so stop the source
+        // before cancellation to make the reader observe shutdown promptly.
+        runCatching { audioSource.stop() }
         job?.cancel()
         readerJob = null
+        if (job == null) {
+            runCatching { audioSource.release() }
+            microphoneLease?.let(MicrophoneOwnershipCoordinator::release)
+            microphoneLease = null
+        }
         return job
     }
 

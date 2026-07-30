@@ -1,5 +1,32 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-29 — Full-turn voice interruption and local wake-word preview
+
+Android barge-in now owns one microphone/VAD listener from response generation
+through playback drain for both Standard and Realtime voice. Quiet-room RMS
+calibration freezes before output begins, playback receives a grace interval,
+and model-confirmed majority filtering separates actual interruption from raw
+ducking hints. Turn epochs, stream cancellation, late-delta suppression, and
+an awaited microphone handoff keep an interrupted response from speaking again
+or racing the replacement recording. Exact stop/pause intent is phase-aware,
+while explicit background-task cancellation remains separate from silencing.
+
+An opt-in Android-local “Hey Hermes” preview uses sherpa-onnx in a user-started
+microphone foreground service. Its approximately 6 MB English model is
+downloaded and hash-verified on first enable rather than bundled. The service
+keeps pre-activation audio local, exposes an ongoing Stop notification, pauses
+for active voice, and shares a process-wide single-microphone ownership
+contract with voice recording, barge-in, and realtime diagnostics. The stored
+configuration includes strictness, confirmation frames, new-session behavior,
+and a deliberately inactive future profile-routing shape.
+
+Focused JVM coverage exercises calibration, grace, listener teardown,
+Thinking-to-Speaking ownership, generation/playback interruption, command
+gating, wake preferences, activation, and microphone exclusion. Android
+compilation for both distribution flavors, sideload lint, and sideload APK
+packaging pass with all four supported ABIs. On-device acoustic, foreground
+service, and lifecycle checks remain the corresponding validation gates.
+
 ## 2026-07-28 — Android 1.5.2 production release
 
 Android 1.5.2 shipped from the approved `dev` to `main` release tree as

@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.audio.BargeInListener
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
+import com.hermesandroid.relay.audio.RmsBargeInGate
 import com.hermesandroid.relay.audio.VadEngine
 import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
@@ -910,15 +911,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // B4 barge-in state (voice-barge-in 2026-04-17)
     // ---------------------------------------------------------------------
     //
-    // BargeInListener is created lazily on the transition into Speaking when
-    // the user has barge-in enabled + a non-Off sensitivity, then torn down
-    // on Speaking-exit. The lifecycle is "per Speaking turn" — one listener
-    // per response the agent gives, not one for the lifetime of voice mode.
+    // BargeInListener is created once when a foreground response enters
+    // Thinking and remains alive through Speaking and final audio drain.
+    // A monotonically increasing epoch fences callbacks from a listener whose
+    // AudioRecord teardown completed after the next turn began.
     //
     // The listener owns an AudioRecord under the hood; bracketing it around
-    // Speaking keeps the mic permission footprint tight, avoids contesting
-    // with the VoiceRecorder during Listening, and means "barge-in = off"
-    // genuinely means no mic is ever opened during Speaking.
+    // the active response keeps it out of Listening, avoids contesting with
+    // VoiceRecorder, and means "barge-in = off" never opens a response mic.
     //
     // [bargeInPreferences] is initialized from [initialize] and mirrors the
     // datastore value via [viewModelScope]. Null before initialize — which
@@ -943,6 +943,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var bargeInListener: BargeInListener? = null
     private var bargeInListenerJob: Job? = null
     private var bargeInVadEngine: VadEngine? = null
+    private val bargeInTurnEpoch = AtomicLong(0L)
+    @Volatile private var activeBargeInTurnEpoch: Long = 0L
 
     /**
      * The ordered list of sentence chunks the synth worker has seen during
@@ -2162,10 +2164,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * upstream SSE stream kept generating and the observer kept pushing
      * fresh deltas, so playback resumed on the next sentence. We now
      * cancel the stream, tear down the observer + turn job, reset all
-     * per-turn state, and go back to Idle (not Listening — Bailey's
-     * mental model is "stop" = ready to start a new turn on mic tap).
+     * per-turn state, and go back to Idle ("stop" means ready to start a
+     * new turn on the next mic tap).
      */
-    fun interruptSpeaking() {
+    fun interruptSpeaking(): Job? {
         Log.i(
             TAG,
             "Interrupting speech pipeline",
@@ -2193,7 +2195,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // double-trigger on the ducking watchdog or emit another
         // bargeInDetected while the resume watchdog is deliberating.
         // stopBargeInListener is null-safe.
-        stopBargeInListener()
+        val bargeInReaderRelease = stopBargeInListener()
         cancelStandardSpeechStream("speech interrupted")
         // 2026-04-18: the silence watchdog only runs during Listening, but
         // cancel defensively so a stale job from the prior turn can't
@@ -2250,8 +2252,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         speakEnvelope = 0f
         // Deliberately do NOT clear responseText here. "Stop" should freeze
         // the visible response so the user can read whatever was already
-        // said before they hit stop — Bailey hit this and pointed out the
-        // old behavior felt like the screen evaporated under his hand. The
+        // said before they hit stop. The
         // chat history was always preserved server-side; the bug was the
         // voice overlay's local copy getting blanked. The next [startListening]
         // resets responseText at the moment the user explicitly starts a
@@ -2265,6 +2266,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 hermesConfirmation = null,
             )
         }
+        return bargeInReaderRelease
     }
 
     fun clearError() {
@@ -2765,6 +2767,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         return VoiceCommandContext(
             responseActive = responseActive,
+            interruptedActiveResponse = responseWasInterrupted,
             backgroundTaskActive = backgroundTaskActive,
             backgroundAnswerAvailable = backgroundPhase == BackgroundRunPhase.DONE &&
                 realtimeAgentControl != null,
@@ -3184,6 +3187,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val submittedUserUiKey =
             chatVm.sendVoiceMessage(userText, STABLE_VOICE_INTERFACE_CONTEXT)
         voiceTurnSessionFence?.bindSubmittedUser(submittedUserUiKey)
+        beginBargeInTurnIfEnabled()
         startStreamObserver(chatVm)
     }
 
@@ -3260,6 +3264,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     responseText = "",
                 )
             }
+            beginBargeInTurnIfEnabled(
+                audioSessionIdProvider = { realtimePcmPlayer?.audioSessionId ?: 0 },
+            )
         }
 
         // Per-turn event state is hoisted to fields so one session-lived callback
@@ -4023,6 +4030,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 responseText = "",
             )
         }
+        beginBargeInTurnIfEnabled(
+            audioSessionIdProvider = { realtimePcmPlayer?.audioSessionId ?: 0 },
+        )
         val deliveryResult = CompletableDeferred<Result<Unit>>()
         val queued = channel.trySend(
             RealtimeTurnInput(
@@ -4927,13 +4937,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             TAG,
             "$source audio delta bytes=${audio.size} sampleRate=$sampleRate",
         )
+        val firstAudioChunk = bargeInStarted.compareAndSet(false, true)
+        if (firstAudioChunk) {
+            if (bargeInListener == null) {
+                startBargeInListenerIfEnabled(
+                    audioSessionIdProvider = { pcmPlayer.audioSessionId },
+                )
+            }
+            // Freeze quiet-room calibration before the first PCM write can
+            // reach AudioTrack and leak speaker output into the noise floor.
+            markBargeInPlaybackStarted(REALTIME_BARGE_IN_STARTUP_GUARD_MS)
+        }
         val level = pcmPlayer.write(audio, sampleRate)
         scheduleRealtimeAmplitudeRelease(audio.size, sampleRate, lastRealtimeAudioDeltaAtMs)
-        if (bargeInStarted.compareAndSet(false, true)) {
-            startBargeInListenerIfEnabled(
-                audioSessionIdProvider = { pcmPlayer.audioSessionId },
-                startupGuardMs = REALTIME_BARGE_IN_STARTUP_GUARD_MS,
-            )
+        if (firstAudioChunk) {
             startRealtimePlaybackWatchdog()
         }
         // Audio arriving IS the speech signal, whatever produced it: a
@@ -5195,10 +5212,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 // "currently playing" from the moment play() returns.
                 _currentPlayingChunkIndex.value = _currentPlayingChunkIndex.value + 1
                 trackTtsFile(file)
-                // B4: first chunk of a Speaking run → spin up the listener
-                // if the user has it enabled. Idempotent — startBargeInListener
-                // no-ops if already active.
-                startBargeInListenerIfEnabled()
+                // The turn listener normally started in Thinking. Keep this as
+                // a safety net for standalone speech, then freeze quiet-room
+                // calibration before speaker output reaches the microphone.
+                if (bargeInListener == null) startBargeInListenerIfEnabled()
+                markBargeInPlaybackStarted(RmsBargeInGate.DEFAULT_PLAYBACK_GRACE_MS)
             },
             pendingFiles = pendingTtsFiles,
             onQueueDrained = {
@@ -5418,9 +5436,33 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * listener's internal poll loop can watch it flip from 0 to non-zero
      * as playback begins.
      */
+    private fun beginBargeInTurnIfEnabled(
+        audioSessionIdProvider: (() -> Int)? = null,
+    ) {
+        val previousReader = stopBargeInListener()
+        val epoch = bargeInTurnEpoch.incrementAndGet()
+        activeBargeInTurnEpoch = epoch
+        if (previousReader == null) {
+            startBargeInListenerIfEnabled(
+                audioSessionIdProvider = audioSessionIdProvider,
+                epoch = epoch,
+            )
+        } else {
+            viewModelScope.launch {
+                previousReader.join()
+                if (activeBargeInTurnEpoch == epoch) {
+                    startBargeInListenerIfEnabled(
+                        audioSessionIdProvider = audioSessionIdProvider,
+                        epoch = epoch,
+                    )
+                }
+            }
+        }
+    }
+
     private fun startBargeInListenerIfEnabled(
         audioSessionIdProvider: (() -> Int)? = null,
-        startupGuardMs: Long = 0L,
+        epoch: Long = bargeInTurnEpoch.incrementAndGet(),
     ) {
         // Already running → no-op. We bracket per Speaking turn, not per
         // chunk within a turn.
@@ -5473,16 +5515,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         bargeInListener = listener
-        bargeInIgnoreUntilMs = if (startupGuardMs > 0L) {
-            System.currentTimeMillis() + startupGuardMs
-        } else {
-            0L
-        }
+        activeBargeInTurnEpoch = epoch
+        listener.setThresholdMultiplier(bargeInThresholdMultiplier(prefs.sensitivity))
+        bargeInIgnoreUntilMs = 0L
         bargeInGuardLogged = false
         bargeInListenerJob = viewModelScope.launch {
             // Fan out the two event flows on child coroutines of this job.
-            launch { listener.maybeSpeech.collect { onMaybeSpeech() } }
-            launch { listener.bargeInDetected.collect { onBargeInDetected() } }
+            launch { listener.maybeSpeech.collect { onMaybeSpeech(epoch) } }
+            launch { listener.bargeInDetected.collect { onBargeInDetected(epoch) } }
         }
         Log.i(
             TAG,
@@ -5503,12 +5543,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * unduck the player (in case a ducking watchdog hadn't yet restored
      * volume), and release the owned VAD engine. Idempotent.
      */
-    private fun stopBargeInListener() {
+    private fun stopBargeInListener(): Job? {
         if (bargeInListener != null) {
             Log.i(TAG, "Stopping barge-in listener")
         }
         bargeInIgnoreUntilMs = 0L
         bargeInGuardLogged = false
+        activeBargeInTurnEpoch = 0L
         bargeInListenerJob?.cancel(); bargeInListenerJob = null
         val stoppedReaderJob = try { bargeInListener?.stop() } catch (_: Throwable) { null }
         bargeInListener = null
@@ -5530,6 +5571,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             try { realtimePcmPlayer?.unduck() } catch (_: Throwable) { /* ignore */ }
             isDucked = false
         }
+        return stoppedReaderJob
+    }
+
+    private fun markBargeInPlaybackStarted(graceMs: Long) {
+        val now = System.currentTimeMillis()
+        bargeInIgnoreUntilMs = now + graceMs.coerceAtLeast(0L)
+        bargeInGuardLogged = false
+        bargeInListener?.markPlaybackStarted(nowMs = now, graceMs = graceMs)
+    }
+
+    private fun bargeInThresholdMultiplier(sensitivity: BargeInSensitivity): Float = when (sensitivity) {
+        BargeInSensitivity.Off -> 8f
+        BargeInSensitivity.Low -> 4.5f
+        BargeInSensitivity.Default -> 3f
+        BargeInSensitivity.High -> 2f
     }
 
     /**
@@ -5550,6 +5606,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             isDucked = true
         }
         scheduleDuckingWatchdog()
+    }
+
+    private fun onMaybeSpeech(epoch: Long) {
+        if (epoch != activeBargeInTurnEpoch) {
+            Log.i(TAG, "Ignoring stale barge-in maybe-speech epoch=$epoch active=$activeBargeInTurnEpoch")
+            return
+        }
+        onMaybeSpeech()
     }
 
     /**
@@ -5583,7 +5647,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // bargeInDetected emissions are impossible until the next
         // Speaking entry. Belt-and-braces: we also cancel the subscriber
         // job as part of stopBargeInListener which interruptSpeaking calls.
-        interruptSpeaking()
+        val microphoneRelease = interruptSpeaking()
 
         // interruptSpeaking landed us in Idle — flip to Listening and
         // pre-warm the recorder so the first ~100 ms of user speech
@@ -5597,19 +5661,28 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 responseText = "",
             )
         }
-        val rec = recorder
-        if (rec != null && !rec.isRecording()) {
+        viewModelScope.launch {
             try {
-                rec.startRecording()
+                microphoneRelease?.join()
+                val rec = recorder
+                if (rec != null && !rec.isRecording()) {
+                    rec.startRecording()
+                }
+                scheduleResumeWatchdog()
             } catch (t: Throwable) {
                 responseInterruptedForVoiceCommand = false
-                Log.w(TAG, "barge-in pre-warm recorder failed: ${t.message}")
+                Log.w(TAG, "barge-in microphone handoff failed: ${t.message}")
                 surfaceError(t, context = "record")
-                return
             }
         }
+    }
 
-        scheduleResumeWatchdog()
+    private fun onBargeInDetected(epoch: Long) {
+        if (epoch != activeBargeInTurnEpoch) {
+            Log.i(TAG, "Ignoring stale barge-in detection epoch=$epoch active=$activeBargeInTurnEpoch")
+            return
+        }
+        onBargeInDetected()
     }
 
     private fun isBargeInStartupGuardActive(): Boolean {
@@ -5908,6 +5981,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     @androidx.annotation.VisibleForTesting
     internal fun startBargeInListenerForTest() {
         startBargeInListenerIfEnabled()
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun beginBargeInTurnForTest() {
+        _uiState.update { it.copy(state = VoiceState.Thinking) }
+        beginBargeInTurnIfEnabled()
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun markBargeInPlaybackStartedForTest() {
+        _uiState.update { it.copy(state = VoiceState.Speaking) }
+        startBargeInListenerIfEnabled()
+        markBargeInPlaybackStarted(RmsBargeInGate.DEFAULT_PLAYBACK_GRACE_MS)
     }
 
     /**

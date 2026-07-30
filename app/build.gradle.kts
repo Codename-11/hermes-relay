@@ -164,6 +164,21 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            // sherpa-onnx v1.13.4 and the Silero VAD both use ONNX Runtime.
+            // Keep them on sherpa's 1.27.0 baseline and package one shared core.
+            pickFirsts += "**/libonnxruntime.so"
+
+            // The Android app calls only sherpa's JNI facade. These native C/C++
+            // API facades are development surfaces and are not loaded by the app.
+            excludes += setOf(
+                "**/libsherpa-onnx-c-api.so",
+                "**/libsherpa-onnx-cxx-api.so",
+            )
+        }
+    }
+
     // JVM unit tests run against the stubbed Android SDK jar, where every
     // platform API method throws RuntimeException("... not mocked") by
     // default. With returnDefaultValues = true, those stubs instead
@@ -261,6 +276,12 @@ dependencies {
     // android-vad Silero — on-device VAD for barge-in (B2)
     // Bundled ONNX Silero model (~2.2 MB); pulled from JitPack.
     implementation(libs.android.vad.silero)
+
+    // Experimental, opt-in local keyword spotting. Models are downloaded only
+    // after the user enables the feature; no model binary is bundled in APKs.
+    // Keep the shared runtime aligned with sherpa-onnx v1.13.4.
+    implementation(libs.onnxruntime.android)
+    implementation(libs.sherpa.onnx)
 
     // Google Play In-App Update — googlePlay flavor ONLY (FLEXIBLE flow).
     // Scoped via the `googlePlayImplementation` configuration so it never

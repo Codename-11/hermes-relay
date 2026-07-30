@@ -1042,11 +1042,12 @@ to tool state, safety prompts, or the current task.
   playback-synchronized amplitude through `shouldMarkRealtimeOutputActive`,
   matching the basic-TTS path. Confirm visually on-device with the 1.4.1 batch.
 
-- **Voice command layer — initial 1.4.1 subset code-complete; live verify and
+- **Voice command layer — phase-aware stop/pause code-complete; live verify and
   navigation residuals remain.** Exact final transcripts can stop speech,
   explicitly cancel the active background task, pause/resume Continuous mode,
-  repeat a settled background answer, and start a new Standard chat. Bare `stop`
-  and `cancel`, partial transcripts, and command-like ordinary prompts stay on the
+  repeat a settled background answer, and start a new Standard chat. Bare
+  `stop`/`pause` are commands only after barge-in interrupted an active response;
+  `cancel`, partial transcripts, and command-like ordinary prompts stay on the
   normal Hermes route. Realtime `new chat` remains gated on a clean websocket
   session-rebind boundary; `open overlay` and `return to Hermes` remain future
   navigation commands. Verify barge-in Stop, pause during a background run, local
@@ -1082,11 +1083,21 @@ and whether the agent is waiting on the user.
   experimental barge-in choice. Relay update is server-first; local Voice/barge-in
   values share one DataStore transaction, with relay rollback on local failure.
 
-- **Barge-in hardening** — keep barge-in experimental until echo/self-recording
+- **Barge-in hardening — code complete; on-device matrix remains.** Full-turn
+  listener ownership, AEC/noise suppression, quiet-room calibration,
+  playback grace, duck/cut behavior, late-delta fencing, and single-microphone
+  handoff are implemented. Keep the feature experimental until phone testing
+  covers speakerphone/headphones, quiet/noisy rooms, Standard/Realtime
+  generation and playback, stop/pause, and resume-after-interruption.
 
-is solved. The target path is proper AEC, playback-ducking, and a rule that
-
-output audio can never become a user turn.
+- **Experimental wake word — on-device validation.** Verify first-enable model
+  installation and integrity failure recovery, all supported ABIs, Android
+  notification/microphone permission variants, background-start restrictions,
+  task recreation from the detection notification, acoustic false-positive and
+  false-negative rates, battery impact, stop action, and wake→voice→wake
+  microphone handoff. The first release remains fixed to “Hey Hermes”; do not
+  expose profile-specific phrases until routing and acoustic behavior are
+  implemented and validated.
 
 - **Audio quality guardrails** — normalize output volume across realtime and
 

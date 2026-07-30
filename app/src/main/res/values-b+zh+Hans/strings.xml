@@ -3344,4 +3344,39 @@
     <string name="conn_info_profile_api_key_saved">已保存配置文件 API 密钥</string>
     <string name="conn_info_profile_api_key_cleared">已清除配置文件 API 密钥</string>
     <string name="conn_info_profile_api_key_save_failed">无法保存配置文件 API 密钥</string>
+
+    <!-- 实验性设备端唤醒词 -->
+    <string name="wake_word_title">唤醒词</string>
+    <string name="wake_word_enable">监听“Hey Hermes”</string>
+    <string name="wake_word_enable_desc">完全在此手机上运行的实验性自愿启用检测。</string>
+    <string name="wake_word_phrase">短语</string>
+    <string name="wake_word_status">状态</string>
+    <string name="wake_word_status_stopped">已停止</string>
+    <string name="wake_word_status_starting">正在启动…</string>
+    <string name="wake_word_status_listening">正在本地监听</string>
+    <string name="wake_word_status_paused">语音功能使用期间已暂停</string>
+    <string name="wake_word_status_detected">已检测到 — 请打开通知</string>
+    <string name="wake_word_status_error">需要处理</string>
+    <string name="wake_word_installing">正在下载并验证设备端英语模型（约 6 MB）…</string>
+    <string name="wake_word_unsupported_abi">唤醒词需要 arm64-v8a、armeabi-v7a、x86_64 或 x86 设备。</string>
+    <string name="wake_word_sensitivity">严格程度</string>
+    <string name="wake_word_sensitivity_desc">数值越高，判定越严格、误唤醒越少，但可能无法检测较轻的语音。</string>
+    <string name="wake_word_confirmation_frames">确认帧数：%1$d</string>
+    <string name="wake_word_confirmation_frames_desc">激活前要求解码器在更多帧中检测到该短语。</string>
+    <string name="wake_word_new_session">开始新会话</string>
+    <string name="wake_word_new_session_desc">打开语音前创建新聊天。关闭后将继续所选配置文件的当前会话。</string>
+    <string name="wake_word_privacy_battery">激活前的麦克风音频仅保留在此手机上，唤醒检测绝不会上传音频。持续监听会增加耗电量。Android 会持续显示带“停止”操作的麦克风通知。</string>
+    <string name="wake_word_microphone_permission_required">唤醒词监听需要麦克风权限。</string>
+    <string name="wake_word_notification_permission_required">需要通知权限，以便 Android 持续显示麦克风隐私控制。</string>
+    <string name="wake_word_notification_channel">唤醒词麦克风</string>
+    <string name="wake_word_notification_channel_desc">实验性唤醒词监听期间持续显示隐私和停止控制。</string>
+    <string name="wake_word_notification_title">正在监听“Hey Hermes”</string>
+    <string name="wake_word_notification_starting">正在启动设备端检测器…</string>
+    <string name="wake_word_notification_listening">正在本地监听。不会上传音频。</string>
+    <string name="wake_word_notification_paused">Hermes 语音会话正在使用麦克风，监听已暂停。</string>
+    <string name="wake_word_notification_detected">已检测到短语。点按即可打开 Hermes 语音。</string>
+    <string name="wake_word_notification_error">唤醒词监听需要处理。请打开语音设置。</string>
+    <string name="wake_word_notification_stopped">正在停止唤醒词监听。</string>
+    <string name="wake_word_notification_stop">停止</string>
+    <string name="wake_word_notification_open">打开语音</string>
 </resources>

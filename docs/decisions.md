@@ -2257,3 +2257,57 @@ active private route.
 - Android retains a full-screen embedded WebView for compatible dashboard
   cookie providers, while providers that prohibit embedding use the explicit
   brokered native route.
+
+---
+
+## ADR 41 — Android owns full-turn interruption and experimental wake detection
+
+**Status:** Accepted (2026-07-29).
+
+**Context.** Android barge-in previously armed only when speech playback began.
+That left agent generation non-interruptible and recreated the microphone/VAD
+pipeline at the Thinking-to-Speaking boundary. Upstream voice work established
+a safer full-turn lifecycle, quiet calibration before playback, and phase-aware
+bare stop behavior. Upstream wake listening is host-local, but enabling that
+server listener from Android would capture audio on the wrong machine and
+couple Standard voice to non-standard server behavior.
+
+**Decision.**
+
+- Android owns one barge-in listener per active voice response, spanning
+  `Thinking`, `Speaking`, and final audio drain on Standard and Realtime paths.
+  A turn epoch fences callbacks, and teardown completes before replacement
+  capture or another listener can acquire the microphone.
+- Quiet-room RMS calibration occurs before output and freezes at playback
+  start. Sensitivity scales the threshold; playback adds a grace interval and
+  bounded threshold; majority filtering requires model-confirmed speech.
+- Interruption uses the existing active-turn cancellation seam. Late Standard
+  stream content and Realtime audio are suppressed. Silencing does not cancel
+  a promoted Hermes task; explicit background-task cancellation remains the
+  separate destructive intent.
+- Bare `stop` and `pause` are voice commands only when they are the exact final
+  transcript captured after an active response interruption. Longer ordinary
+  requests remain agent input.
+- Wake-word detection is Android-local, experimental, and off by default. A
+  user-started microphone foreground service runs sherpa-onnx for the single
+  validated “Hey Hermes” phrase, with an ongoing notification and Stop action.
+  No pre-activation PCM leaves the phone.
+- Wake and voice share a process-wide microphone lease. Detection releases its
+  recorder before entering the existing voice flow and resumes only after voice
+  exits. There is no boot receiver or server wake-listener control.
+- The KWS model is downloaded and SHA-256 verified on first enable. Preferences
+  store enabled state, fixed phrase, strictness, confirmation frames,
+  start-new-session behavior, and a future-safe profile-routing shape. Only
+  active-profile preservation is implemented; profile-specific phrases are
+  intentionally not claimed.
+
+**Consequences.**
+
+- Standard voice remains Dashboard/Gateway-backed and works against unmodified
+  upstream Hermes. Local detection is an Android input affordance, not a Relay
+  server dependency.
+- The sherpa runtime increases Android artifacts for each packaged ABI, while
+  the approximately 6 MB model is device storage rather than APK payload.
+- Continuous wake listening has visible microphone and battery cost and
+  requires explicit device/acoustic validation before the experimental label
+  can be reconsidered.

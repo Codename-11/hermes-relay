@@ -3411,4 +3411,39 @@
     <string name="conn_info_profile_api_key_saved">Profil-API-Schlüssel gespeichert</string>
     <string name="conn_info_profile_api_key_cleared">Profil-API-Schlüssel gelöscht</string>
     <string name="conn_info_profile_api_key_save_failed">Profil-API-Schlüssel konnte nicht gespeichert werden</string>
+
+    <!-- Experimentelles Weckwort auf dem Gerät -->
+    <string name="wake_word_title">Weckwort</string>
+    <string name="wake_word_enable">Auf „Hey Hermes“ hören</string>
+    <string name="wake_word_enable_desc">Experimentelle, freiwillig aktivierbare Erkennung, die vollständig auf diesem Telefon läuft.</string>
+    <string name="wake_word_phrase">Phrase</string>
+    <string name="wake_word_status">Status</string>
+    <string name="wake_word_status_stopped">Angehalten</string>
+    <string name="wake_word_status_starting">Wird gestartet…</string>
+    <string name="wake_word_status_listening">Hört lokal zu</string>
+    <string name="wake_word_status_paused">Pausiert, während Sprache aktiv ist</string>
+    <string name="wake_word_status_detected">Erkannt — Benachrichtigung öffnen</string>
+    <string name="wake_word_status_error">Aktion erforderlich</string>
+    <string name="wake_word_installing">Das englische Gerätemodell wird heruntergeladen und geprüft (ca. 6 MB)…</string>
+    <string name="wake_word_unsupported_abi">Das Weckwort erfordert ein arm64-v8a-, armeabi-v7a-, x86_64- oder x86-Gerät.</string>
+    <string name="wake_word_sensitivity">Strenge</string>
+    <string name="wake_word_sensitivity_desc">Höhere Werte sind strenger und reduzieren Fehlauslösungen, können aber leisere Sprache überhören.</string>
+    <string name="wake_word_confirmation_frames">Bestätigungs-Frames: %1$d</string>
+    <string name="wake_word_confirmation_frames_desc">Die Phrase muss vor der Aktivierung in mehr Decoder-Frames vorkommen.</string>
+    <string name="wake_word_new_session">Neue Sitzung starten</string>
+    <string name="wake_word_new_session_desc">Vor dem Öffnen der Sprache einen neuen Chat erstellen. Deaktivieren, um die aktuelle Sitzung des ausgewählten Profils fortzusetzen.</string>
+    <string name="wake_word_privacy_battery">Mikrofon-Audio bleibt vor der Aktivierung auf diesem Telefon und wird von der Weckworterkennung nie hochgeladen. Ständiges Zuhören verbraucht mehr Akku. Android zeigt eine dauerhafte Mikrofonbenachrichtigung mit einer Stopp-Aktion.</string>
+    <string name="wake_word_microphone_permission_required">Für das Weckwort ist die Mikrofonberechtigung erforderlich.</string>
+    <string name="wake_word_notification_permission_required">Die Benachrichtigungsberechtigung ist erforderlich, damit Android die dauerhafte Mikrofon-Datenschutzsteuerung anzeigen kann.</string>
+    <string name="wake_word_notification_channel">Weckwort-Mikrofon</string>
+    <string name="wake_word_notification_channel_desc">Dauerhafte Datenschutz- und Stoppsteuerung bei aktiver experimenteller Weckworterkennung.</string>
+    <string name="wake_word_notification_title">Hört auf „Hey Hermes“</string>
+    <string name="wake_word_notification_starting">Geräteinterne Erkennung wird gestartet…</string>
+    <string name="wake_word_notification_listening">Hört lokal zu. Audio wird nicht hochgeladen.</string>
+    <string name="wake_word_notification_paused">Pausiert, während eine Hermes-Sprachsitzung das Mikrofon verwendet.</string>
+    <string name="wake_word_notification_detected">Phrase erkannt. Tippen, um Hermes Voice zu öffnen.</string>
+    <string name="wake_word_notification_error">Die Weckworterkennung erfordert Aufmerksamkeit. Spracheinstellungen öffnen.</string>
+    <string name="wake_word_notification_stopped">Die Weckworterkennung wird beendet.</string>
+    <string name="wake_word_notification_stop">Stopp</string>
+    <string name="wake_word_notification_open">Sprache öffnen</string>
 </resources>

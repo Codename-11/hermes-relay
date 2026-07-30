@@ -522,6 +522,7 @@ fun ChatScreen(
             micPermissionDenied = false
             if (pendingVoiceEnter && !isDemoMode) {
                 pendingVoiceEnter = false
+                com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
                 voiceViewModel.enterVoiceMode()
             } else {
                 pendingVoiceEnter = false
@@ -538,6 +539,7 @@ fun ChatScreen(
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (granted) {
             micPermissionDenied = false
+            com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
             voiceViewModel.enterVoiceMode()
         } else {
             pendingVoiceEnter = true
