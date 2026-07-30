@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-30 — Voice transcript identity alignment
+
+Android voice Focus mode now keys transcript rows with the same stable UI
+identity as the main Chat list. A live row may adopt its persisted server
+message ID during history reconciliation while retaining its original Compose
+identity; using the mutable domain ID in the voice overlay could otherwise
+collide during that transition and close the app.
+
+Focused JVM coverage recreates two visible rows with a shared reconciled server
+ID and verifies distinct stable transcript keys. Sideload production and
+Android-test Kotlin compilation pass. The existing full-overlay instrumentation
+fixture remains blocked by its continuously animating surface never reaching
+Compose idleness.
+
 ## 2026-07-29 — Full-turn voice interruption and local wake-word preview
 
 Android barge-in now owns one microphone/VAD listener from response generation

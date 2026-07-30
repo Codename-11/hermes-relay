@@ -21,6 +21,32 @@ import org.junit.Test
 class VoiceModeOverlayStateTest {
 
     @Test
+    fun transcriptKeys_remainDistinctWhenRowsShareReconciledServerId() {
+        val serverId = "7c4af8b7-1bb2-4830-a4e5-0332d5ddcd1f"
+        val messages = listOf(
+            ChatMessage(
+                id = serverId,
+                uiKey = "persisted-assistant-row",
+                role = MessageRole.ASSISTANT,
+                content = "Earlier snapshot",
+                timestamp = 1L,
+            ),
+            ChatMessage(
+                id = serverId,
+                uiKey = "live-assistant-row",
+                role = MessageRole.ASSISTANT,
+                content = "Reconciled live snapshot",
+                timestamp = 2L,
+            ),
+        )
+
+        assertEquals(
+            listOf("persisted-assistant-row", "live-assistant-row"),
+            messages.map(::voiceTranscriptItemKey),
+        )
+    }
+
+    @Test
     fun providerTranscript_isTranscribingAfterMicrophoneCaptureStops() {
         assertEquals(VoiceState.Transcribing, realtimeTranscriptState(micCaptureActive = false))
         assertEquals(VoiceState.Listening, realtimeTranscriptState(micCaptureActive = true))
