@@ -103,6 +103,14 @@ object AssistantSessionProtocol {
     private const val EXTRA_ERROR = "error"
     private const val EXTRA_CANCEL_VOICE = "cancel_voice"
 
+    fun prepareAssistActivation(intent: Intent?) {
+        val assistIntent = intent ?: return
+        if (!isAssistAction(assistIntent.action)) return
+        assistIntent.putExtra(EXTRA_ASSISTANT_SESSION, true)
+    }
+
+    internal fun isAssistAction(action: String?): Boolean = action == Intent.ACTION_ASSIST
+
     fun activationIntent(
         context: Context,
         activationId: String = UUID.randomUUID().toString(),

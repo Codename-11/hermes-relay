@@ -72,6 +72,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
+        com.hermesandroid.relay.assistant.AssistantSessionProtocol
+            .prepareAssistActivation(intent)
 
         // Hold splash until DataStore is loaded and onboarding status is known
         splashScreen.setKeepOnScreenCondition {
@@ -141,6 +143,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        com.hermesandroid.relay.assistant.AssistantSessionProtocol
+            .prepareAssistActivation(intent)
         configureAssistantWindow(intent)
         // === PHASE3-safety-rails-followup: deep-link nav route on re-launch ===
         // Same as onCreate but for the singleTask / FLAG_ACTIVITY_CLEAR_TOP

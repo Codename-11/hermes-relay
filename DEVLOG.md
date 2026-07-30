@@ -6833,3 +6833,8 @@ After:  Phone (HTTP/SSE) → API Server (:8642)          [chat — direct]
 - Lowered the unset Android wake-word strictness default from `0.6` to `0.3` after physical-device testing showed reliable activation only at the lower slider positions.
 - Added the live numeric strictness value to Voice settings so tuning is observable.
 - Preserved saved user values and the existing three-frame confirmation default; this adjustment does not migrate working installations or broaden the detector acceptance window beyond the selected threshold.
+
+# 2026-07-30 — OEM assistant-picker compatibility
+
+- Added the standard `android.intent.action.ASSIST` activity filter because some OEM assistant pickers enumerate Assist activities even when a valid `VoiceInteractionService` is present.
+- Routed activity-based Assist invocations through the existing system-assistant activation protocol so both Android entry points share microphone ownership and session lifecycle behavior.
