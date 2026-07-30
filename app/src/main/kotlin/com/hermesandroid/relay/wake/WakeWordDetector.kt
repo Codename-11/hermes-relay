@@ -9,8 +9,8 @@ import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 
 interface WakeWordDetector : AutoCloseable {
     /**
-     * Accept a 16 kHz mono PCM16 frame. Returns true exactly once when the
-     * configured confirmation count is met.
+     * Accept a 16 kHz mono PCM16 frame. Returns true when sherpa emits a
+     * completed match for the configured phrase.
      */
     fun accept(samples: ShortArray, count: Int): Boolean
 }
@@ -23,22 +23,23 @@ fun interface WakeWordDetectorFactory {
     ): WakeWordDetector
 }
 
-internal class WakeWordConfirmationGate(private val requiredFrames: Int) {
-    private var matchingFrames = 0
-    private var fired = false
-
-    fun update(matches: Boolean): Boolean {
-        if (fired) return false
-        matchingFrames = if (matches) matchingFrames + 1 else 0
-        if (matchingFrames < requiredFrames.coerceIn(1, 5)) return false
-        fired = true
-        return true
-    }
-}
-
 object WakeWordTuning {
     /** sherpa threshold is 0..1 and higher is harder to trigger. */
     fun threshold(sensitivity: Float): Float = sensitivity.coerceIn(0.2f, 0.9f)
+
+    /**
+     * sherpa confirms a decoded keyword after this many trailing blank frames.
+     * This is the native KWS confirmation control; a completed keyword result
+     * must not be counted again in application code.
+     */
+    fun trailingBlanks(confirmationFrames: Int): Int = confirmationFrames.coerceIn(1, 5)
+
+    fun matchesConfiguredPhrase(keyword: String): Boolean =
+        keyword
+            .replace('_', ' ')
+            .trim()
+            .replace(Regex("\\s+"), " ")
+            .equals(DEFAULT_WAKE_PHRASE, ignoreCase = true)
 }
 
 class SherpaWakeWordDetector(
@@ -63,11 +64,10 @@ class SherpaWakeWordDetector(
             keywordsFile = files.keywords.absolutePath,
             keywordsScore = 1.5f,
             keywordsThreshold = WakeWordTuning.threshold(sensitivity),
-            numTrailingBlanks = 2,
+            numTrailingBlanks = WakeWordTuning.trailingBlanks(confirmationFrames),
         ),
     )
     private val stream: OnlineStream = spotter.createStream()
-    private val confirmationGate = WakeWordConfirmationGate(confirmationFrames)
     private var closed = false
 
     override fun accept(samples: ShortArray, count: Int): Boolean {
@@ -77,13 +77,14 @@ class SherpaWakeWordDetector(
         var detected = false
         while (spotter.isReady(stream)) {
             spotter.decode(stream)
-            val matches = spotter.getResult(stream).keyword
-                .replace('_', ' ')
-                .trim()
-                .equals(DEFAULT_WAKE_PHRASE, ignoreCase = true)
-            if (confirmationGate.update(matches)) {
-                detected = true
-                break
+            val keyword = spotter.getResult(stream).keyword
+            if (keyword.isNotBlank()) {
+                detected = WakeWordTuning.matchesConfiguredPhrase(keyword)
+                // sherpa's KWS contract requires reset immediately after any
+                // completed keyword result. Without it the completed result
+                // remains attached to the stream and later frames are stale.
+                spotter.reset(stream)
+                if (detected) break
             }
         }
         return detected

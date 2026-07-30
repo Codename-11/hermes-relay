@@ -20,6 +20,7 @@ import com.hermesandroid.relay.wake.WakeWordModelInstaller
 import com.hermesandroid.relay.wake.WakeWordPreferences
 import com.hermesandroid.relay.wake.WakeWordPreferencesRepository
 import com.hermesandroid.relay.wake.WakeWordRuntimeState
+import com.hermesandroid.relay.wake.WakeWordTestState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -100,6 +101,8 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
 
     val wakeWordRuntimeState: StateFlow<WakeWordRuntimeState> =
         WakeWordForegroundService.runtimeState
+    val wakeWordTestState: StateFlow<WakeWordTestState> =
+        WakeWordForegroundService.testState
 
     private val _wakeWordInstallState = MutableStateFlow(WakeWordInstallUiState())
     val wakeWordInstallState: StateFlow<WakeWordInstallUiState> =
@@ -201,6 +204,10 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
             wakeWordRepo.setStartNewSession(enabled)
             WakeWordForegroundService.reloadSettings()
         }
+    }
+
+    fun testWakeWord() {
+        WakeWordForegroundService.startTest()
     }
 
     fun clearWakeWordError() {

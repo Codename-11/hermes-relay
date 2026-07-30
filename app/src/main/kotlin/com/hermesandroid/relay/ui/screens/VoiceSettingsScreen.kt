@@ -143,6 +143,8 @@ import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoicePreviewUiState
 import com.hermesandroid.relay.wake.WakeWordPreferences
 import com.hermesandroid.relay.wake.WakeWordRuntimeState
+import com.hermesandroid.relay.wake.WakeWordTestPhase
+import com.hermesandroid.relay.wake.WakeWordTestState
 import kotlinx.coroutines.launch
 
 internal enum class VoiceSettingsSection { Output, Listening, Advanced }
@@ -500,9 +502,12 @@ fun VoiceSettingsScreen(
                         prefsRepo = prefsRepo,
                         voiceViewModel = voiceViewModel,
                     )
+                    val wakeWordTestState by
+                        settingsViewModel.wakeWordTestState.collectAsState()
                     WakeWordCard(
                         preferences = wakeWordPrefs,
                         runtimeState = wakeWordRuntimeState,
+                        testState = wakeWordTestState,
                         installing = wakeWordInstallState.installing,
                         error = wakeWordPermissionError ?: wakeWordInstallState.error,
                         onEnable = requestWakeWordEnable,
@@ -512,6 +517,7 @@ fun VoiceSettingsScreen(
                             settingsViewModel::setWakeWordConfirmationFrames,
                         onStartNewSessionChange =
                             settingsViewModel::setWakeWordStartNewSession,
+                        onTest = settingsViewModel::testWakeWord,
                     )
                     BargeInCard(
                         bargeInPrefs = bargeInPrefs,
@@ -3376,6 +3382,7 @@ private fun GlobalVoiceControlsCard(
 private fun WakeWordCard(
     preferences: WakeWordPreferences,
     runtimeState: WakeWordRuntimeState,
+    testState: WakeWordTestState,
     installing: Boolean,
     error: String?,
     onEnable: () -> Unit,
@@ -3383,6 +3390,7 @@ private fun WakeWordCard(
     onSensitivityChange: (Float) -> Unit,
     onConfirmationFramesChange: (Int) -> Unit,
     onStartNewSessionChange: (Boolean) -> Unit,
+    onTest: () -> Unit,
 ) {
     val abiSupported = Build.SUPPORTED_ABIS.any {
         it == "arm64-v8a" || it == "armeabi-v7a" || it == "x86_64" || it == "x86"
@@ -3474,6 +3482,50 @@ private fun WakeWordCard(
                         stringResource(R.string.wake_word_status_error)
                 },
             )
+
+            Spacer(Modifier.height(8.dp))
+            FilledTonalButton(
+                onClick = onTest,
+                enabled = runtimeState == WakeWordRuntimeState.Listening &&
+                    testState.phase != WakeWordTestPhase.Listening,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (testState.phase == WakeWordTestPhase.Listening) {
+                        stringResource(R.string.wake_word_test_listening)
+                    } else {
+                        stringResource(R.string.wake_word_test_action)
+                    }
+                )
+            }
+            if (testState.phase == WakeWordTestPhase.Listening) {
+                LinearProgressIndicator(
+                    progress = { testState.inputLevel },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            val testStatus = when (testState.phase) {
+                WakeWordTestPhase.Idle -> null
+                WakeWordTestPhase.Listening ->
+                    stringResource(R.string.wake_word_test_prompt)
+                WakeWordTestPhase.Detected ->
+                    stringResource(R.string.wake_word_test_detected)
+                WakeWordTestPhase.TimedOut ->
+                    stringResource(R.string.wake_word_test_timed_out)
+                WakeWordTestPhase.Unavailable ->
+                    stringResource(R.string.wake_word_test_unavailable)
+            }
+            testStatus?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (testState.phase == WakeWordTestPhase.Detected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
             Text(
