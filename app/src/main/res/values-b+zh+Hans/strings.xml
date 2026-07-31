@@ -2269,6 +2269,7 @@
     <string name="conn_info_connect">连接</string>
     <string name="conn_info_connected">已连接</string>
     <string name="conn_info_active_configuration">当前配置</string>
+    <string name="conn_info_active_profile">活跃个人资料</string>
     <string name="conn_info_inherited">继承</string>
     <string name="conn_info_bypassed">已绕过</string>
     <string name="conn_info_customize_identity">自定义身份</string>

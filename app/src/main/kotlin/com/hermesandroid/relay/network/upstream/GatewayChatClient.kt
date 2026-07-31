@@ -1301,6 +1301,22 @@ class GatewayChatClient(
     }
 
     /**
+     * List personalities through upstream's slash completer. Unlike the
+     * dashboard config schema, this resolves the CLI config that contains both
+     * built-in and profile-defined personalities, matching `/personality` in
+     * the desktop and TUI.
+     */
+    suspend fun personalityOptions(): Result<List<String>> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            return Result.failure(GatewayRpcException("not connected"))
+        }
+        return rpc(
+            "complete.slash",
+            buildJsonObject { put("text", "/personality ") },
+        ).map(::parseGatewayPersonalityOptions)
+    }
+
+    /**
      * Set the personality the way the desktop + TUI do (`config.set
      * {key:"personality"}`). The gateway persists `display.personality` +
      * `agent.system_prompt` to the active profile's config AND applies the
@@ -2924,6 +2940,22 @@ class GatewayChatClient(
         onStatusClear = { kind -> callbackDispatcher { callbacks.onStatusClear(kind) } },
     )
 }
+
+internal fun parseGatewayPersonalityOptions(result: JsonObject): List<String> =
+    (result["items"] as? JsonArray)
+        .orEmpty()
+        .mapNotNull { item ->
+            (item as? JsonObject)
+                ?.stringField("text")
+                ?.trim()
+                ?.removePrefix("/personality")
+                ?.trim()
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        it.lowercase() !in setOf("none", "default", "neutral")
+                }
+        }
+        .distinctBy { it.lowercase() }
 
 /** Outcome of an active-turn correction — Rejected and Failed both mean "queue locally instead". */
 enum class SteerResult {

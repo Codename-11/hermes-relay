@@ -2080,6 +2080,7 @@
     <string name="conn_info_connect">Conectar</string>
     <string name="conn_info_connected">Conectado</string>
     <string name="conn_info_active_configuration">Configuración activa</string>
+    <string name="conn_info_active_profile">Perfil activo</string>
     <string name="conn_info_inherited">Heredado</string>
     <string name="conn_info_bypassed">Omitido</string>
     <string name="conn_info_customize_identity">Personalizar identidad</string>

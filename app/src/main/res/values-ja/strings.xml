@@ -2285,6 +2285,7 @@
     <string name="conn_info_connect">接続する</string>
     <string name="conn_info_connected">接続済み</string>
     <string name="conn_info_active_configuration">有効な構成</string>
+    <string name="conn_info_active_profile">アクティブなプロフィール</string>
     <string name="conn_info_inherited">継承</string>
     <string name="conn_info_bypassed">バイパス</string>
     <string name="conn_info_customize_identity">アイデンティティをカスタマイズ</string>

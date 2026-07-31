@@ -481,6 +481,28 @@ class GatewayClientHarness(
 }
 
 class GatewayChatClientTest {
+    @Test
+    fun `personality completion parser keeps configured names and excludes none`() {
+        val result = buildJsonObject {
+            put("items", JsonArray(listOf(
+                buildJsonObject {
+                    put("text", "none")
+                    put("meta", "clear personality overlay")
+                },
+                buildJsonObject {
+                    put("text", "coder")
+                    put("meta", "Expert programmer")
+                },
+                buildJsonObject {
+                    put("text", "coach")
+                    put("meta", "Supportive coach")
+                },
+            )))
+        }
+
+        assertEquals(listOf("coder", "coach"), parseGatewayPersonalityOptions(result))
+    }
+
 
     private lateinit var harness: GatewayClientHarness
     private lateinit var scope: CoroutineScope

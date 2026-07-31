@@ -70,6 +70,7 @@ import com.hermesandroid.relay.network.upstream.ApiModelRoutingException
 import com.hermesandroid.relay.network.upstream.ApiModelSelectionAck
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.isCurrentModelOptionsResponse
+import com.hermesandroid.relay.network.upstream.parsePersonalityPrompts
 import com.hermesandroid.relay.network.upstream.sessionTurnModelHint
 import com.hermesandroid.relay.network.relay.ProactiveMessage
 import com.hermesandroid.relay.network.relay.RelayHttpClient
@@ -2933,6 +2934,14 @@ class ChatViewModel : ViewModel() {
 
     private fun fetchPersonalities() {
         viewModelScope.launch {
+            val gatewayNames = if (
+                streamingEndpoint == "gateway" &&
+                gatewayClient?.connectionState?.value == GatewayConnectionState.Ready
+            ) {
+                gatewayClient?.personalityOptions()?.getOrNull().orEmpty()
+            } else {
+                emptyList()
+            }
             val config = if (apiClient != null) {
                 apiClient?.getPersonalities()
             } else {
@@ -2940,11 +2949,12 @@ class ChatViewModel : ViewModel() {
                     ?.invoke()
                     ?.getOrNull()
                     ?.let(::parseDashboardPersonalityConfig)
-            } ?: return@launch
-            _personalityNames.value = config.names
-            _defaultPersonality.value = config.defaultName
-            personalityPrompts = config.prompts
-            _serverModelName.value = config.modelName
+            }
+            if (config == null && gatewayNames.isEmpty()) return@launch
+            _personalityNames.value = gatewayNames.ifEmpty { config?.names.orEmpty() }
+            _defaultPersonality.value = config?.defaultName.orEmpty()
+            personalityPrompts = config?.prompts.orEmpty()
+            _serverModelName.value = config?.modelName.orEmpty()
             refreshActiveAgentName(relabelGenericMessages = true)
         }
     }
@@ -7955,14 +7965,9 @@ internal fun parseDashboardPersonalityConfig(
     // Dashboard builds have returned both the API-compatible `{config:{...}}`
     // envelope and the config tree directly; accept either without guessing.
     val config = root["config"] as? JsonObject ?: root
-    val personalities = ((config["agent"] as? JsonObject)?.get("personalities") as? JsonObject)
-        ?.entries
-        ?.mapNotNull { (name, value) ->
-            val prompt = (value as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
-            name to prompt
-        }
-        ?.toMap()
-        .orEmpty()
+    val personalities = parsePersonalityPrompts(
+        (config["agent"] as? JsonObject)?.get("personalities") as? JsonObject,
+    )
     val display = config["display"] as? JsonObject
     val configuredPersonality = display?.stringValue("personality")
     val defaultName = listOf(

@@ -2274,6 +2274,7 @@
     <string name="conn_info_connect">Verbinden</string>
     <string name="conn_info_connected">Verbunden</string>
     <string name="conn_info_active_configuration">Aktive Konfiguration</string>
+    <string name="conn_info_active_profile">Aktives Profil</string>
     <string name="conn_info_inherited">Geerbt</string>
     <string name="conn_info_bypassed">Umgangen</string>
     <string name="conn_info_customize_identity">Identität anpassen</string>
