@@ -402,7 +402,12 @@ fun VoiceModeOverlay(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            items(visibleTranscriptMessages, key = { it.id }) { msg ->
+                            // Match ChatScreen's identity contract. A history
+                            // reconcile can adopt the same authoritative server
+                            // id into a live row while Compose still holds the
+                            // pre-reconcile row for a frame. uiKey remains stable
+                            // and unique across that transition.
+                            items(visibleTranscriptMessages, key = ::voiceTranscriptItemKey) { msg ->
                                 CompactTranscriptRow(
                                     message = msg,
                                     showThinking = showThinking,
@@ -728,6 +733,8 @@ internal fun pendingVoiceTranscriptText(
 
     return if (alreadyRendered) null else transcribed
 }
+
+internal fun voiceTranscriptItemKey(message: ChatMessage): String = message.uiKey
 
 @Composable
 private fun InteractionMode.label(): String = when (this) {

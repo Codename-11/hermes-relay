@@ -1,6 +1,4 @@
-v1.5.2 - Sign in without detours
+v1.5.3 - Voice stays open
 
-* Complete self-hosted OIDC sign-in through the dashboard callback.
-* Open Nous Portal securely in the system browser.
-* Sign in over private-LAN and Tailscale dashboard routes.
-* Keep replayed chat updates from duplicating conversation rows.
+* Prevent Voice Focus from closing while live messages reconcile with chat history.
+* Keep transcript rows stable when they receive persisted server identities.
