@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -37,7 +38,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
@@ -85,6 +85,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import com.hermesandroid.relay.R
 import androidx.compose.ui.text.font.FontWeight
@@ -673,6 +674,8 @@ fun AgentInfoSheet(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val resolvedProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
+    val effectiveSessionProfileName by
+        connectionViewModel.effectiveSessionProfileName.collectAsState()
     val profilePresentation by connectionViewModel.profilePresentation.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val isProfileLocked by connectionViewModel.isProfileLocked.collectAsState()
@@ -692,12 +695,22 @@ fun AgentInfoSheet(
     val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
     val fastEnabled by chatViewModel.fastEnabled.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    val chatReady by connectionViewModel.chatReady.collectAsState()
+    val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
     val messages by chatViewModel.messages.collectAsState()
     val sessions by chatViewModel.sessions.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
     val contextWindow by chatViewModel.contextWindow.collectAsState()
     val appStats by AppAnalytics.stats.collectAsState()
+    val effectiveApiServerUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    val relayUrl by connectionViewModel.relayUrl.collectAsState()
+    val effectiveRelayUrl by connectionViewModel.effectiveRelayUrl.collectAsState()
+    val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
+    val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
+    val voiceReady by connectionViewModel.voiceReady.collectAsState()
+    val proactiveEnabled by connectionViewModel.proactiveEnabled.collectAsState()
     val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
     val allConnections by connectionViewModel.connectionStore.connections.collectAsState()
     val activeConnectionId by
@@ -723,9 +736,9 @@ fun AgentInfoSheet(
         connectionLabel = null,
         localDisplayAlias = profileDisplayAlias,
     )
-    val profileLabel = profileDisplayAlias
-        ?: AgentDisplay.profileDisplayName(resolvedProfile)
-        ?: agentName
+    val profileLabel = selectedProfile?.let {
+        AgentDisplay.profileDisplayName(it) ?: it.name
+    } ?: stringResource(R.string.conn_info_server_default)
     val modelLabel = AgentDisplay.displayModelName(selectedModel ?: gatewayModel)
         ?: AgentDisplay.displayModelName(resolvedProfile?.model)
         ?: AgentDisplay.displayModelName(serverModel)
@@ -735,11 +748,48 @@ fun AgentInfoSheet(
         ?.name
         ?.takeIf { it.isNotBlank() }
         ?: gatewayProvider.takeIf { it.isNotBlank() }
-    val connected = gatewayAvailability == GatewayAvailability.Ready
-    val routeLabel = activeEndpoint?.displayLabel()
-        ?: activeConnection?.primaryHost?.takeIf { it.isNotBlank() }
-        ?: activeConnection?.label
-        ?: stringResource(R.string.session_path_gateway)
+    val sessionModelLabel = AgentDisplay.displayModelName(currentSession?.model)
+        ?: modelLabel
+    val sessionProviderLabel = currentSession?.model
+        ?.takeIf { it.isNotBlank() }
+        ?.let { sessionModel ->
+            modelProviders.firstOrNull { sessionModel in it.models }?.name
+        }
+        ?: providerLabel.takeIf { currentSession?.model.isNullOrBlank() }
+    val connected = chatReady
+    val resolvedPresence = resolvedProfile?.let {
+        ProfilePresenceResolver.resolve(it, connected)
+    }
+    val sessionTransport = sessionPathTransport(
+        connectionViewModel.resolveStreamingEndpoint(streamingEndpoint),
+    )
+    val routeLabel = if (sessionTransport.isGateway) {
+        activeConnection?.routeCandidates
+            ?.firstOrNull {
+                it.dashboard?.url?.trimEnd('/') == effectiveDashboardUrl.trimEnd('/')
+            }
+            ?.displayLabel()
+            ?: effectiveDashboardUrl.takeIf { it.isNotBlank() }?.let { url ->
+                com.hermesandroid.relay.data.Connection.endpointCandidateFromDashboardUrl(
+                    role = com.hermesandroid.relay.data.Connection.inferRouteRole(url),
+                    priority = 0,
+                    dashboardUrl = url,
+                )?.displayLabel()
+            }
+    } else {
+        activeEndpoint?.displayLabel()
+            ?: com.hermesandroid.relay.data.Connection
+                .extractDefaultLabel(effectiveApiServerUrl)
+                .takeIf { it.isNotBlank() }
+    }
+    val sessionCaps = sessionCapabilities(
+        transport = sessionTransport,
+        gatewayAvailability = gatewayAvailability,
+        relayConnected = relayConnectionState == ConnectionState.Connected,
+        relayConfigured = relayUrl.isNotBlank(),
+        voiceReady = voiceReady,
+        threadsActive = proactiveEnabled && authState is AuthState.Paired,
+    )
     val contextLabel = contextWindow?.let {
         "${compactTokenCount(it.usedTokens)} / ${compactTokenCount(it.maxTokens)}"
     } ?: "—"
@@ -791,7 +841,7 @@ fun AgentInfoSheet(
                     connectionViewModel = connectionViewModel,
                     profileDisplayAlias = profileDisplayAlias,
                     fallbackName = agentName,
-                    selectedProfile = selectedProfile,
+                    effectiveProfile = resolvedProfile,
                     hasProfiles = agentProfiles.isNotEmpty(),
                     onBack = { showIdentityEditor = false },
                     onManageProfiles = { showProfileManager = true },
@@ -812,8 +862,12 @@ fun AgentInfoSheet(
                     modelLabel = modelLabel,
                     providerLabel = providerLabel,
                     connected = connected,
-                    routeLabel = routeLabel,
-                    messageCount = messages.size,
+                    presence = resolvedPresence,
+                    hasSoul = resolvedProfile?.hasSoul == true,
+                    skillCount = resolvedProfile?.skillCount ?: 0,
+                    profileScopeLabel = profileLabel,
+                    transportLabel = transportFriendlyName(sessionTransport.type),
+                    sessionLabel = currentSessionId?.take(8) ?: "—",
                     contextLabel = contextLabel,
                     onProfileClick = { profilePickerExpanded = !profilePickerExpanded },
                 )
@@ -1093,6 +1147,24 @@ fun AgentInfoSheet(
                     Spacer(Modifier.size(8.dp))
                     Text(stringResource(R.string.conn_info_customize_identity))
                 }
+                resolvedProfile?.let { profile ->
+                    TextButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            onDismiss()
+                            onNavigateToProfileInspector(profile.name)
+                        },
+                    ) {
+                        Icon(Icons.Filled.Visibility, contentDescription = null)
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            stringResource(
+                                R.string.conn_info_inspect_profile,
+                                AgentDisplay.profileDisplayName(profile) ?: profile.name,
+                            ),
+                        )
+                    }
+                }
                 } else {
                 AgentPassportSessionTab(
                     currentSessionLabel = currentSession?.title
@@ -1105,9 +1177,26 @@ fun AgentInfoSheet(
                         appStats.currentSessionTokensIn,
                         appStats.currentSessionTokensOut,
                     ),
+                    sessionId = currentSessionId,
+                    sessionProfileName = effectiveSessionProfileName,
+                    modelLabel = sessionModelLabel,
+                    providerLabel = sessionProviderLabel,
+                    reasoningLabel = selectedReasoning?.let(::reasoningLabel)
+                        ?: stringResource(R.string.conn_info_server_default),
+                    approvalMode = approvalMode,
+                    approvalCapability = approvalCapability,
+                    fastEnabled = fastEnabled,
+                    contextLabel = contextLabel,
+                    transport = sessionTransport,
                     routeLabel = routeLabel,
-                    connectionLabel = activeConnection?.label ?: routeLabel,
-                    connected = connected,
+                    capabilities = sessionCaps,
+                    relayConnectionState = relayConnectionState,
+                    apiServerUrl = effectiveApiServerUrl,
+                    relayUrl = effectiveRelayUrl,
+                    streamingEndpoint = streamingEndpoint,
+                    gatewayAvailability = gatewayAvailability,
+                    serverCapabilities = serverCapabilities,
+                    connectionLabel = activeConnection?.label ?: routeLabel ?: "—",
                     authState = authState,
                     onManageConnections = {
                         onDismiss()
@@ -1137,7 +1226,7 @@ private fun AgentPassportIdentityEditor(
     connectionViewModel: ConnectionViewModel,
     profileDisplayAlias: String?,
     fallbackName: String,
-    selectedProfile: Profile?,
+    effectiveProfile: Profile?,
     hasProfiles: Boolean,
     onBack: () -> Unit,
     onManageProfiles: () -> Unit,
@@ -1192,7 +1281,7 @@ private fun AgentPassportIdentityEditor(
         }
     }
 
-    selectedProfile?.let { profile ->
+    effectiveProfile?.let { profile ->
         TextButton(
             onClick = { onInspectProfile(profile) },
             modifier = Modifier.fillMaxWidth(),
@@ -1214,8 +1303,12 @@ private fun AgentPassportHeader(
     modelLabel: String,
     providerLabel: String?,
     connected: Boolean,
-    routeLabel: String,
-    messageCount: Int,
+    presence: ProfilePresence?,
+    hasSoul: Boolean,
+    skillCount: Int,
+    profileScopeLabel: String,
+    transportLabel: String,
+    sessionLabel: String,
     contextLabel: String,
     onProfileClick: () -> Unit,
 ) {
@@ -1280,7 +1373,7 @@ private fun AgentPassportHeader(
                                 horizontalArrangement = Arrangement.spacedBy(5.dp),
                             ) {
                                 Icon(
-                                    imageVector = Icons.Filled.PushPin,
+                                    imageVector = Icons.Filled.Person,
                                     contentDescription = null,
                                     modifier = Modifier.size(14.dp),
                                     tint = MaterialTheme.colorScheme.primary,
@@ -1303,7 +1396,6 @@ private fun AgentPassportHeader(
                     }
                     Text(
                         text = listOfNotNull(
-                            stringResource(R.string.conn_info_server_default),
                             modelLabel,
                             providerLabel,
                         )
@@ -1313,6 +1405,45 @@ private fun AgentPassportHeader(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        presence?.let {
+                            val (label, background, content) = when (it) {
+                                ProfilePresence.ONLINE -> Triple(
+                                    stringResource(R.string.conn_info_profile_online),
+                                    MaterialTheme.colorScheme.primaryContainer,
+                                    MaterialTheme.colorScheme.onPrimaryContainer,
+                                )
+                                ProfilePresence.AVAILABLE -> Triple(
+                                    stringResource(R.string.conn_info_profile_available),
+                                    MaterialTheme.colorScheme.secondaryContainer,
+                                    MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                                ProfilePresence.OFFLINE -> Triple(
+                                    stringResource(R.string.conn_info_profile_offline),
+                                    MaterialTheme.colorScheme.errorContainer,
+                                    MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                            }
+                            StatusChip(label, background, content)
+                        }
+                        if (skillCount > 0) {
+                            StatusChip(
+                                text = stringResource(R.string.conn_info_skills_count, skillCount),
+                                background = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (hasSoul) {
+                            StatusChip(
+                                text = stringResource(R.string.conn_info_soul),
+                                background = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -1351,27 +1482,23 @@ private fun AgentPassportHeader(
             )
             Row(modifier = Modifier.fillMaxWidth()) {
                 PassportMetric(
-                    icon = Icons.Filled.Language,
-                    label = stringResource(R.string.session_path_gateway),
-                    value = stringResource(R.string.conn_info_server_default),
+                    icon = Icons.Filled.Person,
+                    label = stringResource(R.string.conn_info_profile),
+                    value = profileScopeLabel,
                     modifier = Modifier.weight(1f),
                 )
                 PassportMetricDivider()
                 PassportMetric(
-                    icon = Icons.Filled.Security,
-                    label = routeLabel,
-                    value = if (connected) {
-                        stringResource(R.string.conn_info_connected)
-                    } else {
-                        stringResource(R.string.conn_info_disconnected)
-                    },
+                    icon = Icons.Filled.Language,
+                    label = stringResource(R.string.conn_info_transport),
+                    value = transportLabel,
                     modifier = Modifier.weight(1f),
                 )
                 PassportMetricDivider()
                 PassportMetric(
                     icon = Icons.Filled.ChatBubble,
-                    label = stringResource(R.string.conn_info_messages),
-                    value = messageCount.toString(),
+                    label = stringResource(R.string.conn_info_session_title),
+                    value = sessionLabel,
                     modifier = Modifier.weight(1f),
                 )
                 PassportMetricDivider()
@@ -1436,7 +1563,9 @@ private fun AgentPassportTabs(
     onSelected: (Int) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectableGroup(),
     ) {
         listOf(
             stringResource(R.string.subagent_lane_label_fallback),
@@ -1445,7 +1574,11 @@ private fun AgentPassportTabs(
             Surface(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable { onSelected(index) },
+                    .selectable(
+                        selected = selected == index,
+                        role = Role.Tab,
+                        onClick = { onSelected(index) },
+                    ),
                 color = Color.Transparent,
                 contentColor = if (selected == index) {
                     MaterialTheme.colorScheme.primary
@@ -1488,10 +1621,18 @@ private fun PassportConfigRow(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val expansionState = stringResource(
+        if (expanded) {
+            R.string.profile_inspector_expanded_state
+        } else {
+            R.string.profile_inspector_collapsed_state
+        },
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
+            .semantics { stateDescription = expansionState }
             .padding(horizontal = 16.dp, vertical = 7.dp)
             .alpha(if (enabled) 1f else 0.58f),
         verticalAlignment = Alignment.CenterVertically,
@@ -1710,6 +1851,7 @@ private fun PassportSegmentedControl(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .selectableGroup()
             .clip(RoundedCornerShape(14.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .padding(3.dp)
@@ -1719,7 +1861,12 @@ private fun PassportSegmentedControl(
             Surface(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable(enabled = enabled) { onSelected(index) },
+                    .selectable(
+                        selected = selected == index,
+                        enabled = enabled,
+                        role = Role.RadioButton,
+                        onClick = { onSelected(index) },
+                    ),
                 shape = RoundedCornerShape(11.dp),
                 color = if (selected == index) {
                     MaterialTheme.colorScheme.primary
@@ -1750,12 +1897,43 @@ private fun AgentPassportSessionTab(
     currentSessionLabel: String,
     messageCount: Int,
     tokenSummary: String,
-    routeLabel: String,
+    sessionId: String?,
+    sessionProfileName: String?,
+    modelLabel: String,
+    providerLabel: String?,
+    reasoningLabel: String,
+    approvalMode: GatewayApprovalMode?,
+    approvalCapability: GatewayApprovalModeCapability,
+    fastEnabled: Boolean?,
+    contextLabel: String,
+    transport: SessionPathTransport,
+    routeLabel: String?,
+    capabilities: List<SessionCapability>,
+    relayConnectionState: ConnectionState,
+    apiServerUrl: String,
+    relayUrl: String,
+    streamingEndpoint: String,
+    gatewayAvailability: GatewayAvailability,
+    serverCapabilities: com.hermesandroid.relay.network.upstream.ServerCapabilities,
     connectionLabel: String,
-    connected: Boolean,
     authState: AuthState,
     onManageConnections: () -> Unit,
 ) {
+    val approvalLabel = when (approvalCapability) {
+        GatewayApprovalModeCapability.Unknown ->
+            stringResource(R.string.conn_info_checking)
+        GatewayApprovalModeCapability.Unsupported ->
+            stringResource(R.string.conn_info_approval_mode_unsupported)
+        GatewayApprovalModeCapability.Supported -> when (approvalMode) {
+            GatewayApprovalMode.Manual ->
+                stringResource(R.string.conn_info_approval_mode_manual)
+            GatewayApprovalMode.Smart ->
+                stringResource(R.string.conn_info_approval_mode_smart)
+            GatewayApprovalMode.Off ->
+                stringResource(R.string.conn_info_approval_mode_off)
+            null -> stringResource(R.string.conn_info_checking)
+        }
+    }
     Surface(
         shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -1774,8 +1952,38 @@ private fun AgentPassportSessionTab(
                 fontWeight = FontWeight.SemiBold,
             )
             InfoRow(stringResource(R.string.conn_info_name), currentSessionLabel)
+            InfoRow(
+                stringResource(R.string.conn_info_session_id),
+                sessionId?.take(12) ?: "—",
+                monospace = true,
+            )
+            InfoRow(
+                stringResource(R.string.conn_info_profile),
+                sessionProfileName ?: stringResource(R.string.conn_info_server_default),
+                monospace = sessionProfileName != null,
+            )
             InfoRow(stringResource(R.string.conn_info_messages), messageCount.toString())
             InfoRow(stringResource(R.string.conn_info_tokens), tokenSummary)
+            InfoRow(stringResource(R.string.conn_info_context), contextLabel)
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+            )
+            InfoRow(stringResource(R.string.conn_info_model_title), modelLabel)
+            providerLabel?.let {
+                InfoRow(stringResource(R.string.voice_settings_label_provider), it)
+            }
+            InfoRow(stringResource(R.string.conn_info_reasoning), reasoningLabel)
+            InfoRow(stringResource(R.string.conn_info_approval_policy), approvalLabel)
+            InfoRow(
+                stringResource(R.string.conn_info_fast_mode_title),
+                if (fastEnabled == true) {
+                    stringResource(R.string.conn_info_fast)
+                } else if (fastEnabled == false) {
+                    stringResource(R.string.appearance_font_normal)
+                } else {
+                    stringResource(R.string.conn_info_server_default)
+                },
+            )
         }
     }
     Surface(
@@ -1795,18 +2003,14 @@ private fun AgentPassportSessionTab(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
+            SessionPathSummary(
+                transport = transport,
+                routeLabel = routeLabel,
+                capabilities = capabilities,
+            )
             InfoRow(
                 stringResource(R.string.conn_info_name),
                 connectionLabel,
-            )
-            InfoRow(
-                stringResource(R.string.session_path_gateway),
-                routeLabel,
-                valueColor = if (connected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.error
-                },
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1820,6 +2024,17 @@ private fun AgentPassportSessionTab(
                 )
                 authStateChip(authState)
             }
+            SessionPathDetails(
+                transport = transport,
+                routeLabel = routeLabel,
+                relayConnectionState = relayConnectionState,
+                capabilities = capabilities,
+                apiServerUrl = apiServerUrl,
+                relayUrl = relayUrl,
+                streamingEndpoint = streamingEndpoint,
+                gatewayAvailability = gatewayAvailability,
+                serverCapabilities = serverCapabilities,
+            )
         }
     }
     OutlinedButton(

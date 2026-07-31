@@ -1357,6 +1357,33 @@
     <string name="profile_inspector_disabled">（無効）</string>
     <string name="profile_inspector_retry">リトライ</string>
     <string name="profile_inspector_truncated">コンテンツはRelayによって切り詰められ、最初のスライスのみが表示されます。</string>
+    <string name="profile_inspector_config_summary">プロファイル設定</string>
+    <string name="profile_inspector_config_summary_description">このプロファイルの config.yaml に定義されているフィールドのスナップショットです。</string>
+    <string name="profile_inspector_profile">プロファイル</string>
+    <string name="profile_inspector_access">アクセス</string>
+    <string name="profile_inspector_read_only_value">読み取り専用</string>
+    <string name="profile_inspector_inspector_view_value">インスペクタービュー</string>
+    <string name="profile_inspector_fields">フィールド</string>
+    <string name="profile_inspector_config_field_summary">トップレベル %1$d 件 · 合計 %2$d 件</string>
+    <string name="profile_inspector_configured_sections">設定済みセクション</string>
+    <string name="profile_inspector_empty_config_summary">このプロファイル設定にはフィールドが定義されていません。</string>
+    <string name="profile_inspector_show_raw_config">生の設定を表示</string>
+    <string name="profile_inspector_hide_raw_config">生の設定を非表示</string>
+    <string name="profile_inspector_skills_count_summary">サーバースナップショット: %2$d 件中 %1$d 件が有効</string>
+    <string name="profile_inspector_skills_visible_count">%2$d 件中 %1$d 件のスキルを表示</string>
+    <string name="profile_inspector_search_skills">スキルを検索</string>
+    <string name="profile_inspector_clear_skill_search">スキル検索をクリア</string>
+    <string name="profile_inspector_filter_all">すべて</string>
+    <string name="profile_inspector_filter_enabled">有効</string>
+    <string name="profile_inspector_filter_disabled">無効</string>
+    <string name="profile_inspector_no_matching_skills">一致するスキルはありません</string>
+    <string name="profile_inspector_no_matching_skills_hint">別の検索語またはフィルターを試してください。</string>
+    <string name="profile_inspector_expanded_state">展開済み</string>
+    <string name="profile_inspector_collapsed_state">折りたたみ済み</string>
+    <string name="profile_inspector_enable_skill">%1$s を有効にする</string>
+    <string name="profile_inspector_disable_skill">%1$s を無効にする</string>
+    <string name="conn_info_session_id">セッション ID</string>
+    <string name="conn_info_reasoning">推論</string>
 
     <!-- PairedDevicesScreen -->
     <string name="paired_devices_title">Relay セッション</string>

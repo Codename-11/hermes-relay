@@ -1344,6 +1344,33 @@
     <string name="profile_inspector_disabled">(deaktiviert)</string>
     <string name="profile_inspector_retry">Erneut versuchen</string>
     <string name="profile_inspector_truncated">Inhalt vom Relay gekürzt — nur der erste Abschnitt wird angezeigt.</string>
+    <string name="profile_inspector_config_summary">Profilkonfiguration</string>
+    <string name="profile_inspector_config_summary_description">Momentaufnahme der Felder, die in der config.yaml dieses Profils definiert sind.</string>
+    <string name="profile_inspector_profile">Profil</string>
+    <string name="profile_inspector_access">Zugriff</string>
+    <string name="profile_inspector_read_only_value">Schreibgeschützt</string>
+    <string name="profile_inspector_inspector_view_value">Inspektoransicht</string>
+    <string name="profile_inspector_fields">Felder</string>
+    <string name="profile_inspector_config_field_summary">%1$d auf oberster Ebene · %2$d insgesamt</string>
+    <string name="profile_inspector_configured_sections">Konfigurierte Bereiche</string>
+    <string name="profile_inspector_empty_config_summary">In dieser Profilkonfiguration sind keine Felder definiert.</string>
+    <string name="profile_inspector_show_raw_config">Rohkonfiguration anzeigen</string>
+    <string name="profile_inspector_hide_raw_config">Rohkonfiguration ausblenden</string>
+    <string name="profile_inspector_skills_count_summary">Server-Momentaufnahme: %1$d von %2$d aktiviert</string>
+    <string name="profile_inspector_skills_visible_count">%1$d von %2$d Skills werden angezeigt</string>
+    <string name="profile_inspector_search_skills">Skills durchsuchen</string>
+    <string name="profile_inspector_clear_skill_search">Skill-Suche löschen</string>
+    <string name="profile_inspector_filter_all">Alle</string>
+    <string name="profile_inspector_filter_enabled">Aktiviert</string>
+    <string name="profile_inspector_filter_disabled">Deaktiviert</string>
+    <string name="profile_inspector_no_matching_skills">Keine passenden Skills</string>
+    <string name="profile_inspector_no_matching_skills_hint">Versuche es mit einer anderen Suche oder einem anderen Filter.</string>
+    <string name="profile_inspector_expanded_state">Ausgeklappt</string>
+    <string name="profile_inspector_collapsed_state">Eingeklappt</string>
+    <string name="profile_inspector_enable_skill">%1$s aktivieren</string>
+    <string name="profile_inspector_disable_skill">%1$s deaktivieren</string>
+    <string name="conn_info_session_id">Sitzungs-ID</string>
+    <string name="conn_info_reasoning">Denkmodus</string>
 
     <!-- PairedDevicesScreen -->
     <string name="paired_devices_title">Relay-Sitzungen</string>

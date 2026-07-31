@@ -1341,6 +1341,33 @@
     <string name="profile_inspector_disabled">（已禁用）</string>
     <string name="profile_inspector_retry">重试</string>
     <string name="profile_inspector_truncated">内容已被 Relay 截断——仅显示前一部分。</string>
+    <string name="profile_inspector_config_summary">配置文件设置</string>
+    <string name="profile_inspector_config_summary_description">此配置文件的 config.yaml 中已定义字段的快照。</string>
+    <string name="profile_inspector_profile">配置文件</string>
+    <string name="profile_inspector_access">访问权限</string>
+    <string name="profile_inspector_read_only_value">只读</string>
+    <string name="profile_inspector_inspector_view_value">检查器视图</string>
+    <string name="profile_inspector_fields">字段</string>
+    <string name="profile_inspector_config_field_summary">%1$d 个顶层字段 · 共 %2$d 个</string>
+    <string name="profile_inspector_configured_sections">已配置部分</string>
+    <string name="profile_inspector_empty_config_summary">此配置文件中未定义任何字段。</string>
+    <string name="profile_inspector_show_raw_config">显示原始配置</string>
+    <string name="profile_inspector_hide_raw_config">隐藏原始配置</string>
+    <string name="profile_inspector_skills_count_summary">服务器快照：%2$d 个技能中已启用 %1$d 个</string>
+    <string name="profile_inspector_skills_visible_count">显示 %2$d 个技能中的 %1$d 个</string>
+    <string name="profile_inspector_search_skills">搜索技能</string>
+    <string name="profile_inspector_clear_skill_search">清除技能搜索</string>
+    <string name="profile_inspector_filter_all">全部</string>
+    <string name="profile_inspector_filter_enabled">已启用</string>
+    <string name="profile_inspector_filter_disabled">已禁用</string>
+    <string name="profile_inspector_no_matching_skills">没有匹配的技能</string>
+    <string name="profile_inspector_no_matching_skills_hint">请尝试其他搜索词或筛选条件。</string>
+    <string name="profile_inspector_expanded_state">已展开</string>
+    <string name="profile_inspector_collapsed_state">已折叠</string>
+    <string name="profile_inspector_enable_skill">启用 %1$s</string>
+    <string name="profile_inspector_disable_skill">禁用 %1$s</string>
+    <string name="conn_info_session_id">会话 ID</string>
+    <string name="conn_info_reasoning">推理</string>
 
     <!-- PairedDevicesScreen -->
     <string name="paired_devices_title">Relay 会话</string>
