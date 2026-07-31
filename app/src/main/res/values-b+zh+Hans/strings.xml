@@ -1602,7 +1602,7 @@
     <string name="voice_settings_silence_threshold_desc">结束语音：在您说话后，超过此静音时长即自动停止（桌面默认 1.25 秒）。</string>
     <string name="voice_settings_barge_in_title">插话</string>
     <string name="voice_settings_barge_in_master">我说话时打断</string>
-    <string name="voice_settings_barge_in_master_desc">在生成和播放期间持续监听，让你可以自然打断。默认开启；耳机可提供最佳回声隔离。</string>
+    <string name="voice_settings_barge_in_master_desc">在 Hermes 思考和说话时持续监听，让你可以自然打断。回复期间使用免手动停止短语需要开启此功能。默认开启；耳机可提供最佳回声隔离。</string>
     <string name="voice_settings_barge_in_aec_warning">您的设备可能回声消除能力有限。插话质量会有差异。</string>
     <string name="voice_settings_sensitivity">灵敏度</string>
     <string name="voice_settings_sensitivity_desc">控制语音模型确认。关闭可在不更改主开关的情况下禁用检测。</string>
@@ -3444,7 +3444,7 @@
     <string name="assistant_session_collapse">收起助理</string>
     <string name="assistant_session_open_full_voice">打开完整语音界面</string>
     <string name="voice_settings_stop_phrases">停止短语</string>
-    <string name="voice_settings_stop_phrases_desc">用逗号分隔可结束当前语音聊天的精确短语。留空可禁用。</string>
+    <string name="voice_settings_stop_phrases_desc">用逗号分隔可结束当前语音聊天的精确短语。要在 Hermes 思考或说话时识别这些短语，必须开启插话功能。留空可禁用。</string>
     <string name="voice_settings_barge_in_rms_multiplier">RMS 阈值：%1$.1f×</string>
     <string name="voice_settings_barge_in_rms_multiplier_desc">数值越高，语音相对于校准后的安静环境需要越响。上游默认值：3×。</string>
     <string name="voice_settings_barge_in_playback_grace">播放宽限：%1$.2f 秒</string>
