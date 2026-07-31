@@ -11,6 +11,7 @@ import java.util.Locale
  * never safe command boundaries.
  */
 internal enum class VoiceCommandAction {
+    EndVoiceChat,
     StopResponse,
     CancelBackgroundTask,
     PauseContinuousListening,
@@ -21,6 +22,8 @@ internal enum class VoiceCommandAction {
 
 /** State gates that keep an exact command phrase from becoming a global hotword. */
 internal data class VoiceCommandContext(
+    val voiceChatActive: Boolean = false,
+    val stopPhrases: List<String> = listOf("stop"),
     val responseActive: Boolean = false,
     val interruptedActiveResponse: Boolean = false,
     val backgroundTaskActive: Boolean = false,
@@ -41,7 +44,6 @@ internal data class VoiceCommandContext(
  */
 internal object VoiceCommandInterpreter {
     private val stopResponsePhrases = setOf(
-        "stop",
         "stop speaking",
         "stop talking",
         "stop the response",
@@ -86,9 +88,10 @@ internal object VoiceCommandInterpreter {
         return when {
             context.backgroundTaskActive && phrase in cancelBackgroundTaskPhrases ->
                 VoiceCommandAction.CancelBackgroundTask
+            context.voiceChatActive && phrase in context.stopPhrases.map(::normalize) ->
+                VoiceCommandAction.EndVoiceChat
             context.responseActive &&
-                phrase in stopResponsePhrases &&
-                (phrase != "stop" || context.interruptedActiveResponse) ->
+                phrase in stopResponsePhrases ->
                 VoiceCommandAction.StopResponse
             context.continuousModeSelected &&
                 context.interruptedActiveResponse &&

@@ -1605,10 +1605,10 @@
     <string name="voice_settings_silence_threshold_desc">Ende der Spracheingabe: nach so viel Stille automatisch stoppen, sobald du gesprochen hast (Desktop-Standard 1.25 s).</string>
     <string name="voice_settings_barge_in_title">Unterbrechen</string>
     <string name="voice_settings_barge_in_master">Unterbrechen, wenn ich spreche</string>
-    <string name="voice_settings_barge_in_master_desc">Experimentell: kann die Lautsprecherausgabe hören und sich fälschlich selbst unterbrechen oder aufnehmen. Am besten mit Kopfhörern.</string>
+    <string name="voice_settings_barge_in_master_desc">Hört während Generierung und Wiedergabe zu, damit du natürlich unterbrechen kannst. Standardmäßig aktiviert; Kopfhörer bieten die beste Echotrennung.</string>
     <string name="voice_settings_barge_in_aec_warning">Dein Gerät verfügt möglicherweise nur über begrenzte Echounterdrückung. Die Unterbrechungsqualität kann schwanken.</string>
     <string name="voice_settings_sensitivity">Empfindlichkeit</string>
-    <string name="voice_settings_sensitivity_desc">Aus deaktiviert die Erkennung, ohne den obigen Schalter umzulegen.</string>
+    <string name="voice_settings_sensitivity_desc">Steuert die Bestätigung durch das Sprachmodell. Aus deaktiviert die Erkennung, ohne den Hauptschalter zu ändern.</string>
     <string name="voice_settings_sensitivity_off">Aus</string>
     <string name="voice_settings_sensitivity_low">Niedrig</string>
     <string name="voice_settings_sensitivity_default">Standard</string>
@@ -3510,4 +3510,12 @@
     <string name="assistant_session_expand">Assistent erweitern</string>
     <string name="assistant_session_collapse">Assistent minimieren</string>
     <string name="assistant_session_open_full_voice">Vollständige Sprachansicht öffnen</string>
+    <string name="voice_settings_stop_phrases">Stopp-Phrasen</string>
+    <string name="voice_settings_stop_phrases_desc">Exakte, durch Kommas getrennte Phrasen, die einen aktiven Sprachchat beenden. Leer lassen zum Deaktivieren.</string>
+    <string name="voice_settings_barge_in_rms_multiplier">RMS-Schwelle: %1$.1f×</string>
+    <string name="voice_settings_barge_in_rms_multiplier_desc">Höhere Werte erfordern lautere Sprache relativ zum kalibrierten ruhigen Raum. Upstream-Standard: 3×.</string>
+    <string name="voice_settings_barge_in_playback_grace">Wiedergabe-Schonzeit: %1$.2f s</string>
+    <string name="voice_settings_barge_in_playback_grace_desc">Unterdrückt Fehltrigger direkt nach Beginn der Sprachwiedergabe. Upstream-Standard: 0,50 s.</string>
+    <string name="voice_settings_barge_in_debug">VAD-Diagnose</string>
+    <string name="voice_settings_barge_in_debug_desc">Schreibt kalibrierten Pegel, RMS, Schwelle, Phase und Entscheidungen zur Abstimmung in Logcat.</string>
 </resources>

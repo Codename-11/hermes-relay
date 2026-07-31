@@ -1618,10 +1618,10 @@
     <string name="voice_settings_silence_threshold_desc">スピーチの終了: 話し終えると、このくらいの沈黙の後に自動的に停止します (デスクトップのデフォルトは 1.25 秒)。</string>
     <string name="voice_settings_barge_in_title">割り込み</string>
     <string name="voice_settings_barge_in_master">私が話しているときに中断する</string>
-    <string name="voice_settings_barge_in_master_desc">実験的: スピーカー出力が聞こえ、誤って中断または録音自体が行われる可能性があります。ヘッドフォンを使用するのが最適です。</string>
+    <string name="voice_settings_barge_in_master_desc">生成中と再生中を通して聞き取り、自然に割り込めます。既定で有効です。ヘッドフォン使用時にエコーを最も確実に分離できます。</string>
     <string name="voice_settings_barge_in_aec_warning">お使いのデバイスのエコー キャンセルが制限されている可能性があります。バージインの品質は異なります。</string>
     <string name="voice_settings_sensitivity">感度</string>
-    <string name="voice_settings_sensitivity_desc">オフにすると、上のトグルを切り替えずに検出が無効になります。</string>
+    <string name="voice_settings_sensitivity_desc">音声モデルの確認レベルを調整します。オフにすると、メインスイッチを変えずに検出を無効にできます。</string>
     <string name="voice_settings_sensitivity_off">オフ</string>
     <string name="voice_settings_sensitivity_low">低い</string>
     <string name="voice_settings_sensitivity_default">デフォルト</string>
@@ -3509,4 +3509,12 @@
     <string name="assistant_session_expand">アシスタントを展開</string>
     <string name="assistant_session_collapse">アシスタントを折りたたむ</string>
     <string name="assistant_session_open_full_voice">フル音声画面を開く</string>
+    <string name="voice_settings_stop_phrases">停止フレーズ</string>
+    <string name="voice_settings_stop_phrases_desc">音声チャットを終了する完全一致のフレーズをカンマ区切りで指定します。空欄にすると無効になります。</string>
+    <string name="voice_settings_barge_in_rms_multiplier">RMS しきい値: %1$.1f×</string>
+    <string name="voice_settings_barge_in_rms_multiplier_desc">値を高くすると、較正した静かな環境に対してより大きな声が必要です。Upstream の既定値: 3×。</string>
+    <string name="voice_settings_barge_in_playback_grace">再生猶予: %1$.2f 秒</string>
+    <string name="voice_settings_barge_in_playback_grace_desc">音声再生の開始直後に起きる誤検出を抑制します。Upstream の既定値: 0.50 秒。</string>
+    <string name="voice_settings_barge_in_debug">VAD 診断</string>
+    <string name="voice_settings_barge_in_debug_desc">較正フロア、RMS、しきい値、フェーズ、判定内容を調整用に Logcat へ記録します。</string>
 </resources>

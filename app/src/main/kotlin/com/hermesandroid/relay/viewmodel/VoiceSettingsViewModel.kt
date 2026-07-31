@@ -171,6 +171,18 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch { bargeInRepo.setResumeAfterInterruption(enabled) }
     }
 
+    fun setBargeInThresholdMultiplier(value: Float) {
+        viewModelScope.launch { bargeInRepo.setThresholdMultiplier(value) }
+    }
+
+    fun setBargeInPlaybackGraceMs(value: Long) {
+        viewModelScope.launch { bargeInRepo.setPlaybackGraceMs(value) }
+    }
+
+    fun setBargeInDebugDiagnostics(enabled: Boolean) {
+        viewModelScope.launch { bargeInRepo.setDebugDiagnostics(enabled) }
+    }
+
     fun setWakeWordEnabled(enabled: Boolean) {
         if (!enabled) {
             viewModelScope.launch { wakeWordRepo.setEnabled(false) }

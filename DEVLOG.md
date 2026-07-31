@@ -1,5 +1,30 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-31 — Upstream-compatible voice interruption semantics
+
+Android full-turn barge-in now follows upstream Hermes' RMS behavior: roughly
+450 ms of quiet-room calibration, a 90th-percentile floor, 3× default
+multiplier, separate generation/playback minimums, a bounded ceiling, 500 ms
+playback grace, and an 80%-majority decision window. Calibration remains frozen
+against speaker output and cannot itself trigger. Renderer-driven phase tracking
+returns to generation thresholds in quiet output gaps and rearms playback grace
+only after a gap of at least one second. Opt-in Logcat diagnostics expose the
+inputs used for device tuning. Barge-in is enabled by default while retaining its master,
+Silero sensitivity, RMS multiplier, playback grace, and resume controls.
+
+Voice stop phrases now use an editable exact-match list that defaults to
+`stop`; clearing the list disables the behavior. A match ends the active voice
+chat in generation or playback, but the same word outside voice chat and longer
+requests continue through normal Hermes input. Continuous-mode pause/resume and
+explicit background-task cancellation retain their narrower state gates.
+
+Interrupting spoken playback arms the upstream one-shot interruption note for
+the next Standard model-bound message. The latch expires after 120 seconds and
+travels only in API-local voice interface context, never in visible or
+persisted user text. Generation and pre-audio synthesis interruption do not mark
+an unspoken reply, Realtime keeps its provider-session context, and silencing remains independent
+from cancellation of promoted background work.
+
 ## 2026-07-30 — Expandable Android assistant surface
 
 Android Digital Assistant sessions now open as a compact bottom bar over the

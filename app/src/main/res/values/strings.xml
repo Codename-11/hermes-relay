@@ -1721,10 +1721,10 @@
     <string name="voice_settings_silence_threshold_desc">End-of-speech: auto-stop after this much silence once you\'ve spoken (desktop default 1.25s).</string>
     <string name="voice_settings_barge_in_title">Barge-in</string>
     <string name="voice_settings_barge_in_master">Interrupt when I speak</string>
-    <string name="voice_settings_barge_in_master_desc">Experimental: may hear speaker output and falsely interrupt or record itself. Best with headphones.</string>
+    <string name="voice_settings_barge_in_master_desc">Listen across generation and playback so you can interrupt naturally. Enabled by default; headphones give the cleanest echo isolation.</string>
     <string name="voice_settings_barge_in_aec_warning">Your device may have limited echo cancellation. Barge-in quality will vary.</string>
     <string name="voice_settings_sensitivity">Sensitivity</string>
-    <string name="voice_settings_sensitivity_desc">Off disables detection without flipping the toggle above.</string>
+    <string name="voice_settings_sensitivity_desc">Controls the speech model confirmation. Off disables detection without changing the master switch.</string>
     <string name="voice_settings_sensitivity_off">Off</string>
     <string name="voice_settings_sensitivity_low">Low</string>
     <string name="voice_settings_sensitivity_default">Default</string>
@@ -3516,4 +3516,12 @@
     <string name="assistant_session_expand">Expand assistant</string>
     <string name="assistant_session_collapse">Collapse assistant</string>
     <string name="assistant_session_open_full_voice">Open full voice</string>
+    <string name="voice_settings_stop_phrases">Stop phrases</string>
+    <string name="voice_settings_stop_phrases_desc">Exact comma-separated phrases that end an active voice chat. Leave empty to disable.</string>
+    <string name="voice_settings_barge_in_rms_multiplier">RMS threshold: %1$.1f×</string>
+    <string name="voice_settings_barge_in_rms_multiplier_desc">Higher values require speech to be louder relative to the calibrated quiet room. Upstream default: 3×.</string>
+    <string name="voice_settings_barge_in_playback_grace">Playback grace: %1$.2f s</string>
+    <string name="voice_settings_barge_in_playback_grace_desc">Suppresses false triggers immediately after speech playback begins. Upstream default: 0.50 s.</string>
+    <string name="voice_settings_barge_in_debug">VAD diagnostics</string>
+    <string name="voice_settings_barge_in_debug_desc">Write calibrated floor, RMS, trigger, phase, and decision details to logcat for tuning.</string>
 </resources>

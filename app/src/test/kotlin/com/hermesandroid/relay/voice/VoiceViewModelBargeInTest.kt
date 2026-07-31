@@ -33,6 +33,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -189,8 +190,25 @@ class VoiceViewModelBargeInTest {
         runCurrent()
 
         assertEquals(VoiceState.Listening, vm.uiState.value.state)
+        assertNull(vm.takeSpokenInterruptionNoteForTest())
         verify(atLeast = 1) { chatViewModel.cancelStream() }
         verify(atLeast = 1) { recorder.startRecording() }
+        assertNull(vm.takeSpokenInterruptionNoteForTest())
+    }
+
+    @Test
+    fun `bargeInDetected after audible playback arms the next-turn note`() = runTest {
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(
+            chunks = listOf("Hello."),
+            currentIdx = 0,
+            outputAudioActive = true,
+        )
+
+        vm.onBargeInDetected()
+        runCurrent()
+
+        assertEquals(SPEECH_INTERRUPTED_NOTE, vm.takeSpokenInterruptionNoteForTest())
     }
 
     // -------------------------------------------------------------------

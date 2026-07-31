@@ -2279,15 +2279,27 @@ couple Standard voice to non-standard server behavior.
   A turn epoch fences callbacks, and teardown completes before replacement
   capture or another listener can acquire the microphone.
 - Quiet-room RMS calibration occurs before output and freezes at playback
-  start. Sensitivity scales the threshold; playback adds a grace interval and
-  bounded threshold; majority filtering requires model-confirmed speech.
+  start. The gate follows upstream's 90th-percentile ambient floor, 3× default
+  multiplier, generation/playback minimums, 4,000 RMS ceiling, 500 ms grace,
+  and 80%-majority decision window. Calibration frames cannot trigger. The
+  renderer drives playback phase, ambient drift resumes only in quiet gaps,
+  and grace rearms after gaps of at least one second. Android exposes the
+  multiplier and grace for device tuning while preserving upstream defaults.
 - Interruption uses the existing active-turn cancellation seam. Late Standard
   stream content and Realtime audio are suppressed. Silencing does not cancel
   a promoted Hermes task; explicit background-task cancellation remains the
   separate destructive intent.
-- Bare `stop` and `pause` are voice commands only when they are the exact final
-  transcript captured after an active response interruption. Longer ordinary
-  requests remain agent input.
+- Configurable stop phrases default to exact bare `stop` and end the active
+  voice chat during generation or playback; an empty list disables the feature.
+  The phrase remains ordinary agent input outside voice chat, and longer
+  requests remain agent input. Existing exact pause/resume controls remain
+  phase-gated to Continuous mode.
+- A playback interruption arms the upstream-compatible one-shot note for the
+  next model-bound Standard turn, expires after 120 seconds, and is carried in
+  API-local interface context rather than visible or persisted user text.
+  Generation or pre-audio synthesis interruption does not claim that spoken
+  output was cut off, and Realtime relies on its persistent provider session
+  context.
 - Wake-word detection is Android-local, experimental, and off by default. A
   user-started microphone foreground service runs sherpa-onnx for the single
   validated “Hey Hermes” phrase, with an ongoing notification and Stop action.

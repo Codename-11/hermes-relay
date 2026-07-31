@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -82,11 +83,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -3377,6 +3381,19 @@ private fun GlobalVoiceControlsCard(
     voiceViewModel: VoiceViewModel,
 ) {
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    var stopPhrasesDraft by remember { mutableStateOf(voiceSettings.stopPhrases.joinToString(", ")) }
+    var stopPhrasesFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(voiceSettings.stopPhrases, stopPhrasesFocused) {
+        if (!stopPhrasesFocused) {
+            stopPhrasesDraft = voiceSettings.stopPhrases.joinToString(", ")
+        }
+    }
+    fun persistStopPhrases() {
+        scope.launch {
+            prefsRepo.setStopPhrases(stopPhrasesDraft.split(',').map(String::trim))
+        }
+    }
     SectionCard(title = stringResource(R.string.voice_settings_global_controls_title)) {
         Text(
             text = stringResource(R.string.voice_settings_global_controls_desc),
@@ -3456,6 +3473,39 @@ private fun GlobalVoiceControlsCard(
             },
             valueRange = 750f..5000f,
             steps = 16,
+        )
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+        Text(
+            text = stringResource(R.string.voice_settings_stop_phrases),
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Text(
+            text = stringResource(R.string.voice_settings_stop_phrases_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = stopPhrasesDraft,
+            onValueChange = { stopPhrasesDraft = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { state ->
+                    val lostFocus = stopPhrasesFocused && !state.isFocused
+                    stopPhrasesFocused = state.isFocused
+                    if (lostFocus) persistStopPhrases()
+                },
+            singleLine = true,
+            placeholder = { Text("stop, goodbye hermes") },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    persistStopPhrases()
+                    focusManager.clearFocus()
+                },
+            ),
         )
     }
 }
@@ -3807,7 +3857,7 @@ private fun BargeInCard(
     aecAvailable: Boolean,
     settingsViewModel: VoiceSettingsViewModel,
 ) {
-    SectionCard(title = stringResource(R.string.voice_settings_barge_in_title), badge = stringResource(R.string.voice_settings_experimental)) {
+    SectionCard(title = stringResource(R.string.voice_settings_barge_in_title)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -3897,6 +3947,45 @@ private fun BargeInCard(
                 }
             }
 
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = stringResource(
+                    R.string.voice_settings_barge_in_rms_multiplier,
+                    bargeInPrefs.thresholdMultiplier,
+                ),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                text = stringResource(R.string.voice_settings_barge_in_rms_multiplier_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Slider(
+                value = bargeInPrefs.thresholdMultiplier,
+                onValueChange = settingsViewModel::setBargeInThresholdMultiplier,
+                valueRange = 1f..8f,
+                steps = 13,
+            )
+
+            Text(
+                text = stringResource(
+                    R.string.voice_settings_barge_in_playback_grace,
+                    bargeInPrefs.playbackGraceMs / 1000f,
+                ),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                text = stringResource(R.string.voice_settings_barge_in_playback_grace_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Slider(
+                value = bargeInPrefs.playbackGraceMs.toFloat(),
+                onValueChange = { settingsViewModel.setBargeInPlaybackGraceMs(it.toLong()) },
+                valueRange = 0f..2000f,
+                steps = 7,
+            )
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Row(
@@ -3922,6 +4011,14 @@ private fun BargeInCard(
                     },
                 )
             }
+
+
+            SettingSwitchRow(
+                title = stringResource(R.string.voice_settings_barge_in_debug),
+                detail = stringResource(R.string.voice_settings_barge_in_debug_desc),
+                checked = bargeInPrefs.debugDiagnostics,
+                onCheckedChange = settingsViewModel::setBargeInDebugDiagnostics,
+            )
 
             Spacer(Modifier.height(8.dp))
         }

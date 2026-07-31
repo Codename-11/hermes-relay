@@ -1481,10 +1481,10 @@
     <string name="voice_settings_silence_threshold_desc">Fin de la conversación: parada automática después de tanto silencio una vez que hayas hablado (valor predeterminado de escritorio 1,25s).</string>
     <string name="voice_settings_barge_in_title">irrumpir</string>
     <string name="voice_settings_barge_in_master">Interrumpe cuando hablo</string>
-    <string name="voice_settings_barge_in_master_desc">Experimental: puede escuchar la salida del altavoz e interrumpirse o grabarse falsamente. Mejor con auriculares.</string>
+    <string name="voice_settings_barge_in_master_desc">Escucha durante la generación y la reproducción para que puedas interrumpir con naturalidad. Activado de forma predeterminada; los auriculares aíslan mejor el eco.</string>
     <string name="voice_settings_barge_in_aec_warning">Es posible que su dispositivo tenga cancelación de eco limitada. La calidad de la irrupción variará.</string>
     <string name="voice_settings_sensitivity">Sensibilidad</string>
-    <string name="voice_settings_sensitivity_desc">Apagado desactiva la detección sin girar el interruptor de arriba.</string>
+    <string name="voice_settings_sensitivity_desc">Controla la confirmación del modelo de voz. Apagado desactiva la detección sin cambiar el interruptor principal.</string>
     <string name="voice_settings_sensitivity_off">Apagado</string>
     <string name="voice_settings_sensitivity_low">Bajo</string>
     <string name="voice_settings_sensitivity_default">Por defecto</string>
@@ -3195,4 +3195,12 @@
     <string name="assistant_session_expand">Expandir asistente</string>
     <string name="assistant_session_collapse">Contraer asistente</string>
     <string name="assistant_session_open_full_voice">Abrir voz completa</string>
+    <string name="voice_settings_stop_phrases">Frases de parada</string>
+    <string name="voice_settings_stop_phrases_desc">Frases exactas separadas por comas que finalizan un chat de voz activo. Déjalo vacío para desactivarlas.</string>
+    <string name="voice_settings_barge_in_rms_multiplier">Umbral RMS: %1$.1f×</string>
+    <string name="voice_settings_barge_in_rms_multiplier_desc">Los valores más altos requieren voz más fuerte respecto a la sala silenciosa calibrada. Valor predeterminado de upstream: 3×.</string>
+    <string name="voice_settings_barge_in_playback_grace">Gracia de reproducción: %1$.2f s</string>
+    <string name="voice_settings_barge_in_playback_grace_desc">Evita activaciones falsas justo después de iniciar la reproducción de voz. Valor predeterminado de upstream: 0,50 s.</string>
+    <string name="voice_settings_barge_in_debug">Diagnóstico VAD</string>
+    <string name="voice_settings_barge_in_debug_desc">Escribe en Logcat el nivel calibrado, RMS, umbral, fase y decisiones para ajustar la detección.</string>
 </resources>

@@ -2,74 +2,37 @@ package com.hermesandroid.relay.data
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
+import androidx.datastore.preferences.core.emptyPreferences
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
-import java.io.File
 
 /**
  * Unit tests for [BargeInPreferencesRepository].
  *
- * No Robolectric available in this module, so we bypass [android.content.Context]
- * by constructing the repo against a filesystem-backed [DataStore] via
- * [PreferenceDataStoreFactory.create]. This is the canonical JVM-only DataStore
- * test pattern and is why [BargeInPreferencesRepository] exposes a
- * `DataStore<Preferences>`-accepting constructor alongside the Context one.
+ * Uses an in-memory [DataStore] so Windows file rename/antivirus timing cannot
+ * make preference semantics flaky.
  */
 class BargeInPreferencesTest {
-
-    @get:Rule
-    val tempFolder = TemporaryFolder()
-
-    private lateinit var scope: CoroutineScope
-    private lateinit var dataStore: DataStore<Preferences>
     private lateinit var repo: BargeInPreferencesRepository
 
     @Before
     fun setUp() {
-        // DataStore's internal reader/writer actor runs on this scope. It
-        // must be a REAL dispatcher, not a StandardTestDispatcher: the latter
-        // only runs queued work when its scheduler is advanced, and nothing
-        // here advances it — so dataStore.data would never emit and
-        // repo.flow.first() would suspend forever (the indefinite hang that
-        // got this class deferred under issue #32). The test bodies still use
-        // runTest{}; the suspend calls complete against the real IO scope well
-        // within runTest's dispatch timeout.
-        scope = CoroutineScope(Dispatchers.IO + Job())
-        val file: File = tempFolder.newFile("barge_in_test.preferences_pb")
-        // We want a fresh empty store — delete the newFile() sentinel so
-        // PreferenceDataStoreFactory starts from clean state each test.
-        if (file.exists()) file.delete()
-        dataStore = PreferenceDataStoreFactory.create(
-            scope = scope,
-            produceFile = { file },
-        )
-        repo = BargeInPreferencesRepository(dataStore)
-    }
-
-    @After
-    fun tearDown() {
-        scope.cancel()
+        repo = BargeInPreferencesRepository(InMemoryBargeInPreferencesDataStore())
     }
 
     // --- Defaults ---
 
     @Test
-    fun defaults_enabled_isFalse() = runTest {
+    fun defaults_enabled_isTrue() = runTest {
         val prefs = repo.flow.first()
-        assertFalse("enabled should default to false", prefs.enabled)
+        assertTrue("enabled should match upstream default", prefs.enabled)
     }
 
     @Test
@@ -89,9 +52,12 @@ class BargeInPreferencesTest {
         // The data class and the repo defaults must agree — belt-and-suspenders
         // because the repo re-materializes defaults on every read.
         val fromDataClass = BargeInPreferences()
-        assertEquals(false, fromDataClass.enabled)
+        assertEquals(true, fromDataClass.enabled)
         assertEquals(BargeInSensitivity.Default, fromDataClass.sensitivity)
         assertEquals(true, fromDataClass.resumeAfterInterruption)
+        assertEquals(3f, fromDataClass.thresholdMultiplier)
+        assertEquals(500L, fromDataClass.playbackGraceMs)
+        assertEquals(false, fromDataClass.debugDiagnostics)
     }
 
     // --- Round-trip per field ---
@@ -122,6 +88,18 @@ class BargeInPreferencesTest {
         }
     }
 
+    @Test
+    fun upstreamRmsTuning_roundTrips() = runTest {
+        repo.setThresholdMultiplier(2.5f)
+        repo.setPlaybackGraceMs(750L)
+        repo.setDebugDiagnostics(true)
+
+        val prefs = repo.flow.first()
+        assertEquals(2.5f, prefs.thresholdMultiplier)
+        assertEquals(750L, prefs.playbackGraceMs)
+        assertTrue(prefs.debugDiagnostics)
+    }
+
     // --- Enum serialization ---
 
     @Test
@@ -144,10 +122,29 @@ class BargeInPreferencesTest {
         repo.setEnabled(true)
         repo.setSensitivity(BargeInSensitivity.Low)
         repo.setResumeAfterInterruption(false)
+        repo.setThresholdMultiplier(4f)
+        repo.setPlaybackGraceMs(250L)
+        repo.setDebugDiagnostics(true)
 
         val prefs = repo.flow.first()
         assertTrue(prefs.enabled)
         assertEquals(BargeInSensitivity.Low, prefs.sensitivity)
         assertFalse(prefs.resumeAfterInterruption)
+        assertEquals(4f, prefs.thresholdMultiplier)
+        assertEquals(250L, prefs.playbackGraceMs)
+        assertTrue(prefs.debugDiagnostics)
+    }
+}
+
+private class InMemoryBargeInPreferencesDataStore : DataStore<Preferences> {
+    private val state = MutableStateFlow(emptyPreferences())
+    override val data: Flow<Preferences> = state
+
+    override suspend fun updateData(
+        transform: suspend (t: Preferences) -> Preferences,
+    ): Preferences {
+        val updated = transform(state.value)
+        state.value = updated
+        return updated
     }
 }

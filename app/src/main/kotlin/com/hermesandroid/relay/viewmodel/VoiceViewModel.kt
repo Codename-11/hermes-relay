@@ -10,7 +10,6 @@ import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.audio.BargeInListener
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
-import com.hermesandroid.relay.audio.RmsBargeInGate
 import com.hermesandroid.relay.audio.VadEngine
 import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
@@ -18,6 +17,7 @@ import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.BargeInPreferences
 import com.hermesandroid.relay.data.BargeInPreferencesRepository
 import com.hermesandroid.relay.data.BargeInSensitivity
+import com.hermesandroid.relay.data.DEFAULT_VOICE_STOP_PHRASES
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
@@ -47,6 +47,8 @@ import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
 import com.hermesandroid.relay.voice.VoiceCommandAction
 import com.hermesandroid.relay.voice.VoiceCommandContext
 import com.hermesandroid.relay.voice.VoiceCommandInterpreter
+import com.hermesandroid.relay.voice.SpokenInterruptionLatch
+import com.hermesandroid.relay.voice.voiceInterfaceContextPrompt
 // === PHASE3-voice-intents: voice→bridge intent routing ===
 import com.hermesandroid.relay.voice.IntentResult
 import com.hermesandroid.relay.voice.LocalBridgeDispatcher
@@ -550,7 +552,6 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
          * frames after AudioTrack start are most likely to contain TTS echo or
          * route-settling noise, not a deliberate user interrupt.
          */
-        private const val REALTIME_BARGE_IN_STARTUP_GUARD_MS = 850L
         private const val REALTIME_WATCHDOG_INTERVAL_MS = 75L
         private const val REALTIME_WATCHDOG_MAX_TICKS = 60 // ~4.5s of watching
         private const val REALTIME_STUCK_CURSOR_MS = 1_200L
@@ -666,6 +667,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var voicePreferences: VoicePreferencesRepository? = null
     private var voicePreferencesJob: Job? = null
     private var voiceEngineMode: VoiceEngineMode = VoiceEngineMode.HermesVoiceOutput
+    private var voiceStopPhrases: List<String> = DEFAULT_VOICE_STOP_PHRASES
     private var finalAnswerOnly: Boolean = false
     private var realtimeTraceDetails: Boolean = false
     private var realtimePersistentSession: Boolean = true
@@ -835,6 +837,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var continuousListeningPaused: Boolean = false
     /** One final-transcript window opened specifically by barge-in playback. */
     private var responseInterruptedForVoiceCommand: Boolean = false
+    private val spokenInterruptionLatch = SpokenInterruptionLatch()
     private var lastRealtimeAudioDeltaAtMs: Long = 0L
 
     /**
@@ -1103,7 +1106,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     Log.i(
                         TAG,
                         "Barge-in prefs updated enabled=${prefs.enabled} " +
-                            "sensitivity=${prefs.sensitivity} resume=${prefs.resumeAfterInterruption}",
+                            "sensitivity=${prefs.sensitivity} resume=${prefs.resumeAfterInterruption} " +
+                            "multiplier=${prefs.thresholdMultiplier} graceMs=${prefs.playbackGraceMs} " +
+                            "debug=${prefs.debugDiagnostics}",
                     )
                     // If the user flips the toggle off mid-Speaking, tear
                     // the listener down immediately — don't wait for the
@@ -1419,6 +1424,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             closeRealtimeSession()
         }
         voiceEngineMode = nextEngineMode
+        voiceStopPhrases = settings.stopPhrases
         finalAnswerOnly = settings.finalAnswerOnly
         realtimeTraceDetails = settings.realtimeTraceDetails
         realtimePersistentSession = settings.realtimePersistentSession
@@ -2775,6 +2781,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 ))
 
         return VoiceCommandContext(
+            voiceChatActive = ui.voiceMode,
+            stopPhrases = voiceStopPhrases,
             responseActive = responseActive,
             interruptedActiveResponse = responseWasInterrupted,
             backgroundTaskActive = backgroundTaskActive,
@@ -2818,6 +2826,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         )
         val action = VoiceCommandInterpreter.interpretFinalTranscript(transcript, context)
         if (action == null) {
+            if (fromRealtime) spokenInterruptionLatch.clear()
             // The user manually tapped the mic after an explicit pause and said
             // an ordinary prompt. Preserve the existing tap-to-rearm behavior.
             if (continuousListeningPaused && continuousLoopArmed) {
@@ -2837,12 +2846,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (fromRealtime) {
             chatViewModel?.discardRealtimeAgentLocalCommandTurn(rtAssistantMessageId)
         }
+        spokenInterruptionLatch.clear()
 
         val backgroundOwnsResponse = preserveRealtimeTurnOnStop(
             _uiState.value.backgroundRun?.phase,
         )
 
         when (action) {
+            VoiceCommandAction.EndVoiceChat -> exitVoiceMode()
             VoiceCommandAction.StopResponse -> interruptSpeaking()
             VoiceCommandAction.CancelBackgroundTask -> cancelBackgroundRun()
             VoiceCommandAction.PauseContinuousListening -> pauseContinuousMode()
@@ -3192,8 +3203,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // session adoption can be rejected before the submitted user key exists.
         // StateFlow replay preserves any assistant text that arrives before the
         // observer starts.
+        val spokenInterruptionNote = spokenInterruptionLatch.takeNote()
         val submittedUserUiKey =
-            chatVm.sendVoiceMessage(userText, STABLE_VOICE_INTERFACE_CONTEXT)
+            chatVm.sendVoiceMessage(
+                userText,
+                voiceInterfaceContextPrompt(
+                    stableContext = STABLE_VOICE_INTERFACE_CONTEXT,
+                    spokenReplyInterrupted = spokenInterruptionNote != null,
+                ),
+            )
         voiceTurnSessionFence?.bindSubmittedUser(submittedUserUiKey)
         beginBargeInTurnIfEnabled()
         startStreamObserver(chatVm)
@@ -4954,7 +4972,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             }
             // Freeze quiet-room calibration before the first PCM write can
             // reach AudioTrack and leak speaker output into the noise floor.
-            markBargeInPlaybackStarted(REALTIME_BARGE_IN_STARTUP_GUARD_MS)
+            markBargeInPlaybackStarted(_bargeInPrefs.value.playbackGraceMs)
         }
         val level = pcmPlayer.write(audio, sampleRate)
         scheduleRealtimeAmplitudeRelease(audio.size, sampleRate, lastRealtimeAudioDeltaAtMs)
@@ -5224,7 +5242,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 // a safety net for standalone speech, then freeze quiet-room
                 // calibration before speaker output reaches the microphone.
                 if (bargeInListener == null) startBargeInListenerIfEnabled()
-                markBargeInPlaybackStarted(RmsBargeInGate.DEFAULT_PLAYBACK_GRACE_MS)
+                markBargeInPlaybackStarted(_bargeInPrefs.value.playbackGraceMs)
             },
             pendingFiles = pendingTtsFiles,
             onQueueDrained = {
@@ -5435,7 +5453,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // ---------------------------------------------------------------------
 
     /**
-     * Start a [BargeInListener] for the current Speaking turn if the user
+     * Start a [BargeInListener] for the current active response if the user
      * has barge-in enabled with a non-Off sensitivity and the listener is
      * not already running. Idempotent. Safe to call on any dispatcher.
      *
@@ -5472,8 +5490,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         audioSessionIdProvider: (() -> Int)? = null,
         epoch: Long = bargeInTurnEpoch.incrementAndGet(),
     ) {
-        // Already running → no-op. We bracket per Speaking turn, not per
-        // chunk within a turn.
+        // Already running → no-op. One listener spans generation and playback,
+        // rather than being recreated per phase or audio chunk.
         if (bargeInListener != null) {
             Log.i(TAG, "Barge-in listener already running; leaving active")
             return
@@ -5524,7 +5542,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         bargeInListener = listener
         activeBargeInTurnEpoch = epoch
-        listener.setThresholdMultiplier(bargeInThresholdMultiplier(prefs.sensitivity))
+        listener.setThresholdMultiplier(prefs.thresholdMultiplier)
+        listener.setDiagnosticsEnabled(prefs.debugDiagnostics)
+        listener.setPlaybackActiveProvider {
+            player?.isPlaying() == true || realtimePcmPlayer?.snapshot()?.let { snapshot ->
+                snapshot.active && snapshot.playStatePlaying && snapshot.playbackStarted &&
+                    snapshot.framesWritten > snapshot.headFrames
+            } == true
+        }
         bargeInIgnoreUntilMs = 0L
         bargeInGuardLogged = false
         bargeInListenerJob = viewModelScope.launch {
@@ -5589,13 +5614,6 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bargeInListener?.markPlaybackStarted(nowMs = now, graceMs = graceMs)
     }
 
-    private fun bargeInThresholdMultiplier(sensitivity: BargeInSensitivity): Float = when (sensitivity) {
-        BargeInSensitivity.Off -> 8f
-        BargeInSensitivity.Low -> 4.5f
-        BargeInSensitivity.Default -> 3f
-        BargeInSensitivity.High -> 2f
-    }
-
     /**
      * Raw-VAD positive frame — soft-duck the TTS and arm the un-duck
      * watchdog. If the next frame passes the hysteresis threshold,
@@ -5638,6 +5656,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     internal fun onBargeInDetected() {
         if (isBargeInStartupGuardActive()) return
+        val interruptedSpokenReply = _uiState.value.outputAudioActive
+        if (interruptedSpokenReply) spokenInterruptionLatch.mark()
         duckingWatchdog?.cancel(); duckingWatchdog = null
         lastInterruptedAtChunkIndex = _currentPlayingChunkIndex.value
         // Snapshot the un-played tail NOW, before interruptSpeaking restarts
@@ -5756,6 +5776,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             responseInterruptedForVoiceCommand = false
+            spokenInterruptionLatch.clear()
 
             // Silence after interrupt. If resume is off, drop the tail
             // and return to Idle (the user wanted a hard cancel semantic).
@@ -6001,7 +6022,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     internal fun markBargeInPlaybackStartedForTest() {
         _uiState.update { it.copy(state = VoiceState.Speaking) }
         startBargeInListenerIfEnabled()
-        markBargeInPlaybackStarted(RmsBargeInGate.DEFAULT_PLAYBACK_GRACE_MS)
+        markBargeInPlaybackStarted(_bargeInPrefs.value.playbackGraceMs)
     }
 
     /**
@@ -6013,16 +6034,27 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * currently-playing file).
      */
     @androidx.annotation.VisibleForTesting
-    internal fun seedSpeakingStateForTest(chunks: List<String>, currentIdx: Int) {
+    internal fun seedSpeakingStateForTest(
+        chunks: List<String>,
+        currentIdx: Int,
+        outputAudioActive: Boolean = false,
+    ) {
         synchronized(spokenChunks) {
             spokenChunks.clear()
             spokenChunks.addAll(chunks)
         }
         _currentPlayingChunkIndex.value = currentIdx
         _uiState.update {
-            it.copy(voiceMode = true, state = VoiceState.Speaking, outputAudioActive = false)
+            it.copy(
+                voiceMode = true,
+                state = VoiceState.Speaking,
+                outputAudioActive = outputAudioActive,
+            )
         }
     }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun takeSpokenInterruptionNoteForTest(): String? = spokenInterruptionLatch.takeNote()
 
     /**
      * Test hook: cancel the V4 synth/play consumer scope so subsequent

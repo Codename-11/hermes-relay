@@ -1042,13 +1042,14 @@ to tool state, safety prompts, or the current task.
   playback-synchronized amplitude through `shouldMarkRealtimeOutputActive`,
   matching the basic-TTS path. Confirm visually on-device with the 1.4.1 batch.
 
-- **Voice command layer — phase-aware stop/pause code-complete; live verify and
-  navigation residuals remain.** Exact final transcripts can stop speech,
+- **Voice command layer — upstream stop phrases and phase-aware pause are
+  code-complete; live verify and navigation residuals remain.** Exact final transcripts can end the active voice chat,
   explicitly cancel the active background task, pause/resume Continuous mode,
   repeat a settled background answer, and start a new Standard chat. Bare
-  `stop`/`pause` are commands only after barge-in interrupted an active response;
-  `cancel`, partial transcripts, and command-like ordinary prompts stay on the
-  normal Hermes route. Realtime `new chat` remains gated on a clean websocket
+  `stop` is configurable and exact-only while voice chat is active; bare
+  `pause` remains phase-gated to Continuous mode. `cancel`, partial transcripts,
+  and command-like ordinary prompts stay on the normal Hermes route. Realtime
+  `new chat` remains gated on a clean websocket
   session-rebind boundary; `open overlay` and `return to Hermes` remain future
   navigation commands. Verify barge-in Stop, pause during a background run, local
   command Chat cleanup, and Continuous rearm on device.
@@ -1084,10 +1085,10 @@ and whether the agent is waiting on the user.
   values share one DataStore transaction, with relay rollback on local failure.
 
 - **Barge-in hardening — code complete; on-device matrix remains.** Full-turn
-  listener ownership, AEC/noise suppression, quiet-room calibration,
-  playback grace, duck/cut behavior, late-delta fencing, and single-microphone
-  handoff are implemented. Keep the feature experimental until phone testing
-  covers speakerphone/headphones, quiet/noisy rooms, Standard/Realtime
+  listener ownership, AEC/noise suppression, upstream-compatible RMS
+  calibration and thresholds, configurable playback grace, duck/cut behavior,
+  late-delta fencing, next-turn interruption context, and single-microphone
+  handoff are implemented. Phone testing still needs to cover speakerphone/headphones, quiet/noisy rooms, Standard/Realtime
   generation and playback, stop/pause, and resume-after-interruption.
 
 - **Experimental wake word — on-device validation.** Verify first-enable model

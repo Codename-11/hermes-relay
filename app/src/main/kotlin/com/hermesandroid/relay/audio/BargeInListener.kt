@@ -153,10 +153,22 @@ class BargeInListener internal constructor(
     @Volatile private var noiseSuppressor: NoiseSuppressor? = null
     private val rmsGate = RmsBargeInGate()
     @Volatile private var playbackGraceMs: Long = RmsBargeInGate.DEFAULT_PLAYBACK_GRACE_MS
+    @Volatile private var playbackActiveProvider: (() -> Boolean)? = null
+    @Volatile private var diagnosticsEnabled: Boolean = false
+    private var wasCalibrating: Boolean = false
 
     /** Apply the user-facing barge-in sensitivity to the quiet-room RMS gate. */
     fun setThresholdMultiplier(multiplier: Float) {
         rmsGate.thresholdMultiplier = multiplier
+    }
+
+    fun setDiagnosticsEnabled(enabled: Boolean) {
+        diagnosticsEnabled = enabled
+    }
+
+    /** Supplies the renderer's current playback phase for upstream-style gaps. */
+    fun setPlaybackActiveProvider(provider: () -> Boolean) {
+        playbackActiveProvider = provider
     }
 
     /**
@@ -169,6 +181,9 @@ class BargeInListener internal constructor(
     ) {
         playbackGraceMs = graceMs.coerceAtLeast(0L)
         rmsGate.markPlaybackStarted(nowMs)
+        if (diagnosticsEnabled) {
+            Log.d(TAG, "voice-vad playback started; grace=${playbackGraceMs}ms")
+        }
     }
 
     /**
@@ -211,6 +226,7 @@ class BargeInListener internal constructor(
 
         _aecAttached.value = false
         rmsGate.reset()
+        wasCalibrating = true
         readerJob = scope.launch(readerDispatcher) {
             var effectsJob: Job? = null
             try {
@@ -269,7 +285,31 @@ class BargeInListener internal constructor(
                         nowMs = System.currentTimeMillis(),
                         playbackGraceMs = playbackGraceMs,
                         confirmedSpeech = result.isSpeech,
+                        playbackActiveOverride = playbackActiveProvider?.invoke(),
                     )
+                    if (diagnosticsEnabled) {
+                        if (wasCalibrating && !gated.calibrating) {
+                            Log.d(
+                                TAG,
+                                "voice-vad calibrated quiet floor=${gated.floor.toInt()} " +
+                                    "mult=${rmsGate.thresholdMultiplier}",
+                            )
+                        }
+                        wasCalibrating = gated.calibrating
+                        if (
+                            gated.detected || gated.playbackGrace ||
+                            gated.rms >= gated.threshold * 0.5f
+                        ) {
+                            Log.d(
+                                TAG,
+                                "voice-vad rms=${gated.rms.toInt()} floor=${gated.floor.toInt()} " +
+                                    "trigger=${gated.threshold.toInt()} raw=${result.probability > 0f} " +
+                                    "confirmed=${result.isSpeech} detected=${gated.detected} " +
+                                    "grace=${gated.playbackGrace} " +
+                                    "phase=${if (gated.playback) "playback" else "generation"}",
+                            )
+                        }
+                    }
                     if (gated.maybeSpeech) {
                         _maybeSpeech.tryEmit(Unit)
                     }

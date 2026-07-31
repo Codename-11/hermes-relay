@@ -1541,10 +1541,10 @@
     <string name="voice_settings_silence_threshold_desc">Fim da fala: pare automaticamente após esse tempo de silêncio depois que você falar (padrão do desktop: 1,25 s).</string>
     <string name="voice_settings_barge_in_title">Interrupção por voz</string>
     <string name="voice_settings_barge_in_master">Interromper quando eu falar</string>
-    <string name="voice_settings_barge_in_master_desc">Experimental: pode ouvir a saída do alto-falante e interromper ou gravar a si mesmo por engano. Funciona melhor com fones de ouvido.</string>
+    <string name="voice_settings_barge_in_master_desc">Escuta durante a geração e a reprodução para você interromper naturalmente. Ativado por padrão; fones de ouvido oferecem o melhor isolamento de eco.</string>
     <string name="voice_settings_barge_in_aec_warning">Seu dispositivo pode ter cancelamento de eco limitado. A qualidade da interrupção por voz poderá variar.</string>
     <string name="voice_settings_sensitivity">Sensibilidade</string>
-    <string name="voice_settings_sensitivity_desc">Desativado desliga a detecção sem mudar a chave acima.</string>
+    <string name="voice_settings_sensitivity_desc">Controla a confirmação do modelo de fala. Desativado desliga a detecção sem mudar a chave principal.</string>
     <string name="voice_settings_sensitivity_off">Desativada</string>
     <string name="voice_settings_sensitivity_low">Baixa</string>
     <string name="voice_settings_sensitivity_default">Padrão</string>
@@ -3350,4 +3350,12 @@
     <string name="assistant_session_expand">Expandir assistente</string>
     <string name="assistant_session_collapse">Recolher assistente</string>
     <string name="assistant_session_open_full_voice">Abrir voz completa</string>
+    <string name="voice_settings_stop_phrases">Frases de parada</string>
+    <string name="voice_settings_stop_phrases_desc">Frases exatas separadas por vírgulas que encerram um chat de voz ativo. Deixe vazio para desativar.</string>
+    <string name="voice_settings_barge_in_rms_multiplier">Limite RMS: %1$.1f×</string>
+    <string name="voice_settings_barge_in_rms_multiplier_desc">Valores maiores exigem fala mais alta em relação ao ambiente silencioso calibrado. Padrão upstream: 3×.</string>
+    <string name="voice_settings_barge_in_playback_grace">Carência da reprodução: %1$.2f s</string>
+    <string name="voice_settings_barge_in_playback_grace_desc">Evita acionamentos falsos logo após o início da reprodução de voz. Padrão upstream: 0,50 s.</string>
+    <string name="voice_settings_barge_in_debug">Diagnóstico de VAD</string>
+    <string name="voice_settings_barge_in_debug_desc">Grava no Logcat o piso calibrado, RMS, limite, fase e decisões para ajuste.</string>
 </resources>
