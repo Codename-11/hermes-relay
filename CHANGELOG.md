@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Android assistant invocations use a compact, expandable surface.** Transcript and response detail can expand in place, while Open full voice continues the same turn and microphone ownership in the existing Voice screen.
+- **The optional floating Voice overlay uses the same progressive layout.** It starts as a wide compact bar, expands for turn details and controls, and can still minimize to the existing bubble.
 - **Voice interruption covers the complete active response.** One calibrated VAD listener spans generation and playback on Standard and Realtime paths, rejects stale callbacks and speaker bleed, and keeps promoted background tasks alive when speech alone is stopped.
 - **Experimental wake-word tuning starts at a more practical strictness.** New installations default to `0.3`, and Voice settings show the exact value while it is adjusted; existing saved choices remain unchanged.
 

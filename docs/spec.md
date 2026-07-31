@@ -874,17 +874,31 @@ utilities.
   for Android's Assistant role. When its separate background-wake switch is
   enabled, the system-kept service reuses the Android-local sherpa-onnx detector
   and opens a `VoiceInteractionSession` for background or locked-screen
-  activation. The session UI runs in a separate process and uses
-  `startVoiceActivity` to hand the turn to the existing voice state machine;
-  cancel, error, app/process recreation, and session finish are reconciled by
-  explicit package-scoped messages. The wake recorder is released before the
-  established voice recorder opens, and assistant listening resumes only after
-  the session exits. This mode is mutually exclusive with the experimental
-  notification-based foreground listener. Third-party assistants do not receive
-  Google's dedicated low-power hotword hardware, so continuous local detection
-  has a material battery cost.
+  activation. Its separate-process UI defaults to a compact bottom bar that can
+  expand in place for transcript and response detail. Expanding and collapsing
+  are presentation-only; **Open full voice** disables the system surface and
+  foregrounds the already-running `VoiceModeOverlay` without starting a second
+  session or changing microphone ownership. Initial activation is delivered to
+  the app-owned voice state machine by an explicit package-scoped message, so it
+  does not bring Hermes' Activity over the app currently on screen. Ordinary
+  assistant dismissal still cancels the voice turn. Connection, chat, and voice
+  state machines and audio resources have one main-process,
+  application-lifetime owner, allowing assistant activation to start cold
+  without constructing or foregrounding `MainActivity`; full Voice later binds
+  that same runtime. Cancel, error, app/process recreation, and session finish
+  use the same scoped protocol. The
+  wake recorder is released before the established voice recorder opens, and
+  assistant listening resumes only after the session exits. This mode is
+  mutually exclusive with the experimental notification-based foreground
+  listener. Third-party assistants do not receive Google's dedicated low-power
+  hotword hardware, so continuous local detection has a material battery cost.
 - Stable voice integrates with `ChatViewModel` by **observing** `messages: StateFlow`; transcribed text goes through normal `chatVm.sendMessage(text)` so voice utterances appear as regular user messages in chat history. Experimental Realtime Agent creates a mirrored chat turn and applies broker events directly so tool state, transcript text, assistant deltas, and final responses appear without leaving voice mode.
 - `VoiceModeOverlay` — full-screen UI with the MorphingSphere at 60% height in `voiceMode=true`, transcribed + response text, mic button supporting Tap / Hold / Continuous interaction modes.
+- The optional `SYSTEM_ALERT_WINDOW` Voice control is user-invoked from an
+  active in-app turn. It starts as a wide compact bar, expands for transcript,
+  response, route metadata, and turn controls, and can still minimize to the
+  existing bubble. It is distinct from the Assistant-role session, which does
+  not require display-over-other-apps permission.
 - `MorphingSphere` gains `SphereState.Listening` (soft blue/purple, subtle wobble with user amplitude) and `SphereState.Speaking` (vivid green/teal, dramatic core-warmth pulse with agent amplitude). Additive changes — existing call sites unchanged via defaulted `voiceAmplitude` / `voiceMode` params.
 - Voice Settings screen off the main Settings — Output / Listening / Advanced tabs split engine/provider selection from turn-taking controls and diagnostics. Global controls include a final-answer-only policy shared by Standard and Realtime voice. Output groups the provider summary and model/voice catalog, exposes inline no-save play/stop previews for the draft model and individual voices, shows the speaking waveform on the active row, and keeps Discard separate from Save. Dropdowns come from relay-advertised provider metadata, refresh through provider-specific options routes when the selected provider changes, become searchable/grouped for large voice catalogs, and validate compatibility before saving, with advanced manual entry for raw provider/model/voice IDs. Voice routes receive the selected Hermes profile; the relay reports whether values came from profile config, relay config, or global fallback. Test Current Engine remains under Advanced and uses `/voice/output/*` playback for stable mode and `/voice/realtime-agent/*` provider-native session playback for realtime mode; normal assistant speech uses the same streaming renderer PCM path when available.
 

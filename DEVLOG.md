@@ -1,5 +1,44 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-30 — Expandable Android assistant surface
+
+Android Digital Assistant sessions now open as a compact bottom bar over the
+current app, expand in place for transcript and response detail, and collapse
+without changing the active turn. Open full voice disables only the
+system-owned session UI and reveals the existing app Voice surface, preserving
+the same session, response stream, and microphone owner.
+
+Connection, chat, and voice state machines now have one main-process,
+application-lifetime owner. Assistant activation can initialize and run a cold
+voice turn without constructing or foregrounding `MainActivity`; opening full
+Voice binds the Activity to those same ViewModels and audio resources.
+
+The optional `SYSTEM_ALERT_WINDOW` Voice surface now follows the same
+wide-bar-to-expanded-sheet progression while retaining its minimized bubble.
+It remains a separately user-invoked control for turns that began in the app;
+the Assistant-role session does not require display-over-other-apps permission.
+
+The assistant window is transparent outside the bar or sheet, leaves the
+underlying app unresized, and restricts touch interception to the measured
+surface. Back collapses an expanded surface first; Back from compact, Stop, and
+ordinary dismissal remain terminal. A hidden full-Voice handoff instead follows
+the app-owned turn through its final Closed state.
+Package-scoped lifecycle reconciliation also clears assistant state if Android
+reclaims the separately processed UI while full Voice remains active.
+
+Assistant activation is ID-aware and single-flight. Duplicate delivery cannot
+re-arm capture, Retry replaces a pending readiness attempt, and Stop invalidates
+the attempt before chat, Voice, or microphone mutations. Scoped voice settings
+must hydrate from DataStore before route readiness, and process extraction
+preserves connection-catalog isolation plus the existing gateway route-flip
+settle window.
+
+Physical-device validation on a Samsung SM-S938U confirmed cold invocation over
+a non-Hermes foreground app, compact and expanded presentation without
+foregrounding `MainActivity`, and one main-process microphone owner. Locked
+invocation reached a shown system assistant session without runtime or recorder
+errors; Samsung's secure lock screen prevented screenshot-based visual review.
+
 ## 2026-07-30 — Foreground wake-word diagnostics and recovery
 
 The Android-local sherpa listener now treats each non-empty keyword result as a

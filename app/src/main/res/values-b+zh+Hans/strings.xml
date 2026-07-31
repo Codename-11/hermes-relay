@@ -3410,5 +3410,9 @@
     <string name="assistant_session_error">需要处理</string>
     <string name="assistant_session_closing">正在关闭…</string>
     <string name="assistant_session_cancel">取消</string>
+    <string name="assistant_session_stop">停止</string>
     <string name="assistant_session_retry">重试</string>
+    <string name="assistant_session_expand">展开助理</string>
+    <string name="assistant_session_collapse">收起助理</string>
+    <string name="assistant_session_open_full_voice">打开完整语音界面</string>
 </resources>

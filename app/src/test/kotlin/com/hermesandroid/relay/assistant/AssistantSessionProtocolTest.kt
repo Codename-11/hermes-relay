@@ -68,4 +68,53 @@ class AssistantSessionProtocolTest {
             )
         )
     }
+
+    @Test
+    fun assistantProtocol_distinguishesHeadlessActivationFromLifecycleStart() {
+        assertTrue(
+            AssistantSessionProtocol.isActivateAction(
+                "com.hermesandroid.relay.assistant.ACTIVATE"
+            )
+        )
+        assertFalse(
+            AssistantSessionProtocol.isActivateAction(
+                "com.hermesandroid.relay.assistant.START"
+            )
+        )
+    }
+
+    @Test
+    fun ordinarySessionHide_cancelsTheAppOwnedVoiceTurn() {
+        assertTrue(
+            shouldCancelVoiceWhenSessionUiEnds(AssistantSessionPresentation.Overlay)
+        )
+    }
+
+    @Test
+    fun fullVoiceHandoff_doesNotCancelTheAppOwnedVoiceTurn() {
+        assertFalse(
+            shouldCancelVoiceWhenSessionUiEnds(AssistantSessionPresentation.FullVoice)
+        )
+    }
+
+    @Test
+    fun inactiveSessionCleanup_isIdempotent() {
+        assertFalse(
+            shouldCancelVoiceWhenSessionUiEnds(AssistantSessionPresentation.Inactive)
+        )
+    }
+
+    @Test
+    fun closedSnapshot_reconcilesTheAppLifecycleWithoutCancellingVoice() {
+        assertTrue(
+            AssistantSessionProtocol.shouldFinishLifecycleOnSnapshot(
+                AssistantSessionSnapshot(phase = AssistantSessionPhase.Closed)
+            )
+        )
+        assertFalse(
+            AssistantSessionProtocol.shouldFinishLifecycleOnSnapshot(
+                AssistantSessionSnapshot(phase = AssistantSessionPhase.Speaking)
+            )
+        )
+    }
 }

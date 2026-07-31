@@ -13,7 +13,6 @@ import android.view.animation.DecelerateInterpolator
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.appcompat.app.AppCompatActivity
@@ -32,7 +31,8 @@ import kotlinx.coroutines.flow.collect
 
 class MainActivity : AppCompatActivity() {
 
-    private val connectionViewModel: ConnectionViewModel by viewModels()
+    private val connectionViewModel: ConnectionViewModel
+        get() = (applicationContext as HermesRelayApp).runtime.connectionViewModel
 
     // === PHASE3-bridge-ui-followup: MediaProjection consent flow ===
     // ActivityResultLauncher for the system screen-capture consent dialog.

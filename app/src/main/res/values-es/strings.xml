@@ -3162,5 +3162,9 @@
     <string name="assistant_session_error">Requiere atención</string>
     <string name="assistant_session_closing">Cerrando…</string>
     <string name="assistant_session_cancel">Cancelar</string>
+    <string name="assistant_session_stop">Detener</string>
     <string name="assistant_session_retry">Reintentar</string>
+    <string name="assistant_session_expand">Expandir asistente</string>
+    <string name="assistant_session_collapse">Contraer asistente</string>
+    <string name="assistant_session_open_full_voice">Abrir voz completa</string>
 </resources>

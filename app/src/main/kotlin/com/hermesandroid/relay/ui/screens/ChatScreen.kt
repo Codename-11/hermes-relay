@@ -221,6 +221,7 @@ import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
+import com.hermesandroid.relay.assistant.AssistantAppSessionState
 import com.hermesandroid.relay.voice.VoiceOverlayHost
 import com.hermesandroid.relay.voice.VoiceOverlaySession
 import com.hermesandroid.relay.voice.openHermesFromOverlay
@@ -512,6 +513,7 @@ fun ChatScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val voiceOverlayHost = remember { VoiceOverlayHost.install(context) }
+    val assistantSessionActive by AssistantAppSessionState.active.collectAsState()
     var pendingVoiceEnter by remember { mutableStateOf(false) }
     var micPermissionDenied by remember { mutableStateOf(false) }
     var pendingVoiceOverlayPermission by remember { mutableStateOf(false) }
@@ -873,7 +875,9 @@ fun ChatScreen(
     }
 
     val showVoiceSystemOverlay: () -> Unit = {
-        if (!voiceOverlayHost.hasOverlayPermission()) {
+        if (assistantSessionActive) {
+            voiceOverlayHost.hide()
+        } else if (!voiceOverlayHost.hasOverlayPermission()) {
             pendingVoiceOverlayPermission = true
             runCatching {
                 val intent = Intent(
@@ -929,6 +933,13 @@ fun ChatScreen(
 
     LaunchedEffect(voiceUiState.voiceMode) {
         if (!voiceUiState.voiceMode) {
+            voiceOverlayHost.hide()
+            pendingVoiceOverlayPermission = false
+        }
+    }
+
+    LaunchedEffect(assistantSessionActive) {
+        if (assistantSessionActive) {
             voiceOverlayHost.hide()
             pendingVoiceOverlayPermission = false
         }

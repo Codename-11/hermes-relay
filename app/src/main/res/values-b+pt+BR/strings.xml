@@ -3317,5 +3317,9 @@
     <string name="assistant_session_error">Requer atenção</string>
     <string name="assistant_session_closing">Fechando…</string>
     <string name="assistant_session_cancel">Cancelar</string>
+    <string name="assistant_session_stop">Parar</string>
     <string name="assistant_session_retry">Tentar novamente</string>
+    <string name="assistant_session_expand">Expandir assistente</string>
+    <string name="assistant_session_collapse">Recolher assistente</string>
+    <string name="assistant_session_open_full_voice">Abrir voz completa</string>
 </resources>

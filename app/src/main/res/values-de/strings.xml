@@ -3477,5 +3477,9 @@
     <string name="assistant_session_error">Aktion erforderlich</string>
     <string name="assistant_session_closing">Wird geschlossen…</string>
     <string name="assistant_session_cancel">Abbrechen</string>
+    <string name="assistant_session_stop">Stopp</string>
     <string name="assistant_session_retry">Erneut versuchen</string>
+    <string name="assistant_session_expand">Assistent erweitern</string>
+    <string name="assistant_session_collapse">Assistent minimieren</string>
+    <string name="assistant_session_open_full_voice">Vollständige Sprachansicht öffnen</string>
 </resources>

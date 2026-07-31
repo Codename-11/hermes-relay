@@ -46,7 +46,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -57,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -70,6 +70,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.HermesRelayApp
 import com.hermesandroid.relay.ui.components.CrashReportGate
 import com.hermesandroid.relay.ui.components.DemoModeBanner
 import com.hermesandroid.relay.ui.components.DemoUnavailableContent
@@ -105,17 +106,12 @@ import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Connection
-import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.EndpointCandidate
-import com.hermesandroid.relay.data.VoiceAudioRoute
-import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoicePresentationMode
-import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.displayLabel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.hermesandroid.relay.util.HumanError
@@ -155,9 +151,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.relay.RelayProfileInspectorClient
-import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
-import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
@@ -167,14 +161,9 @@ import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
-import com.hermesandroid.relay.audio.VoicePlayer
-import com.hermesandroid.relay.audio.VoiceRecorder
-import com.hermesandroid.relay.audio.VoiceSfxPlayer
-import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
-import com.hermesandroid.relay.network.upstream.StandardHermesVoiceClient
 import com.hermesandroid.relay.auth.AuthState
-import androidx.lifecycle.viewModelScope
+import com.hermesandroid.relay.runtime.HermesRuntimeInitializationState
 
 // Global snackbar host so any screen can surface a HumanError without
 // plumbing a host through every ViewModel. Provided by RelayApp below.
@@ -448,10 +437,22 @@ sealed class Screen(
 
 @Composable
 fun RelayApp() {
-    val connectionViewModel: ConnectionViewModel = viewModel()
-    val chatViewModel: ChatViewModel = viewModel()
+    val applicationContext = LocalContext.current.applicationContext
+    val processRuntime = (applicationContext as HermesRelayApp).runtime
+    val connectionViewModel: ConnectionViewModel = processRuntime.connectionViewModel
+    val chatViewModel: ChatViewModel = processRuntime.chatViewModel
     val terminalViewModel: TerminalViewModel = viewModel()
-    val voiceViewModel: VoiceViewModel = viewModel()
+    val voiceViewModel: VoiceViewModel = processRuntime.voiceViewModel
+    val runtimeInitializationState by processRuntime.initializationState.collectAsState()
+
+    LaunchedEffect(processRuntime) {
+        processRuntime.ensureInitialized()
+    }
+    if (runtimeInitializationState != HermesRuntimeInitializationState.Ready) return
+
+    val voiceClient: RelayVoiceClient = processRuntime.relayVoiceClient
+    val voicePreferences = processRuntime.voicePreferences
+    val voiceSettings by processRuntime.voiceSettings.collectAsState()
 
     // Composition-scoped coroutine scope for firing connection-store suspend
     // writes off of UI click handlers (rename/revoke/remove) —
@@ -477,31 +478,6 @@ fun RelayApp() {
             authManager = connectionViewModel.authManager,
             tabNameStore = com.hermesandroid.relay.data.TerminalTabNameStore(terminalAppContext),
         )
-    }
-
-    // Cold-start relay kick.
-    //
-    // The ON_RESUME observer installed below in DisposableEffect misses the
-    // Activity's very first ON_RESUME because DisposableEffect attaches the
-    // observer AFTER the Activity has already resumed — LifecycleEventObserver
-    // does not fire state transitions retroactively, it only sees *future*
-    // events. That meant cold-start users had a disconnected relay UI until
-    // they navigated to Settings (whose own `LaunchedEffect(Unit)` fires
-    // `reconnectIfStale()` on entry) or backgrounded + foregrounded the app
-    // to trigger a fresh ON_RESUME.
-    //
-    // Watching authState here handles both branches: on cold start the
-    // persisted session rehydrates asynchronously from AuthManager and flips
-    // authState → Paired after DataStore + crypto init. That transition fires
-    // this LaunchedEffect, which kicks the WSS handshake regardless of which
-    // tab the user is looking at. reconnectIfStale() is cheap and
-    // self-guarding (paired && disconnected && hasUrl) so the second firing
-    // on any later Paired-refresh is a no-op.
-    val coldStartAuthState by connectionViewModel.authState.collectAsState()
-    LaunchedEffect(coldStartAuthState) {
-        if (coldStartAuthState is AuthState.Paired) {
-            connectionViewModel.reconnectIfStale()
-        }
     }
 
     // Lifecycle-aware revalidation. ON_RESUME (every time the app comes
@@ -539,91 +515,16 @@ fun RelayApp() {
         }
     }
 
-    // Bind chat state independently of the optional API fallback client.
-    val chatApiClient by connectionViewModel.chatApiClient.collectAsState()
-    val chatTransportReady by connectionViewModel.chatReady.collectAsState()
-    val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
+    val coldStartAuthState by connectionViewModel.authState.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val effectiveSessionProfileName by connectionViewModel.effectiveSessionProfileName.collectAsState()
     val effectiveDisplayProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
-    val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
 
-    val mediaContext = androidx.compose.ui.platform.LocalContext.current
-    val voicePreferences = remember(mediaContext) { VoicePreferencesRepository(mediaContext) }
-    val voiceSettings by voicePreferences.settings.collectAsState(initial = VoiceSettings())
-    val selectedAudioRoute = VoiceAudioRoute.fromStorage(voiceSettings.audioRoute)
-    val selectedAudioRouteState = rememberUpdatedState(selectedAudioRoute)
-    val standardVoiceReady by connectionViewModel.standardVoiceReady.collectAsState()
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
-    val standardVoiceReadyState = rememberUpdatedState(standardVoiceReady)
-    val relayVoiceReadyState = rememberUpdatedState(relayVoiceReady)
-    // Latest enhanced-voice overrides (null when nothing is set). Read lazily by
-    // the relay TTS adapter so changes apply without rebuilding it.
-    val enhancedOverridesState = rememberUpdatedState(EnhancedVoiceOverrides.fromSettings(voiceSettings))
-
-    // Voice pipeline wiring — mirrors ChatViewModel.initializeMedia (above).
-    // We build a dedicated OkHttpClient so voice requests don't contend with
-    // media fetches on the same dispatcher queue, then hand VoiceViewModel
-    // the client + recorder + player it needs for the turn state machine.
-    val voiceClient = remember {
-        RelayVoiceClient(
-            context = mediaContext,
-            okHttpClient = okhttp3.OkHttpClient.Builder()
-                .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
-                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build(),
-            relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
-            relayRouteChangesProvider = {
-                connectionViewModel.activeEndpoint.mapNotNull { it?.relay?.url }
-            },
-            routeProbeRequester = { connectionViewModel.probeNow() },
-            profileNameProvider = {
-                AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
-            },
-            sessionTokenProvider = {
-                (connectionViewModel.authState.value as? AuthState.Paired)?.token
-            },
-            apiBearerTokenProvider = {
-                connectionViewModel.getApiKey()
-            },
-        )
-    }
-    // Standard voice talks to the dashboard web server (hermes-desktop's
-    // /api/audio/* contract) and authenticates with the same per-connection
-    // cookie session Manage signs in with. Dashboard URLs are connection-level
-    // (no per-profile dashboard exists), so unlike chat this client does not
-    // route through ProfileApiUrlResolver.
-    val standardVoiceClient = remember {
-        StandardHermesVoiceClient(
-            context = mediaContext,
-            dashboardHttpClientProvider = { dashboardUrl ->
-                connectionViewModel.dashboardHttpClientForActive(dashboardUrl)
-            },
-            dashboardUrlProvider = { connectionViewModel.activeDashboardUrl() },
-            // Live read (null for the default profile) — sent defensively on
-            // /api/audio/speak; upstream ignores it, so standard voice stays the
-            // host's global TTS. Same live source the relay voice client uses.
-            profileProvider = {
-                AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
-            },
-        )
-    }
-    val voiceAudioClient = remember {
-        AutoVoiceAudioClient(
-            standardClient = standardVoiceClient,
-            relayClient = RelayVoiceAudioClientAdapter(
-                voiceClient,
-                enhancedOverridesProvider = { enhancedOverridesState.value },
-            ),
-            routeProvider = { selectedAudioRouteState.value },
-            standardReadyProvider = { standardVoiceReadyState.value },
-            relayReadyProvider = { relayVoiceReadyState.value },
-        )
-    }
 
     // Profile Inspector client. Shares the same lazy relay URL + bearer
     // token providers as the voice client so any rotation/re-pair is
@@ -641,260 +542,6 @@ fun RelayApp() {
             },
         )
     }
-    // Remembered so the AudioTrack buffers are synthesized once per process.
-    // VoiceSfxPlayer is internally crash-proof — failed AudioTrack builds
-    // become null-tracks that no-op — so we don't need an outer try/catch.
-    val voiceSfxPlayer = remember { VoiceSfxPlayer(mediaContext) }
-    val realtimePcmPlayer = remember { RealtimePcmPlayer(mediaContext) }
-    LaunchedEffect(Unit) {
-        val recorder = VoiceRecorder(mediaContext, voiceViewModel.viewModelScope)
-        val player = VoicePlayer(mediaContext)
-        voiceViewModel.initialize(
-            voiceClient = voiceClient,
-            voiceAudioClient = voiceAudioClient,
-            chatViewModel = chatViewModel,
-            recorder = recorder,
-            player = player,
-            realtimePcmPlayer = realtimePcmPlayer,
-            sfxPlayer = voiceSfxPlayer,
-            // === PHASE3-voice-intents-localdispatch ===
-            // Wire the local in-process dispatcher so voice intents go
-            // through `BridgeCommandHandler.handleLocalCommand` (same
-            // dispatch + Tier 5 safety pipeline as WSS-incoming commands)
-            // instead of round-tripping through the relay. The relay
-            // correctly rejects phone-originated bridge.command envelopes
-            // as "unexpected from phone" — the wire protocol is server→
-            // phone for commands, and voice intents are phone-local.
-            //
-            // The multiplexer is still passed for non-bridge envelope use
-            // cases and as a debug fallback (with a WARN log) if the
-            // local dispatcher is somehow null at runtime.
-            //
-            // Discovered + fixed 2026-04-14 — see ROADMAP.md v0.4.1
-            // "voice intent local dispatch loop" entry and the multiplexer
-            // wiring fix in commit a568366 that unblocked the dispatch
-            // path enough to surface this protocol mismatch.
-            bridgeMultiplexer = connectionViewModel.multiplexer,
-            localBridgeDispatcher = if (BuildFlavor.isSideload) {
-                connectionViewModel.bridgeCommandHandler::handleLocalCommand
-            } else {
-                null
-            },
-            // === END PHASE3-voice-intents-localdispatch ===
-            // 2026-04-17: persist the interaction-mode preference across
-            // app restarts. VoicePreferencesRepository is the same repo
-            // VoiceSettingsScreen reads/writes.
-            voicePreferences = voicePreferences,
-            voiceRelayPreflight = { connectionViewModel.verifyRelayForVoice() },
-            voiceHandoffReporter = { connectionViewModel.recordVoiceHandoff(it) },
-            bargeInPreferences = com.hermesandroid.relay.data.BargeInPreferencesRepository(mediaContext),
-            vadEngineFactory = { com.hermesandroid.relay.audio.VadEngine(mediaContext) },
-            bargeInListenerFactory = { vad, audioSessionIdProvider ->
-                com.hermesandroid.relay.audio.BargeInListener.create(
-                    mediaContext,
-                    vad,
-                    audioSessionIdProvider,
-                )
-            },
-        )
-    }
-
-    // Multi-connection: wire ChatViewModel / VoiceViewModel into the
-    // connection switch coordinator. Registered once per composition — the
-    // coordinator stores these as callbacks and fires them in order when
-    // switchConnection() is invoked so in-flight streams don't keep
-    // scribbling into the outgoing connection's state after the swap.
-    //
-    // Voice callback is gated on sideload: googlePlay still builds the
-    // VoiceViewModel (it's wired unconditionally above) but voice mode is a
-    // sideload-only feature, so there's no live turn to stop on stock
-    // googlePlay builds. The stop-callback is harmless either way; the gate
-    // mirrors the flavor check on the global unattended banner below.
-    LaunchedEffect(Unit) {
-        connectionViewModel.registerStreamCancelCallback {
-            chatViewModel.cancelStream()
-        }
-        if (BuildFlavor.isSideload) {
-            // VoiceViewModel.stop() isn't defined — use exitVoiceMode() which
-            // is the closest semantic match (tears down the active turn and
-            // returns the UI to text mode). Worker B2 confirmed no stop()
-            // method exists as of the connection-switch pass, so this rename
-            // is intentional and kept as-is. If a proper stop() is added
-            // later, swap this for vvm.stop().
-            connectionViewModel.registerVoiceStopCallback {
-                voiceViewModel.exitVoiceMode()
-            }
-        }
-        chatViewModel.observeConnectionSwitches(connectionViewModel.connectionSwitchEvents)
-        // Mirror chat streaming state so a mid-turn route change defers its
-        // client rebuild instead of cancelling the live turn (the gateway
-        // socket rides the blip via its own reconnect).
-        launch {
-            chatViewModel.isStreaming.collect { connectionViewModel.setChatStreaming(it) }
-        }
-    }
-
-    var boundCatalogConnectionId by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(chatApiClient, activeConnectionId) {
-        val handler = connectionViewModel.chatHandler
-        val connectionChanged = boundCatalogConnectionId != activeConnectionId
-        // A route handoff / reconnect rebuilds the API client (new instance)
-        // while the chat is unchanged — the bound handler is the same. Take the
-        // cheap path: swap the client reference only, no re-init. This is what
-        // keeps the chat surface from repainting/reloading on a LAN↔Tailscale
-        // switch or a reconnect. A genuine re-bind (different handler) falls
-        // through to the full one-time wiring below.
-        if (chatViewModel.boundHandler === handler) {
-            if (connectionChanged) {
-                chatViewModel.resetConnectionCatalogs()
-                // The active pointer changes before an API target is rebuilt.
-                // Never let the outgoing API client refill the new connection's
-                // catalogs during that window. Dashboard-only (null -> null)
-                // refreshes immediately through the already-installed loader.
-                chatViewModel.updateApiClient(null)
-            } else {
-                chatViewModel.updateApiClient(chatApiClient)
-            }
-            boundCatalogConnectionId = activeConnectionId
-            return@LaunchedEffect
-        }
-
-        // The Dashboard/Gateway transport is independently sufficient for
-        // chat, so handler and dashboard callbacks must bind even when no API
-        // fallback client is configured.
-        chatViewModel.initialize(chatApiClient, handler)
-
-        // Wire inbound-media dependencies. Idempotent rewire of the
-        // ChatHandler callbacks.
-        chatViewModel.initializeMedia(
-            context = mediaContext,
-            relayHttpClient = connectionViewModel.relayHttpClient,
-            mediaSettingsRepo = connectionViewModel.mediaSettingsRepo,
-            mediaCacheWriter = connectionViewModel.mediaCacheWriter
-        )
-
-        // Agent-profile pick provider (Pass 2). Lambda reads the latest
-        // StateFlow value on every send, so ChatViewModel never needs a
-        // direct reference to ConnectionViewModel. The lambda captures the
-        // long-lived VM, not the (per-connection) apiClient.
-        chatViewModel.setSelectedProfileProvider {
-            connectionViewModel.selectedProfile.value
-        }
-        chatViewModel.setIsolatedProfileApiProvider {
-            connectionViewModel.selectedProfileUsesIsolatedApiRoute()
-        }
-        chatViewModel.setSessionProfileNameProvider {
-            connectionViewModel.effectiveSessionProfileName.value
-        }
-        chatViewModel.setEffectiveProfileProvider {
-            AgentDisplay.effectiveProfile(
-                selectedProfile = connectionViewModel.selectedProfile.value,
-                profiles = connectionViewModel.agentProfiles.value,
-            )
-        }
-        chatViewModel.setDisplayProfileProvider {
-            connectionViewModel.effectiveDisplayProfile.value
-        }
-        chatViewModel.setDisplayAliasProvider {
-            connectionViewModel.profileDisplayAlias.value
-        }
-
-        // Drawer session list, scoped to the active profile on gateway
-        // connections (dashboard `/api/sessions?profile=`). Returns null off the
-        // dashboard surface so refreshSessions() falls back to the shared list.
-        chatViewModel.setProfileSessionLister {
-            connectionViewModel.listProfileScopedSessions()
-        }
-        // …and load a tapped session's transcript from that same profile's DB.
-        chatViewModel.setProfileMessageLoader { sessionId ->
-            connectionViewModel.loadProfileScopedMessages(sessionId)
-        }
-        // Personality choices live in Dashboard `/api/config` on a
-        // dashboard-only connection. The setter immediately refreshes after
-        // this callback is installed, covering the null-API initialization.
-        chatViewModel.setDashboardConfigLoader {
-            connectionViewModel.loadActiveDashboardConfig()
-        }
-        // …and delete from that same profile's DB so a non-default profile's
-        // session can't be resurrected by the next profile-scoped list.
-        chatViewModel.profileSessionDeleter = { sessionId ->
-            connectionViewModel.deleteProfileScopedSession(sessionId)
-        }
-        // …and rename in that same profile's DB so a non-default profile's
-        // title actually persists (the unscoped api_server PATCH hits the
-        // shared DB). Write twin of the scoped list/delete.
-        chatViewModel.profileSessionRenamer = { sessionId, title ->
-            connectionViewModel.renameProfileScopedSession(sessionId, title)
-        }
-
-        // Wire session persistence callback
-        chatViewModel.onSessionChanged = { sessionId ->
-            connectionViewModel.saveLastSessionId(sessionId)
-        }
-        boundCatalogConnectionId = activeConnectionId
-    }
-
-    // Reload sessions / switch profile context only on a SEMANTIC change
-    // (connection, profile, or restored session) — NOT on every API-client
-    // instance swap. Keying on a readiness flag instead of the client instance
-    // means a route handoff (which churns the client) no longer triggers a
-    // refreshSessions() that would flash/reload the chat. `switchProfileContext`
-    // already no-ops when the context key + session are unchanged.
-    LaunchedEffect(
-        chatTransportReady,
-        activeConnectionId,
-        selectedProfile?.name,
-        effectiveSessionProfileName,
-        lastSessionId,
-        profileSelectionSettled,
-    ) {
-        if (!chatTransportReady) return@LaunchedEffect
-        // Cold-start profile-isolation guard: hold the first profile-scoped load
-        // until the persisted profile selection has SETTLED, so the session
-        // drawer (and the restored session context) don't briefly load the
-        // SERVER-DEFAULT profile and then visibly snap to the real one. While a
-        // non-default profile is still resolving we wait on a backstop instead of
-        // fetching now; this effect re-fires the instant the profile resolves
-        // (selectedProfile / profileSelectionSettled change), cancelling the wait
-        // so only the correct, profile-scoped load lands. The backstop guarantees
-        // the drawer is never permanently empty if the profile list never lands.
-        if (!profileSelectionSettled) {
-            delay(2_500L)
-        } else {
-            // Coalesce the rapid lastSessionId null→value churn a profile switch
-            // produces: selectProfile() nulls lastSessionId, then the persisted
-            // per-profile session resolves a tick later. This effect re-fires on
-            // that change, cancelling the delay below before it commits — so we
-            // skip painting the intermediate empty draft and land straight on the
-            // resolved session (or a genuine fresh draft when the profile has no
-            // history).
-            delay(160)
-        }
-        chatViewModel.switchProfileContext(
-            contextKey = AgentDisplay.profileContextKey(
-                connectionId = activeConnectionId,
-                profileName = effectiveSessionProfileName,
-            ),
-            sessionId = lastSessionId,
-        )
-        chatViewModel.refreshSessions()
-    }
-
-    LaunchedEffect(activeConnectionId, selectedProfile?.name) {
-        // WP-V2: namespace per-profile voice prefs by BOTH the active connection
-        // and the profile so two connections exposing a same-named profile don't
-        // collide. Set the connection id first so onProfileChanged re-seeds from
-        // the correctly-scoped keys.
-        voiceViewModel.setVoicePrefsConnection(activeConnectionId)
-        voiceViewModel.onProfileChanged(
-            AgentDisplay.profileRequestName(selectedProfile?.name)
-        )
-    }
-
-    LaunchedEffect(selectedProfile?.name, effectiveDisplayProfile?.name, agentProfiles, profileDisplayAlias) {
-        chatViewModel.refreshAgentDisplayName(relabelGenericMessages = true)
-    }
-
     // === PHASE3-status: sync granular phone-status settings to chat ===
     val appContextEnabled by connectionViewModel.appContextEnabled.collectAsState()
     val appContextBridgeState by connectionViewModel.appContextBridgeState.collectAsState()
@@ -926,81 +573,10 @@ fun RelayApp() {
         chatViewModel.notifyOnTurnComplete = notifyTurnComplete
     }
 
-    // Demo-mode composer wiring: unconditional — a demo session has no API
-    // client, so the client-gated chat init effect above never runs and
-    // ChatViewModel's own handler stays null. Lambdas read live state on
-    // every send.
-    LaunchedEffect(Unit) {
-        chatViewModel.setDemoModeWiring(
-            isDemo = { connectionViewModel.isDemoMode.value },
-            handler = { connectionViewModel.chatHandler },
-        )
-        // Voice → chat breadcrumbs (e.g. "background task still running" when
-        // voice mode exits with a detached run) land as system notices in the
-        // shared chat transcript.
-        voiceViewModel.chatNoticeSink = { notice ->
-            connectionViewModel.chatHandler.addSystemNotice(notice)
-        }
-    }
-
-    // Sync tool annotation parsing toggle to ChatHandler
-    val parseAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()
-    LaunchedEffect(parseAnnotations) {
-        connectionViewModel.chatHandler.parseToolAnnotations = parseAnnotations
-    }
-
-    // Sync "show system messages" debug toggle to ChatHandler
-    val showSystemMessages by connectionViewModel.showSystemMessages.collectAsState()
-    LaunchedEffect(showSystemMessages) {
-        connectionViewModel.chatHandler.showSystemMarkers = showSystemMessages
-    }
-
-    // Sync streaming endpoint preference to chat. Resolves "auto" against the
-    // current server capabilities so vanilla upstream + bootstrap-injected
-    // sessions API picks /v1/chat/completions for portable SSE chat while
-    // still using /api/sessions/* for browse/rename/delete. Gateway
-    // availability is a key so a Manage sign-in mid-session re-resolves
-    // "auto" to the gateway transport (live thinking) without an app restart.
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
-    // The resolved API route is a key so a mid-turn route switch (LAN→Tailscale)
-    // re-runs activeGatewayChatClient(), which RETARGETS the in-flight gateway
-    // client to follow the new dashboard route instead of stranding the turn on
-    // the dead one.
     val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
-    // Debounce a route FLIP before re-acquiring the gateway chat client. The
-    // network-layer hysteresis (ConnectionManager) already keeps _activeEndpoint
-    // stable on a transient endpoint-resolution miss, so the Dashboard URL should
-    // not flap — this is belt-and-suspenders against any residual sub-second
-    // LAN⇄Tailscale flip, which would otherwise shutdown the warm gateway socket
-    // (when idle) or retarget mid-turn (burning MAX_TURN_REJOINS). The FIRST
-    // acquisition (lastAcquiredApiUrl == null) and non-url key changes
-    // (url unchanged) are NOT delayed, so cold-start connect latency is
-    // unaffected; only a genuine url change waits for a settle window, and if
-    // the url flips back within it the LaunchedEffect cancels + restarts so no
-    // rebuild happens.
-    var lastAcquiredDashboardUrl by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(
-        streamingEndpoint,
-        serverCapabilities,
-        gatewayAvailability,
-        effectiveDashboardUrl,
-    ) {
-        if (
-            lastAcquiredDashboardUrl != null &&
-            lastAcquiredDashboardUrl != effectiveDashboardUrl
-        ) {
-            delay(750L)
-        }
-        val resolved = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
-        chatViewModel.streamingEndpoint = resolved
-        chatViewModel.sseFallbackEndpoint = connectionViewModel.resolveSseStreamingEndpoint()
-        chatViewModel.updateGatewayClient(
-            if (resolved == "gateway") connectionViewModel.activeGatewayChatClient() else null,
-        )
-        lastAcquiredDashboardUrl = effectiveDashboardUrl
-    }
 
     // What's New auto-show
     val showWhatsNew by connectionViewModel.showWhatsNew.collectAsState()
@@ -1248,25 +824,25 @@ fun RelayApp() {
             com.hermesandroid.relay.wake.WakeWordActivationCoordinator.pending.collectAsState()
         val appIsForeground by
             com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
-        val assistantSessionActive by
-            com.hermesandroid.relay.assistant.AssistantAppSessionState.active.collectAsState()
-        val assistantCancelRequest by
-            com.hermesandroid.relay.assistant.AssistantVoiceCommandCoordinator.cancelRequest
-                .collectAsState()
 
-        // A background detection stays pending behind the actionable
-        // notification. Only a visible Hermes activity may enter voice.
+        // The process runtime owns Android-assistant activation. RelayApp only
+        // brings the already-running turn into its full Voice presentation.
+        // Foreground-service wake detections retain their existing visible-app
+        // gate and UI-owned activation flow.
         LaunchedEffect(wakeActivation?.id, appIsForeground) {
             val activation = wakeActivation ?: return@LaunchedEffect
-            if (!appIsForeground) return@LaunchedEffect
             if (activation.source ==
                 com.hermesandroid.relay.wake.WakeWordActivationSource.SystemAssistant
             ) {
-                com.hermesandroid.relay.assistant.HermesVoiceInteractionService
-                    .setVoiceSessionActive(true)
-            } else {
-                com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
+                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                    launchSingleTop = true
+                }
+                com.hermesandroid.relay.wake.WakeWordActivationCoordinator.consume(activation.id)
+                return@LaunchedEffect
             }
+            if (!appIsForeground) return@LaunchedEffect
+
+            com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
             if (activation.startNewSession) {
                 chatViewModel.createNewChat()
             }
@@ -1285,39 +861,6 @@ fun RelayApp() {
             com.hermesandroid.relay.wake.WakeWordForegroundService.setVoiceSessionActive(
                 voiceUiState.voiceMode
             )
-        }
-        LaunchedEffect(
-            assistantSessionActive,
-            voiceUiState.voiceMode,
-            voiceUiState.state,
-            voiceUiState.transcribedText,
-            voiceUiState.responseText,
-            voiceUiState.error,
-        ) {
-            if (assistantSessionActive) {
-                if (voiceUiState.voiceMode) {
-                    com.hermesandroid.relay.assistant.AssistantAppSessionState
-                        .markVoiceStarted()
-                }
-                if (voiceUiState.voiceMode ||
-                    com.hermesandroid.relay.assistant.AssistantAppSessionState.hasVoiceStarted()
-                ) {
-                    com.hermesandroid.relay.assistant.AssistantSessionProtocol.publish(
-                        mediaContext,
-                        voiceUiState,
-                    )
-                } else {
-                    com.hermesandroid.relay.assistant.AssistantSessionProtocol.publish(
-                        mediaContext,
-                        com.hermesandroid.relay.assistant.AssistantSessionSnapshot(),
-                    )
-                }
-            }
-        }
-        LaunchedEffect(assistantCancelRequest) {
-            val request = assistantCancelRequest ?: return@LaunchedEffect
-            voiceViewModel.exitVoiceMode()
-            com.hermesandroid.relay.assistant.AssistantVoiceCommandCoordinator.consume(request)
         }
         val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()

@@ -2353,6 +2353,18 @@ boundary.
   system session, and retries local wake ownership only after the microphone is
   free. Process recreation creates a fresh activation rather than relying on an
   in-memory Activity reference.
+- The system session defaults to a compact bottom bar and can expand without
+  changing turn lifecycle. **Open full voice** disables only the system-owned
+  session UI and foregrounds the app-owned Voice surface. It does not create
+  another voice session or reacquire the microphone. Back collapses an expanded
+  surface first; Back from compact, hide, Stop, or cancel remains terminal,
+  while the hidden session still observes the final `Closed` state and finishes
+  without cancelling the completed turn.
+- Connection, chat, and voice runtime ownership is application-lifetime in the
+  main process rather than Activity-owned. The assistant service may initialize
+  that graph and start a turn while no Activity exists; the app UI later binds
+  the same ViewModels, recorder, players, clients, and turn state. The isolated
+  session process never creates voice collaborators.
 - Standard voice remains dashboard-backed and upstream-only. Assistant mode adds
   an Android invocation surface; it does not add or require a Relay/server wake
   endpoint.

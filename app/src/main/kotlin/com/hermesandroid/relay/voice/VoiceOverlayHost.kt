@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -32,14 +33,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,6 +66,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -255,6 +262,7 @@ private fun VoiceFloatingOverlayPill(
 ) {
     val uiState by session.uiState.collectAsState()
     var minimized by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
     val engineText = voiceEngineLabel(session.engineMode)
     val providerText = voiceProviderLabel(
         session.provider,
@@ -262,15 +270,12 @@ private fun VoiceFloatingOverlayPill(
         session.voice,
         session.outputEnabled,
     )
-    val profileText = session.profileName?.takeIf { it.isNotBlank() } ?: "default profile"
-    val stateText = when (uiState.state) {
-        VoiceState.Idle -> "Ready"
-        VoiceState.Listening -> "Listening"
-        VoiceState.Transcribing -> "Transcribing"
-        VoiceState.Thinking -> "Thinking"
-        VoiceState.Speaking -> "Speaking"
-        VoiceState.Error -> "Error"
-    }
+    val profileText = session.profileName?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.voice_overlay_label_default_profile)
+    val stateText = voiceOverlayStateLabel(uiState.state)
+    val overlayWidth = (LocalConfiguration.current.screenWidthDp - 24)
+        .coerceIn(280, 368)
+        .dp
 
     if (minimized) {
         VoiceFloatingOverlayBubble(
@@ -288,114 +293,303 @@ private fun VoiceFloatingOverlayPill(
 
     Surface(
         modifier = Modifier
-            .width(332.dp)
+            .width(overlayWidth)
+            .animateContentSize()
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()
                     onDragBy(dragAmount.x, dragAmount.y)
                 }
             },
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-        tonalElevation = 6.dp,
-        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(if (expanded) 28.dp else 26.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.98f),
+        tonalElevation = 8.dp,
+        shadowElevation = 10.dp,
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        if (expanded) {
+            ExpandedVoiceOverlay(
+                uiState = uiState,
+                stateText = stateText,
+                engineText = engineText,
+                profileText = profileText,
+                providerText = providerText,
+                onCollapse = { expanded = false },
+                onMinimize = {
+                    expanded = false
+                    minimized = true
+                },
+                session = session,
+            )
+        } else {
+            CompactVoiceOverlay(
+                uiState = uiState,
+                stateText = stateText,
+                onExpand = { expanded = true },
+                session = session,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactVoiceOverlay(
+    uiState: VoiceUiState,
+    stateText: String,
+    onExpand: () -> Unit,
+    session: VoiceOverlaySession,
+) {
+    Row(
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(modifier = Modifier.size(50.dp), contentAlignment = Alignment.Center) {
+            OverlayCircularWaveformRing(
+                amplitude = uiState.amplitude,
+                state = uiState.state,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Icon(
+                imageVector = Icons.Filled.GraphicEq,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stateText,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = overlayPrimaryText(uiState, stateText),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onExpand, modifier = Modifier.size(38.dp)) {
+            Icon(
+                imageVector = Icons.Filled.ExpandMore,
+                contentDescription = stringResource(R.string.voice_overlay_expand_cd),
+            )
+        }
+        MicControlButton(
+            uiState = uiState,
+            onStartListening = session.onStartListening,
+            onStopListening = session.onStopListening,
+            onInterrupt = session.onInterrupt,
+            onPauseAutoMode = session.onPauseAutoMode,
+        )
+    }
+}
+
+@Composable
+private fun ExpandedVoiceOverlay(
+    uiState: VoiceUiState,
+    stateText: String,
+    engineText: String,
+    profileText: String,
+    providerText: String,
+    onCollapse: () -> Unit,
+    onMinimize: () -> Unit,
+    session: VoiceOverlaySession,
+) {
+    Column(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.GraphicEq,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = stringResource(R.string.voice_overlay_title),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    Text(
-                        text = "$stateText · $engineText · $profileText · $providerText",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                MicControlButton(
-                    uiState = uiState,
-                    onStartListening = session.onStartListening,
-                    onStopListening = session.onStopListening,
-                    onInterrupt = session.onInterrupt,
-                    onPauseAutoMode = session.onPauseAutoMode,
+                Icon(
+                    imageVector = Icons.Filled.GraphicEq,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(20.dp),
                 )
-                IconButton(
-                    onClick = session.onExit,
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = stringResource(R.string.voice_overlay_exit_a11y),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
             }
-
-            if (uiState.state == VoiceState.Transcribing || uiState.state == VoiceState.Thinking) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.voice_overlay_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = stateText,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
+            IconButton(onClick = onCollapse) {
+                Icon(
+                    imageVector = Icons.Filled.ExpandLess,
+                    contentDescription = stringResource(R.string.voice_overlay_collapse_cd),
+                )
+            }
+            IconButton(onClick = session.onExit) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = stringResource(R.string.voice_overlay_exit_a11y),
+                )
+            }
+        }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+        OverlayLinearWaveform(
+            amplitude = uiState.amplitude,
+            state = uiState.state,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp),
+        )
+
+        uiState.transcribedText?.takeIf { it.isNotBlank() }?.let {
+            VoiceOverlayTextRow(
+                icon = Icons.Filled.Person,
+                text = it,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        uiState.responseText.takeIf { it.isNotBlank() }?.let {
+            VoiceOverlayTextRow(
+                icon = Icons.Filled.AutoAwesome,
+                text = it,
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        if (uiState.state == VoiceState.Transcribing || uiState.state == VoiceState.Thinking) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+
+        Text(
+            text = "$engineText · $profileText · $providerText",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            MicControlButton(
+                uiState = uiState,
+                onStartListening = session.onStartListening,
+                onStopListening = session.onStopListening,
+                onInterrupt = session.onInterrupt,
+                onPauseAutoMode = session.onPauseAutoMode,
+            )
+            TextButton(onClick = onMinimize) {
+                Text(stringResource(R.string.voice_overlay_minimize))
+            }
+            TextButton(onClick = session.onDismissOverlay) {
+                Text(stringResource(R.string.voice_overlay_hide))
+            }
+            OutlinedButton(
+                onClick = session.onReturnToHermes,
+                modifier = Modifier.weight(1f),
             ) {
-                TextButton(
-                    onClick = { minimized = true },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(stringResource(R.string.voice_overlay_minimize))
-                }
-                TextButton(
-                    onClick = session.onReturnToHermes,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(stringResource(R.string.voice_overlay_hermes))
-                }
-                TextButton(
-                    onClick = session.onDismissOverlay,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(stringResource(R.string.voice_overlay_hide))
-                }
-                TextButton(
-                    onClick = session.onExit,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(stringResource(R.string.voice_overlay_exit))
-                }
+                Text(
+                    stringResource(R.string.assistant_session_open_full_voice),
+                    maxLines = 1,
+                )
             }
         }
     }
 }
+
+@Composable
+private fun VoiceOverlayTextRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+    tint: Color,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(19.dp),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = tint,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun OverlayLinearWaveform(
+    amplitude: Float,
+    state: VoiceState,
+    modifier: Modifier = Modifier,
+) {
+    val phase = rememberOverlayWaveformPhase(amplitude)
+    val active = state == VoiceState.Listening || state == VoiceState.Speaking
+    val color = if (active) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    }
+    Canvas(modifier = modifier) {
+        val centerY = size.height / 2f
+        val count = 35
+        val spacing = size.width / count
+        val envelope = max(amplitude.coerceIn(0f, 1f), if (active) 0.12f else 0.05f)
+        repeat(count) { index ->
+            val wave = (sin(index * 0.74f + phase) + 1f) * 0.5f
+            val centerBias = 1f - kotlin.math.abs(index - count / 2f) / (count / 2f)
+            val halfHeight = size.height * (0.12f + 0.38f * wave * envelope) *
+                max(0.35f, centerBias)
+            val x = spacing * (index + 0.5f)
+            drawLine(
+                color = color,
+                start = androidx.compose.ui.geometry.Offset(x, centerY - halfHeight),
+                end = androidx.compose.ui.geometry.Offset(x, centerY + halfHeight),
+                strokeWidth = max(2f, spacing * 0.24f),
+                cap = StrokeCap.Round,
+            )
+        }
+    }
+}
+
+@Composable
+private fun voiceOverlayStateLabel(state: VoiceState): String = when (state) {
+    VoiceState.Idle -> stringResource(R.string.voice_overlay_state_ready)
+    VoiceState.Listening -> stringResource(R.string.voice_overlay_state_listening)
+    VoiceState.Transcribing -> stringResource(R.string.voice_overlay_state_transcribing)
+    VoiceState.Thinking -> stringResource(R.string.voice_overlay_state_thinking)
+    VoiceState.Speaking -> stringResource(R.string.voice_overlay_state_speaking)
+    VoiceState.Error -> stringResource(R.string.voice_overlay_state_error)
+}
+
+private fun overlayPrimaryText(uiState: VoiceUiState, fallback: String): String =
+    uiState.transcribedText?.takeIf { it.isNotBlank() }
+        ?: uiState.responseText.takeIf { it.isNotBlank() }
+        ?: uiState.error?.takeIf { it.isNotBlank() }
+        ?: fallback
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

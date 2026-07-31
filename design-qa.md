@@ -1,8 +1,10 @@
-# Agent Passport design QA
+# Design QA
+
+## Agent Passport
 
 Status: **passed**
 
-## Compared
+### Compared
 
 - Source: `C:\Users\Bailey\.codex\generated_images\019f6640-e6dc-7c33-8aca-a1610e2a19f0\call_JzVlJKlG8KWTJRo2xup7oTlq.png`
 - Implementation: `C:\Users\Bailey\.codex\visualizations\2026\07\25\agent-drawer-audit\passport-qa-final.png`
@@ -10,7 +12,7 @@ Status: **passed**
 - Device viewport: Android, 1080 x 2340 px, font scale 1.0
 - State: Agent tab, Victor pinned profile, disconnected gateway
 
-## Resolved findings
+### Resolved findings
 
 - **P2 - Header hierarchy and identity treatment differed from the selected concept.** The sheet now uses the Agent Passport title, large profile card, circular avatar, pin-style profile chip, status line, and four-column metrics strip.
 - **P2 - Configuration controls lacked the concept's card hierarchy.** Personality, model, and reasoning are grouped into one outlined Active configuration card with matching icon medallions and row affordances.
@@ -18,7 +20,7 @@ Status: **passed**
 - **P2 - Primary action looked detached and visually unfinished.** Start new chat now uses the selected full-width purple-to-relay gradient, white outlined chat icon, and a single clean label.
 - **P2 - Nested sheet and content gestures caused visible vertical bounce.** Sheet drag gestures are disabled for this scrollable detail surface and overscroll is suppressed; repeated device swipes keep the sheet anchored while the content scrolls.
 
-## Final review
+### Final review
 
 - Layout and hierarchy match the selected Agent Passport direction: profile identity, metrics, Agent/Session tabs, active configuration, safety and speed, primary chat action, and identity customization.
 - Interactions remain wired: profile selection, configuration rows, Agent/Session tabs, approval and fast controls, new chat, and identity customization.
@@ -28,3 +30,44 @@ Status: **passed**
 No open P0, P1, or P2 findings.
 
 final result: passed
+
+## Assistant overlay
+
+- Reference: `C:\Users\Bailey\.codex\generated_images\019fb003-68ea-7052-85c7-3745fa7e838e\call_jPwpDr9QfaCDA6k2c01StBYe.png`
+- Implementation captures:
+  - `C:\Users\Bailey\.codex\visualizations\2026\07\29\019fb003-68ea-7052-85c7-3745fa7e838e\assistant-live-compact.png`
+  - `C:\Users\Bailey\.codex\visualizations\2026\07\29\019fb003-68ea-7052-85c7-3745fa7e838e\assistant-live-expanded.png`
+- Combined comparison: `C:\Users\Bailey\.codex\visualizations\2026\07\29\019fb003-68ea-7052-85c7-3745fa7e838e\assistant-design-comparison.png`
+- Device viewport: 1080 × 2340, portrait, Samsung SM-S938U
+- States reviewed: system assistant compact overlay and expanded overlay over a non-Hermes app
+
+### Full comparison
+
+The implementation preserves the selected progression: a wide bottom compact
+bar over the current app, an in-place expanded assistant panel, and an explicit
+Open full voice action. The current app remains visible behind both assistant
+surfaces. The live expanded panel uses the existing Hermes theme rather than
+copying the mock's illustrative app chrome.
+
+### Focused comparison
+
+- Compact: wide rounded bar, active voice orb, status/transcript, expand, and
+  stop controls match the reference hierarchy.
+- Expanded: drag handle, Hermes identity/status, waveform, transcript/response,
+  Stop, collapse, and Open full voice match the reference hierarchy.
+- Device review found the translucent expanded surface did not infer a readable
+  content color for its title and collapse icon. The surface now explicitly
+  uses the theme's `onSurface` color.
+
+### Iteration history
+
+1. Cold assistant activation initially proved the session could overlay another
+   app without launching `MainActivity`.
+2. Unlocked-device captures proved compact and expanded presentation over
+   Reddit.
+3. Combined reference/device review found and corrected the expanded foreground
+   color inheritance defect.
+4. A fresh final capture and full-voice handoff check remain pending because the
+   device was locked after the corrected APK was installed.
+
+final result: blocked
