@@ -3510,5 +3510,9 @@
     <string name="assistant_session_error">Needs attention</string>
     <string name="assistant_session_closing">Closing…</string>
     <string name="assistant_session_cancel">Cancel</string>
+    <string name="assistant_session_stop">Stop</string>
     <string name="assistant_session_retry">Try again</string>
+    <string name="assistant_session_expand">Expand assistant</string>
+    <string name="assistant_session_collapse">Collapse assistant</string>
+    <string name="assistant_session_open_full_voice">Open full voice</string>
 </resources>

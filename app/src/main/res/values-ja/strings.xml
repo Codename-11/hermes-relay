@@ -3503,5 +3503,9 @@
     <string name="assistant_session_error">確認が必要です</string>
     <string name="assistant_session_closing">終了しています…</string>
     <string name="assistant_session_cancel">キャンセル</string>
+    <string name="assistant_session_stop">停止</string>
     <string name="assistant_session_retry">再試行</string>
+    <string name="assistant_session_expand">アシスタントを展開</string>
+    <string name="assistant_session_collapse">アシスタントを折りたたむ</string>
+    <string name="assistant_session_open_full_voice">フル音声画面を開く</string>
 </resources>

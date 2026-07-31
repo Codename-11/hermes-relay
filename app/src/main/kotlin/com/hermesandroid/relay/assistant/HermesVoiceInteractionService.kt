@@ -87,21 +87,9 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
 
     override fun onLaunchVoiceAssistFromKeyguard() {
         val activationId = java.util.UUID.randomUUID().toString()
-        val activityStarted = runCatching {
-            startActivity(
-                AssistantSessionProtocol.activationIntent(
-                    this,
-                    activationId,
-                    latestPreferences.startNewSession,
-                )
-                    .putExtra(EXTRA_FROM_KEYGUARD, true)
-            )
-        }.onFailure {
-            Log.w(TAG, "Could not open keyguard assistant host", it)
-        }.isSuccess
         showAssistantSession(
             fromKeyguard = true,
-            activationId = activationId.takeIf { activityStarted },
+            activationId = activationId,
         )
     }
 
@@ -214,7 +202,10 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
             }
             if (detected && !stopRequested.get()) {
                 setRuntimeState(AssistantWakeRuntimeState.AwaitingSession)
-                mainHandler.post { showAssistantSession(fromKeyguard = false) }
+                val keyguard = getSystemService(android.app.KeyguardManager::class.java)
+                mainHandler.post {
+                    showAssistantSession(fromKeyguard = keyguard?.isKeyguardLocked == true)
+                }
             }
         }
     }

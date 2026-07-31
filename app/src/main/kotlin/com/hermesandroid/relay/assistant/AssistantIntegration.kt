@@ -11,6 +11,7 @@ import android.service.voice.VoiceInteractionService
 import androidx.core.content.edit
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
+import com.hermesandroid.relay.HermesRelayApp
 import com.hermesandroid.relay.wake.WakeWordActivation
 import com.hermesandroid.relay.wake.WakeWordActivationCoordinator
 import com.hermesandroid.relay.wake.WakeWordActivationSource
@@ -19,6 +20,7 @@ import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 enum class AssistantRoleStatus {
     Unavailable,
@@ -94,9 +96,11 @@ object AssistantSessionProtocol {
     const val EXTRA_ACTIVATION_ID = "com.hermesandroid.relay.assistant.ACTIVATION_ID"
     const val EXTRA_START_NEW_SESSION =
         "com.hermesandroid.relay.assistant.START_NEW_SESSION"
+    const val EXTRA_HANDOFF_ONLY = "com.hermesandroid.relay.assistant.HANDOFF_ONLY"
     private const val ACTION_STATUS = "com.hermesandroid.relay.assistant.STATUS"
     private const val ACTION_FINISH = "com.hermesandroid.relay.assistant.FINISH"
     private const val ACTION_START = "com.hermesandroid.relay.assistant.START"
+    private const val ACTION_ACTIVATE = "com.hermesandroid.relay.assistant.ACTIVATE"
     private const val EXTRA_PHASE = "phase"
     private const val EXTRA_TRANSCRIPT = "transcript"
     private const val EXTRA_RESPONSE = "response"
@@ -106,6 +110,7 @@ object AssistantSessionProtocol {
     fun prepareAssistActivation(intent: Intent?) {
         val assistIntent = intent ?: return
         if (!isAssistAction(assistIntent.action)) return
+        if (assistIntent.getBooleanExtra(EXTRA_HANDOFF_ONLY, false)) return
         assistIntent.putExtra(EXTRA_ASSISTANT_SESSION, true)
     }
 
@@ -124,7 +129,34 @@ object AssistantSessionProtocol {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
 
+    fun fullVoiceIntent(context: Context) =
+        Intent(context, com.hermesandroid.relay.MainActivity::class.java).apply {
+            action = Intent.ACTION_ASSIST
+            addCategory(Intent.CATEGORY_VOICE)
+            putExtra(EXTRA_HANDOFF_ONLY, true)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+
+    fun activate(
+        context: Context,
+        activationId: String = UUID.randomUUID().toString(),
+        startNewSession: Boolean = true,
+    ) {
+        context.sendBroadcast(
+            Intent(context, AssistantSessionLifecycleReceiver::class.java).apply {
+                action = ACTION_ACTIVATE
+                putExtra(EXTRA_ACTIVATION_ID, activationId)
+                putExtra(EXTRA_START_NEW_SESSION, startNewSession)
+            }
+        )
+    }
+
     fun consumeActivation(context: Context, intent: Intent?): Boolean {
+        if (intent?.getBooleanExtra(EXTRA_HANDOFF_ONLY, false) == true) {
+            intent.removeExtra(EXTRA_HANDOFF_ONLY)
+            com.hermesandroid.relay.util.NavRouteRequest.tryRequest("chat")
+            return true
+        }
         if (intent?.getBooleanExtra(EXTRA_ASSISTANT_SESSION, false) != true) return false
         val id = intent.getStringExtra(EXTRA_ACTIVATION_ID) ?: UUID.randomUUID().toString()
         val startNewSession = intent.getBooleanExtra(EXTRA_START_NEW_SESSION, true)
@@ -148,7 +180,21 @@ object AssistantSessionProtocol {
         if (AssistantAppSessionState.active.value) return false
         val activation = AssistantSessionPersistence.restoreActivation(context) ?: return false
         AssistantAppSessionState.setActive(true)
-        WakeWordActivationCoordinator.request(activation)
+        HermesVoiceInteractionService.setVoiceSessionActive(true)
+        val application = context.applicationContext as HermesRelayApp
+        application.runtime.requestVoiceActivation(
+            activationId = activation.id,
+            startNewSession = activation.startNewSession,
+            onFailure = { failure ->
+                publish(
+                    application,
+                    AssistantSessionSnapshot(
+                        phase = AssistantSessionPhase.Error,
+                        error = failure.message ?: "Hermes voice could not start",
+                    ),
+                )
+            },
+        )
         return true
     }
 
@@ -162,6 +208,12 @@ object AssistantSessionProtocol {
                 putExtra(EXTRA_ERROR, snapshot.error)
             }
         )
+        if (shouldFinishLifecycleOnSnapshot(snapshot)) {
+            // The session UI runs in a separate process. Reconcile the app-owned
+            // lifecycle directly as well so a reclaimed hidden UI process cannot
+            // leave wake listening paused after full Voice closes.
+            finish(context, cancelVoice = false)
+        }
     }
 
     fun publish(context: Context, state: VoiceUiState) {
@@ -186,6 +238,9 @@ object AssistantSessionProtocol {
         )
     }
 
+    internal fun shouldFinishLifecycleOnSnapshot(snapshot: AssistantSessionSnapshot): Boolean =
+        snapshot.phase == AssistantSessionPhase.Closed
+
     fun finish(context: Context, cancelVoice: Boolean) {
         context.sendBroadcast(
             Intent(context, AssistantSessionLifecycleReceiver::class.java).apply {
@@ -203,6 +258,7 @@ object AssistantSessionProtocol {
 
     internal fun isFinishAction(action: String?): Boolean = action == ACTION_FINISH
     internal fun isStartAction(action: String?): Boolean = action == ACTION_START
+    internal fun isActivateAction(action: String?): Boolean = action == ACTION_ACTIVATE
     internal fun shouldCancelVoice(intent: Intent): Boolean =
         intent.getBooleanExtra(EXTRA_CANCEL_VOICE, false)
 
@@ -245,6 +301,36 @@ class AssistantSessionStateReceiver : BroadcastReceiver() {
 
 class AssistantSessionLifecycleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (AssistantSessionProtocol.isActivateAction(intent.action)) {
+            val id = intent.getStringExtra(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)
+                ?: UUID.randomUUID().toString()
+            val startNewSession = intent.getBooleanExtra(
+                AssistantSessionProtocol.EXTRA_START_NEW_SESSION,
+                true,
+            )
+            AssistantSessionPersistence.setActive(context, true)
+            AssistantSessionPersistence.setActivation(context, id, startNewSession)
+            AssistantAppSessionState.setActive(true)
+            HermesVoiceInteractionService.setVoiceSessionActive(true)
+            val application = context.applicationContext as HermesRelayApp
+            // Dispatch into the process-owned scope and return from the receiver
+            // immediately. Cold readiness can take longer than a broadcast's
+            // execution budget.
+            application.runtime.requestVoiceActivation(
+                activationId = id,
+                startNewSession = startNewSession,
+                onFailure = { failure ->
+                    AssistantSessionProtocol.publish(
+                        application,
+                        AssistantSessionSnapshot(
+                            phase = AssistantSessionPhase.Error,
+                            error = failure.message ?: "Hermes voice could not start",
+                        ),
+                    )
+                },
+            )
+            return
+        }
         if (AssistantSessionProtocol.isStartAction(intent.action)) {
             AssistantSessionPersistence.setActive(context, true)
             HermesVoiceInteractionService.setVoiceSessionActive(true)
@@ -253,7 +339,8 @@ class AssistantSessionLifecycleReceiver : BroadcastReceiver() {
         if (!AssistantSessionProtocol.isFinishAction(intent.action)) return
         AssistantSessionPersistence.setActive(context, false)
         if (AssistantSessionProtocol.shouldCancelVoice(intent)) {
-            AssistantVoiceCommandCoordinator.requestCancel()
+            val application = context.applicationContext as HermesRelayApp
+            application.runtime.cancelVoice()
         }
         AssistantAppSessionState.setActive(false)
         HermesVoiceInteractionService.setVoiceSessionActive(false)

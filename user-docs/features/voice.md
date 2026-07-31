@@ -112,6 +112,13 @@ Open a chat and tap the microphone FAB in the bottom-right corner. The first tim
 
 To exit voice mode, tap the X in the top-right of the overlay.
 
+Choose **Overlay** during an active turn before leaving Hermes to keep Voice
+available as a wide compact bar over the app you are using. Android will request
+display-over-other-apps access the first time. Expand it for transcript and
+response details, minimize it to the existing bubble, or choose **Open full
+voice** to return to Hermes without restarting the turn. This optional floating
+control is separate from Android Assistant mode below.
+
 ## Interaction Modes
 
 Change in **Settings → Voice → Interaction mode**. All three share the same overlay — only the mic button's behavior changes.
@@ -219,6 +226,13 @@ assistant gesture or power-button shortcut can open a Hermes session even when
 continuous wake is off. Android presents a real assistant session and hands it
 to the existing voice flow; Standard voice still uses the upstream Dashboard
 audio routes and does not require Relay.
+
+Assistant invocation opens as a compact bar over the current screen. Tap the
+up arrow to expand transcript and response details, then collapse it without
+ending the turn. **Open full voice** continues the same request in Hermes'
+existing Voice screen without restarting the session or handing the microphone
+to a second recorder. Back collapses an expanded assistant first; Back from the
+compact bar or Stop closes the assistant turn normally.
 
 The optional background listener uses the same Android-local sherpa model and
 keeps pre-activation audio on the phone. It releases the microphone before the
