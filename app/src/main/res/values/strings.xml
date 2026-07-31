@@ -1449,6 +1449,33 @@
     <string name="profile_inspector_disabled">(disabled)</string>
     <string name="profile_inspector_retry">Retry</string>
     <string name="profile_inspector_truncated">Content truncated by relay — showing the first slice only.</string>
+    <string name="profile_inspector_config_summary">Profile configuration</string>
+    <string name="profile_inspector_config_summary_description">Snapshot of the fields defined in this profile’s config.yaml.</string>
+    <string name="profile_inspector_profile">Profile</string>
+    <string name="profile_inspector_access">Access</string>
+    <string name="profile_inspector_read_only_value">Read only</string>
+    <string name="profile_inspector_inspector_view_value">Inspector view</string>
+    <string name="profile_inspector_fields">Fields</string>
+    <string name="profile_inspector_config_field_summary">%1$d top-level · %2$d total</string>
+    <string name="profile_inspector_configured_sections">Configured sections</string>
+    <string name="profile_inspector_empty_config_summary">No fields are defined in this profile config.</string>
+    <string name="profile_inspector_show_raw_config">Show raw configuration</string>
+    <string name="profile_inspector_hide_raw_config">Hide raw configuration</string>
+    <string name="profile_inspector_skills_count_summary">Server snapshot: %1$d enabled of %2$d</string>
+    <string name="profile_inspector_skills_visible_count">Showing %1$d of %2$d skills</string>
+    <string name="profile_inspector_search_skills">Search skills</string>
+    <string name="profile_inspector_clear_skill_search">Clear skill search</string>
+    <string name="profile_inspector_filter_all">All</string>
+    <string name="profile_inspector_filter_enabled">Enabled</string>
+    <string name="profile_inspector_filter_disabled">Disabled</string>
+    <string name="profile_inspector_no_matching_skills">No matching skills</string>
+    <string name="profile_inspector_no_matching_skills_hint">Try another search or filter.</string>
+    <string name="profile_inspector_expanded_state">Expanded</string>
+    <string name="profile_inspector_collapsed_state">Collapsed</string>
+    <string name="profile_inspector_enable_skill">Enable %1$s</string>
+    <string name="profile_inspector_disable_skill">Disable %1$s</string>
+    <string name="conn_info_session_id">Session ID</string>
+    <string name="conn_info_reasoning">Reasoning</string>
 
     <!-- PairedDevicesScreen -->
     <string name="paired_devices_title">Relay sessions</string>
