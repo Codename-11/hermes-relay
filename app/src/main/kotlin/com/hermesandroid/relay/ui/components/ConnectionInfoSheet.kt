@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import android.content.ClipData
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -891,6 +893,10 @@ fun AgentInfoSheet(
         passportScrollState.scrollTo(0)
     }
 
+    BackHandler(enabled = showIdentityEditor) {
+        showIdentityEditor = false
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -907,6 +913,7 @@ fun AgentInfoSheet(
     ) {
         Column(
             modifier = Modifier
+                .fillMaxHeight(0.94f)
                 .verticalScroll(
                     state = passportScrollState,
                     overscrollEffect = null,
@@ -915,6 +922,26 @@ fun AgentInfoSheet(
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            Text(
+                text = stringResource(R.string.conn_info_agent_passport),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            AgentPassportHeader(
+                agentName = agentName,
+                profileLabel = profileLabel,
+                modelLabel = modelLabel,
+                providerLabel = providerLabel,
+                connected = connected,
+                presence = resolvedPresence,
+                hasSoul = resolvedProfile?.hasSoul == true,
+                skillCount = resolvedProfile?.skillCount ?: 0,
+                transportLabel = transportFriendlyName(sessionTransport.type),
+                sessionLabel = currentSessionId?.take(8) ?: "—",
+                contextLabel = contextLabel,
+                onProfileClick = { activePicker = AgentPassportPicker.Profile },
+            )
+
             if (showIdentityEditor) {
                 AgentPassportIdentityEditor(
                     connectionViewModel = connectionViewModel,
@@ -930,26 +957,6 @@ fun AgentInfoSheet(
                     },
                 )
             } else {
-                Text(
-                    text = stringResource(R.string.conn_info_agent_passport),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                AgentPassportHeader(
-                    agentName = agentName,
-                    profileLabel = profileLabel,
-                    modelLabel = modelLabel,
-                    providerLabel = providerLabel,
-                    connected = connected,
-                    presence = resolvedPresence,
-                    hasSoul = resolvedProfile?.hasSoul == true,
-                    skillCount = resolvedProfile?.skillCount ?: 0,
-                    transportLabel = transportFriendlyName(sessionTransport.type),
-                    sessionLabel = currentSessionId?.take(8) ?: "—",
-                    contextLabel = contextLabel,
-                    onProfileClick = { activePicker = AgentPassportPicker.Profile },
-                )
-
                 AgentPassportTabs(
                     selected = selectedTab,
                     onSelected = { selectedTab = it },
