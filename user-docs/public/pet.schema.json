@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://hermes-relay.dev/docs/pet.schema.json",
   "title": "Hermes-Relay pet manifest",
-  "description": "Schema for pet.json — a side-loaded still or animated avatar ('pet') pack for Hermes-Relay. Encodes the loader's structural rules; on-disk checks (file existence, decodability) are enforced at load time. Visual QA rules such as PNG alpha, safe-box padding, and frame registration are documented in docs/pet-spec.md.",
+  "description": "Schema for pet.json — a still or animated floating-companion pack for Hermes-Relay. Encodes the loader's structural rules; on-disk checks (file existence, decodability) are enforced at load time. Visual QA rules such as PNG alpha, safe-box padding, and frame registration are documented in docs/pet-spec.md.",
   "type": "object",
   "required": ["states"],
   "properties": {
@@ -24,6 +24,18 @@
     "description": {
       "type": "string",
       "description": "Free-text description, shown in the picker."
+    },
+    "source": {
+      "type": "string",
+      "description": "Optional origin identifier such as 'petdex'. Informational only; the pet loader does not fetch or execute it."
+    },
+    "sourceUrl": {
+      "type": "string",
+      "description": "Optional source or attribution page. Informational only; the pet loader does not fetch it."
+    },
+    "creator": {
+      "type": "string",
+      "description": "Optional creator attribution retained with gallery-installed packs."
     },
     "reactive": { "$ref": "#/definitions/reactive" },
     "states": {
@@ -77,6 +89,7 @@
         "frameWidth":  { "type": "integer", "minimum": 1, "description": "Sprite-sheet cell canvas width, in pixels. This is not the visible character width; leave safe transparent padding inside each cell." },
         "frameHeight": { "type": "integer", "minimum": 1, "description": "Sprite-sheet cell canvas height, in pixels. This is not the visible character height; leave safe transparent padding inside each cell." },
         "frameCount":  { "type": "integer", "minimum": 1, "description": "Number of cells in the sheet (rows x columns). Clamped to the sheet's real capacity at load." },
+        "startFrame":  { "type": "integer", "minimum": 0, "default": 0, "description": "Zero-based first cell for this clip, read left-to-right then top-to-bottom. Allows several state clips to reference different rows of one atlas." },
         "fps": {
           "type": "number",
           "default": 8,
@@ -96,7 +109,8 @@
             "sheet": { "type": "string", "minLength": 1 },
             "frameWidth": { "type": "integer", "minimum": 1 },
             "frameHeight": { "type": "integer", "minimum": 1 },
-            "frameCount": { "type": "integer", "minimum": 1 }
+            "frameCount": { "type": "integer", "minimum": 1 },
+            "startFrame": { "type": "integer", "minimum": 0, "default": 0 }
           }
         }
       ]

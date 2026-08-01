@@ -51,7 +51,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLocale
@@ -63,7 +62,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
@@ -73,7 +71,6 @@ import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import kotlinx.coroutines.delay
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -247,36 +244,52 @@ fun MessageBubble(
     val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
 
     CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
-    // Identity (the active profile avatar) is shown once in the top bar, so
-    // message bubbles no longer reserve a per-group avatar gutter — that width
-    // is reclaimed for wider bubbles. Outer alignment keeps user bubbles right.
+    // The active profile image is sender identity, distinct from both the
+    // floating pet companion and the ambient Sphere. Reserve one stable gutter
+    // for an assistant run and render the identity only on its first message.
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
     ) {
+    if (!isUser && !isSystem) {
+        Box(
+            modifier = Modifier.width(40.dp),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            if (shouldShowMessageGroupAvatar(
+                    isUser = isUser,
+                    isSystem = isSystem,
+                    isFirstInGroup = isFirstInGroup,
+                    agentName = message.agentName,
+                )
+            ) {
+                Surface(
+                    // Decorative: the adjacent visible agent name already owns
+                    // the identity announcement, avoiding duplicate TalkBack copy.
+                    modifier = Modifier.size(32.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                ) {
+                    AgentAvatarFace(
+                        name = message.agentName.orEmpty(),
+                        letterStyle = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+        }
+    }
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.weight(1f),
         horizontalAlignment = alignment
     ) {
-        // Agent name label (above assistant bubbles, only first in group), with
-        // the active profile's local icon (if set) — a small avatar by the name.
+        // Agent name label sits beside the first group identity avatar. Pet
+        // companions never enter this row.
         if (!isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
-            val agentIconPath = LocalAgentIconPath.current
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.padding(bottom = 2.dp, start = 4.dp),
             ) {
-                if (!agentIconPath.isNullOrBlank()) {
-                    AsyncImage(
-                        model = File(agentIconPath),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(16.dp)
-                            .clip(CircleShape),
-                    )
-                }
                 Text(
                     text = message.agentName,
                     style = MaterialTheme.typography.labelSmall,
@@ -760,6 +773,13 @@ internal fun shouldShowSpeakResponseAction(
         message.role == MessageRole.ASSISTANT &&
         !message.isStreaming &&
         message.content.isNotBlank()
+
+internal fun shouldShowMessageGroupAvatar(
+    isUser: Boolean,
+    isSystem: Boolean,
+    isFirstInGroup: Boolean,
+    agentName: String?,
+): Boolean = !isUser && !isSystem && isFirstInGroup && !agentName.isNullOrBlank()
 
 @Composable
 private fun MessagePathBadge(text: String, leadingIcon: ImageVector? = null) {

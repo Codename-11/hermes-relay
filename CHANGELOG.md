@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Hermes can be selected as Android’s default Digital Assistant.** The opt-in system role adds a genuine `VoiceInteractionService`/system-session path for background and locked-screen “Hey Hermes” activation, while keeping local wake audio private and Standard voice upstream-only.
 - **Android can opt into an experimental local “Hey Hermes” wake word.** A user-started microphone foreground service performs sherpa-onnx detection on the phone, keeps pre-activation audio local, shows an ongoing Stop notification, and safely hands microphone ownership to the existing voice flow.
+- **Pets can stay with you during everyday chat without replacing the agent.** A selected pet now occupies a fixed companion perch above the composer, reacts to agent activity, compacts for the keyboard and short screens, and pauses and dims while you scroll. Its menu can open Appearance or hide it. (#267)
+- **Petdex browsing and one-tap pet installation.** Appearance can search the public Petdex catalog, shows creator attribution and a source link, and downloads an atlas only after you tap Install. The app prefers the compact v2 catalog with v1 fallback, converts supported current or legacy layouts into a validated local pet, and keeps installed companions available offline. Petdex assets retain their own creator-provided licensing terms. (#267)
 
 ### Changed
 
@@ -18,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Voice interruption covers the complete active response.** One calibrated VAD listener spans generation and playback on Standard and Realtime paths, rejects stale callbacks and speaker bleed, and keeps promoted background tasks alive when speech alone is stopped.
 - **Voice interruption matches upstream turn semantics.** Barge-in now defaults on with upstream RMS calibration, threshold, grace, and majority-window behavior; configurable exact stop phrases end the active voice chat; and an interrupted spoken reply privately informs the next Standard model turn without altering chat history.
 - **Experimental wake-word tuning starts at a more practical strictness.** New installations default to `0.3`, and Voice settings show the exact value while it is adjusted; existing saved choices remain unchanged.
+- **Profile identity, the Sphere, and pets are now separate appearance choices.** Profile images and letter fallbacks continue to identify assistant message groups; Background visualization independently controls Off or Sphere and its skins; Floating pet independently controls None or an imported companion. Existing pet selections migrate to the companion setting, while the old Sphere selection becomes no companion. (#267)
 
 ### Fixed
 

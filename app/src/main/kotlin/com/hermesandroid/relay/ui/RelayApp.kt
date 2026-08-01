@@ -85,6 +85,9 @@ import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
+import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
+import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
@@ -120,6 +123,7 @@ import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
+import com.hermesandroid.relay.ui.screens.PetdexBrowseScreen
 import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
 import com.hermesandroid.relay.ui.screens.DiagnosticsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
@@ -393,6 +397,7 @@ sealed class Screen(
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
+    data object PetdexBrowse : Screen("settings/appearance/petdex", "Petdex", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
     data object Diagnostics : Screen("settings/diagnostics", "Diagnostics", Icons.Filled.Settings)
     data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
@@ -631,36 +636,40 @@ fun RelayApp() {
         )
     }
 
-    // Agent avatar seam (P2/P3): the built-in sphere plus any user-loaded "pets"
-    // (P3). The sphere nests the skin system one level below (avatar → skin).
-    // Published beside the skin locals so every avatar call site resolves it via
-    // LocalAgentAvatar without per-call-site threading. An unknown selected id
-    // (e.g. a pet pack was removed) falls back to the sphere.
-    val agentAvatarId by connectionViewModel.agentAvatar.collectAsState()
+    // Ambient visualization and pet companionship are independent. Existing
+    // LocalAgentAvatar call sites keep rendering the sphere; a selected pet is
+    // published separately for the floating companion surface.
+    val floatingPetId by connectionViewModel.floatingPet.collectAsState()
     // Re-scans the pets/ dir whenever the tick bumps (in-app import/delete, or the
     // Appearance screen opening), so newly added/removed pets appear everywhere
     // without an app restart.
     val avatarsRefreshTick by connectionViewModel.avatarsRefreshTick.collectAsState()
-    val availableAgentAvatars by produceState(
-        initialValue = listOf<AgentAvatar>(SphereAvatar),
+    val availablePets by produceState(
+        initialValue = emptyList<AgentAvatar>(),
         key1 = sphereContext,
         key2 = avatarsRefreshTick,
     ) {
-        value = listOf<AgentAvatar>(SphereAvatar) +
-            withContext(Dispatchers.IO) { PetLoader.loadPets(sphereContext) }
+        value = withContext(Dispatchers.IO) { PetLoader.loadPets(sphereContext) }
     }
-    val activeAgentAvatar = remember(agentAvatarId, availableAgentAvatars) {
-        availableAgentAvatars.firstOrNull { it.id == agentAvatarId } ?: SphereAvatar
+    val activeFloatingPet = remember(floatingPetId, availablePets) {
+        availablePets.firstOrNull { it.id == floatingPetId }
     }
     val petSpeed by connectionViewModel.petSpeed.collectAsState()
     val petStabilize by connectionViewModel.petStabilize.collectAsState()
+    val backgroundVisualizationEnabled by
+        connectionViewModel.backgroundVisualizationEnabled.collectAsState()
     val agentIconPath by connectionViewModel.profileIcon.collectAsState()
 
     CompositionLocalProvider(
         LocalSphereSkin provides activeSphereSkin,
         LocalAvailableSphereSkins provides availableSphereSkins,
-        LocalAgentAvatar provides activeAgentAvatar,
-        LocalAvailableAvatars provides availableAgentAvatars,
+        LocalAgentAvatar provides SphereAvatar,
+        // Compatibility list for the existing Appearance picker during the
+        // transition; new companion UI consumes LocalAvailablePets.
+        LocalAvailableAvatars provides listOf(SphereAvatar) + availablePets,
+        LocalAvailablePets provides availablePets,
+        LocalFloatingPet provides activeFloatingPet,
+        LocalBackgroundVisualizationEnabled provides backgroundVisualizationEnabled,
         LocalPetPlaybackSpeed provides petSpeed,
         LocalPetStabilize provides petStabilize,
         LocalAgentIconPath provides agentIconPath,
@@ -1625,6 +1634,11 @@ fun RelayApp() {
                                 launchSingleTop = true
                             }
                         },
+                        onNavigateToAppearanceSettings = {
+                            navController.navigate(Screen.AppearanceSettings.route) {
+                                launchSingleTop = true
+                            }
+                        },
                         onNavigateToVoiceSettings = {
                             navController.navigate(Screen.VoiceSettings.route) {
                                 launchSingleTop = true
@@ -2261,7 +2275,14 @@ fun RelayApp() {
                 composable(Screen.AppearanceSettings.route) {
                     AppearanceSettingsScreen(
                         connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        onBrowsePetdex = { navController.navigate(Screen.PetdexBrowse.route) },
+                    )
+                }
+                composable(Screen.PetdexBrowse.route) {
+                    PetdexBrowseScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.Analytics.route) {

@@ -45,17 +45,9 @@ data class AvatarRenderState(
 )
 
 /**
- * Swappable agent avatar — the visual embodiment of the agent across chat, the
- * clean text-flow mode, and the voice overlay.
- *
- * This is the seam that lets the rendering implementation change without
- * touching any surface: every surface composes `LocalAgentAvatar.current.Render(
- * AvatarRenderState(...), modifier)` and is blind to whether the avatar is the
- * ASCII [SphereAvatar] or a future sprite/Lottie "pet".
- *
- * Two-level model: **which avatar** (this interface) → for the sphere avatar,
- * **which skin** (the unchanged [com.hermesandroid.relay.ui.components.SphereSkin]
- * system, consumed internally by [SphereAvatar]).
+ * Shared reactive-rendering contract for the ambient Sphere and floating pets.
+ * Profile identity images use a separate UI path; implementing this interface
+ * does not make a visual the message sender's identity.
  *
  * Implementations are expected to be cheap, stable singletons (or `@Immutable`
  * data) so they sit safely in a [staticCompositionLocalOf].
@@ -90,18 +82,29 @@ interface AgentAvatar {
 }
 
 /**
- * The active agent avatar. Defaults to [SphereAvatar] so previews and any
- * composable outside the app root render the classic orb; `RelayApp` provides
- * the user's resolved choice beside the sphere-skin locals.
+ * Legacy ambient-visualization seam. The app now provides [SphereAvatar] here;
+ * floating companions are published through [LocalFloatingPet].
  */
 val LocalAgentAvatar = staticCompositionLocalOf<AgentAvatar> { SphereAvatar }
 
 /**
- * Every selectable avatar (built-ins + any loaded user "pets"). Provided at the
- * app root for the Appearance picker. C2 ships only [SphereAvatar]; C3 appends
- * user pets.
+ * Compatibility list retained during the Sphere/pet split. New companion
+ * pickers should consume [LocalAvailablePets].
  */
 val LocalAvailableAvatars = staticCompositionLocalOf<List<AgentAvatar>> { listOf(SphereAvatar) }
+
+/**
+ * The optional floating pet companion. Unlike [LocalAgentAvatar], this does not
+ * replace the ambient sphere or the active profile's identity image. `null`
+ * means the user has not selected a companion.
+ */
+val LocalFloatingPet = staticCompositionLocalOf<AgentAvatar?> { null }
+
+/** User-installed pets available to the companion picker (sphere excluded). */
+val LocalAvailablePets = staticCompositionLocalOf<List<AgentAvatar>> { emptyList() }
+
+/** Ambient sphere/background visibility, independent of the motion setting. */
+val LocalBackgroundVisualizationEnabled = staticCompositionLocalOf { true }
 
 /**
  * Global pet playback-speed multiplier (1.0 = the clip's authored fps), set in

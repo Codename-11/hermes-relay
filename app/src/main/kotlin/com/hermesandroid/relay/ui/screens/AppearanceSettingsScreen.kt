@@ -79,9 +79,8 @@ import com.hermesandroid.relay.ui.components.reactivityLabels
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.AvatarSource
-import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
-import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
-import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
+import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppTheme
 import com.hermesandroid.relay.ui.theme.AppThemes
@@ -102,6 +101,7 @@ import kotlinx.coroutines.launch
 fun AppearanceSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    onBrowsePetdex: () -> Unit = {},
 ) {
     val theme by connectionViewModel.theme.collectAsState()
     val appThemeId by connectionViewModel.appTheme.collectAsState()
@@ -572,11 +572,94 @@ fun AppearanceSettingsScreen(
                 }
             }
 
-            // Agent avatar section — choose the avatar first (the built-in sphere
-            // plus any imported "pets"; add/remove pets in-app below). When the
-            // sphere avatar is selected its skin chips nest below: avatar → skin.
             Text(
-                text = stringResource(R.string.appearance_agent_avatar),
+                text = stringResource(R.string.appearance_background_visualization),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .gradientBorder(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkTheme = isDarkTheme,
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                val backgroundVisualizationEnabled by
+                    connectionViewModel.backgroundVisualizationEnabled.collectAsState()
+                val availableSkins = LocalAvailableSphereSkins.current
+                val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
+                val effectiveSkinId = SphereRegistry.resolve(
+                    selectedId = sphereSkinId,
+                    themeDefaultSkinId = selectedTheme.defaultSphereSkinId,
+                    available = availableSkins,
+                ).id
+                val brand = LocalBrand.current
+
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.appearance_background_visualization_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = !backgroundVisualizationEnabled,
+                            onClick = { connectionViewModel.setBackgroundVisualizationEnabled(false) },
+                            label = { Text(stringResource(R.string.appearance_background_off)) },
+                        )
+                        FilterChip(
+                            selected = backgroundVisualizationEnabled,
+                            onClick = { connectionViewModel.setBackgroundVisualizationEnabled(true) },
+                            label = { Text(stringResource(R.string.appearance_background_sphere)) },
+                        )
+                    }
+
+                    if (backgroundVisualizationEnabled) {
+                        HorizontalDivider()
+                        Text(
+                            text = stringResource(R.string.appearance_sphere_skin),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            availableSkins.forEach { skin ->
+                                SphereSkinChip(
+                                    skin = skin,
+                                    brand = brand,
+                                    selected = skin.id == effectiveSkinId,
+                                    onClick = { connectionViewModel.setSphereSkin(skin.id) },
+                                )
+                            }
+                        }
+                        Text(
+                            text = stringResource(R.string.appearance_sphere_custom_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            // Floating pets are companions, not agent identity or background art.
+            Text(
+                text = stringResource(R.string.appearance_floating_pet),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -593,22 +676,15 @@ fun AppearanceSettingsScreen(
                 )
             ) {
                 val brand = LocalBrand.current
-                val availableAvatars = LocalAvailableAvatars.current
-                val activeAvatar = LocalAgentAvatar.current
-                val availableSkins = LocalAvailableSphereSkins.current
-                val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
-                val effectiveSkinId = SphereRegistry.resolve(
-                    selectedId = sphereSkinId,
-                    themeDefaultSkinId = selectedTheme.defaultSphereSkinId,
-                    available = availableSkins,
-                ).id
+                val availablePets = LocalAvailablePets.current
+                val activePet = LocalFloatingPet.current
 
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.appearance_agent_avatar_desc),
+                        text = stringResource(R.string.appearance_floating_pet_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -618,27 +694,29 @@ fun AppearanceSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        availableAvatars.forEach { avatar ->
+                        FilterChip(
+                            selected = activePet == null,
+                            onClick = { connectionViewModel.setFloatingPet(null) },
+                            label = { Text(stringResource(R.string.appearance_floating_pet_none)) },
+                        )
+                        availablePets.forEach { pet ->
                             AgentAvatarChip(
-                                avatar = avatar,
+                                avatar = pet,
                                 brand = brand,
-                                selected = avatar.id == activeAvatar.id,
-                                // Persist + switch. RelayApp re-resolves
-                                // LocalAgentAvatar from this pref, so every
-                                // surface (and these chips) updates.
-                                onClick = { connectionViewModel.setAgentAvatar(avatar.id) },
+                                selected = pet.id == activePet?.id,
+                                onClick = { connectionViewModel.setFloatingPet(pet.id) },
                             )
                         }
                     }
 
                     // Add / manage user pets in-app — the reliable alternative to
                     // adb push (scoped storage blocks or stalls it on many devices).
-                    val userAvatars = availableAvatars.filter { it.source == AvatarSource.USER }
+                    val userAvatars = availablePets.filter { it.source == AvatarSource.USER }
 
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         OutlinedButton(
                             onClick = {
@@ -659,6 +737,9 @@ fun AppearanceSettingsScreen(
                         }
                         TextButton(onClick = { connectionViewModel.refreshAgentAvatars() }) {
                             Text(stringResource(R.string.appearance_rescan))
+                        }
+                        TextButton(onClick = onBrowsePetdex) {
+                            Text(stringResource(R.string.appearance_browse_petdex))
                         }
                     }
 
@@ -699,7 +780,7 @@ fun AppearanceSettingsScreen(
 
                     // Pet playback-speed tuning (selected pet only) — scales the
                     // authored fps live, no re-authoring or re-importing needed.
-                    if (activeAvatar.source == AvatarSource.USER) {
+                    if (activePet?.source == AvatarSource.USER) {
                         HorizontalDivider()
 
                         val petSpeed by connectionViewModel.petSpeed.collectAsState()
@@ -779,7 +860,7 @@ fun AppearanceSettingsScreen(
                         ) {
                             Box(modifier = Modifier.size(140.dp)) {
                                 key(greetKey) {
-                                    activeAvatar.Render(
+                                    activePet.Render(
                                         state = AvatarRenderState(
                                             state = previewSphereState,
                                             toolCallBurst = previewBurst,
@@ -832,40 +913,6 @@ fun AppearanceSettingsScreen(
                         )
                     }
 
-                    // Second level of the model: skin chips, shown only when the
-                    // sphere avatar is active (a pet carries no skins).
-                    if (activeAvatar.id == SphereAvatar.id) {
-                        HorizontalDivider()
-
-                        Text(
-                            text = stringResource(R.string.appearance_sphere_skin),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            availableSkins.forEach { skin ->
-                                SphereSkinChip(
-                                    skin = skin,
-                                    brand = brand,
-                                    selected = skin.id == effectiveSkinId,
-                                    onClick = { connectionViewModel.setSphereSkin(skin.id) },
-                                )
-                            }
-                        }
-
-                        HorizontalDivider()
-
-                        Text(
-                            text = stringResource(R.string.appearance_sphere_custom_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
         }

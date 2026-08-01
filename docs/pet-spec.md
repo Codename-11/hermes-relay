@@ -1,32 +1,102 @@
 # Pet spec
 
-The agent avatar (the embodiment shown on the empty chat screen, clean mode,
-the voice overlay, onboarding, and the startup splash) is a **swappable
-component**. The built-in **Sphere** ships with the app, and you can side-load
-your own **"pet"** — a still or animated bitmap frame-sequence / sprite atlas —
-to replace it. This document is the authoring reference.
+The floating pet is an optional companion shown above the Android chat
+composer. It is independent of both the active profile's identity image and the
+Sphere background visualization. You can side-load a still or animated bitmap
+frame-sequence / sprite atlas as a pet. This document is the authoring
+reference.
 
-> **See also** [`sphere-spec.md`](./sphere-spec.md) — the Sphere avatar has its
-> own skin system; pets and Sphere skins are the two ways to customize the agent
-> avatar.
+> **See also** [`sphere-spec.md`](./sphere-spec.md) — the Sphere is an optional
+> background visualization with its own skin system. Choosing or hiding a pet
+> does not change the Sphere, and choosing a Sphere skin does not change the
+> pet.
 
 > A pet is a self-contained pack of images plus a small JSON manifest. Pets are
 > **pure data** — frames + numbers, never code. The renderer is dependency-free
 > (Android `BitmapFactory` + a rate-capped Compose `Canvas`), so a pet is just a
 > set of PNGs the app plays back. Pets are an Android feature; the docs-site
-> embed always renders the Sphere.
+> Sphere embed is a separate visualization.
 
-## Two levels: avatar, then skin
+## Three independent appearance concepts
 
-Appearance has a two-level model:
+Android keeps these concepts separate:
 
-1. **Agent avatar** — Sphere (built-in) or one of your pets.
-2. **Sphere skin** — only applies to the Sphere avatar (see
-   [`sphere-spec.md`](./sphere-spec.md)). When a pet is selected, skins don't
-   apply and the skin chips hide.
+1. **Profile identity** — the profile image or letter fallback that identifies
+   the speaking agent in the top bar and at the first assistant message in a
+   group.
+2. **Background visualization** — Off or Sphere. Sphere skins apply only to this
+   visualization (see [`sphere-spec.md`](./sphere-spec.md)).
+3. **Floating pet** — None or one selected pet companion.
 
-Pick your avatar in **Settings → Appearance → Agent avatar**. Valid pets appear
-as chips alongside the Sphere; selecting one switches every surface at once.
+Pick a companion in **Settings → Appearance → Floating pet**. The pet occupies
+a fixed perch above the composer so it cannot cover messages or composer
+controls. Selecting a pet does not replace the profile identity or Sphere.
+
+## Petdex catalog and custom packs
+
+Appearance offers two installation paths:
+
+- **Browse Petdex** opens a searchable public catalog. Android prefers Petdex's
+  compact v2 manifest and falls back to the v1 manifest if v2 cannot be loaded.
+  Catalog metadata is cached in memory for five minutes. Sprites are not
+  downloaded while browsing; each install is an explicit user action.
+- **Add a pet** imports a custom Relay-format `.zip` or single image from device
+  storage. This path remains independent of Petdex and accepts the manifest
+  format documented below.
+
+Each Petdex card shows the submitting creator and links to its source page.
+Petdex does not provide one uniform license for every community asset, so a
+catalog listing is not permission to redistribute or relicense the art. Review
+the linked source and creator-provided terms before reuse outside the app.
+
+Installing converts the supported Petdex atlas into a normal local Relay pet
+pack under `files/pets/petdex-<slug>/`, retaining `source: "petdex"`, the source
+URL, and creator attribution in `pet.json`. The installed `pet.json` and
+spritesheet are sufficient for rendering, so the selected companion continues
+to work offline. Network access is needed only to refresh the catalog or install
+another pet. An installed Petdex pet can be selected, hidden, or removed like a
+custom pack.
+
+### Petdex trust and resource limits
+
+Petdex network access is deliberately narrow:
+
+- Catalog requests accept HTTPS on port 443 only from `petdex.dev` or
+  `assets.petdex.dev`; asset requests accept only `assets.petdex.dev`. URLs with
+  embedded credentials are rejected, and each redirect is revalidated (maximum
+  three redirects).
+- v2 and v1 catalog responses are limited to 4 MiB and 8 MiB respectively, with
+  at most 10,000 entries. Per-pet metadata is limited to 256 KiB.
+- Spritesheets are limited to 32 MiB and 16 million decoded pixels, must be PNG
+  or WebP, and must match a supported Petdex atlas layout.
+- Installation uses a temporary directory, validates the exact generated Relay
+  pack, then swaps it into place atomically. A failed download or validation
+  does not replace an existing installed pet.
+
+The importer downloads only Petdex metadata and the referenced spritesheet; it
+does not run install scripts or execute pack content.
+
+### Petdex atlas mapping
+
+Android supports both current 8-column × 9-row and legacy 9-column × 8-row
+Petdex atlases. Cells are 192 × 208 pixels; each generated Relay clip plays the
+first six cells of its mapped row at roughly 5.45 fps. `startFrame` selects that
+row without copying the atlas into separate images.
+
+The adapter maps Petdex motion rows to Relay states as follows:
+
+| Relay state | Petdex row | Fallback |
+|-------------|------------|----------|
+| `idle` | `idle` | required by the supported layout |
+| `thinking` | `review` | `idle` |
+| `working`, `writing` | `run` | `idle` |
+| `listening` | `waiting` | `idle` (legacy atlas has no waiting row) |
+| `speaking`, `greet`, `done` | `wave` | `idle` |
+| `error` | `failed` | `idle` |
+
+Only the Android Chat state subset is live on the Composer Perch; the broader
+mapping preserves the generated pack's compatibility with previews and future
+hosts.
 
 ## Where pets live
 
@@ -55,10 +125,10 @@ adb push blob/ /sdcard/Android/data/com.axiomlabs.hermesrelay.sideload/files/pet
 On the **googlePlay** flavor, drop the `.sideload` suffix from the package —
 `/sdcard/Android/data/com.axiomlabs.hermesrelay/files/pets/`.
 
-Then reopen **Settings → Appearance → Agent avatar** — valid pets appear in the
+Then reopen **Settings → Appearance → Floating pet** — valid pets appear in the
 picker. Invalid/incomplete packs are skipped (check logcat, tag `PetLoader`);
-one bad pack never breaks the picker, and with no pets installed the app behaves
-exactly as today (Sphere only).
+one bad pack never breaks the picker, and with no pets installed the companion
+picker offers **None**.
 
 The in-app **Add a pet** importer accepts either a `.zip` pack or a single image.
 Zip packs may put `pet.json` at the archive root or inside one top-level folder;
@@ -81,11 +151,11 @@ node scripts/package-pet.mjs path/to/my-pet --out my-pet.zip
   "id": "blob",
   "label": "Blob",
   "description": "A friendly blob companion",
-  "reactive": { "voice": true, "tools": false, "intensity": false },
+  "reactive": { "voice": false, "tools": false, "intensity": true },
   "states": {
     "idle":     { "frames": ["idle_0.png", "idle_1.png", "idle_2.png"], "fps": 6 },
     "thinking": { "frames": ["think_0.png", "think_1.png"], "fps": 8 },
-    "speaking": { "sheet": "talk.png", "frameWidth": 64, "frameHeight": 64, "frameCount": 4, "fps": 12 }
+    "writing":  { "sheet": "write.png", "frameWidth": 64, "frameHeight": 64, "frameCount": 4, "fps": 12 }
   },
   "defaults": { "frames": ["idle_0.png"], "fps": 1 }
 }
@@ -99,6 +169,9 @@ node scripts/package-pet.mjs path/to/my-pet --out my-pet.zip
 | `id` | recommended | Stable identity + persistence key. Falls back to the pack directory name. |
 | `label` | no | Shown in the picker. Falls back to `id`. |
 | `description` | no | Free text. |
+| `source` | no | Informational origin identifier, such as `petdex`; never fetched or executed by the loader. |
+| `sourceUrl` | no | Informational source/attribution page; never fetched by the loader. |
+| `creator` | no | Creator attribution retained with gallery-installed packs. |
 | `reactive` | no | Which live signals the pet honors. See below. |
 | `states` | **yes** | Per-state clips. A usable `idle` clip is **required**. |
 | `defaults` | no | Fallback clip for any state with no usable clip. |
@@ -110,8 +183,9 @@ A **clip** is one animation loop, defined as **either**:
 - a **frame sequence** — `"frames": ["a.png", "b.png", ...]`, or
 - a **sprite sheet** — `"sheet": "atlas.png"` plus `"frameWidth"`,
   `"frameHeight"`, and `"frameCount"` (cells are read left-to-right,
-  top-to-bottom; any rectangular grid works — a 4×4 sheet holds 16 frames,
-  decoded as one bitmap regardless of cell count).
+  top-to-bottom; optional `"startFrame"` chooses the zero-based first cell).
+  Any rectangular grid works — a 4×4 sheet holds 16 frames, decoded as one
+  bitmap regardless of cell count.
 
 Both forms take an `"fps"` (frames per second; clamped to **1–60**, default
 `8`). All clips **loop** while their state is active. A frame sequence may contain
@@ -147,10 +221,9 @@ the pack, or decodes as an image. Those remain load-time checks (see
 ## Agent states & pet behavior
 
 The point of per-state clips is to make the agent's activity **legible** — a
-glance at the pet tells you whether it's idle, thinking, writing, or talking.
-This mirrors a 30-year convention (Microsoft Agent's `Think`/`Write`/`Process`
-animation set, Live2D motion groups, VTuber lip-sync): a **looping base clip per
-activity**, plus amplitude-driven motion while speaking.
+glance at the pet tells you whether it's idle, thinking, writing, working, or in
+an error state. This mirrors a 30-year convention (Microsoft Agent's
+`Think`/`Write`/`Process` animation set): a **looping base clip per activity**.
 
 The agent reports six activity states; you author clips by name and they resolve
 through a fallback chain (first existing clip wins). The names you write are
@@ -169,6 +242,13 @@ through a fallback chain (first existing clip wins). The names you write are
 `idle` is the **only** hard requirement; every other state falls back to it.
 Author the subset you want and the chain fills the rest.
 
+The manifest vocabulary retains `listening` and `speaking` for pack
+compatibility and preview tooling, but the Android floating pet currently lives
+only in Chat. Its live perch drives Idle, Thinking, Streaming, Error, the
+Working tool overlay, and greet/done reactions; it does not receive microphone,
+TTS, or voice-amplitude signals. The Sphere and voice presentation remain
+separate systems.
+
 ### The `working` overlay — tool use vs. thinking
 
 `working` is special: not one of the six base states but a **tool-use overlay**.
@@ -185,12 +265,13 @@ what lights the **Tools** badge — no separate flag needed.
 ### Authoring ladder (how much buys how much)
 
 - **Minimal — 1 clip:** `idle`. A present, state-agnostic companion.
-- **Basic — 3 clips:** `idle` + `thinking` + `speaking`. Rest / busy / talking —
-  the core spine. (Add `voice` reactivity for a talking bounce.)
-- **Standard — 5 clips:** add `writing` (distinct output loop) and `listening`
-  (mic open), so chat-output vs. voice-output vs. mic-open read at a glance.
-- **Rich — 7 clips:** add `error` and `working` (the tool-use overlay, so the
-  user sees *thinking* vs. *running a tool* vs. *writing*). The full story.
+- **Basic — 3 clips:** `idle` + `thinking` + `writing`. Rest / reasoning / output
+  form the live Chat spine.
+- **Standard — 5 clips:** add `error` and `working` (the tool-use overlay), so
+  the user sees *thinking* vs. *running a tool* vs. *writing*.
+- **Compatibility — optional clips:** `listening` and `speaking` remain valid
+  manifest states for preview tooling and possible non-Android hosts, but the
+  current Android floating perch does not drive them.
 - **Expressive — + reactions:** add one-shot `greet` and `done` clips (below) for
   personality on top of the sustained loops.
 
@@ -222,7 +303,7 @@ These are specified so authors can plan, but the renderer doesn't drive them
 yet — they're tracked in `TODO.md`. Authoring the clips/flags now is harmless.
 
 - **`attention` reaction** — a one-shot when a notification arrives. Reserved: it
-  needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which
+  needs a host event the pet doesn't yet receive (unlike `greet`/`done`, which
   ride activity-state transitions).
 
 ## Reactivity — optional and detectable
@@ -232,20 +313,20 @@ summary so users see what a pet does before selecting it.
 
 | Flag | Default | Effect when `true` |
 |------|---------|--------------------|
-| `voice` | `true` | Voice amplitude gives a subtle scale "bounce" while speaking/listening. |
+| `voice` | `true` | Declares voice-amplitude bounce support in the renderer and preview. The current Android Chat perch does not provide voice amplitude. |
 | `tools` | *auto* | **Driven by the `working` clip, not this flag.** A pet that ships a usable `working` clip reacts to tool use (swaps to it while a tool runs) and advertises **Tools**; one without it doesn't — so the flag is ignored and can't over-promise. |
 | `intensity` | `false` | The active clip plays **faster** as agent activity ramps (up to ~1.6× at peak) — a base/working loop visibly "works harder" while output streams. Advertises **Activity**. |
 
-The badge only ever advertises what the renderer actually delivers: a declared
-flag the renderer doesn't honor is dropped, so a pet can't over-promise. The
-clips carry most of a pet's expressiveness (idle vs. thinking vs. working vs.
-writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
-`intensity` (playback speed) add the live motion on top.
+Capability badges describe what the pack and renderer support, not which signals
+every host surface supplies. On the Android Chat perch, `working` and
+`intensity` are live; `voice` is retained for pack compatibility and preview.
+The clips carry most of a pet's expressiveness, while the working overlay and
+intensity-driven playback speed add live motion on top.
 
 ## Frames and images
 
 - PNG with alpha is recommended (transparent background composites cleanly).
-- Frames are **contain-fit and centered** in the avatar area, preserving aspect
+- Frames are **contain-fit and centered** in the pet area, preserving aspect
   ratio — they don't have to match the screen's shape.
 - Sprite-sheet cells need their own internal padding. Treat the declared
   `frameWidth`/`frameHeight` as the **transparent cell canvas**, not as the
@@ -268,9 +349,8 @@ writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
   smaller and clip lengths modest (≤ ~30 frames); for many frames prefer a
   **sprite sheet** over a long frame sequence — a sheet decodes as one bitmap, so
   its cells can be larger (256–512 px) without the per-frame cost of a sequence.
-  **Size art to the largest surface the avatar appears on** (the full-screen
-  chat background): a 128 px cell or still upscaled that far looks pixelated,
-  while smaller surfaces (the voice overlay) just downscale and stay sharp.
+  **Size art for the companion perch**: a 128 px cell or still is sufficient
+  for the current 40–48 dp rendered pet and avoids unnecessary decode cost.
   Only the **selected** pet's **current** clip is decoded, off the main thread.
 - File names must stay **inside the pack directory** — paths that escape it
   (`../…`) are rejected.
@@ -296,10 +376,8 @@ contained tool/gear for `working`, mouth/gesture for `speaking`, warm warning
 accent for `error`, a clear wave for `greet`, and a celebratory smile/accent for
 `done`. Use transparent PNGs (or chroma-key then remove it), keep the same safe
 box margins, and avoid scenery/text/backgrounds. For normal use, `1024×1024`
-stills are a good lighter target. For high-DPI phones where the avatar may expand
-near full screen width, author stills natively at `2048×2048` rather than
-upscaling a small `256×256` image; the larger canvas only helps if the drawing
-itself has real high-resolution linework.
+stills are already larger than the Android companion perch requires; downsize
+finished assets when practical to reduce package and decode cost.
 
 For animated sheets, the reliable AI workflow is:
 
@@ -334,10 +412,11 @@ live in the user guide under **Custom Avatars → Generate a pet with AI**
 
 ## Reduced motion / accessibility
 
-When the user disables animations (app setting or OS reduce-motion) or a screen
-reader is exploring, the avatar is rendered **paused** — the pet freezes on its
-current frame and the voice bounce is suppressed. Author the first `idle` frame
-to be a good, legible still.
+When the user disables animations or scrolls the transcript, the pet is rendered
+**paused**. During scrolling it also dims; with the keyboard open or on a short
+screen it compacts from 48 dp to 40 dp. Author the first `idle` frame to be a
+good, legible still. The fixed perch is exposed as a button with the pet name and
+current state; its menu can open Appearance or hide the companion.
 
 ## Minimal example
 
@@ -350,9 +429,22 @@ pets/blob/idle.png
 { "id": "blob", "label": "Blob", "states": { "idle": { "frames": ["idle.png"], "fps": 1 } } }
 ```
 
-A single-frame `idle` is a complete, valid pet (a static image avatar).
+A single-frame `idle` is a complete, valid static pet.
 
 ## Removing a pet
 
 Delete the pack directory (or its `pet.json`) and reopen Appearance. If the
-removed pet was selected, the avatar falls back to the **Sphere** automatically.
+removed pet was selected, the floating-pet choice resets to **None**. The Sphere
+and profile identity are unchanged.
+
+## Migration from the combined picker
+
+For one release, Android reads the former `agent_avatar` preference when the new
+floating-pet preference is absent:
+
+- `sphere` or no previous selection becomes **Floating pet: None**.
+- A valid pet id remains selected as the floating companion.
+- A missing or deleted pet resolves to no companion.
+
+The Sphere remains the default background visualization. Profile images and
+letter fallbacks are not migrated because they were never pet selections.

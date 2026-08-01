@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -103,8 +104,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -179,6 +182,8 @@ import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
+import com.hermesandroid.relay.ui.components.FloatingPetCompanion
+import com.hermesandroid.relay.ui.components.shouldCompactFloatingPet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
@@ -191,6 +196,8 @@ import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
+import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.SphereState
@@ -480,6 +487,7 @@ fun ChatScreen(
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    onNavigateToAppearanceSettings: () -> Unit = {},
     // Voice mode gear button → full Voice Settings screen. Default no-op so
     // existing test/preview call sites keep compiling.
     onNavigateToVoiceSettings: () -> Unit = {},
@@ -2215,7 +2223,7 @@ fun ChatScreen(
                             Spacer(modifier = Modifier.weight(0.15f))
 
                             // ASCII sphere (constrained to square aspect)
-                            if (animationEnabled) {
+                            if (LocalBackgroundVisualizationEnabled.current) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -2227,6 +2235,7 @@ fun ChatScreen(
                                             state = if (error != null) SphereState.Error else SphereState.Idle,
                                             intensity = streamingIntensity,
                                             toolCallBurst = toolCallBurst,
+                                            paused = !animationEnabled,
                                         ),
                                         modifier = Modifier.fillMaxSize(),
                                     )
@@ -2375,12 +2384,17 @@ fun ChatScreen(
                         }
                 ) {
                     // Ambient avatar behind messages
-                    if (animationEnabled && animationBehindChat && !ambientMode) {
+                    if (
+                        LocalBackgroundVisualizationEnabled.current &&
+                        animationBehindChat &&
+                        !ambientMode
+                    ) {
                         LocalAgentAvatar.current.Render(
                             state = AvatarRenderState(
                                 state = sphereState,
                                 intensity = streamingIntensity,
                                 toolCallBurst = toolCallBurst,
+                                paused = !animationEnabled,
                             ),
                             modifier = Modifier
                                 .fillMaxSize()
@@ -3127,6 +3141,34 @@ fun ChatScreen(
             } else {
                 null
             }
+
+            // The pet is a persistent companion, not the agent's identity and
+            // not the ambient Sphere. Keep it in a real layout slot directly
+            // above the composer so it cannot cover messages, snackbars, the
+            // scroll-to-bottom affordance, or composer actions.
+            val floatingPet = LocalFloatingPet.current
+            if (floatingPet != null && !ambientMode) {
+                val density = LocalDensity.current
+                val imeVisible = WindowInsets.ime.getBottom(density) > 0
+                val compactPet = shouldCompactFloatingPet(
+                    imeVisible = imeVisible,
+                    screenHeightDp = LocalConfiguration.current.screenHeightDp,
+                )
+                FloatingPetCompanion(
+                    pet = floatingPet,
+                    state = AvatarRenderState(
+                        state = sphereState,
+                        intensity = streamingIntensity,
+                        toolCallBurst = toolCallBurst,
+                    ),
+                    isScrolling = listState.isScrollInProgress,
+                    compact = compactPet,
+                    animationEnabled = animationEnabled,
+                    onHide = { connectionViewModel.setFloatingPet(null) },
+                    onOpenAppearance = onNavigateToAppearanceSettings,
+                )
+            }
+
             ChatInputBar(
                 value = inputText,
                 onValueChange = { inputText = it },
@@ -3573,12 +3615,13 @@ private fun ChatColdStartLoadingState(
         modifier = modifier,
         contentAlignment = Alignment.Center,
     ) {
-        if (animationEnabled) {
+        if (LocalBackgroundVisualizationEnabled.current) {
             LocalAgentAvatar.current.Render(
                 state = AvatarRenderState(
                     state = SphereState.Thinking,
                     intensity = streamingIntensity.coerceAtLeast(0.18f),
                     toolCallBurst = toolCallBurst,
+                    paused = !animationEnabled,
                 ),
                 modifier = Modifier
                     .fillMaxSize()

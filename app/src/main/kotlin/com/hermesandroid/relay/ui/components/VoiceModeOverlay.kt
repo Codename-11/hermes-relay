@@ -82,6 +82,7 @@ import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanError
@@ -170,6 +171,7 @@ fun VoiceModeOverlay(
         { _, _, _ -> },
     // === END v0.4.1 ===
 ) {
+    val backgroundVisualizationEnabled = LocalBackgroundVisualizationEnabled.current
     val surface = MaterialTheme.colorScheme.surface
     val haptic = LocalHapticFeedback.current
 
@@ -323,14 +325,16 @@ fun VoiceModeOverlay(
                         .weight(1.0f),
                     contentAlignment = Alignment.Center,
                 ) {
-                    LocalAgentAvatar.current.Render(
-                        state = AvatarRenderState(
-                            state = voiceStateToSphereState(uiState.state),
-                            voiceAmplitude = uiState.amplitude,
-                            voiceMode = true,
-                        ),
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    if (backgroundVisualizationEnabled) {
+                        LocalAgentAvatar.current.Render(
+                            state = AvatarRenderState(
+                                state = voiceStateToSphereState(uiState.state),
+                                voiceAmplitude = uiState.amplitude,
+                                voiceMode = true,
+                            ),
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
 
                 VoiceWaveform(
