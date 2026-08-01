@@ -65,6 +65,7 @@ import com.hermesandroid.relay.ui.components.pet.expandObstaclesForPet
 import com.hermesandroid.relay.ui.components.pet.findBubbleVisitRoute
 import com.hermesandroid.relay.ui.components.pet.findOverlayRoute
 import com.hermesandroid.relay.ui.components.pet.petPerchSegments
+import com.hermesandroid.relay.ui.components.pet.petPerchEdgeRail
 import com.hermesandroid.relay.ui.components.pet.projectIntoSafeBounds
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -207,6 +208,7 @@ fun FloatingPetCompanion(
     val targetSizePx = with(density) { targetSize.toPx() }
     val heldLiftPx = with(density) { 6.dp.toPx() }
     val safeMarginPx = with(density) { 12.dp.toPx() }
+    val perchClearancePx = with(density) { 6.dp.toPx() }
     val topClearancePx = with(density) { 76.dp.toPx() }
     val bottomClearancePx = with(density) { (if (compact) 84.dp else 104.dp).toPx() }
     val radius = targetSizePx / 2f
@@ -229,15 +231,38 @@ fun FloatingPetCompanion(
         PetFootprint(targetSizePx, targetSizePx, safeMarginPx / 2f)
     }
     val safeAreaSnapshot = registry.snapshot(route)
-    val roamingRails = remember(safeAreaSnapshot, footprint, safeBounds) {
+    val roamingRails = remember(
+        safeAreaSnapshot,
+        footprint,
+        safeBounds,
+        perchClearancePx,
+        petLayoutDirection,
+    ) {
         safeAreaSnapshot.perches.flatMap { perch ->
-            petPerchSegments(
-                perch = perch,
-                obstacles = safeAreaSnapshot.obstacles,
-                footprint = footprint,
-                outer = safeBounds,
-                minimumWidth = targetSizePx / 2f,
-            ).mapIndexed { index, bounds ->
+            val segments = if (perch.key.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX)) {
+                listOfNotNull(
+                    petPerchEdgeRail(
+                        perch = perch,
+                        footprint = footprint,
+                        outer = safeBounds,
+                        // Assistant bubbles are start-aligned. Prefer the
+                        // roomier trailing gutter so the vertical route stays
+                        // completely outside the message bounds.
+                        useLeftEdge = petLayoutDirection == PetLayoutDirection.Rtl,
+                        verticalClearance = perchClearancePx,
+                    ),
+                )
+            } else {
+                petPerchSegments(
+                    perch = perch,
+                    obstacles = safeAreaSnapshot.obstacles,
+                    footprint = footprint,
+                    outer = safeBounds,
+                    minimumWidth = targetSizePx / 2f,
+                    verticalClearance = perchClearancePx,
+                )
+            }
+            segments.mapIndexed { index, bounds ->
                 PetRoamingRail(
                     key = "${perch.key}:$index",
                     perchKey = perch.key,
@@ -486,13 +511,16 @@ fun FloatingPetCompanion(
                 uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
                 footprint = footprint,
             )
-            if (preferredMessageTransfer != null && jumpToRail(
-                    preferredMessageTransfer.rail,
-                    preferredMessageTransfer.destinationX,
-                    preferredMessageTransfer.route,
-                )
-            ) {
-                rail = preferredMessageTransfer.rail
+            if (preferredMessageTransfer != null) {
+                val hopX = preferredMessageTransfer.destinationX
+                if (abs(x.value - hopX) > 1f) {
+                    locomotion = if (hopX < x.value) PetLocomotion.WalkLeft else PetLocomotion.WalkRight
+                    x.animateTo(hopX, tween(durationMillis = 900))
+                    locomotion = PetLocomotion.None
+                }
+                if (jumpToRail(preferredMessageTransfer.rail, hopX)) {
+                    rail = preferredMessageTransfer.rail
+                }
             }
 
             var hasMoved = false
@@ -505,12 +533,19 @@ fun FloatingPetCompanion(
                 } else {
                     rail.bounds.left
                 }
-                locomotion = if (destinationX < x.value) PetLocomotion.WalkLeft else PetLocomotion.WalkRight
-                val duration = ((abs(destinationX - x.value) / density.density) * 18f)
-                    .roundToInt()
-                    .coerceIn(1_800, 6_000)
-                x.animateTo(destinationX, tween(duration))
-                locomotion = PetLocomotion.None
+                val horizontalDistance = abs(destinationX - x.value)
+                if (horizontalDistance > 1f) {
+                    locomotion = if (destinationX < x.value) PetLocomotion.WalkLeft else PetLocomotion.WalkRight
+                    val duration = ((horizontalDistance / density.density) * 18f)
+                        .roundToInt()
+                        .coerceIn(1_800, 6_000)
+                    x.animateTo(destinationX, tween(duration))
+                    locomotion = PetLocomotion.None
+                } else {
+                    locomotion = PetLocomotion.Wave
+                    delay(1_200L)
+                    locomotion = PetLocomotion.None
+                }
                 hasMoved = true
                 delay(2_400L)
 
@@ -528,12 +563,14 @@ fun FloatingPetCompanion(
                 if (transfer != null) {
                     val nextRail = transfer.rail
                     val hopX = transfer.destinationX
-                    if (!transfer.siblingSegment && abs(x.value - hopX) > 1f) {
+                    val walkedToTransfer = !transfer.siblingSegment && abs(x.value - hopX) > 1f
+                    if (walkedToTransfer) {
                         locomotion = if (hopX < x.value) PetLocomotion.WalkLeft else PetLocomotion.WalkRight
                         x.animateTo(hopX, tween(durationMillis = 900))
                         locomotion = PetLocomotion.None
                     }
-                    if (jumpToRail(nextRail, hopX, transfer.route)) rail = nextRail
+                    val plannedRoute = transfer.route.takeUnless { walkedToTransfer }
+                    if (jumpToRail(nextRail, hopX, plannedRoute)) rail = nextRail
                 } else {
                     when (petAmbientAction(ambientStep++)) {
                         PetAmbientAction.Hop -> {

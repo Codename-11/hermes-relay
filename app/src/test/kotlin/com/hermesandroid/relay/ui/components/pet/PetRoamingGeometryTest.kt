@@ -194,6 +194,44 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `message landing uses one outer edge with visual clearance`() {
+        val footprint = PetFootprint(width = 40f, height = 40f)
+        val landing = requireNotNull(
+            petPerchEdgeRail(
+                perch = PetMeasuredPerch(
+                    key = "message",
+                    bounds = PetObstacle(40f, 200f, 220f, 260f),
+                ),
+                footprint = footprint,
+                outer = PetSafeBounds(20f, 20f, 280f, 280f),
+                useLeftEdge = false,
+                verticalClearance = 6f,
+            ),
+        )
+
+        assertEquals(246f, landing.left, 0f)
+        assertEquals(landing.left, landing.right, 0f)
+        assertEquals(174f, landing.top, 0f)
+        assertEquals(landing.top, landing.bottom, 0f)
+    }
+
+    @Test
+    fun `message landing is omitted when neither screen gutter fits`() {
+        assertNull(
+            petPerchEdgeRail(
+                perch = PetMeasuredPerch(
+                    key = "wide-message",
+                    bounds = PetObstacle(20f, 200f, 280f, 260f),
+                ),
+                footprint = PetFootprint(width = 40f, height = 40f),
+                outer = PetSafeBounds(20f, 20f, 280f, 280f),
+                useLeftEdge = false,
+                verticalClearance = 6f,
+            ),
+        )
+    }
+
+    @Test
     fun `perch obstacle can split one ledge into two reachable rails`() {
         val outer = PetSafeBounds(0f, 0f, 300f, 300f)
         val footprint = PetFootprint(width = 40f, height = 40f)

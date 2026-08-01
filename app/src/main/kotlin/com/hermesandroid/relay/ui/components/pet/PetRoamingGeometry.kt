@@ -282,12 +282,46 @@ fun petPerchRail(
     perch: PetMeasuredPerch,
     footprint: PetFootprint,
     outer: PetSafeBounds,
+    verticalClearance: Float = 0f,
 ): PetSafeBounds? {
+    require(verticalClearance >= 0f && verticalClearance.isFinite()) {
+        "Perch clearance must be finite and non-negative."
+    }
     val left = (perch.bounds.left + footprint.horizontalRadius).coerceIn(outer.left, outer.right)
     val right = (perch.bounds.right - footprint.horizontalRadius).coerceIn(outer.left, outer.right)
     if (right < left) return null
-    val centerY = (perch.bounds.top - footprint.height / 2f).coerceIn(outer.top, outer.bottom)
+    val centerY = (perch.bounds.top - footprint.height / 2f - verticalClearance)
+        .coerceIn(outer.top, outer.bottom)
     return PetSafeBounds(left, centerY, right, centerY)
+}
+
+/**
+ * A zero-width landing point beside a measured perch. The preferred side is
+ * used when the full pet footprint fits in that gutter; otherwise the opposite
+ * side is tried. Returning null is safer than overlapping the surface.
+ */
+fun petPerchEdgeRail(
+    perch: PetMeasuredPerch,
+    footprint: PetFootprint,
+    outer: PetSafeBounds,
+    useLeftEdge: Boolean,
+    verticalClearance: Float = 0f,
+): PetSafeBounds? {
+    require(verticalClearance >= 0f && verticalClearance.isFinite()) {
+        "Perch clearance must be finite and non-negative."
+    }
+    val centerY = (perch.bounds.top - footprint.verticalRadius - verticalClearance)
+        .coerceIn(outer.top, outer.bottom)
+    val sides = if (useLeftEdge) listOf(true, false) else listOf(false, true)
+    val edgeX = sides.firstNotNullOfOrNull { leftSide ->
+        val requested = if (leftSide) {
+            perch.bounds.left - footprint.horizontalRadius - verticalClearance
+        } else {
+            perch.bounds.right + footprint.horizontalRadius + verticalClearance
+        }
+        requested.takeIf { it in outer.left..outer.right }
+    } ?: return null
+    return PetSafeBounds(edgeX, centerY, edgeX, centerY)
 }
 
 /** Whether the pet's bottom edge is resting on this curated ledge. */
@@ -317,11 +351,12 @@ fun petPerchSegments(
     footprint: PetFootprint,
     outer: PetSafeBounds,
     minimumWidth: Float = 1f,
+    verticalClearance: Float = 0f,
 ): List<PetSafeBounds> {
     require(minimumWidth >= 0f && minimumWidth.isFinite()) {
         "Minimum perch width must be finite and non-negative."
     }
-    val rail = petPerchRail(perch, footprint, outer) ?: return emptyList()
+    val rail = petPerchRail(perch, footprint, outer, verticalClearance) ?: return emptyList()
     var intervals = listOf(rail.left to rail.right)
     obstacles.asSequence()
         .map { it.bounds.expanded(footprint.horizontalRadius, footprint.verticalRadius) }
