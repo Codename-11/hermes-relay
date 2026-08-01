@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.ui.components
 
 import com.hermesandroid.relay.ui.components.avatar.PetLocomotion
+import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
+import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -24,6 +26,45 @@ class FloatingPetCompanionTest {
     fun `dragging presents held locomotion until drop settles`() {
         assertEquals(PetLocomotion.Held, presentedPetLocomotion(true, PetLocomotion.WalkRight))
         assertEquals(PetLocomotion.WalkRight, presentedPetLocomotion(false, PetLocomotion.WalkRight))
+    }
+
+    @Test
+    fun `pending drop releases only after local snap and both prop acknowledgements`() {
+        val oldPlacement = PetPlacement(PetLogicalEdge.Start, 0.2f)
+        val droppedPlacement = PetPlacement(PetLogicalEdge.End, 0.7f)
+
+        assertFalse(
+            shouldReleasePendingPetDrop(
+                expectedPlacement = droppedPlacement,
+                positionSettled = false,
+                roamingEnabled = false,
+                observedPlacement = droppedPlacement,
+            ),
+        )
+        assertFalse(
+            shouldReleasePendingPetDrop(
+                expectedPlacement = droppedPlacement,
+                positionSettled = true,
+                roamingEnabled = true,
+                observedPlacement = droppedPlacement,
+            ),
+        )
+        assertFalse(
+            shouldReleasePendingPetDrop(
+                expectedPlacement = droppedPlacement,
+                positionSettled = true,
+                roamingEnabled = false,
+                observedPlacement = oldPlacement,
+            ),
+        )
+        assertTrue(
+            shouldReleasePendingPetDrop(
+                expectedPlacement = droppedPlacement,
+                positionSettled = true,
+                roamingEnabled = false,
+                observedPlacement = droppedPlacement,
+            ),
+        )
     }
 
     @Test

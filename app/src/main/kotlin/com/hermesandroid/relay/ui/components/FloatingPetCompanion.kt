@@ -94,6 +94,20 @@ internal fun petVerticalLocomotion(fromY: Float, toY: Float): PetLocomotion =
 internal fun presentedPetLocomotion(dragging: Boolean, movement: PetLocomotion): PetLocomotion =
     if (dragging) PetLocomotion.Held else movement
 
+internal fun shouldReleasePendingPetDrop(
+    expectedPlacement: PetPlacement?,
+    positionSettled: Boolean,
+    roamingEnabled: Boolean,
+    observedPlacement: PetPlacement,
+): Boolean = expectedPlacement != null && positionSettled && !roamingEnabled &&
+    observedPlacement == expectedPlacement
+
+private data class PendingPetDrop(
+    val point: PetPoint,
+    val expectedPlacement: PetPlacement,
+    val positionSettled: Boolean = false,
+)
+
 internal fun shouldRoamFloatingPet(
     roamingEnabled: Boolean,
     roamingAllowed: Boolean,
@@ -138,6 +152,7 @@ fun FloatingPetCompanion(
     var menuExpanded by remember(pet.id) { mutableStateOf(false) }
     var dragging by remember(pet.id) { mutableStateOf(false) }
     var draggedPoint by remember(pet.id) { mutableStateOf<PetPoint?>(null) }
+    var pendingDrop by remember(pet.id) { mutableStateOf<PendingPetDrop?>(null) }
     var locomotion by remember(pet.id) { mutableStateOf(PetLocomotion.None) }
     var positioned by remember(pet.id) { mutableStateOf(false) }
     var viewportWidth by remember { mutableStateOf(0) }
@@ -256,7 +271,7 @@ fun FloatingPetCompanion(
         touchExploration = accessibleMotion.touchExploration,
         paused = state.paused,
         isScrolling = isScrolling,
-        dragging = dragging,
+        dragging = dragging || pendingDrop != null,
         menuExpanded = menuExpanded,
     )
 
@@ -268,11 +283,26 @@ fun FloatingPetCompanion(
         }
     }
 
-    LaunchedEffect(homePoint, dragging, canRoam) {
-        if (positioned && !dragging && !canRoam) {
+    LaunchedEffect(homePoint, dragging, canRoam, pendingDrop) {
+        if (positioned && !dragging && pendingDrop == null && !canRoam) {
             locomotion = PetLocomotion.None
             x.snapTo(homePoint.x)
             y.snapTo(homePoint.y)
+        }
+    }
+
+    LaunchedEffect(pendingDrop, roamingEnabled, placement) {
+        val pending = pendingDrop ?: return@LaunchedEffect
+        if (
+            shouldReleasePendingPetDrop(
+                expectedPlacement = pending.expectedPlacement,
+                positionSettled = pending.positionSettled,
+                roamingEnabled = roamingEnabled,
+                observedPlacement = placement,
+            )
+        ) {
+            draggedPoint = null
+            pendingDrop = null
         }
     }
 
@@ -383,10 +413,6 @@ fun FloatingPetCompanion(
     val appearanceLabel = stringResource(R.string.floating_pet_menu_appearance)
     val hideLabel = stringResource(R.string.floating_pet_menu_hide)
 
-    fun persistAt(point: PetPoint) {
-        onPlacementChanged(safeBounds.snapToEdge(point, petLayoutDirection, placement.edge))
-    }
-
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -415,6 +441,7 @@ fun FloatingPetCompanion(
                 .pointerInput(pet.id, safeBounds, roamingRails, registeredObstacles) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = {
+                            pendingDrop = null
                             dragging = true
                             draggedPoint = PetPoint(x.value, y.value)
                             locomotion = PetLocomotion.None
@@ -430,13 +457,28 @@ fun FloatingPetCompanion(
                         },
                         onDragEnd = {
                             val dropped = draggedPoint ?: PetPoint(x.value, y.value)
+                            val updatedPlacement = safeBounds.snapToEdge(
+                                dropped,
+                                petLayoutDirection,
+                                placement.edge,
+                            )
+                            pendingDrop = PendingPetDrop(dropped, updatedPlacement)
                             if (roamingEnabled) onRoamingEnabledChanged(false)
-                            persistAt(dropped)
+                            onPlacementChanged(updatedPlacement)
                             scope.launch {
                                 x.snapTo(dropped.x)
                                 y.snapTo(dropped.y)
-                                draggedPoint = null
                                 locomotion = PetLocomotion.None
+                                pendingDrop = pendingDrop?.let { pending ->
+                                    if (
+                                        pending.point == dropped &&
+                                        pending.expectedPlacement == updatedPlacement
+                                    ) {
+                                        pending.copy(positionSettled = true)
+                                    } else {
+                                        pending
+                                    }
+                                }
                                 dragging = false
                             }
                         },
