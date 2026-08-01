@@ -2526,6 +2526,8 @@ fun RelayApp() {
                 animationEnabled = animationEnabled,
                 appForeground = appIsForeground,
                 route = roamingRoute,
+                visitRequest = petCompanionCoordinator.pendingVisitRequest,
+                onVisitRequestConsumed = petCompanionCoordinator::clearVisitRequest,
                 onPlacementChanged = connectionViewModel::setPetPlacement,
                 onRoamingEnabledChanged = connectionViewModel::setPetRoamingEnabled,
                 onResetPlacement = connectionViewModel::resetPetPlacement,

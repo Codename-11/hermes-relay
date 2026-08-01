@@ -29,6 +29,7 @@ enum class PetLocomotion {
     Jump,
     Fall,
     Held,
+    Wave,
 }
 
 /**

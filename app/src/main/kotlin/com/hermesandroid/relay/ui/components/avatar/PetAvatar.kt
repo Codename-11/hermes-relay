@@ -195,6 +195,11 @@ class PetAvatar(
                     locomotionClips[PetLocomotion.Held] ?: activityClips[SphereState.Idle],
                 )
             }
+            PetLocomotion.Wave -> {
+                return PetClipSelection(
+                    locomotionClips[PetLocomotion.Wave] ?: activityClips[SphereState.Idle],
+                )
+            }
             PetLocomotion.Jump -> {
                 return PetClipSelection(
                     locomotionClips[PetLocomotion.Jump] ?: activityClips[SphereState.Idle],
@@ -218,7 +223,6 @@ class PetAvatar(
                     PetLocomotion.WalkRight -> PetLocomotion.RunRight
                     PetLocomotion.RunLeft -> PetLocomotion.WalkLeft
                     PetLocomotion.RunRight -> PetLocomotion.WalkRight
-                    else -> error("Non-directional locomotion reached directional resolver")
                 }
                 listOf(exact, sameDirectionAlternate).firstNotNullOfOrNull(locomotionClips::get)?.let {
                     return PetClipSelection(it)
@@ -228,7 +232,6 @@ class PetAvatar(
                     PetLocomotion.WalkRight -> listOf(PetLocomotion.WalkLeft, PetLocomotion.RunLeft)
                     PetLocomotion.RunLeft -> listOf(PetLocomotion.RunRight, PetLocomotion.WalkRight)
                     PetLocomotion.RunRight -> listOf(PetLocomotion.RunLeft, PetLocomotion.WalkLeft)
-                    else -> emptyList()
                 }
                 oppositeDirection.firstNotNullOfOrNull(locomotionClips::get)?.let {
                     return PetClipSelection(it, mirrorHorizontally = true)
