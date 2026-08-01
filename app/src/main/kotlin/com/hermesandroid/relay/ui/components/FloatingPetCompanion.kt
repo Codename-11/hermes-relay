@@ -356,7 +356,7 @@ fun FloatingPetCompanion(
                 if (transfer != null) {
                     val nextRail = transfer.rail
                     val hopX = transfer.destinationX
-                    if (abs(x.value - hopX) > 1f) {
+                    if (!transfer.siblingSegment && abs(x.value - hopX) > 1f) {
                         locomotion = if (hopX < x.value) PetLocomotion.WalkLeft else PetLocomotion.WalkRight
                         x.animateTo(hopX, tween(durationMillis = 900))
                         locomotion = PetLocomotion.None
@@ -430,6 +430,7 @@ fun FloatingPetCompanion(
                         },
                         onDragEnd = {
                             val dropped = draggedPoint ?: PetPoint(x.value, y.value)
+                            if (roamingEnabled) onRoamingEnabledChanged(false)
                             persistAt(dropped)
                             scope.launch {
                                 x.snapTo(dropped.x)
