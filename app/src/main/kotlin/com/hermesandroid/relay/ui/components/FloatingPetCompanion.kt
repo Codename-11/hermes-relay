@@ -74,7 +74,15 @@ import kotlin.math.roundToInt
 
 internal const val FLOATING_PET_COMPACT_HEIGHT_DP = 700
 internal const val CHAT_PET_WALK_REGION = "chat-composer-perch"
+internal const val CHAT_PET_MESSAGE_PERCH_PREFIX = "chat-message-perch:"
 private const val PET_ROAM_REPEAT_DELAY_MS = 4_800L
+private const val PET_AMBIENT_HOP_HEIGHT_DP = 24
+
+internal enum class PetAmbientAction {
+    Hop,
+    Wave,
+    Rest,
+}
 
 internal fun shouldCompactFloatingPet(imeVisible: Boolean, screenHeightDp: Int): Boolean =
     imeVisible || screenHeightDp < FLOATING_PET_COMPACT_HEIGHT_DP
@@ -92,6 +100,12 @@ internal fun floatingPetAlpha(isScrolling: Boolean): Float = if (isScrolling) 0.
 internal fun floatingPetRoamDelayMs(hasMoved: Boolean): Long =
     if (hasMoved) PET_ROAM_REPEAT_DELAY_MS else 0L
 
+internal fun petAmbientAction(step: Int): PetAmbientAction = when (step % 3) {
+    0 -> PetAmbientAction.Hop
+    1 -> PetAmbientAction.Wave
+    else -> PetAmbientAction.Rest
+}
+
 internal fun petVerticalLocomotion(fromY: Float, toY: Float): PetLocomotion =
     if (toY > fromY) PetLocomotion.Fall else PetLocomotion.Jump
 
@@ -105,6 +119,17 @@ internal fun shouldReleasePendingPetDrop(
     observedPlacement: PetPlacement,
 ): Boolean = expectedPlacement != null && positionSettled && !roamingEnabled &&
     observedPlacement == expectedPlacement
+
+internal fun shouldDockFloatingPet(
+    roamingEnabled: Boolean,
+    roamingAllowed: Boolean,
+): Boolean = !roamingEnabled || !roamingAllowed
+
+internal fun shouldPreferChatMessagePerch(
+    currentPerchKey: String,
+    candidatePerchKey: String,
+): Boolean = currentPerchKey == CHAT_PET_WALK_REGION &&
+    candidatePerchKey.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX)
 
 private data class PendingPetDrop(
     val point: PetPoint,
@@ -141,6 +166,7 @@ fun FloatingPetCompanion(
     placement: PetPlacement,
     roamingEnabled: Boolean,
     roamingAllowed: Boolean,
+    surfaceScrolling: Boolean,
     isScrolling: Boolean,
     compact: Boolean,
     animationEnabled: Boolean,
@@ -277,7 +303,7 @@ fun FloatingPetCompanion(
         osAnimations = accessibleMotion.osAnimations,
         touchExploration = accessibleMotion.touchExploration,
         paused = state.paused,
-        isScrolling = isScrolling,
+        isScrolling = isScrolling || surfaceScrolling,
         dragging = dragging || pendingDrop != null,
         menuExpanded = menuExpanded,
     )
@@ -315,8 +341,9 @@ fun FloatingPetCompanion(
         }
     }
 
-    LaunchedEffect(homePoint, dragging, canRoam, pendingDrop) {
-        if (positioned && !dragging && pendingDrop == null && !canRoam) {
+    val shouldDock = shouldDockFloatingPet(roamingEnabled, roamingAllowed)
+    LaunchedEffect(homePoint, dragging, shouldDock, pendingDrop) {
+        if (positioned && !dragging && pendingDrop == null && shouldDock) {
             locomotion = PetLocomotion.None
             x.snapTo(homePoint.x)
             y.snapTo(homePoint.y)
@@ -442,7 +469,34 @@ fun FloatingPetCompanion(
                 return@LaunchedEffect
             }
 
+            // The composer remains the stable home rail, but a visible
+            // assistant response is the more expressive chat destination.
+            // Prefer that vertical transfer before beginning another long
+            // composer traverse.
+            val preferredMessageTransfer = choosePetRailTransfer(
+                currentRail = rail,
+                current = PetPoint(x.value, y.value),
+                rails = roamingRails.filter { candidate ->
+                    candidate.key == rail.key || shouldPreferChatMessagePerch(
+                        currentPerchKey = rail.perchKey,
+                        candidatePerchKey = candidate.perchKey,
+                    )
+                },
+                bounds = safeBounds,
+                uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
+                footprint = footprint,
+            )
+            if (preferredMessageTransfer != null && jumpToRail(
+                    preferredMessageTransfer.rail,
+                    preferredMessageTransfer.destinationX,
+                    preferredMessageTransfer.route,
+                )
+            ) {
+                rail = preferredMessageTransfer.rail
+            }
+
             var hasMoved = false
+            var ambientStep = 0
             while (true) {
                 val delayMs = floatingPetRoamDelayMs(hasMoved)
                 if (delayMs > 0L) delay(delayMs)
@@ -480,6 +534,28 @@ fun FloatingPetCompanion(
                         locomotion = PetLocomotion.None
                     }
                     if (jumpToRail(nextRail, hopX, transfer.route)) rail = nextRail
+                } else {
+                    when (petAmbientAction(ambientStep++)) {
+                        PetAmbientAction.Hop -> {
+                            val railY = y.value
+                            val apexY = (railY - with(density) {
+                                PET_AMBIENT_HOP_HEIGHT_DP.dp.toPx()
+                            }).coerceAtLeast(safeBounds.top)
+                            if (abs(apexY - railY) > 1f) {
+                                locomotion = PetLocomotion.Jump
+                                y.animateTo(apexY, tween(durationMillis = 220))
+                                locomotion = PetLocomotion.Fall
+                                y.animateTo(railY, tween(durationMillis = 260))
+                                locomotion = PetLocomotion.None
+                            }
+                        }
+                        PetAmbientAction.Wave -> {
+                            locomotion = PetLocomotion.Wave
+                            delay(1_200L)
+                            locomotion = PetLocomotion.None
+                        }
+                        PetAmbientAction.Rest -> Unit
+                    }
                 }
             }
         } finally {

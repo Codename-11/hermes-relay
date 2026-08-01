@@ -16,6 +16,37 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `ambient roaming cycles through hop wave and rest`() {
+        assertEquals(PetAmbientAction.Hop, petAmbientAction(0))
+        assertEquals(PetAmbientAction.Wave, petAmbientAction(1))
+        assertEquals(PetAmbientAction.Rest, petAmbientAction(2))
+        assertEquals(PetAmbientAction.Hop, petAmbientAction(3))
+    }
+
+    @Test
+    fun `temporary movement pauses do not dock the overlay`() {
+        assertFalse(shouldDockFloatingPet(roamingEnabled = true, roamingAllowed = true))
+        assertTrue(shouldDockFloatingPet(roamingEnabled = false, roamingAllowed = true))
+        assertTrue(shouldDockFloatingPet(roamingEnabled = true, roamingAllowed = false))
+    }
+
+    @Test
+    fun `composer patrol prefers a visible chat message perch`() {
+        assertTrue(
+            shouldPreferChatMessagePerch(
+                currentPerchKey = CHAT_PET_WALK_REGION,
+                candidatePerchKey = "${CHAT_PET_MESSAGE_PERCH_PREFIX}assistant-1",
+            ),
+        )
+        assertFalse(
+            shouldPreferChatMessagePerch(
+                currentPerchKey = "terminal-toolbar",
+                candidatePerchKey = "${CHAT_PET_MESSAGE_PERCH_PREFIX}assistant-1",
+            ),
+        )
+    }
+
+    @Test
     fun `vertical transfer distinguishes jump from fall`() {
         assertEquals(PetLocomotion.Jump, petVerticalLocomotion(fromY = 200f, toY = 100f))
         assertEquals(PetLocomotion.Fall, petVerticalLocomotion(fromY = 100f, toY = 200f))

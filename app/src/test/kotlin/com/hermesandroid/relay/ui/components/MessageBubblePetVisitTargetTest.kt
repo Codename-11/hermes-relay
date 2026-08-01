@@ -56,6 +56,23 @@ class MessageBubblePetVisitTargetTest {
     }
 
     @Test
+    fun `settled text response can be a perch even when it reports tool activity`() {
+        val responseWithTool = message().copy(
+            toolCalls = listOf(
+                ToolCall(
+                    name = "search",
+                    args = null,
+                    result = "done",
+                    success = true,
+                ),
+            ),
+        )
+
+        assertTrue(isPetPerchCandidate(responseWithTool))
+        assertTrue(newestPetPerchUiKey(listOf(responseWithTool)) == responseWithTool.uiKey)
+    }
+
+    @Test
     fun `later interactive response does not fall back to an older response`() {
         val older = message(id = "older").copy(uiKey = "stable-older")
         val newerInteractive = message(id = "newer").copy(
