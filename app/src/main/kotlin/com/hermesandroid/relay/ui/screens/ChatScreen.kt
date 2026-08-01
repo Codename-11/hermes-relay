@@ -196,9 +196,8 @@ import coil3.compose.AsyncImage
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
-import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
-import com.hermesandroid.relay.ui.components.pet.petWalkRegion
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.SphereState
@@ -3155,19 +3154,6 @@ fun ChatScreen(
                 null
             }
 
-            // Reserve and register a real safe walking perch above the composer.
-            // The app-level host renders the one companion; keeping this as a
-            // layout slot means it cannot cover messages or composer actions.
-            val floatingPet = LocalFloatingPet.current
-            if (floatingPet != null && !ambientMode) {
-                Spacer(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .petWalkRegion(CHAT_PET_WALK_REGION),
-                )
-            }
-
             ChatInputBar(
                 value = inputText,
                 onValueChange = { inputText = it },
@@ -3294,6 +3280,10 @@ fun ChatScreen(
                 },
                 topContentVisible = conversationVoiceDockVisible,
                 suppressVoiceTrailing = conversationVoiceDockVisible,
+                // Measure the existing composer as a Desktop-style ledge. The
+                // floating host stands on its top edge; no transcript space is
+                // reserved and the composer controls remain unobstructed.
+                modifier = Modifier.petPerchSurface(CHAT_PET_WALK_REGION),
                 enabled = chatReady,
                 onModelPickerClick = { showModelSheet = true },
             )

@@ -122,9 +122,11 @@ normal Hermes Relay screens.
   edge and remembers a proportional vertical position across rotation, resizing,
   relaunches, and RTL layouts.
 - Turn on **Walk around the interface** to let it roam while Hermes is idle. This
-  is off by default and docks the pet onto Chat's reserved strip above the
-  composer. Dragging it elsewhere or using TalkBack's up/down actions pauses
-  roaming first and keeps the new position. On other screens the pet stays docked.
+  is off by default and docks the pet onto the measured top edge of Chat's
+  existing composer. The pet is a true overlay—no blank strip or transcript
+  space is added—and avoids the composer controls. Dragging it elsewhere or
+  using TalkBack's up/down actions pauses roaming first and keeps the new
+  position. On other screens the pet stays docked.
 - Use the pet menu to pause roaming, reset position, open Appearance, or hide it.
   TalkBack offers move-to-start/end, move-up/down, and reset actions so dragging
   is never required.

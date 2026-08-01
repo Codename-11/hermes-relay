@@ -31,8 +31,9 @@ Desktop and Codex while adapting it to a phone-sized viewport.
   a normalized vertical fraction. Pixel coordinates are not stored, so the home
   position remains meaningful after rotation, resizing, and RTL changes.
 - Autonomous roaming is separately opt-in and defaults off. Chat registers a
-  real 56 dp layout rail immediately above the composer; that is the only region
-  where the pet walks on its own. Enabling roaming docks onto that rail; manual
+  live measurement of the existing composer; its top edge is the only region
+  where the pet walks on its own, with no reserved layout spacer. Enabling
+  roaming docks onto that perch; manual
   drag or a vertical accessibility move pauses roaming before applying free-form
   placement. Other app screens show the pet docked.
 - Roaming runs only while Hermes is idle and the app is foregrounded. Thinking,

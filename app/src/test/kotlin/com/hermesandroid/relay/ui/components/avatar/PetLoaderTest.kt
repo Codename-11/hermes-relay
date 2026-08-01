@@ -279,6 +279,16 @@ class PetLoaderTest {
         assertEquals("right.png", avatar.locomotionClips.getValue(PetLocomotion.WalkRight).fileName())
         assertEquals("left.png", avatar.locomotionClips.getValue(PetLocomotion.RunLeft).fileName())
         assertEquals("right.png", avatar.locomotionClips.getValue(PetLocomotion.RunRight).fileName())
+        val travelLeft = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkLeft),
+        )
+        val travelRight = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkRight),
+        )
+        assertEquals("left.png", travelLeft.clip!!.fileName())
+        assertFalse(travelLeft.mirrorHorizontally)
+        assertEquals("right.png", travelRight.clip!!.fileName())
+        assertFalse(travelRight.mirrorHorizontally)
     }
 
     @Test
@@ -297,23 +307,118 @@ class PetLoaderTest {
         val avatar = PetLoader.loadPets(dir).single()
 
         fun PetClip?.fileName(): String = ((this as FrameSequenceClip).files.single().name)
+        val leftWalk = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkLeft),
+        )
         assertEquals(
             "left.png",
-            avatar.resolveBaseClip(
-                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkLeft),
-            ).fileName(),
+            leftWalk.clip.fileName(),
         )
-        assertEquals(
-            "working.png",
-            avatar.resolveBaseClip(
-                AvatarRenderState(SphereState.Streaming, petLocomotion = PetLocomotion.WalkLeft),
-            ).fileName(),
+        assertFalse(leftWalk.mirrorHorizontally)
+
+        val rightWalk = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkRight),
         )
+        assertEquals("left.png", rightWalk.clip.fileName())
+        assertTrue(rightWalk.mirrorHorizontally)
+
+        val activeWork = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Streaming, petLocomotion = PetLocomotion.WalkLeft),
+        )
+        assertEquals("working.png", activeWork.clip.fileName())
+        assertFalse(activeWork.mirrorHorizontally)
+
         assertEquals(
             "working.png",
             avatar.resolveBaseClip(
                 AvatarRenderState(SphereState.Thinking, toolCallBurst = 1f),
             ).fileName(),
+        )
+    }
+
+    @Test
+    fun `legacy run row supplies directional travel with desktop mirror convention`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "legacy",
+            """{ "id": "legacy", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "run": { "frames": ["run.png"] }
+            } }""",
+            imageFiles = listOf("idle.png", "run.png"),
+        )
+        val avatar = PetLoader.loadPets(dir).single()
+
+        fun PetClip?.fileName(): String = ((this as FrameSequenceClip).files.single().name)
+        val left = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.RunLeft),
+        )
+        val right = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.RunRight),
+        )
+
+        assertEquals("run.png", left.clip.fileName())
+        assertFalse(left.mirrorHorizontally)
+        assertEquals("run.png", right.clip.fileName())
+        assertTrue(right.mirrorHorizontally)
+    }
+
+    @Test
+    fun `requested run locomotion prefers run clip over distinct walking clip`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "paces",
+            """{ "id": "paces", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "walking-left": { "frames": ["walk-left.png"] },
+                 "running-left": { "frames": ["run-left.png"] }
+            } }""",
+            imageFiles = listOf("idle.png", "walk-left.png", "run-left.png"),
+        )
+        val avatar = PetLoader.loadPets(dir).single()
+
+        fun PetClip?.fileName(): String = ((this as FrameSequenceClip).files.single().name)
+        assertEquals(
+            "walk-left.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkLeft),
+            ).clip.fileName(),
+        )
+        assertEquals(
+            "run-left.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.RunLeft),
+            ).clip.fileName(),
+        )
+    }
+
+    @Test
+    fun `tool-only working pose never becomes roaming locomotion`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "tool-only",
+            """{ "id": "tool-only", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "working": { "frames": ["tool.png"] }
+            } }""",
+            imageFiles = listOf("idle.png", "tool.png"),
+        )
+        val avatar = PetLoader.loadPets(dir).single()
+
+        fun PetClip?.fileName(): String = ((this as FrameSequenceClip).files.single().name)
+        val roaming = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.RunRight),
+        )
+        assertEquals("idle.png", roaming.clip.fileName())
+        assertFalse(roaming.mirrorHorizontally)
+        assertEquals(
+            "tool.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Streaming, toolCallBurst = 1f),
+            ).clip.fileName(),
         )
     }
 
