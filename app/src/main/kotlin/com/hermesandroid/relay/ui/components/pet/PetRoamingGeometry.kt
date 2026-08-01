@@ -225,11 +225,23 @@ data class PetMeasuredObstacle(
     }
 }
 
+/** Immutable, named point of interest that does not become walkable terrain. */
+data class PetMeasuredVisitTarget(
+    val key: String,
+    val bounds: PetObstacle,
+    val routeScope: PetRouteScope = PetRouteScope(),
+) {
+    init {
+        require(key.isNotBlank()) { "Visit target key must not be blank." }
+    }
+}
+
 /** Route-filtered registry view. It cannot leak stale surfaces from another destination. */
 data class PetSafeAreaSnapshot(
     val route: String?,
     val perches: List<PetMeasuredPerch>,
     val obstacles: List<PetMeasuredObstacle>,
+    val visitTargets: List<PetMeasuredVisitTarget> = emptyList(),
 )
 
 /** One collision-trimmed segment of a measured perch. */
@@ -576,6 +588,71 @@ fun findOverlayRoute(
     if (reversed.lastOrNull() != safeStart) return null
     return PetRoute(removeCollinearPoints(reversed.asReversed()))
 }
+
+/**
+ * Find a reachable place for the pet to visit beside a measured message
+ * bubble without turning that bubble into walkable terrain. Above-corner
+ * anchors are preferred, followed by side anchors; within each tier the
+ * shortest real overlay route wins.
+ *
+ * The bubble joins the obstacle set while routing, and every candidate lies
+ * just beyond its footprint-expanded bounds. A candidate that the generic
+ * router would need to project elsewhere is treated as blocked.
+ */
+fun findBubbleVisitRoute(
+    targetBounds: PetObstacle,
+    footprint: PetFootprint,
+    bounds: PetSafeBounds,
+    uiObstacles: Iterable<PetObstacle>,
+    current: PetPoint,
+): PetRoute? {
+    val expandedTarget = targetBounds.expanded(
+        footprint.horizontalRadius,
+        footprint.verticalRadius,
+    )
+    val epsilon = PET_ROUTE_EPSILON
+    val centerY = (targetBounds.top + targetBounds.bottom) / 2f
+    val candidates = listOf(
+        0 to PetPoint(targetBounds.left, expandedTarget.top - epsilon),
+        0 to PetPoint(targetBounds.right, expandedTarget.top - epsilon),
+        1 to PetPoint(expandedTarget.left - epsilon, centerY),
+        1 to PetPoint(expandedTarget.right + epsilon, centerY),
+    )
+    val routingObstacles = uiObstacles.toList() + targetBounds
+
+    return candidates.asSequence()
+        .filter { (_, candidate) -> bounds.contains(candidate) }
+        .filter { (_, candidate) -> !expandedTarget.contains(candidate) }
+        .mapNotNull { (preference, candidate) ->
+            val route = findOverlayRoute(
+                start = current,
+                requestedDestination = candidate,
+                bounds = bounds,
+                uiObstacles = routingObstacles,
+                footprint = footprint,
+            ) ?: return@mapNotNull null
+            if (route.destination != candidate) return@mapNotNull null
+            BubbleVisitCandidate(preference, route)
+        }
+        .sortedWith(
+            compareBy<BubbleVisitCandidate> { it.preference }
+                .thenBy { it.route.length }
+                .thenBy { it.route.destination.x }
+                .thenBy { it.route.destination.y },
+        )
+        .firstOrNull()
+        ?.route
+}
+
+private data class BubbleVisitCandidate(
+    val preference: Int,
+    val route: PetRoute,
+)
+
+private val PetRoute.length: Float
+    get() = points.zipWithNext().sumOf { (start, end) ->
+        sqrt(start.distanceSquaredTo(end)).toDouble()
+    }.toFloat()
 
 /** Deterministically choose among destinations that have a real safe route. */
 fun chooseDeterministicOverlayRoute(

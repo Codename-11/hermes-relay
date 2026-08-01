@@ -279,6 +279,58 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `bubble visit prefers nearest reachable above corner and stays exterior`() {
+        val safe = PetSafeBounds(0f, 0f, 300f, 300f)
+        val footprint = PetFootprint(width = 20f, height = 20f)
+        val bubble = PetObstacle(100f, 120f, 200f, 200f)
+
+        val route = findBubbleVisitRoute(
+            targetBounds = bubble,
+            footprint = footprint,
+            bounds = safe,
+            uiObstacles = emptyList(),
+            current = PetPoint(240f, 260f),
+        )
+
+        requireNotNull(route)
+        assertEquals(200f, route.destination.x, 0f)
+        assertTrue(route.destination.y < 110f)
+        val expandedBubble = bubble.expanded(10f, 10f)
+        assertFalse(expandedBubble.contains(route.destination))
+        route.points.zipWithNext().forEach { (start, end) ->
+            assertFalse(pathIntersectsObstacle(start, end, listOf(expandedBubble)))
+        }
+    }
+
+    @Test
+    fun `bubble visit falls back to nearest side when above anchors are blocked`() {
+        val route = findBubbleVisitRoute(
+            targetBounds = PetObstacle(100f, 120f, 200f, 200f),
+            footprint = PetFootprint(width = 20f, height = 20f),
+            bounds = PetSafeBounds(0f, 0f, 300f, 300f),
+            uiObstacles = listOf(PetObstacle(80f, 80f, 220f, 110f)),
+            current = PetPoint(20f, 160f),
+        )
+
+        requireNotNull(route)
+        assertTrue(route.destination.x < 90f)
+        assertEquals(160f, route.destination.y, 0f)
+    }
+
+    @Test
+    fun `bubble visit returns null when expanded bubble fills safe bounds`() {
+        assertNull(
+            findBubbleVisitRoute(
+                targetBounds = PetObstacle(10f, 10f, 90f, 90f),
+                footprint = PetFootprint(width = 20f, height = 20f),
+                bounds = PetSafeBounds(0f, 0f, 100f, 100f),
+                uiObstacles = emptyList(),
+                current = PetPoint(0f, 0f),
+            ),
+        )
+    }
+
+    @Test
     fun `deterministic overlay route is candidate order independent and collision free`() {
         val safe = PetSafeBounds(10f, 10f, 190f, 190f)
         val obstacle = PetObstacle(80f, 70f, 120f, 130f)

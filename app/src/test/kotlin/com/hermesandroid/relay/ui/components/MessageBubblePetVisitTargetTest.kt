@@ -1,0 +1,103 @@
+package com.hermesandroid.relay.ui.components
+
+import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.ToolCall
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class MessageBubblePetVisitTargetTest {
+
+    @Test
+    fun `settled plain assistant response is eligible`() {
+        assertTrue(isPetVisitTargetCandidate(message()))
+    }
+
+    @Test
+    fun `user system and streaming rows are excluded`() {
+        assertFalse(isPetVisitTargetCandidate(message(role = MessageRole.USER)))
+        assertFalse(isPetVisitTargetCandidate(message(role = MessageRole.SYSTEM)))
+        assertFalse(isPetVisitTargetCandidate(message(isStreaming = true)))
+        assertFalse(isPetVisitTargetCandidate(message(isThinkingStreaming = true)))
+    }
+
+    @Test
+    fun `empty and phone action responses are excluded`() {
+        assertFalse(isPetVisitTargetCandidate(message(content = "")))
+        assertFalse(isPetVisitTargetCandidate(message(agentName = "Phone action")))
+        assertFalse(isPetVisitTargetCandidate(message(id = "voice-intent-result-1")))
+    }
+
+    @Test
+    fun `interactive tool and attachment responses are excluded`() {
+        assertFalse(
+            isPetVisitTargetCandidate(
+                message().copy(
+                    toolCalls = listOf(
+                        ToolCall(
+                            name = "search",
+                            args = null,
+                            result = null,
+                            success = true,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        assertFalse(
+            isPetVisitTargetCandidate(
+                message().copy(
+                    attachments = listOf(Attachment("image/png", "")),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `later interactive response does not fall back to an older response`() {
+        val older = message(id = "older").copy(uiKey = "stable-older")
+        val newerInteractive = message(id = "newer").copy(
+            attachments = listOf(Attachment("image/png", "")),
+        )
+
+        assertTrue(newestPetVisitTargetUiKey(listOf(older, newerInteractive)) == null)
+    }
+
+    @Test
+    fun `later tool-only or empty response does not revisit an older bubble`() {
+        val older = message(id = "older").copy(uiKey = "stable-older")
+        val toolOnly = message(id = "tool-only", content = "").copy(
+            toolCalls = listOf(
+                ToolCall(
+                    name = "search",
+                    args = null,
+                    result = "done",
+                    success = true,
+                ),
+            ),
+        )
+        val empty = message(id = "empty", content = "")
+
+        assertTrue(newestPetVisitTargetUiKey(listOf(older, toolOnly)) == null)
+        assertTrue(newestPetVisitTargetUiKey(listOf(older, empty)) == null)
+    }
+
+    private fun message(
+        id: String = "assistant-1",
+        role: MessageRole = MessageRole.ASSISTANT,
+        content: String = "Done.",
+        isStreaming: Boolean = false,
+        isThinkingStreaming: Boolean = false,
+        agentName: String? = null,
+    ) = ChatMessage(
+        id = id,
+        role = role,
+        content = content,
+        timestamp = 1L,
+        isStreaming = isStreaming,
+        isThinkingStreaming = isThinkingStreaming,
+        agentName = agentName,
+    )
+}

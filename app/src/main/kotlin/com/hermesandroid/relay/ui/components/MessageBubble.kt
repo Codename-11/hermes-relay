@@ -69,6 +69,7 @@ import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.ui.components.pet.petVisitTargetSurface
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -144,6 +145,7 @@ fun MessageBubble(
     recoveringAnswer: Boolean = false,
     imageGenerationStylePreference: String = "rotate",
     imageGenerationRotationIndex: Int = 0,
+    petVisitTargetKey: String? = null,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -498,6 +500,16 @@ fun MessageBubble(
                     }
                 )
                 .semantics { contentDescription = a11yDescription }
+                .then(
+                    if (petVisitTargetKey != null) {
+                        Modifier.petVisitTargetSurface(
+                            key = petVisitTargetKey,
+                            routes = setOf("chat"),
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
                 val messageTextContent: @Composable () -> Unit = {
@@ -764,6 +776,31 @@ fun MessageBubble(
     } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
 }
+
+/**
+ * Only a settled, plain assistant response can become a transient pet visit
+ * target. Rich cards, attachments, and tool/action rows remain interaction
+ * surfaces for the user rather than pet destinations.
+ */
+internal fun isPetVisitTargetCandidate(message: ChatMessage): Boolean =
+    message.role == MessageRole.ASSISTANT &&
+        !message.isStreaming &&
+        !message.isThinkingStreaming &&
+        message.content.isNotBlank() &&
+        message.toolCalls.isEmpty() &&
+        message.cards.isEmpty() &&
+        message.attachments.isEmpty() &&
+        message.backgroundTask == null &&
+        message.agentName != "Voice action" &&
+        message.agentName != "Phone action" &&
+        !message.id.startsWith("voice-intent-")
+
+internal fun newestPetVisitTargetUiKey(messages: List<ChatMessage>): String? =
+    messages.lastOrNull { message ->
+        message.role == MessageRole.ASSISTANT &&
+            !message.isStreaming &&
+            !message.isThinkingStreaming
+    }?.takeIf(::isPetVisitTargetCandidate)?.uiKey
 
 internal fun shouldShowSpeakResponseAction(
     message: ChatMessage,

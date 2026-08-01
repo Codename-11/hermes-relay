@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
+import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -57,8 +58,11 @@ import com.hermesandroid.relay.ui.components.pet.PetPoint
 import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
 import com.hermesandroid.relay.ui.components.pet.PetRoute
 import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
+import com.hermesandroid.relay.ui.components.pet.PetVisitReadiness
+import com.hermesandroid.relay.ui.components.pet.PetVisitRequest
 import com.hermesandroid.relay.ui.components.pet.choosePetRailTransfer
 import com.hermesandroid.relay.ui.components.pet.expandObstaclesForPet
+import com.hermesandroid.relay.ui.components.pet.findBubbleVisitRoute
 import com.hermesandroid.relay.ui.components.pet.findOverlayRoute
 import com.hermesandroid.relay.ui.components.pet.petPerchSegments
 import com.hermesandroid.relay.ui.components.pet.projectIntoSafeBounds
@@ -94,6 +98,20 @@ internal fun petVerticalLocomotion(fromY: Float, toY: Float): PetLocomotion =
 internal fun presentedPetLocomotion(dragging: Boolean, movement: PetLocomotion): PetLocomotion =
     if (dragging) PetLocomotion.Held else movement
 
+internal fun shouldReleasePendingPetDrop(
+    expectedPlacement: PetPlacement?,
+    positionSettled: Boolean,
+    roamingEnabled: Boolean,
+    observedPlacement: PetPlacement,
+): Boolean = expectedPlacement != null && positionSettled && !roamingEnabled &&
+    observedPlacement == expectedPlacement
+
+private data class PendingPetDrop(
+    val point: PetPoint,
+    val expectedPlacement: PetPlacement,
+    val positionSettled: Boolean = false,
+)
+
 internal fun shouldRoamFloatingPet(
     roamingEnabled: Boolean,
     roamingAllowed: Boolean,
@@ -128,6 +146,8 @@ fun FloatingPetCompanion(
     animationEnabled: Boolean,
     appForeground: Boolean,
     route: String?,
+    visitRequest: PetVisitRequest?,
+    onVisitRequestConsumed: (String) -> Unit,
     onPlacementChanged: (PetPlacement) -> Unit,
     onRoamingEnabledChanged: (Boolean) -> Unit,
     onResetPlacement: () -> Unit,
@@ -138,6 +158,8 @@ fun FloatingPetCompanion(
     var menuExpanded by remember(pet.id) { mutableStateOf(false) }
     var dragging by remember(pet.id) { mutableStateOf(false) }
     var draggedPoint by remember(pet.id) { mutableStateOf<PetPoint?>(null) }
+    var pendingDrop by remember(pet.id) { mutableStateOf<PendingPetDrop?>(null) }
+    var visitActive by remember(pet.id) { mutableStateOf(false) }
     var locomotion by remember(pet.id) { mutableStateOf(PetLocomotion.None) }
     var positioned by remember(pet.id) { mutableStateOf(false) }
     var viewportWidth by remember { mutableStateOf(0) }
@@ -256,9 +278,34 @@ fun FloatingPetCompanion(
         touchExploration = accessibleMotion.touchExploration,
         paused = state.paused,
         isScrolling = isScrolling,
-        dragging = dragging,
+        dragging = dragging || pendingDrop != null,
         menuExpanded = menuExpanded,
     )
+    val canPatrol = canRoam && !visitActive
+    val visitTarget = remember(safeAreaSnapshot, visitRequest) {
+        visitRequest?.let { request ->
+            safeAreaSnapshot.visitTargets.firstOrNull { it.key == request.targetKey }
+        }
+    }
+
+    suspend fun animatePetRoute(routePlan: PetRoute) {
+        val livePoint = PetPoint(x.value, y.value)
+        if (routePlan.start.distanceSquaredTo(livePoint) > 1f) return
+        routePlan.points.drop(1).forEach { waypoint ->
+            locomotion = if (abs(waypoint.y - y.value) > 1f) {
+                petVerticalLocomotion(y.value, waypoint.y)
+            } else if (waypoint.x < x.value) {
+                PetLocomotion.WalkLeft
+            } else {
+                PetLocomotion.WalkRight
+            }
+            coroutineScope {
+                launch { x.animateTo(waypoint.x, tween(durationMillis = 460)) }
+                launch { y.animateTo(waypoint.y, tween(durationMillis = 460)) }
+            }
+        }
+        locomotion = PetLocomotion.None
+    }
 
     LaunchedEffect(pet.id, homePoint) {
         if (!positioned) {
@@ -268,16 +315,94 @@ fun FloatingPetCompanion(
         }
     }
 
-    LaunchedEffect(homePoint, dragging, canRoam) {
-        if (positioned && !dragging && !canRoam) {
+    LaunchedEffect(homePoint, dragging, canRoam, pendingDrop) {
+        if (positioned && !dragging && pendingDrop == null && !canRoam) {
             locomotion = PetLocomotion.None
             x.snapTo(homePoint.x)
             y.snapTo(homePoint.y)
         }
     }
 
-    LaunchedEffect(pet.id, canRoam, roamingRails, homePoint, positioned) {
+    LaunchedEffect(pendingDrop, roamingEnabled, placement) {
+        val pending = pendingDrop ?: return@LaunchedEffect
+        if (
+            shouldReleasePendingPetDrop(
+                expectedPlacement = pending.expectedPlacement,
+                positionSettled = pending.positionSettled,
+                roamingEnabled = roamingEnabled,
+                observedPlacement = placement,
+            )
+        ) {
+            draggedPoint = null
+            pendingDrop = null
+        }
+    }
+
+    LaunchedEffect(
+        visitRequest,
+        visitTarget,
+        canRoam,
+        positioned,
+        homePoint,
+        safeAreaSnapshot.obstacles,
+        footprint,
+        safeBounds,
+    ) {
+        val request = visitRequest ?: return@LaunchedEffect
+        val now = SystemClock.elapsedRealtime()
+        when (request.readinessAt(now)) {
+            PetVisitReadiness.Expired -> {
+                onVisitRequestConsumed(request.assistantUiKey)
+                return@LaunchedEffect
+            }
+            PetVisitReadiness.CoolingDown -> {
+                delay(request.notBeforeElapsedMs - now)
+            }
+            PetVisitReadiness.Ready -> Unit
+        }
         if (!canRoam || !positioned) return@LaunchedEffect
+        val target = visitTarget
+        if (target == null) {
+            val remaining = request.expiresAtElapsedMs - SystemClock.elapsedRealtime()
+            if (remaining >= 0L) delay(remaining + 1L)
+            onVisitRequestConsumed(request.assistantUiKey)
+            return@LaunchedEffect
+        }
+        visitActive = true
+        try {
+            x.stop()
+            y.stop()
+            val routeToBubble = findBubbleVisitRoute(
+                targetBounds = target.bounds,
+                footprint = footprint,
+                bounds = safeBounds,
+                uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
+                current = PetPoint(x.value, y.value),
+            ) ?: run {
+                onVisitRequestConsumed(request.assistantUiKey)
+                return@LaunchedEffect
+            }
+            animatePetRoute(routeToBubble)
+            locomotion = PetLocomotion.Wave
+            delay(1_600L)
+            locomotion = PetLocomotion.None
+            val returnRoute = findOverlayRoute(
+                start = PetPoint(x.value, y.value),
+                requestedDestination = homePoint,
+                bounds = safeBounds,
+                uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds } + target.bounds,
+                footprint = footprint,
+            )
+            if (returnRoute != null) animatePetRoute(returnRoute)
+            onVisitRequestConsumed(request.assistantUiKey)
+        } finally {
+            locomotion = PetLocomotion.None
+            visitActive = false
+        }
+    }
+
+    LaunchedEffect(pet.id, canPatrol, roamingRails, homePoint, positioned) {
+        if (!canPatrol || !positioned) return@LaunchedEffect
 
         fun railSupporting(point: PetPoint): PetRoamingRail? = roamingRails.firstOrNull { rail ->
             point.x in rail.bounds.left..rail.bounds.right && abs(point.y - rail.bounds.top) <= 1f
@@ -301,14 +426,7 @@ fun FloatingPetCompanion(
             // Silently accepting a projected start would visually teleport the
             // pet and could skip across the control that caused the projection.
             if (routePlan.start.distanceSquaredTo(currentPoint) > 1f) return false
-            routePlan.points.drop(1).forEach { waypoint ->
-                locomotion = petVerticalLocomotion(y.value, waypoint.y)
-                coroutineScope {
-                    launch { x.animateTo(waypoint.x, tween(durationMillis = 460)) }
-                    launch { y.animateTo(waypoint.y, tween(durationMillis = 460)) }
-                }
-            }
-            locomotion = PetLocomotion.None
+            animatePetRoute(routePlan)
             return true
         }
 
@@ -383,10 +501,6 @@ fun FloatingPetCompanion(
     val appearanceLabel = stringResource(R.string.floating_pet_menu_appearance)
     val hideLabel = stringResource(R.string.floating_pet_menu_hide)
 
-    fun persistAt(point: PetPoint) {
-        onPlacementChanged(safeBounds.snapToEdge(point, petLayoutDirection, placement.edge))
-    }
-
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -415,6 +529,7 @@ fun FloatingPetCompanion(
                 .pointerInput(pet.id, safeBounds, roamingRails, registeredObstacles) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = {
+                            pendingDrop = null
                             dragging = true
                             draggedPoint = PetPoint(x.value, y.value)
                             locomotion = PetLocomotion.None
@@ -430,13 +545,28 @@ fun FloatingPetCompanion(
                         },
                         onDragEnd = {
                             val dropped = draggedPoint ?: PetPoint(x.value, y.value)
+                            val updatedPlacement = safeBounds.snapToEdge(
+                                dropped,
+                                petLayoutDirection,
+                                placement.edge,
+                            )
+                            pendingDrop = PendingPetDrop(dropped, updatedPlacement)
                             if (roamingEnabled) onRoamingEnabledChanged(false)
-                            persistAt(dropped)
+                            onPlacementChanged(updatedPlacement)
                             scope.launch {
                                 x.snapTo(dropped.x)
                                 y.snapTo(dropped.y)
-                                draggedPoint = null
                                 locomotion = PetLocomotion.None
+                                pendingDrop = pendingDrop?.let { pending ->
+                                    if (
+                                        pending.point == dropped &&
+                                        pending.expectedPlacement == updatedPlacement
+                                    ) {
+                                        pending.copy(positionSettled = true)
+                                    } else {
+                                        pending
+                                    }
+                                }
                                 dragging = false
                             }
                         },

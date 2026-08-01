@@ -22,13 +22,102 @@ data class PetCompanionActivity(
     val hidden: Boolean = false,
 )
 
+internal const val PET_VISIT_COOLDOWN_MIN_MS = 12_000L
+internal const val PET_VISIT_COOLDOWN_RANGE_MS = 8_001L
+internal const val PET_VISIT_EXPIRY_WINDOW_MS = 20_000L
+
+enum class PetVisitReadiness { CoolingDown, Ready, Expired }
+
+/** One post-response visit request, timed only with monotonic elapsed time. */
+data class PetVisitRequest(
+    val assistantUiKey: String,
+    val targetKey: String,
+    val notBeforeElapsedMs: Long,
+    val expiresAtElapsedMs: Long,
+) {
+    fun readinessAt(nowElapsedMs: Long): PetVisitReadiness = when {
+        nowElapsedMs < notBeforeElapsedMs -> PetVisitReadiness.CoolingDown
+        nowElapsedMs <= expiresAtElapsedMs -> PetVisitReadiness.Ready
+        else -> PetVisitReadiness.Expired
+    }
+}
+
+/** Pure falling-edge detector and latest-wins request state. */
+data class PetVisitRequestState(
+    val streamArmed: Boolean = false,
+    val lastRequestedAssistantUiKey: String? = null,
+    val pending: PetVisitRequest? = null,
+)
+
+internal fun deterministicPetVisitCooldownMs(assistantUiKey: String): Long {
+    val stableUnsignedHash = assistantUiKey.hashCode().toLong() and 0xffff_ffffL
+    return PET_VISIT_COOLDOWN_MIN_MS + stableUnsignedHash % PET_VISIT_COOLDOWN_RANGE_MS
+}
+
+internal fun reducePetVisitRequestState(
+    state: PetVisitRequestState,
+    isStreaming: Boolean,
+    assistantUiKey: String?,
+    nowElapsedMs: Long,
+): PetVisitRequestState {
+    require(nowElapsedMs >= 0L) { "Elapsed time must be non-negative." }
+    val livePending = state.pending?.takeUnless {
+        it.readinessAt(nowElapsedMs) == PetVisitReadiness.Expired
+    }
+    if (isStreaming) return state.copy(streamArmed = true, pending = livePending)
+    if (!state.streamArmed) return state.copy(pending = livePending)
+
+    val settledKey = assistantUiKey?.takeIf(String::isNotBlank)
+        ?: return state.copy(streamArmed = false, pending = livePending)
+    if (settledKey == state.lastRequestedAssistantUiKey) {
+        return state.copy(streamArmed = false, pending = livePending)
+    }
+
+    val notBefore = nowElapsedMs + deterministicPetVisitCooldownMs(settledKey)
+    val request = PetVisitRequest(
+        assistantUiKey = settledKey,
+        targetKey = "chat-message:$settledKey",
+        notBeforeElapsedMs = notBefore,
+        expiresAtElapsedMs = notBefore + PET_VISIT_EXPIRY_WINDOW_MS,
+    )
+    return PetVisitRequestState(
+        streamArmed = false,
+        lastRequestedAssistantUiKey = settledKey,
+        pending = request,
+    )
+}
+
 @Stable
 class PetCompanionCoordinator {
     private var renderState by mutableStateOf(AvatarRenderState(SphereState.Idle))
+    private var visitRequestState by mutableStateOf(PetVisitRequestState())
     private val surfaces = mutableStateMapOf<String, PetCompanionSurface>()
+
+    val pendingVisitRequest: PetVisitRequest?
+        get() = visitRequestState.pending
 
     fun publishRenderState(renderState: AvatarRenderState) {
         this.renderState = renderState
+    }
+
+    fun observeChatStream(
+        isStreaming: Boolean,
+        assistantUiKey: String?,
+        nowElapsedMs: Long,
+    ) {
+        visitRequestState = reducePetVisitRequestState(
+            state = visitRequestState,
+            isStreaming = isStreaming,
+            assistantUiKey = assistantUiKey,
+            nowElapsedMs = nowElapsedMs,
+        )
+    }
+
+    /** Remove a request once consumed, superseded, or noticed after expiry. */
+    fun clearVisitRequest(assistantUiKey: String) {
+        if (visitRequestState.pending?.assistantUiKey == assistantUiKey) {
+            visitRequestState = visitRequestState.copy(pending = null)
+        }
     }
 
     fun publishSurface(owner: String, scrolling: Boolean, hidden: Boolean) {
@@ -65,6 +154,7 @@ class PetSafeAreaRegistry {
     internal val walkRegions = mutableStateMapOf<String, Rect>()
     private val perchRegions = mutableStateMapOf<String, PetMeasuredPerch>()
     private val obstacleRegions = mutableStateMapOf<String, PetMeasuredObstacle>()
+    private val visitTargetRegions = mutableStateMapOf<String, PetMeasuredVisitTarget>()
 
     internal fun updateWalkRegion(key: String, bounds: Rect) {
         updatePerch(key, bounds, PetRouteScope())
@@ -92,6 +182,14 @@ class PetSafeAreaRegistry {
         obstacleRegions.remove(key)
     }
 
+    internal fun updateVisitTarget(key: String, bounds: Rect, routeScope: PetRouteScope) {
+        visitTargetRegions[key] = PetMeasuredVisitTarget(key, bounds.toPetObstacle(), routeScope)
+    }
+
+    internal fun removeVisitTarget(key: String) {
+        visitTargetRegions.remove(key)
+    }
+
     /** Immutable, deterministic view containing only surfaces valid for [route]. */
     fun snapshot(route: String?): PetSafeAreaSnapshot = PetSafeAreaSnapshot(
         route = route,
@@ -99,6 +197,9 @@ class PetSafeAreaRegistry {
             .filter { it.routeScope.includes(route) }
             .sortedBy { it.key },
         obstacles = obstacleRegions.values
+            .filter { it.routeScope.includes(route) }
+            .sortedBy { it.key },
+        visitTargets = visitTargetRegions.values
             .filter { it.routeScope.includes(route) }
             .sortedBy { it.key },
     )
@@ -147,4 +248,18 @@ fun Modifier.petObstacleSurface(
     routes = routes,
     update = PetSafeAreaRegistry::updateObstacle,
     remove = PetSafeAreaRegistry::removeObstacle,
+)
+
+/**
+ * Register an existing UI element as a temporary point of interest. Visit
+ * targets are measured but never promoted to walkable rails or obstacles.
+ */
+fun Modifier.petVisitTargetSurface(
+    key: String,
+    routes: Set<String> = emptySet(),
+): Modifier = measuredPetSurface(
+    key = key,
+    routes = routes,
+    update = PetSafeAreaRegistry::updateVisitTarget,
+    remove = PetSafeAreaRegistry::removeVisitTarget,
 )
