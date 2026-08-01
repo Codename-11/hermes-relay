@@ -2517,7 +2517,11 @@ fun RelayApp() {
                 // visually muting the companion. Dimming is reserved for the
                 // keyboard-compressed layout, where subdued chrome keeps the
                 // composer/terminal input readable.
-                roamingAllowed = roamingRoute != null && !petActivity.scrolling,
+                // A scroll is a temporary movement pause, not a route change.
+                // Keeping route support stable prevents the overlay from
+                // re-docking to its persisted edge position mid-scroll.
+                roamingAllowed = roamingRoute != null,
+                surfaceScrolling = petActivity.scrolling,
                 isScrolling = isKeyboardVisible,
                 compact = shouldCompactFloatingPet(
                     imeVisible = isKeyboardVisible,

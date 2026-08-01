@@ -69,6 +69,7 @@ import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.components.pet.petVisitTargetSurface
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import kotlinx.coroutines.delay
@@ -504,6 +505,9 @@ fun MessageBubble(
                     if (petVisitTargetKey != null) {
                         Modifier.petVisitTargetSurface(
                             key = petVisitTargetKey,
+                            routes = setOf("chat"),
+                        ).petPerchSurface(
+                            key = "perch:$petVisitTargetKey",
                             routes = setOf("chat"),
                         )
                     } else {
