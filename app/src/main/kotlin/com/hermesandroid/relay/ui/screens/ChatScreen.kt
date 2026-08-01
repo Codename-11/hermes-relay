@@ -189,6 +189,7 @@ import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.newestPetVisitTargetUiKey
 import com.hermesandroid.relay.ui.components.SyntheticProcessNotificationNotice
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import androidx.compose.ui.layout.ContentScale
@@ -2451,6 +2452,15 @@ fun ChatScreen(
                         LocalRelayServerImageResolver provides relayServerImageResolver,
                         LocalThinkingIndicator provides thinkingIndicatorConfig,
                     ) {
+                    val petVisitTargetUiKey = remember(messages) {
+                        newestPetVisitTargetUiKey(messages)
+                    }
+                    val visibleMessageKeys by remember(listState) {
+                        derivedStateOf {
+                            listState.layoutInfo.visibleItemsInfo
+                                .mapTo(mutableSetOf<Any>()) { it.key }
+                        }
+                    }
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -2536,6 +2546,14 @@ fun ChatScreen(
                                 MessageBubble(
                                     message = message,
                                     modifier = bubbleModifier,
+                                    petVisitTargetKey = if (
+                                        message.uiKey == petVisitTargetUiKey &&
+                                        message.uiKey in visibleMessageKeys
+                                    ) {
+                                        "chat-message:${message.uiKey}"
+                                    } else {
+                                        null
+                                    },
                                     maxBubbleWidth = maxBubbleWidth,
                                     showThinking = showThinking,
                                     isFirstInGroup = isFirstInGroup,

@@ -65,6 +65,7 @@ class PetSafeAreaRegistry {
     internal val walkRegions = mutableStateMapOf<String, Rect>()
     private val perchRegions = mutableStateMapOf<String, PetMeasuredPerch>()
     private val obstacleRegions = mutableStateMapOf<String, PetMeasuredObstacle>()
+    private val visitTargetRegions = mutableStateMapOf<String, PetMeasuredVisitTarget>()
 
     internal fun updateWalkRegion(key: String, bounds: Rect) {
         updatePerch(key, bounds, PetRouteScope())
@@ -92,6 +93,14 @@ class PetSafeAreaRegistry {
         obstacleRegions.remove(key)
     }
 
+    internal fun updateVisitTarget(key: String, bounds: Rect, routeScope: PetRouteScope) {
+        visitTargetRegions[key] = PetMeasuredVisitTarget(key, bounds.toPetObstacle(), routeScope)
+    }
+
+    internal fun removeVisitTarget(key: String) {
+        visitTargetRegions.remove(key)
+    }
+
     /** Immutable, deterministic view containing only surfaces valid for [route]. */
     fun snapshot(route: String?): PetSafeAreaSnapshot = PetSafeAreaSnapshot(
         route = route,
@@ -99,6 +108,9 @@ class PetSafeAreaRegistry {
             .filter { it.routeScope.includes(route) }
             .sortedBy { it.key },
         obstacles = obstacleRegions.values
+            .filter { it.routeScope.includes(route) }
+            .sortedBy { it.key },
+        visitTargets = visitTargetRegions.values
             .filter { it.routeScope.includes(route) }
             .sortedBy { it.key },
     )
@@ -147,4 +159,18 @@ fun Modifier.petObstacleSurface(
     routes = routes,
     update = PetSafeAreaRegistry::updateObstacle,
     remove = PetSafeAreaRegistry::removeObstacle,
+)
+
+/**
+ * Register an existing UI element as a temporary point of interest. Visit
+ * targets are measured but never promoted to walkable rails or obstacles.
+ */
+fun Modifier.petVisitTargetSurface(
+    key: String,
+    routes: Set<String> = emptySet(),
+): Modifier = measuredPetSurface(
+    key = key,
+    routes = routes,
+    update = PetSafeAreaRegistry::updateVisitTarget,
+    remove = PetSafeAreaRegistry::removeVisitTarget,
 )

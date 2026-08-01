@@ -225,11 +225,23 @@ data class PetMeasuredObstacle(
     }
 }
 
+/** Immutable, named point of interest that does not become walkable terrain. */
+data class PetMeasuredVisitTarget(
+    val key: String,
+    val bounds: PetObstacle,
+    val routeScope: PetRouteScope = PetRouteScope(),
+) {
+    init {
+        require(key.isNotBlank()) { "Visit target key must not be blank." }
+    }
+}
+
 /** Route-filtered registry view. It cannot leak stale surfaces from another destination. */
 data class PetSafeAreaSnapshot(
     val route: String?,
     val perches: List<PetMeasuredPerch>,
     val obstacles: List<PetMeasuredObstacle>,
+    val visitTargets: List<PetMeasuredVisitTarget> = emptyList(),
 )
 
 /** One collision-trimmed segment of a measured perch. */
