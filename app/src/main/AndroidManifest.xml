@@ -120,6 +120,15 @@
             android:foregroundServiceType="microphone"
             android:stopWithTask="false" />
 
+        <!-- User-started protection for voice capture from the system overlay.
+             The service does not own AudioRecord; it keeps foreground-only
+             microphone app-ops available while Hermes is behind another app. -->
+        <service
+            android:name=".voice.VoiceOverlayForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="false" />
+
         <!-- Explicitly opt-in Android Digital Assistant integration. Android
              binds this only after the user selects Hermes for ROLE_ASSISTANT. -->
         <service

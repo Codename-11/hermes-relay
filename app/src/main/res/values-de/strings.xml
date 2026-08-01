@@ -131,6 +131,7 @@
 
     <!-- Chat screen UI chrome -->
     <string name="chat_share_conversation">Unterhaltung teilen</string>
+    <string name="chat_copy_session_id">Sitzungs-ID kopieren</string>
     <string name="chat_retry">Erneut versuchen</string>
     <string name="chat_dismiss">Schließen</string>
     <string name="chat_open_settings">Einstellungen öffnen</string>
@@ -2125,6 +2126,7 @@
     <string name="voice_overlay_focus">Fokus</string>
     <string name="voice_overlay_conversation">Gespräch</string>
     <string name="voice_overlay_image_ready">Bild bereit</string>
+    <string name="voice_overlay_attachment_ready">Anhang bereit</string>
     <string name="voice_overlay_rich_result_ready">Rich-Ergebnis bereit</string>
     <string name="voice_overlay_rich_results_count">%1$d Ergebnisse bereit</string>
     <string name="voice_overlay_view_conversation">Gespräch anzeigen</string>
@@ -2739,6 +2741,7 @@
     <string name="msg_bubble_copy">Kopieren</string>
     <string name="msg_bubble_quote">In Antwort zitieren</string>
     <string name="msg_bubble_edit">Bearbeiten &amp; erneut senden</string>
+    <string name="msg_bubble_speak_response">Antwort vorlesen</string>
     <string name="msg_bubble_reconnecting">Verbindung zu deiner Antwort wird wiederhergestellt&#8230;</string>
     <string name="msg_bubble_still_working">Arbeitet noch&#8230;</string>
     <string name="msg_bubble_sending">Wird gesendet&#8230;</string>
@@ -2794,7 +2797,7 @@
     <string name="voice_overlay_provider_output_off">Ausgabe aus</string>
     <string name="voice_overlay_provider_placeholder">Anbieter ...</string>
     <string name="voice_overlay_engine_realtime">Echtzeit-Agent</string>
-    <string name="voice_overlay_engine_hermes">Hermes-Sprache</string>
+    <string name="voice_overlay_engine_standard">Standardmodus</string>
     <string name="voice_overlay_engine_placeholder">Sprach-Engine ...</string>
 
     <!-- AppTheme labels + descriptions -->
@@ -3208,6 +3211,7 @@
     <string name="update_banner_subtitle_downloaded">Heruntergeladen — zum Installieren neu starten</string>
     <string name="voice_overlay_caption_action">Aktion</string>
     <string name="voice_overlay_caption_agent">Agent</string>
+    <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_caption_you">Du</string>
     <string name="voice_overlay_steps_many">%d Schritte</string>
     <string name="voice_overlay_steps_one">1 Schritt</string>
@@ -3248,6 +3252,12 @@
     <string name="ncs_no_activity">Noch keine Auslöseraktivität.</string>
     <string name="ncs_confirmation_policy">Bestätigungsrichtlinie: Lokale Aufforderungen und Protokolleinträge können nach Zustimmung automatisch erfolgen. Alles, was Nachrichten sendet, in einer anderen App antwortet, Inhalte an eine Person oder einen Kanal leitet, Bridge-Gesten verwendet, Geld ausgibt oder Daten ändert, erfordert weiterhin eine ausdrückliche Bestätigung.</string>
     <string name="voice_overlay_exit_a11y">Sprachmodus beenden</string>
+    <string name="voice_overlay_open_hermes">Hermes öffnen</string>
+    <string name="voice_overlay_notification_channel">Mikrofon der Sprachüberlagerung</string>
+    <string name="voice_overlay_notification_channel_desc">Dauerhafte Datenschutz- und Stoppsteuerung, während die Hermes-Sprachüberlagerung das Mikrofon über einer anderen App verwenden kann.</string>
+    <string name="voice_overlay_notification_title">Hermes-Sprachüberlagerung aktiv</string>
+    <string name="voice_overlay_notification_body">Der Mikrofonzugriff bleibt verfügbar, während Hermes über einer anderen App angezeigt wird.</string>
+    <string name="voice_overlay_notification_stop">Sprache stoppen</string>
     <string name="voice_overlay_a11y">Sprach-Overlay %1$s. Tippen zum %2$s, doppelt tippen zum Ausklappen.</string>
     <string name="voice_overlay_mic_a11y">Mikrofon des Sprach-Overlays</string>
     <string name="chat_more_actions_a11y">Weitere Aktionen</string>

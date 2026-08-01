@@ -900,16 +900,8 @@ fun AgentInfoSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .padding(top = 8.dp, bottom = 8.dp)
-                    .width(40.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant),
-            )
-        },
+        sheetGesturesEnabled = false,
+        dragHandle = null,
     ) {
         Column(
             modifier = Modifier
@@ -1142,30 +1134,33 @@ fun AgentInfoSheet(
 
     when (activePicker) {
         AgentPassportPicker.Profile -> {
-            val options = buildList {
-                add(
+            val selectedProfileKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
+            val visibleProfileKeys = ProfilePresentationPolicy.visibleKeys(
+                profiles = agentProfiles,
+                presentation = profilePresentation,
+                selectedKey = selectedProfileKey,
+            )
+            val options = visibleProfileKeys.mapNotNull { profileKey ->
+                if (profileKey == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY) {
                     ChatInputPickerOption(
                         label = serverDefaultLabel,
                         value = null,
                         secondary = AgentDisplay.profileDisplayName(resolvedProfile),
                         selected = selectedProfile == null,
                         enabled = !isProfileLocked && profileSwitchEnabled,
-                    ),
-                )
-                agentProfiles
-                    .filterNot { AgentDisplay.isServerDefaultAlias(it.name) }
-                    .forEach { profile ->
-                        add(
-                            ChatInputPickerOption(
-                                label = AgentDisplay.profileDisplayName(profile)
-                                    ?: profile.name.replaceFirstChar { it.uppercase() },
-                                value = profile.name,
-                                secondary = profile.model.takeIf { it.isNotBlank() },
-                                selected = selectedProfile?.name == profile.name,
-                                enabled = !isProfileLocked && profileSwitchEnabled,
-                            ),
+                    )
+                } else {
+                    agentProfiles.firstOrNull { it.name == profileKey }?.let { profile ->
+                        ChatInputPickerOption(
+                            label = AgentDisplay.profileDisplayName(profile)
+                                ?: profile.name.replaceFirstChar { it.uppercase() },
+                            value = profile.name,
+                            secondary = profile.model.takeIf { it.isNotBlank() },
+                            selected = selectedProfile?.name == profile.name,
+                            enabled = !isProfileLocked && profileSwitchEnabled,
                         )
                     }
+                }
             }
             OptionPickerSheet(
                 title = stringResource(R.string.conn_info_profile),

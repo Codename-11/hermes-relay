@@ -2391,3 +2391,41 @@ boundary.
 - Android does not grant third-party assistants Google's dedicated low-power
   hotword DSP integration. Local sherpa inference keeps pre-activation audio
   private but can consume materially more battery than the built-in assistant.
+
+---
+
+## ADR 43 — App-owned voice overlay uses a microphone foreground service
+
+**Status:** Accepted (2026-07-31).
+
+**Context.** A `TYPE_APPLICATION_OVERLAY` remains visible over another app, but
+it does not make its owning process foreground for Android's while-in-use
+microphone app-op. The first capture could begin during the foreground grace
+window, while later captures opened successfully but received silenced PCM.
+Keeping `AudioRecord` in the existing voice runtime was still desirable: wake,
+voice capture, barge-in, and diagnostics already share one process-wide owner.
+
+**Decision.**
+
+- Opening the system voice overlay while Hermes is visible starts a dedicated
+  service with `foregroundServiceType="microphone"` before the app backgrounds.
+  The required ongoing notification explains the microphone access and offers
+  a terminal **Stop voice** action.
+- The service never creates an `AudioRecord` and never acquires a microphone
+  lease. It supplies only the foreground execution capability; the existing
+  `VoiceViewModel` and `VoiceRecorder` remain the sole capture owner.
+- Overlay Hide, Exit, Open Hermes, voice-mode shutdown, add-view failure, and
+  app-task removal stop the service. Notification Stop closes the overlay and
+  exits voice mode rather than leaving an unprotected capture surface visible.
+- The service is distinct from experimental wake-word listening. Wake remains
+  paused during voice and cannot become a second microphone owner.
+
+**Consequences.**
+
+- Repeated overlay turns can receive real microphone PCM after Hermes moves to
+  the background instead of Android substituting silence.
+- Background overlay use has an explicit persistent privacy affordance and
+  cannot silently retain microphone eligibility after the overlay session.
+- Android 14+ while-in-use rules require starting this service from the visible,
+  user-initiated overlay action; an arbitrary background caller cannot create
+  equivalent microphone privilege.

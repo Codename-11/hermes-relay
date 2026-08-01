@@ -29,8 +29,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -97,6 +98,12 @@ fun MessageBubble(
      * the long-press menu, so legacy call sites keep the copy-only behavior.
      */
     onQuoteMessage: ((String) -> Unit)? = null,
+    /**
+     * Reads a completed assistant response through the active voice renderer.
+     * Null hides the entry; the owning screen uses that to limit the action to
+     * idle Conversation voice sessions.
+     */
+    onSpeakMessage: ((String) -> Unit)? = null,
     /**
      * Invoked when the user taps a FAILED inbound attachment card.
      * `attachmentIndex` is the position in [ChatMessage.attachments] so the
@@ -294,7 +301,7 @@ fun MessageBubble(
                         // realtime engine chip ("Realtime Agent") are spoken
                         // turns, so they share it; only the text differs.
                         leadingIcon = if (badge == "Voice" || badge == "Realtime Agent") {
-                            Icons.Filled.VolumeUp
+                            Icons.AutoMirrored.Filled.VolumeUp
                         } else {
                             null
                         },
@@ -382,7 +389,8 @@ fun MessageBubble(
         var showMessageActions by remember { mutableStateOf(false) }
         val haptic = LocalHapticFeedback.current
         val showEditAction = onEditMessage != null && isUser
-        if (onQuoteMessage != null || showEditAction) {
+        val showSpeakAction = shouldShowSpeakResponseAction(message, onSpeakMessage != null)
+        if (onQuoteMessage != null || showEditAction || showSpeakAction) {
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
@@ -400,6 +408,21 @@ fun MessageBubble(
                         onClick = {
                             showMessageActions = false
                             onQuoteMessage(message.content)
+                        },
+                    )
+                }
+                if (showSpeakAction) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.msg_bubble_speak_response)) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            showMessageActions = false
+                            onSpeakMessage?.invoke(message.content)
                         },
                     )
                 }
@@ -454,7 +477,7 @@ fun MessageBubble(
                         // action menu is the discoverability moment, so it gets the
                         // same tactile confirm every chat app fires.
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (onQuoteMessage != null || showEditAction) {
+                        if (onQuoteMessage != null || showEditAction || showSpeakAction) {
                             showMessageActions = true
                         } else {
                             onCopyMessage(message.content)
@@ -464,7 +487,7 @@ fun MessageBubble(
                 .semantics { contentDescription = a11yDescription }
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
-                SelectionContainer {
+                val messageTextContent: @Composable () -> Unit = {
                     if (isUser || isSystem) {
                         // Plain text for user and system messages
                         Text(
@@ -489,6 +512,15 @@ fun MessageBubble(
                             )
                         }
                     }
+                }
+                // Conversation voice owns long-press with its action menu.
+                // Disable partial-text selection in that state so Android's
+                // floating selection toolbar does not stack over Copy/Quote/
+                // Speak response. Normal chat retains selectable message text.
+                if (showSpeakAction) {
+                    DisableSelection { messageTextContent() }
+                } else {
+                    SelectionContainer { messageTextContent() }
                 }
 
                 // Inline generated images (assistant only) — rendered OUTSIDE
@@ -719,6 +751,15 @@ fun MessageBubble(
     } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
 }
+
+internal fun shouldShowSpeakResponseAction(
+    message: ChatMessage,
+    handlerAvailable: Boolean,
+): Boolean =
+    handlerAvailable &&
+        message.role == MessageRole.ASSISTANT &&
+        !message.isStreaming &&
+        message.content.isNotBlank()
 
 @Composable
 private fun MessagePathBadge(text: String, leadingIcon: ImageVector? = null) {

@@ -108,6 +108,7 @@
     <string name="chat_stopped_snackbar">Interrumpido</string>
     <string name="chat_attachment_placeholder">[adjunto]</string>
     <string name="chat_share_conversation">Compartir conversación</string>
+    <string name="chat_copy_session_id">Copiar ID de sesión</string>
     <string name="chat_retry">Reintentar</string>
     <string name="chat_dismiss">Descartar</string>
     <string name="chat_open_settings">Abrir configuración</string>
@@ -1937,6 +1938,7 @@
     <string name="voice_overlay_focus">Enfocar</string>
     <string name="voice_overlay_conversation">Conversación</string>
     <string name="voice_overlay_image_ready">Imagen lista</string>
+    <string name="voice_overlay_attachment_ready">Adjunto listo</string>
     <string name="voice_overlay_rich_result_ready">Resultado enriquecido listo</string>
     <string name="voice_overlay_rich_results_count">%1$d resultados listos</string>
     <string name="voice_overlay_view_conversation">Ver conversación</string>
@@ -2481,6 +2483,7 @@
     <string name="msg_bubble_copy">Copiar</string>
     <string name="msg_bubble_quote">Cita en respuesta</string>
     <string name="msg_bubble_edit">Editar y reenviar</string>
+    <string name="msg_bubble_speak_response">Leer respuesta</string>
     <string name="msg_bubble_reconnecting">Volviendo a conectar con tu respuesta...</string>
     <string name="msg_bubble_still_working">Todavía trabajando…</string>
     <string name="msg_bubble_sending">Envío…</string>
@@ -2526,7 +2529,7 @@
     <string name="voice_overlay_provider_output_off">salida apagada</string>
     <string name="voice_overlay_provider_placeholder">proveedor...</string>
     <string name="voice_overlay_engine_realtime">Agente en tiempo real</string>
-    <string name="voice_overlay_engine_hermes">voz de Hermes</string>
+    <string name="voice_overlay_engine_standard">Modo estándar</string>
     <string name="voice_overlay_engine_placeholder">Motor de voz...</string>
     <string name="theme_hermes_relay">Hermes Relay</string>
     <string name="theme_hermes_relay_desc">La marca distintiva azul eléctrico: sigue a light/dark</string>
@@ -2867,6 +2870,7 @@
     <string name="update_banner_subtitle_downloaded">Descargado: reinicie para instalar</string>
     <string name="voice_overlay_caption_action">Acción</string>
     <string name="voice_overlay_caption_agent">Agente</string>
+    <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_caption_you">Tú</string>
     <string name="voice_overlay_steps_many">Pasos %d</string>
     <string name="voice_overlay_steps_one">1 paso</string>
@@ -2906,6 +2910,12 @@
     <string name="ncs_no_activity">Aún no hay actividad desencadenante.</string>
     <string name="ncs_confirmation_policy">Política de confirmación: las indicaciones locales y las escrituras de registros locales se pueden ejecutar automáticamente después de la suscripción. Cualquier cosa que envíe un mensaje, responda en otra aplicación, dirija contenido a una persona o canal, use gestos bridge o gaste o cambie datos aún requiere la confirmación explícita del usuario.</string>
     <string name="voice_overlay_exit_a11y">Salir del modo de voz</string>
+    <string name="voice_overlay_open_hermes">Abrir Hermes</string>
+    <string name="voice_overlay_notification_channel">Micrófono de la superposición de voz</string>
+    <string name="voice_overlay_notification_channel_desc">Controles permanentes de privacidad y detención mientras la superposición de voz de Hermes puede usar el micrófono sobre otra aplicación.</string>
+    <string name="voice_overlay_notification_title">Superposición de voz de Hermes activa</string>
+    <string name="voice_overlay_notification_body">El acceso al micrófono permanece disponible mientras Hermes está sobre otra aplicación.</string>
+    <string name="voice_overlay_notification_stop">Detener voz</string>
     <string name="voice_overlay_a11y">Superposición de voz %1$s. Toque %2$s, toque dos veces para expandir.</string>
     <string name="voice_overlay_mic_a11y">Micrófono de superposición de voz</string>
     <string name="chat_more_actions_a11y">Más acciones</string>

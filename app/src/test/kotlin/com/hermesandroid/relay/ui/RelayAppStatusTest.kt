@@ -4,6 +4,7 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
@@ -15,6 +16,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RelayAppStatusTest {
+
+    @Test
+    fun `connection footer remains visible in conversation voice only`() {
+        assertTrue(shouldShowConnectionFooter(voiceMode = false, VoicePresentationMode.Focus))
+        assertTrue(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Conversation))
+        assertFalse(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Focus))
+    }
 
     @Test
     fun `dashboard-only connection counts as configured startup chat`() {

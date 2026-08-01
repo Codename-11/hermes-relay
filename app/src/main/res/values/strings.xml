@@ -131,6 +131,7 @@
 
     <!-- Chat screen UI chrome -->
     <string name="chat_share_conversation">Share conversation</string>
+    <string name="chat_copy_session_id">Copy session ID</string>
     <string name="chat_retry">Retry</string>
     <string name="chat_dismiss">Dismiss</string>
     <string name="chat_open_settings">Open Settings</string>
@@ -2245,6 +2246,7 @@
     <string name="voice_overlay_conversation">Conversation</string>
     <string name="voice_overlay_focus">Voice focus</string>
     <string name="voice_overlay_image_ready">Image ready</string>
+    <string name="voice_overlay_attachment_ready">Attachment ready</string>
     <string name="voice_overlay_rich_result_ready">Rich result ready</string>
     <string name="voice_overlay_rich_results_count">%1$d results ready</string>
     <string name="voice_overlay_view_conversation">View conversation</string>
@@ -2871,6 +2873,7 @@
     <string name="msg_bubble_copy">Copy</string>
     <string name="msg_bubble_quote">Quote in reply</string>
     <string name="msg_bubble_edit">Edit &amp; resend</string>
+    <string name="msg_bubble_speak_response">Speak response</string>
     <string name="msg_bubble_reconnecting">Reconnecting to your answer&#8230;</string>
     <string name="msg_bubble_still_working">Still working&#8230;</string>
     <string name="msg_bubble_sending">Sending&#8230;</string>
@@ -2926,7 +2929,7 @@
     <string name="voice_overlay_provider_output_off">output off</string>
     <string name="voice_overlay_provider_placeholder">provider ...</string>
     <string name="voice_overlay_engine_realtime">Realtime Agent</string>
-    <string name="voice_overlay_engine_hermes">Hermes voice</string>
+    <string name="voice_overlay_engine_standard">Standard mode</string>
     <string name="voice_overlay_engine_placeholder">Voice engine ...</string>
 
     <!-- AppTheme labels + descriptions -->
@@ -3342,6 +3345,7 @@
     <string name="update_banner_subtitle_downloaded">Downloaded — restart to install</string>
     <string name="voice_overlay_caption_action">Action</string>
     <string name="voice_overlay_caption_agent">Agent</string>
+    <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_caption_you">You</string>
     <string name="voice_overlay_steps_many">%d steps</string>
     <string name="voice_overlay_steps_one">1 step</string>
@@ -3382,6 +3386,12 @@
     <string name="ncs_no_activity">No trigger activity yet.</string>
     <string name="ncs_confirmation_policy">Confirmation policy: local prompts and local log writes can run automatically after opt-in. Anything that sends a message, replies in another app, routes content to a person or channel, uses bridge gestures, or spends or changes data still requires explicit user confirmation.</string>
     <string name="voice_overlay_exit_a11y">Exit voice mode</string>
+    <string name="voice_overlay_open_hermes">Open Hermes</string>
+    <string name="voice_overlay_notification_channel">Voice overlay microphone</string>
+    <string name="voice_overlay_notification_channel_desc">Ongoing privacy and stop controls while the Hermes voice overlay can use the microphone over another app.</string>
+    <string name="voice_overlay_notification_title">Hermes voice overlay active</string>
+    <string name="voice_overlay_notification_body">Microphone access remains available while Hermes is over another app.</string>
+    <string name="voice_overlay_notification_stop">Stop voice</string>
     <string name="voice_overlay_a11y">Voice overlay %1$s. Tap to %2$s, double tap to expand.</string>
     <string name="voice_overlay_mic_a11y">Voice overlay mic</string>
     <string name="chat_more_actions_a11y">More actions</string>

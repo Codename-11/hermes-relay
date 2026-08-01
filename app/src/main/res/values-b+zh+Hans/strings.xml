@@ -131,6 +131,7 @@
 
     <!-- 聊天界面 UI 外壳 -->
     <string name="chat_share_conversation">分享对话</string>
+    <string name="chat_copy_session_id">复制会话 ID</string>
     <string name="chat_retry">重试</string>
     <string name="chat_dismiss">关闭</string>
     <string name="chat_open_settings">打开设置</string>
@@ -2122,6 +2123,7 @@
     <string name="voice_overlay_focus">专注</string>
     <string name="voice_overlay_conversation">对话</string>
     <string name="voice_overlay_image_ready">图片已就绪</string>
+    <string name="voice_overlay_attachment_ready">附件已就绪</string>
     <string name="voice_overlay_rich_result_ready">丰富结果已就绪</string>
     <string name="voice_overlay_rich_results_count">%1$d 个结果已就绪</string>
     <string name="voice_overlay_view_conversation">查看对话</string>
@@ -2735,6 +2737,7 @@
     <string name="msg_bubble_copy">复制</string>
     <string name="msg_bubble_quote">引用回复</string>
     <string name="msg_bubble_edit">编辑并重新发送</string>
+    <string name="msg_bubble_speak_response">朗读回复</string>
     <string name="msg_bubble_reconnecting">正在重新连接到您的回答…</string>
     <string name="msg_bubble_still_working">仍在处理…</string>
     <string name="msg_bubble_sending">发送中…</string>
@@ -2790,7 +2793,7 @@
     <string name="voice_overlay_provider_output_off">输出关闭</string>
     <string name="voice_overlay_provider_placeholder">提供商 ...</string>
     <string name="voice_overlay_engine_realtime">实时代理</string>
-    <string name="voice_overlay_engine_hermes">Hermes 语音</string>
+    <string name="voice_overlay_engine_standard">标准模式</string>
     <string name="voice_overlay_engine_placeholder">语音引擎 ...</string>
 
     <!-- AppTheme labels + descriptions -->
@@ -3140,6 +3143,7 @@
     <string name="update_banner_subtitle_downloaded">已下载——重启以安装</string>
     <string name="voice_overlay_caption_action">操作</string>
     <string name="voice_overlay_caption_agent">代理</string>
+    <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_caption_you">您</string>
     <string name="voice_overlay_steps_many">%d 步</string>
     <string name="voice_overlay_steps_one">1 步</string>
@@ -3180,6 +3184,12 @@
     <string name="ncs_no_activity">暂无触发器活动。</string>
     <string name="ncs_confirmation_policy">确认策略：明确选择启用后，本地提示和本地日志写入可以自动运行。发送消息、在其他应用中回复、向联系人或频道路由内容、使用 Bridge 手势，以及消费或更改数据的操作，仍然需要用户明确确认。</string>
     <string name="voice_overlay_exit_a11y">退出语音模式</string>
+    <string name="voice_overlay_open_hermes">打开 Hermes</string>
+    <string name="voice_overlay_notification_channel">语音浮层麦克风</string>
+    <string name="voice_overlay_notification_channel_desc">Hermes 语音浮层在其他应用上使用麦克风时，持续显示隐私和停止控制。</string>
+    <string name="voice_overlay_notification_title">Hermes 语音浮层已启用</string>
+    <string name="voice_overlay_notification_body">Hermes 显示在其他应用上时，将保持麦克风访问权限。</string>
+    <string name="voice_overlay_notification_stop">停止语音</string>
     <string name="voice_overlay_a11y">语音悬浮窗%1$s。点按可%2$s，双击可展开。</string>
     <string name="voice_overlay_mic_a11y">语音悬浮窗麦克风</string>
     <string name="chat_more_actions_a11y">更多操作</string>

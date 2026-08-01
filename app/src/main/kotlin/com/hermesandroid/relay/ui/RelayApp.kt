@@ -243,6 +243,16 @@ internal fun resolveFooterRouteCandidate(
     }
 }
 
+/**
+ * Conversation voice remains part of chat, so its persistent connection
+ * footer stays visible. Focus voice is the only presentation that suppresses
+ * the surrounding chat chrome.
+ */
+internal fun shouldShowConnectionFooter(
+    voiceMode: Boolean,
+    presentationMode: VoicePresentationMode,
+): Boolean = !voiceMode || presentationMode == VoicePresentationMode.Conversation
+
 sealed class Screen(
     val route: String,
     val label: String,
@@ -453,6 +463,7 @@ fun RelayApp() {
     val voiceClient: RelayVoiceClient = processRuntime.relayVoiceClient
     val voicePreferences = processRuntime.voicePreferences
     val voiceSettings by processRuntime.voiceSettings.collectAsState()
+    val voicePresentationMode = VoicePresentationMode.fromStorage(voiceSettings.presentationMode)
 
     // Composition-scoped coroutine scope for firing connection-store suspend
     // writes off of UI click handlers (rename/revoke/remove) —
@@ -1332,7 +1343,12 @@ fun RelayApp() {
             contentWindowInsets = WindowInsets(0),
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                if (!suppressGlobalChrome && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
+                if (
+                    !suppressGlobalChrome &&
+                    !isKeyboardVisible &&
+                    !showStartupSphere &&
+                    shouldShowConnectionFooter(voiceUiState.voiceMode, voicePresentationMode)
+                ) {
                     val footerRoute = resolveFooterRouteCandidate(
                         runtimeStatus = appChatRuntimeStatus,
                         activeEndpoint = activeEndpoint,
@@ -1539,9 +1555,7 @@ fun RelayApp() {
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
                         maxBubbleWidth = maxBubbleWidth,
-                        voicePresentationMode = VoicePresentationMode.fromStorage(
-                            voiceSettings.presentationMode,
-                        ),
+                        voicePresentationMode = voicePresentationMode,
                         onVoicePresentationModeChange = { mode ->
                             connectionSwitchScope.launch {
                                 voicePreferences.setPresentationMode(mode)

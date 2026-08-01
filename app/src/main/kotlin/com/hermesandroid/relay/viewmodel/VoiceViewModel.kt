@@ -2284,6 +2284,44 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         return bargeInReaderRelease
     }
 
+    /**
+     * Replays a completed chat response through the currently selected voice
+     * output. The UI exposes this only in idle Conversation mode, but the
+     * state checks remain here so non-UI callers cannot overlap a live turn.
+     */
+    fun speakResponse(text: String): Boolean {
+        val state = _uiState.value
+        if (
+            !state.voiceMode ||
+            state.state != VoiceState.Idle ||
+            providerRealtimeAgentTurnActive.get()
+        ) {
+            return false
+        }
+
+        val spoken = sanitizeForTts(text)
+        if (spoken.isBlank()) return false
+
+        realtimeAudioSuppressed = false
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Speaking,
+                outputAudioActive = false,
+                responseText = text,
+                error = null,
+            )
+        }
+        val queued = enqueueSentenceForTts(spoken, immediate = true)
+        if (!queued) {
+            _uiState.update {
+                it.copy(state = VoiceState.Idle, outputAudioActive = false)
+            }
+            return false
+        }
+        scheduleAgentAudioCompletionCheck()
+        return true
+    }
+
     fun clearError() {
         // Clear the message and, if we were parked in Error, return to Idle so a
         // dismissed (or retried) failure lands in a usable state rather than a

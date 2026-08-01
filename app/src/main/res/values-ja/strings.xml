@@ -131,6 +131,7 @@
 
     <!-- Chat screen UI chrome -->
     <string name="chat_share_conversation">会話を共有する</string>
+    <string name="chat_copy_session_id">セッション ID をコピー</string>
     <string name="chat_retry">リトライ</string>
     <string name="chat_dismiss">却下する</string>
     <string name="chat_open_settings">設定を開く</string>
@@ -2138,6 +2139,7 @@
     <string name="voice_overlay_focus">集中</string>
     <string name="voice_overlay_conversation">会話</string>
     <string name="voice_overlay_image_ready">画像の準備ができました</string>
+    <string name="voice_overlay_attachment_ready">添付ファイルの準備ができました</string>
     <string name="voice_overlay_rich_result_ready">リッチな結果の準備ができました</string>
     <string name="voice_overlay_rich_results_count">結果が%1$d件準備できました</string>
     <string name="voice_overlay_view_conversation">会話を表示</string>
@@ -2749,6 +2751,7 @@
     <string name="msg_bubble_copy">コピー</string>
     <string name="msg_bubble_quote">返信で引用</string>
     <string name="msg_bubble_edit">&amp; を編集して再送信</string>
+    <string name="msg_bubble_speak_response">応答を読み上げる</string>
     <string name="msg_bubble_reconnecting">回答への再接続&#8230;</string>
     <string name="msg_bubble_still_working">まだ働いています&#8230;</string>
     <string name="msg_bubble_sending">&#8230; を送信中</string>
@@ -2804,7 +2807,7 @@
     <string name="voice_overlay_provider_output_off">出力オフ</string>
     <string name="voice_overlay_provider_placeholder">プロバイダー ...</string>
     <string name="voice_overlay_engine_realtime">リアルタイムエージェント</string>
-    <string name="voice_overlay_engine_hermes">Hermesの声</string>
+    <string name="voice_overlay_engine_standard">標準モード</string>
     <string name="voice_overlay_engine_placeholder">音声エンジン ...</string>
 
     <!-- AppTheme labels + descriptions -->
@@ -3218,6 +3221,7 @@
     <string name="update_banner_subtitle_downloaded">ダウンロード済み — 再起動してインストールします</string>
     <string name="voice_overlay_caption_action">アクション</string>
     <string name="voice_overlay_caption_agent">エージェント</string>
+    <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_caption_you">あなた</string>
     <string name="voice_overlay_steps_many">%d歩</string>
     <string name="voice_overlay_steps_one">1ステップ</string>
@@ -3258,6 +3262,12 @@
     <string name="ncs_no_activity">まだトリガーアクティビティがありません。</string>
     <string name="ncs_confirmation_policy">確認ポリシー: ローカル プロンプトとローカル ログ書き込みは、オプトイン後に自動的に実行できます。メッセージの送信、別のアプリでの返信、ユーザーやチャネルへのコンテンツのルーティング、Bridge ジェスチャの使用、データの使用や変更には、依然として明示的なユーザー確認が必要です。</string>
     <string name="voice_overlay_exit_a11y">音声モードを終了する</string>
+    <string name="voice_overlay_open_hermes">Hermes を開く</string>
+    <string name="voice_overlay_notification_channel">音声オーバーレイのマイク</string>
+    <string name="voice_overlay_notification_channel_desc">Hermes の音声オーバーレイが他のアプリ上でマイクを使用できる間、プライバシーと停止の操作を常時表示します。</string>
+    <string name="voice_overlay_notification_title">Hermes 音声オーバーレイが有効です</string>
+    <string name="voice_overlay_notification_body">Hermes が他のアプリ上に表示されている間、マイクへのアクセスを維持します。</string>
+    <string name="voice_overlay_notification_stop">音声を停止</string>
     <string name="voice_overlay_a11y">音声オーバーレイ %1$s。 %2$s までタップし、ダブルタップして展開します。</string>
     <string name="voice_overlay_mic_a11y">音声オーバーレイマイク</string>
     <string name="chat_more_actions_a11y">さらなるアクション</string>

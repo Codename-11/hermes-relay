@@ -71,3 +71,84 @@ copying the mock's illustrative app chrome.
    device was locked after the corrected APK was installed.
 
 final result: blocked
+
+## Conversation voice dock
+
+- Reference: `C:\Users\Bailey\.codex\generated_images\019fba42-1e93-78e1-9cd6-6919fb52d5bc\exec-89feab69-9caf-4084-b107-6bff43e511d6.png`
+- Implementation captures:
+  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\implemented_conversation_final.png`
+  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\conversation_refined_expanded.png`
+  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\focus_final_expanded.png`
+- Combined comparison: `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\voice-dock-design-comparison-final.png`
+- Expanded before/after comparison: `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\voice-expanded-before-after.png`
+- Entry transition recording: `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\voice_entry_transition.mp4`
+- Entry transition frame sequence: `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\voice_entry_transition_frames.png`
+- Reference size: 853 x 1844 px
+- Device viewport: 1080 x 2340, portrait, Samsung SM-S938U
+- States reviewed: collapsed idle dock, expanded Tap-mode controls, collapsed and expanded Focus header, Focus-to-Conversation transition
+
+### Full comparison
+
+The implementation preserves the selected hierarchy inside the existing native
+chat screen: voice state and waveform at left, one centered stateful microphone,
+Focus and expansion at right, and the regular message composer immediately below.
+Runtime chat history and the app header intentionally remain live rather than
+copying the mockup's illustrative content.
+
+### Focused comparison
+
+- The conversation state no longer retains the focus-mode top session pill.
+- The dock and text composer share one rounded surface and one microphone owner.
+- The 52 dp mic remains the dominant action without obscuring model or reasoning controls.
+- Expanded Tap, Hold, Auto, route, profile, Overlay, Exit, and Settings controls open above the dock and remain readable without truncation.
+- Device review found the compact waveform painting beyond its assigned width and touching the Ready label. Compact bar geometry now fits a dedicated 40 dp lane with a visible gap before status text.
+- Expanded review found disconnected metadata pills and excess vertical space. Both modes now use one two-line voice-route summary with a compact secondary-action row.
+- Focus review found the animated avatar drawing above the expanded header and obscuring controls. The focus header now owns the foreground z-order, and its collapsed identity text is split into two readable lines.
+- Voice entry always starts in Conversation presentation, including when Focus was the persisted preference. The composer expands upward over 240 ms with a coordinated fade, the mic remains anchored, and device frame review found no Focus overlay flash or clipped controls.
+
+### Iteration history
+
+1. Installed the selected implementation and verified the Focus-to-Conversation transition on the connected phone.
+2. Captured collapsed and expanded conversation states at the production device viewport.
+3. Corrected the waveform/status collision identified during live review.
+4. Rebuilt, reinstalled, and captured the corrected idle and expanded states.
+5. Compared the reference and final device capture together at normalized dimensions.
+6. Compared the original and refined expanded Conversation and Focus states together; the final panels remove metadata fragmentation, header truncation, and avatar bleed-through.
+7. Recorded a persisted-Focus voice entry, inspected the 30 fps frame sequence, and verified that Conversation appears first through a continuous composer expansion before Focus is offered as an explicit action.
+8. Re-audited the installed Standard-mode drawer in both presentations. The final Conversation and Focus captures are:
+   - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit-standard\21-final-expanded.png`
+   - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit-standard\24-final-focus-expanded.png`
+   The route summary is now two clearly separated lines (`Standard mode · Victor` and `xAI TTS · Leo`), with duplicate provider/model aliases removed and configuration provenance left to Voice Settings.
+9. Verified the Conversation long-press menu on-device in `22-final-speak-menu.png`: completed assistant messages expose Copy, Quote in reply, and Speak response without stacking Android's text-selection toolbar over the app menu.
+10. Verified the connection footer remains present under the Conversation composer. Focus remains the only in-app voice presentation that hides it.
+11. Attachment-state unit coverage now distinguishes a real image from PDF/generic files, using Attachment ready as the non-image fallback.
+
+No open P0, P1, or P2 findings.
+
+final result: passed
+
+## System voice overlay redesign
+
+- Selected reference: `C:\Users\Bailey\.codex\generated_images\019fba42-1e93-78e1-9cd6-6919fb52d5bc\exec-6a606b04-58c3-4a6d-b11b-cd25f99a047d.png`
+- Source concepts:
+  - `C:\Users\Bailey\.codex\generated_images\019fba42-1e93-78e1-9cd6-6919fb52d5bc\exec-31a5512a-9cb7-455a-b111-d5797ab09e93.png`
+  - `C:\Users\Bailey\.codex\generated_images\019fba42-1e93-78e1-9cd6-6919fb52d5bc\exec-bbfd616e-3847-4a2e-bbd0-65deb5e4e98c.png`
+- Baseline captures:
+  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit-standard\29-current-overlay-expanded.png`
+  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit-standard\30-current-overlay-expanded.png`
+- Device viewport: 1080 x 2340, portrait, Samsung SM-S938U
+- States to review: collapsed system overlay and expanded system overlay over a non-Hermes app
+
+### Implemented direction
+
+- One stable rounded surface and header remain mounted in both states.
+- Only the expansion body clips and fades, using a short 160 ms reveal instead of animating the full card with a spring.
+- Waveform, transcript, response, route detail, and actions share one flat hierarchy separated only by hairlines.
+- Standard-mode route data uses readable labels and removes duplicate provider/model aliases.
+- Minimize, Hide, Open Hermes, microphone control, and Exit remain wired.
+
+### Pending visual QA
+
+Final same-viewport implementation captures and a combined reference/implementation comparison require user-positioned device states. UI review is intentionally user-driven.
+
+final result: blocked

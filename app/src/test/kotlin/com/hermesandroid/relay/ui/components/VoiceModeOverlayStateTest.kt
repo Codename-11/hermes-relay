@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.BackgroundRunState
@@ -19,6 +20,47 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class VoiceModeOverlayStateTest {
+
+    @Test
+    fun voiceRouteParts_deduplicatePunctuationAliases() {
+        assertEquals(
+            listOf("xai_tts", "leo"),
+            distinctVoiceRouteParts(listOf("xai_tts", "xai-tts", "leo")),
+        )
+        assertEquals("xAI TTS", voiceRouteDisplayLabel("xai_tts"))
+        assertEquals("Leo", voiceRouteDisplayLabel("leo"))
+    }
+
+    @Test
+    fun richResultLabel_identifiesOnlyActualImagesAsImages() {
+        val image = ChatMessage(
+            id = "image",
+            role = MessageRole.ASSISTANT,
+            content = "",
+            timestamp = 1L,
+            attachments = listOf(Attachment("image/png", "")),
+        )
+        val pdf = ChatMessage(
+            id = "pdf",
+            role = MessageRole.ASSISTANT,
+            content = "",
+            timestamp = 1L,
+            attachments = listOf(Attachment("application/pdf", "")),
+        )
+        val unknown = ChatMessage(
+            id = "unknown",
+            role = MessageRole.ASSISTANT,
+            content = "",
+            timestamp = 1L,
+            attachments = listOf(Attachment("application/octet-stream", "")),
+        )
+
+        assertEquals(true, voiceRichResultUsesImageLabel(image, inlineImageCount = 0))
+        assertEquals(true, voiceRichResultUsesImageLabel(image.copy(attachments = emptyList()), inlineImageCount = 1))
+        assertEquals(false, voiceRichResultUsesImageLabel(pdf, inlineImageCount = 0))
+        assertEquals(false, voiceRichResultUsesImageLabel(unknown, inlineImageCount = 0))
+        assertEquals(false, voiceRichResultUsesImageLabel(image, inlineImageCount = 1))
+    }
 
     @Test
     fun transcriptKeys_remainDistinctWhenRowsShareReconciledServerId() {

@@ -20,8 +20,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,7 +35,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -73,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
@@ -145,7 +147,6 @@ fun VoiceModeOverlay(
     voiceOutputModel: String? = null,
     voiceOutputVoice: String? = null,
     voiceProfileName: String? = null,
-    voiceConfigScope: String? = null,
     voiceOutputEnabled: Boolean? = null,
     voiceOutputFallbackEnabled: Boolean? = null,
     onOverlayRequest: () -> Unit = {},
@@ -212,34 +213,36 @@ fun VoiceModeOverlay(
                 }
             )
     ) {
-        VoiceSessionPill(
-            uiState = uiState,
-            expanded = controlsExpanded,
-            onExpandedChange = { controlsExpanded = it },
-            focusMode = focusMode,
-            onFocusModeChange = setFocusMode,
-            engineMode = voiceEngineMode,
-            provider = voiceOutputProvider,
-            model = voiceOutputModel,
-            voice = voiceOutputVoice,
-            profileName = voiceProfileName,
-            configScope = voiceConfigScope,
-            outputEnabled = voiceOutputEnabled,
-            fallbackEnabled = voiceOutputFallbackEnabled,
-            onModeChange = onModeChange,
-            onMicTap = onMicTap,
-            onMicRelease = onMicRelease,
-            onInterrupt = onInterrupt,
-            onPauseAutoMode = onPauseAutoMode,
-            onOverlayRequest = onOverlayRequest,
-            onOpenSettings = onOpenSettings,
-            onExit = onDismiss,
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .align(Alignment.TopCenter),
-        )
+        if (focusMode) {
+            VoiceSessionPill(
+                uiState = uiState,
+                expanded = controlsExpanded,
+                onExpandedChange = { controlsExpanded = it },
+                focusMode = true,
+                onFocusModeChange = setFocusMode,
+                engineMode = voiceEngineMode,
+                provider = voiceOutputProvider,
+                model = voiceOutputModel,
+                voice = voiceOutputVoice,
+                profileName = voiceProfileName,
+                outputEnabled = voiceOutputEnabled,
+                fallbackEnabled = voiceOutputFallbackEnabled,
+                onModeChange = onModeChange,
+                onMicTap = onMicTap,
+                onMicRelease = onMicRelease,
+                onInterrupt = onInterrupt,
+                onPauseAutoMode = onPauseAutoMode,
+                onOverlayRequest = onOverlayRequest,
+                onOpenSettings = onOpenSettings,
+                onExit = onDismiss,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .zIndex(2f)
+                    .align(Alignment.TopCenter),
+            )
+        }
 
         // Center column: sphere -> waveform -> scrolling transcript.
         //
@@ -476,7 +479,7 @@ fun VoiceModeOverlay(
             exit = fadeOut(tween(180)),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 120.dp, start = 24.dp, end = 24.dp),
+                .padding(bottom = 176.dp, start = 24.dp, end = 24.dp),
         ) {
             BackgroundRunChip(
                 run = uiState.backgroundRun,
@@ -736,14 +739,245 @@ internal fun pendingVoiceTranscriptText(
 
 internal fun voiceTranscriptItemKey(message: ChatMessage): String = message.uiKey
 
+/**
+ * Conversation-mode voice controls that live inside the chat composer.
+ *
+ * The full voice surface keeps its top session pill. Conversation mode instead
+ * shares one bottom input system with text chat: a stateful mic is the primary
+ * action, while focus mode and detailed route/mode controls remain secondary.
+ * This keeps chat readable and removes the duplicate top-level mic affordance.
+ */
 @Composable
-private fun InteractionMode.label(): String = when (this) {
-    InteractionMode.TapToTalk -> stringResource(R.string.voice_overlay_tap_to_talk)
-    InteractionMode.HoldToTalk -> stringResource(R.string.voice_overlay_hold_to_talk)
-    InteractionMode.Continuous -> stringResource(R.string.voice_overlay_continuous)
+fun ConversationVoiceDock(
+    uiState: VoiceUiState,
+    engineMode: String?,
+    provider: String?,
+    model: String?,
+    voice: String?,
+    profileName: String?,
+    outputEnabled: Boolean?,
+    onMicTap: () -> Unit,
+    onMicRelease: () -> Unit,
+    onInterrupt: () -> Unit,
+    onPauseAutoMode: () -> Unit,
+    onModeChange: (InteractionMode) -> Unit,
+    onFocusRequest: () -> Unit,
+    onOverlayRequest: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onExit: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val engineText = voiceEngineLabel(engineMode)
+    val providerText = voiceProviderLabel(provider, model, voice, outputEnabled)
+    val profileText = profileName?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.voice_overlay_default_profile)
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("conversationVoiceDock"),
+    ) {
+        AnimatedVisibility(visible = expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 10.dp, top = 8.dp, end = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    InteractionMode.values().forEach { mode ->
+                        VoiceControlChip(
+                            text = mode.shortLabel(),
+                            selected = uiState.interactionMode == mode,
+                            onClick = { onModeChange(mode) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                VoiceRouteSummary(
+                    engine = engineText,
+                    profile = profileText,
+                    provider = providerText,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextButton(
+                        onClick = onOverlayRequest,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.voice_overlay_overlay),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    TextButton(
+                        onClick = onExit,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.voice_overlay_exit),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            onExit()
+                            onOpenSettings()
+                        },
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = stringResource(R.string.voice_overlay_settings_cd),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f),
+                )
+            }
+        }
+
+        AnimatedVisibility(visible = uiState.handoffStatus != null) {
+            VoiceHandoffStrip(
+                status = uiState.handoffStatus,
+                compact = true,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(58.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val agentIconPath = LocalAgentIconPath.current
+                Surface(
+                    modifier = Modifier.size(24.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
+                ) {
+                    if (!agentIconPath.isNullOrBlank()) {
+                        AsyncImage(
+                            model = File(agentIconPath),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.clip(CircleShape),
+                        )
+                    } else {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.GraphicEq,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
+                }
+                VoiceWaveform(
+                    amplitude = uiState.amplitude,
+                    state = uiState.state,
+                    outputAudioActive = uiState.outputAudioActive,
+                    height = 26.dp,
+                    compactBars = true,
+                    modifier = Modifier.width(40.dp),
+                )
+                Text(
+                    text = conversationDockStateLabel(uiState.state),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            ConversationVoiceMicButton(
+                uiState = uiState,
+                onMicTap = onMicTap,
+                onMicRelease = onMicRelease,
+                onInterrupt = onInterrupt,
+                onPauseAutoMode = onPauseAutoMode,
+                baseSize = 52,
+                iconSize = 24,
+                modifier = Modifier.testTag("conversationVoiceDockMic"),
+            )
+
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(
+                    onClick = onFocusRequest,
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("conversationVoiceDockFocus"),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CenterFocusStrong,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = stringResource(R.string.voice_dock_focus),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("conversationVoiceDockExpand"),
+                ) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                        contentDescription = if (expanded) {
+                            stringResource(R.string.voice_overlay_collapse_cd)
+                        } else {
+                            stringResource(R.string.voice_overlay_expand_cd)
+                        },
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun conversationDockStateLabel(state: VoiceState): String = when (state) {
+    VoiceState.Idle -> stringResource(R.string.voice_overlay_state_ready)
+    VoiceState.Listening -> stringResource(R.string.voice_overlay_state_listening)
+    VoiceState.Transcribing -> stringResource(R.string.voice_overlay_state_transcribing)
+    VoiceState.Thinking -> stringResource(R.string.voice_overlay_state_thinking)
+    VoiceState.Speaking -> stringResource(R.string.voice_overlay_state_speaking)
+    VoiceState.Error -> stringResource(R.string.voice_overlay_state_error)
+}
+
 @Composable
 private fun VoiceSessionPill(
     uiState: VoiceUiState,
@@ -756,7 +990,6 @@ private fun VoiceSessionPill(
     model: String?,
     voice: String?,
     profileName: String?,
-    configScope: String?,
     outputEnabled: Boolean?,
     fallbackEnabled: Boolean?,
     onModeChange: (InteractionMode) -> Unit,
@@ -772,17 +1005,6 @@ private fun VoiceSessionPill(
     val engineText = voiceEngineLabel(engineMode)
     val providerText = voiceProviderLabel(provider, model, voice, outputEnabled)
     val profileText = profileName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.voice_overlay_default_profile)
-    val scopeText = when (configScope) {
-        "profile" -> stringResource(R.string.voice_overlay_profile_voice)
-        "relay" -> stringResource(R.string.voice_overlay_relay_voice)
-        "global" -> stringResource(R.string.voice_overlay_global_voice)
-        else -> null
-    }
-    val headlineText = if (focusMode) {
-        "$engineText / $profileText / $providerText"
-    } else {
-        "${stateHint(uiState.state).ifBlank { stringResource(R.string.voice_overlay_voice_ready) }} / $engineText / $providerText"
-    }
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(24.dp),
@@ -824,23 +1046,21 @@ private fun VoiceSessionPill(
                         modifier = Modifier.size(18.dp),
                     )
                 }
-                Text(
-                    text = stringResource(R.string.voice_overlay_voice),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                // Collapsed header trimmed to icon + "Voice" + a single
-                // weighted title + chevron + close so the top bar can never
-                // wrap on narrow screens. The status pill and inline mic
-                // control moved into the expanded body below.
-                Text(
-                    text = headlineText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.voice_overlay_voice),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = "$engineText · $profileText",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (!focusMode) {
                     ConversationVoiceMicButton(
                         uiState = uiState,
@@ -884,18 +1104,6 @@ private fun VoiceSessionPill(
                         .padding(top = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // The expanded body keeps the current interaction mode
-                    // visible; Conversation's persistent mic stays in the
-                    // collapsed header so it never disappears.
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        StatusPill(uiState.interactionMode.label())
-                        Spacer(Modifier.weight(1f))
-                    }
-
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -910,28 +1118,26 @@ private fun VoiceSessionPill(
                         }
                     }
 
-                    // Status pills use a FlowRow so they wrap to a second line
-                    // on narrow screens instead of being squeezed into equal
-                    // weighted columns that truncate every label (4a).
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        StatusPill(engineText, emphasized = true)
-                        StatusPill(profileText)
-                        scopeText?.let { StatusPill(it) }
-                        StatusPill(providerText)
-                    }
+                    VoiceRouteSummary(
+                        engine = engineText,
+                        profile = profileText,
+                        provider = providerText,
+                    )
+
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f),
+                    )
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         TextButton(
                             onClick = { onFocusModeChange(!focusMode) },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1.35f)
+                                .height(40.dp),
                         ) {
                             Text(
                                 if (focusMode) {
@@ -939,6 +1145,7 @@ private fun VoiceSessionPill(
                                 } else {
                                     stringResource(R.string.voice_overlay_focus)
                                 },
+                                style = MaterialTheme.typography.labelMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -948,15 +1155,29 @@ private fun VoiceSessionPill(
                                 onFocusModeChange(false)
                                 onOverlayRequest()
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(0.95f)
+                                .height(40.dp),
                         ) {
-                            Text(stringResource(R.string.voice_overlay_overlay), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                stringResource(R.string.voice_overlay_overlay),
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                         TextButton(
                             onClick = onExit,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(0.75f)
+                                .height(40.dp),
                         ) {
-                            Text(stringResource(R.string.voice_overlay_exit), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                stringResource(R.string.voice_overlay_exit),
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                         // Settings link (4c): exit voice mode before navigating
                         // so the overlay isn't left floating over the Voice
@@ -966,6 +1187,7 @@ private fun VoiceSessionPill(
                                 onExit()
                                 onOpenSettings()
                             },
+                            modifier = Modifier.size(40.dp),
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Settings,
@@ -987,6 +1209,9 @@ private fun ConversationVoiceMicButton(
     onMicRelease: () -> Unit,
     onInterrupt: () -> Unit,
     onPauseAutoMode: () -> Unit,
+    baseSize: Int = 40,
+    iconSize: Int = 20,
+    modifier: Modifier = Modifier,
 ) {
     VoiceMicButton(
         uiState = uiState,
@@ -1010,8 +1235,9 @@ private fun ConversationVoiceMicButton(
             )
         },
         onHoldRelease = onMicRelease,
-        baseSize = 40,
-        iconSize = 20,
+        baseSize = baseSize,
+        iconSize = iconSize,
+        modifier = modifier,
     )
 }
 
@@ -1097,37 +1323,49 @@ private fun VoiceControlChip(
 }
 
 @Composable
-private fun StatusPill(
-    text: String,
+private fun VoiceRouteSummary(
+    engine: String,
+    profile: String,
+    provider: String,
     modifier: Modifier = Modifier,
-    emphasized: Boolean = false,
 ) {
+    val providerLine = provider.replace(" / ", " · ")
     Surface(
-        modifier = modifier.height(24.dp),
-        shape = RoundedCornerShape(999.dp),
-        color = if (emphasized) {
-            // Opaque — translucent status bubbles over the floating overlay were
-            // hard to read against the sphere/chat behind them.
-            MaterialTheme.colorScheme.tertiaryContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant
-        },
-        contentColor = if (emphasized) {
-            MaterialTheme.colorScheme.onTertiaryContainer
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.padding(horizontal = 8.dp),
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Icon(
+                imageVector = Icons.Filled.GraphicEq,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
             )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = "$engine · $profile",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = providerLine,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -1206,13 +1444,37 @@ private fun voiceProviderLabel(
     val providerPart = provider?.takeIf { it.isNotBlank() } ?: stringResource(R.string.voice_overlay_provider_placeholder)
     val modelPart = model?.takeIf { it.isNotBlank() }
     val voicePart = voice?.takeIf { it.isNotBlank() }
-    return listOfNotNull(providerPart, modelPart, voicePart).joinToString(" / ")
+    return listOfNotNull(providerPart, modelPart, voicePart)
+        .let(::distinctVoiceRouteParts)
+        .map(::voiceRouteDisplayLabel)
+        .joinToString(" / ")
 }
+
+internal fun distinctVoiceRouteParts(parts: List<String>): List<String> =
+    parts.distinctBy { value ->
+        value.lowercase().filter(Char::isLetterOrDigit)
+    }
+
+internal fun voiceRouteDisplayLabel(value: String): String =
+    value
+        .split('_', '-')
+        .filter(String::isNotBlank)
+        .joinToString(" ") { token ->
+            when (token.lowercase()) {
+                "xai" -> "xAI"
+                "openai" -> "OpenAI"
+                "tts" -> "TTS"
+                "api" -> "API"
+                else -> token.replaceFirstChar { first ->
+                    if (first.isLowerCase()) first.titlecase() else first.toString()
+                }
+            }
+        }
 
 @Composable
 private fun voiceEngineLabel(engineMode: String?): String = when (engineMode) {
     "realtime_agent" -> stringResource(R.string.voice_overlay_engine_realtime)
-    "hermes_voice_output" -> stringResource(R.string.voice_overlay_engine_hermes)
+    "hermes_voice_output" -> stringResource(R.string.voice_overlay_engine_standard)
     null, "" -> stringResource(R.string.voice_overlay_engine_placeholder)
     else -> engineMode
         .replace('_', ' ')
@@ -1385,8 +1647,10 @@ private fun VoiceRichResultAffordance(
                 R.string.voice_overlay_rich_results_count,
                 message.attachments.size + inlineImages.size,
             )
-        message.attachments.isNotEmpty() || inlineImages.isNotEmpty() ->
+        voiceRichResultUsesImageLabel(message, inlineImages.size) ->
             stringResource(R.string.voice_overlay_image_ready)
+        message.attachments.isNotEmpty() ->
+            stringResource(R.string.voice_overlay_attachment_ready)
         else -> stringResource(R.string.voice_overlay_rich_result_ready)
     }
 
@@ -1413,7 +1677,11 @@ private fun VoiceRichResultAffordance(
                 )
             } else {
                 Icon(
-                    imageVector = Icons.Filled.Image,
+                    imageVector = if (voiceRichResultUsesImageLabel(message, inlineImages.size)) {
+                        Icons.Filled.Image
+                    } else {
+                        Icons.Filled.Description
+                    },
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp),
@@ -1432,6 +1700,19 @@ private fun VoiceRichResultAffordance(
             )
         }
     }
+}
+
+/**
+ * Image-specific copy is valid only when the single surfaced result is an
+ * actual image attachment or an inline image. Documents and unknown MIME types
+ * intentionally fall back to neutral attachment copy.
+ */
+internal fun voiceRichResultUsesImageLabel(
+    message: ChatMessage,
+    inlineImageCount: Int,
+): Boolean {
+    if (message.attachments.size + inlineImageCount != 1) return false
+    return inlineImageCount == 1 || message.attachments.singleOrNull()?.isImage == true
 }
 
 @Composable

@@ -117,6 +117,7 @@
     <string name="chat_attachment_placeholder">[anexo]</string>
     <!-- Chat screen UI chrome -->
     <string name="chat_share_conversation">Compartilhar conversa</string>
+    <string name="chat_copy_session_id">Copiar ID da sessão</string>
     <string name="chat_retry">Tentar novamente</string>
     <string name="chat_dismiss">Dispensar</string>
     <string name="chat_open_settings">Abrir Configurações</string>
@@ -2030,6 +2031,7 @@
     <string name="voice_overlay_focus">Foco</string>
     <string name="voice_overlay_conversation">Conversa</string>
     <string name="voice_overlay_image_ready">Imagem pronta</string>
+    <string name="voice_overlay_attachment_ready">Anexo pronto</string>
     <string name="voice_overlay_rich_result_ready">Resultado avançado pronto</string>
     <string name="voice_overlay_rich_results_count">%1$d resultados prontos</string>
     <string name="voice_overlay_view_conversation">Ver conversa</string>
@@ -2611,6 +2613,7 @@
     <string name="msg_bubble_copy">Copiar</string>
     <string name="msg_bubble_quote">Citar na resposta</string>
     <string name="msg_bubble_edit">Editar e reenviar</string>
+    <string name="msg_bubble_speak_response">Falar resposta</string>
     <string name="msg_bubble_reconnecting">Reconectando à sua resposta…</string>
     <string name="msg_bubble_still_working">Ainda trabalhando…</string>
     <string name="msg_bubble_sending">Enviando…</string>
@@ -2661,7 +2664,7 @@
     <string name="voice_overlay_provider_output_off">saída desativada</string>
     <string name="voice_overlay_provider_placeholder">provedor ...</string>
     <string name="voice_overlay_engine_realtime">Agente em tempo real</string>
-    <string name="voice_overlay_engine_hermes">Voz do Hermes</string>
+    <string name="voice_overlay_engine_standard">Modo padrão</string>
     <string name="voice_overlay_engine_placeholder">Mecanismo de voz ...</string>
     <!-- AppTheme labels + descriptions -->
     <string name="theme_hermes_relay">Hermes Relay</string>
@@ -3037,6 +3040,7 @@
     <string name="update_banner_subtitle_downloaded">Baixada — reinicie para instalar</string>
     <string name="voice_overlay_caption_action">Ação</string>
     <string name="voice_overlay_caption_agent">Agente</string>
+    <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_caption_you">Você</string>
     <string name="voice_overlay_steps_many">%d etapas</string>
     <string name="voice_overlay_steps_one">1 etapa</string>
@@ -3077,6 +3081,12 @@
     <string name="ncs_no_activity">Ainda não há atividade de gatilhos.</string>
     <string name="ncs_confirmation_policy">Política de confirmação: avisos locais e gravações no registro local podem ser executados automaticamente após a adesão. Qualquer ação que envie uma mensagem, responda em outro app, encaminhe conteúdo a uma pessoa ou canal, use gestos do Bridge, gaste ou altere dados ainda exige confirmação explícita do usuário.</string>
     <string name="voice_overlay_exit_a11y">Sair do modo de voz</string>
+    <string name="voice_overlay_open_hermes">Abrir Hermes</string>
+    <string name="voice_overlay_notification_channel">Microfone da sobreposição de voz</string>
+    <string name="voice_overlay_notification_channel_desc">Controles permanentes de privacidade e parada enquanto a sobreposição de voz do Hermes pode usar o microfone sobre outro app.</string>
+    <string name="voice_overlay_notification_title">Sobreposição de voz do Hermes ativa</string>
+    <string name="voice_overlay_notification_body">O acesso ao microfone permanece disponível enquanto o Hermes está sobre outro app.</string>
+    <string name="voice_overlay_notification_stop">Parar voz</string>
     <string name="voice_overlay_a11y">Sobreposição de voz %1$s. Toque para %2$s; toque duas vezes para expandir.</string>
     <string name="voice_overlay_mic_a11y">Microfone da sobreposição de voz</string>
     <string name="chat_more_actions_a11y">Mais ações</string>
