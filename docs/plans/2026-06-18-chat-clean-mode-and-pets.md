@@ -1,7 +1,7 @@
 # Clean mode, Sphere background, and floating pets — design record
 
 **Status:** Implemented; concept model revised 2026-07-31 for #267
-**Owner surface:** Android chat and Appearance settings
+**Owner surface:** Android app shell, Chat, Terminal, and Appearance settings
 
 ## Decision
 
@@ -30,13 +30,18 @@ Desktop and Codex while adapting it to a phone-sized viewport.
   release snaps to the nearest logical start/end edge and persists that edge plus
   a normalized vertical fraction. Pixel coordinates are not stored, so the home
   position remains meaningful after rotation, resizing, and RTL changes.
-- Autonomous roaming is separately opt-in and defaults off. Chat registers a
-  live measurement of the existing composer; its top edge is the only region
-  where the pet walks on its own, with no reserved layout spacer. Enabling
-  roaming docks onto that perch. Drag temporarily yields to the user, then an
-  off-perch drop uses `jumping` to settle before directional travel resumes;
+- Autonomous roaming is separately opt-in and defaults off. Screen owners
+  register a curated set of live-measured perches and obstacles; the host does
+  not scan arbitrary composables or accessibility nodes. Chat's composer and
+  Terminal's extra-keys toolbar are the initial perches, using their existing top
+  edges with no reserved spacer. Chat's scroll-to-bottom button and Terminal's
+  jump-to-latest pill register only while visible and trim or block the rail
+  segments they occupy.
+- Transitions between supported route perches, ledge hops, and off-perch drops
+  use `jumping` to settle onto a valid route-scoped perch. Horizontal movement on
+  a rail uses directional walking clips. Drag temporarily yields to the user;
   vertical accessibility moves pause roaming before applying free-form
-  placement. Other app screens show the pet docked.
+  placement. Screens with no registered perch show the pet docked.
 - Roaming runs only while Hermes is idle and the app is foregrounded. Thinking,
   streaming, tool work, errors, transcript scrolling, dragging, the pet menu,
   voice, clean/ambient mode, startup, and loss of a safe rail return it home or

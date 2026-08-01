@@ -197,6 +197,7 @@ import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
@@ -242,6 +243,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
+private const val CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE = "chat-scroll-to-bottom"
+private val CHAT_PET_ROUTES = setOf("chat")
 
 internal fun resolveChatHeaderSubtitle(
     isStreaming: Boolean,
@@ -836,12 +839,13 @@ fun ChatScreen(
     val petCompanionCoordinator = LocalPetCompanionCoordinator.current
     SideEffect {
         petCompanionCoordinator.publishSurface(
+            owner = "chat",
             scrolling = listState.isScrollInProgress,
             hidden = ambientMode,
         )
     }
     DisposableEffect(petCompanionCoordinator) {
-        onDispose { petCompanionCoordinator.clearSurface() }
+        onDispose { petCompanionCoordinator.clearSurface("chat") }
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -2690,6 +2694,10 @@ fun ChatScreen(
                         SmallFloatingActionButton(
                             modifier = Modifier
                                 .size(48.dp)
+                                .petObstacleSurface(
+                                    key = CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE,
+                                    routes = CHAT_PET_ROUTES,
+                                )
                                 .semantics {
                                     contentDescription = if (unreadMessageCount > 0) {
                                         "Scroll to bottom, $unreadMessageCount unread " +
@@ -3283,7 +3291,10 @@ fun ChatScreen(
                 // Measure the existing composer as a Desktop-style ledge. The
                 // floating host stands on its top edge; no transcript space is
                 // reserved and the composer controls remain unobstructed.
-                modifier = Modifier.petPerchSurface(CHAT_PET_WALK_REGION),
+                modifier = Modifier.petPerchSurface(
+                    key = CHAT_PET_WALK_REGION,
+                    routes = CHAT_PET_ROUTES,
+                ),
                 enabled = chatReady,
                 onModelPickerClick = { showModelSheet = true },
             )

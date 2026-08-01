@@ -1,10 +1,10 @@
 # Pet spec
 
-The floating pet is an optional companion shown above the Android chat
-composer. It is independent of both the active profile's identity image and the
-Sphere background visualization. You can side-load a still or animated bitmap
-frame-sequence / sprite atlas as a pet. This document is the authoring
-reference.
+The floating pet is an optional app-level Android companion that can stand and
+walk on supported screen surfaces. It is independent of both the active
+profile's identity image and the Sphere background visualization. You can
+side-load a still or animated bitmap frame-sequence / sprite atlas as a pet.
+This document is the authoring reference.
 
 > **See also** [`sphere-spec.md`](./sphere-spec.md) — the Sphere is an optional
 > background visualization with its own skin system. Choosing or hiding a pet
@@ -42,17 +42,24 @@ The companion has a durable home and an optional autonomous roaming mode:
   to rotation, resizing, and RTL layouts. **Reset position** restores the default
   end-edge home near the lower-right Chat area in left-to-right layouts (and
   mirrors correctly in right-to-left layouts).
-- **Walk around the interface** is opt-in and off by default. In the current
-  Android implementation, Chat measures the existing composer and uses its top
-  edge as a walkable perch. Enabling roaming docks the pet there; it does not
-  insert a spacer or reduce transcript space. A manual drag temporarily yields
-  the roam loop; when released off the perch, `jumping` settles the pet back and
-  directional travel resumes. TalkBack vertical moves intentionally pause
-  roaming before applying free-form placement. The pet remains docked on other
-  screens.
+- **Walk around the interface** is opt-in and off by default. Screen owners
+  explicitly register curated perches and obstacles using their live measured
+  bounds; the app does not scan arbitrary UI elements or treat the accessibility
+  tree as walkable geometry. The initial perches are Chat's composer and
+  Terminal's extra-keys toolbar. They use the controls' existing top edges, so
+  roaming inserts no spacer and reduces no content area.
+- Visible jump-to-latest controls are registered as temporary obstacles: Chat's
+  scroll-to-bottom button and Terminal's jump-to-latest pill trim the ledge into
+  pet-sized safe segments, or block it when no usable segment remains. When the
+  controls disappear, their measured obstacle is removed.
+- Transitions between supported route perches, hops between ledges, and a manual
+  drop away from a ledge use `jumping` to settle onto the nearest valid
+  route-scoped perch. Horizontal travel on one ledge uses the left/right walking
+  aliases. TalkBack vertical moves intentionally pause roaming before applying
+  free-form placement. On a route with no registered perch, the pet stays docked.
 - Only the pet-sized target consumes touch input; the root positioning layer is
   click-through. Registered UI bounds keep autonomous movement and drag
-  placement clear of composer controls while content may pass behind the overlay.
+  placement clear of curated controls while content may pass behind the overlay.
 - Roaming requires an idle agent, the foreground app, enabled animation, and an
   available safe rail. Agent activity, scrolling, dragging, an open pet menu,
   startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
@@ -310,7 +317,7 @@ what lights the **Tools** badge — no separate flag needed.
   the user sees *thinking* vs. *running a tool* vs. *writing*.
 - **Compatibility — optional clips:** `listening` and `speaking` remain valid
   manifest states for preview tooling and possible non-Android hosts, but the
-  current Android floating perch does not drive them.
+  current Android companion host does not drive them.
 - **Expressive — + reactions:** add one-shot `greet` and `done` clips (below) for
   personality on top of the sustained loops.
 

@@ -92,7 +92,6 @@ import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
-import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
 import com.hermesandroid.relay.ui.components.FloatingPetCompanion
 import com.hermesandroid.relay.ui.components.shouldCompactFloatingPet
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
@@ -2482,20 +2481,25 @@ fun RelayApp() {
         // walk strips; without one the pet remains docked at its persisted edge.
         // The host's empty full-screen area has no pointer input, so only the
         // 48/56dp pet target intercepts touches.
-        val petActivity = petCompanionCoordinator.activity
+        val petSurfaceOwner = when (currentRoute) {
+            Screen.Chat.route -> "chat"
+            Screen.Terminal.route -> "terminal"
+            else -> null
+        }
+        val petActivity = petCompanionCoordinator.activityFor(petSurfaceOwner)
         val showFloatingPet = activeFloatingPet != null &&
             !petActivity.hidden &&
             !suppressGlobalChrome &&
             !showStartupSphere &&
             !voiceUiState.voiceMode
         if (showFloatingPet) {
-            val onChatRoute = currentRoute == Screen.Chat.route
+            val roamingRoute = petSurfaceOwner
             FloatingPetCompanion(
                 pet = requireNotNull(activeFloatingPet),
                 state = petActivity.renderState,
                 placement = petPlacement,
                 roamingEnabled = petRoamingEnabled,
-                roamingAllowed = onChatRoute,
+                roamingAllowed = roamingRoute != null,
                 isScrolling = petActivity.scrolling,
                 compact = shouldCompactFloatingPet(
                     imeVisible = isKeyboardVisible,
@@ -2503,7 +2507,7 @@ fun RelayApp() {
                 ),
                 animationEnabled = animationEnabled,
                 appForeground = appIsForeground,
-                walkRegionKey = if (onChatRoute) CHAT_PET_WALK_REGION else null,
+                route = roamingRoute,
                 onPlacementChanged = connectionViewModel::setPetPlacement,
                 onRoamingEnabledChanged = connectionViewModel::setPetRoamingEnabled,
                 onResetPlacement = connectionViewModel::resetPetPlacement,
