@@ -21,13 +21,16 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.BufferedSink
 import okio.ByteString
 import java.io.File
 import java.io.IOException
+import java.io.OutputStream
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 
@@ -89,14 +92,15 @@ class StandardHermesVoiceClient(
         val httpUrl = "$baseUrl/api/audio/transcribe".toHttpUrlOrNull()
             ?: return@withContext Result.failure(IOException("Hermes dashboard URL is not a valid address: $baseUrl"))
 
-        val dataUrl = buildAudioDataUrl(audioFile)
-        val payload = buildJsonObject {
-            put("data_url", dataUrl)
-            put("mime_type", mediaTypeForAudioFile(audioFile))
-        }
+        val mimeType = mediaTypeForAudioFile(audioFile)
         val request = Request.Builder()
             .url(httpUrl)
-            .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
+            // Stream the file through Base64 directly into OkHttp's sink. Building
+            // a JsonObject first retained the file bytes, a Base64 String, the JSON
+            // serializer's growing char buffer, and the final request bytes at the
+            // same time. A near-limit recording could therefore exhaust Android's
+            // 256 MB heap before the request reached the network (#271).
+            .post(standardHermesTranscriptionRequestBody(audioFile, mimeType))
             .header("Accept", "application/json")
             .build()
 
@@ -244,12 +248,6 @@ class StandardHermesVoiceClient(
         return IOException(message)
     }
 
-    private fun buildAudioDataUrl(audioFile: File): String {
-        val mimeType = mediaTypeForAudioFile(audioFile)
-        val encoded = Base64.getEncoder().encodeToString(audioFile.readBytes())
-        return "data:$mimeType;base64,$encoded"
-    }
-
     private fun mediaTypeForAudioFile(file: File): String =
         when (file.extension.lowercase()) {
             "wav" -> "audio/wav"
@@ -292,6 +290,58 @@ class StandardHermesVoiceClient(
         // dashboard rejects decoded transcription audio above 25 MB with 413.
         const val MAX_TRANSCRIBE_BYTES = 25L * 1024 * 1024
     }
+}
+
+/**
+ * JSON request body for upstream `/api/audio/transcribe`.
+ *
+ * The endpoint requires a Base64 data URL inside JSON rather than multipart
+ * upload. Encoding into [BufferedSink] keeps peak memory bounded by the copy
+ * buffer instead of materializing several 33+ MB representations at once.
+ */
+internal fun standardHermesTranscriptionRequestBody(
+    audioFile: File,
+    mimeType: String,
+): RequestBody {
+    val prefix = "{\"data_url\":\"data:$mimeType;base64,"
+    val suffix = "\",\"mime_type\":\"$mimeType\"}"
+    val contentType = "application/json".toMediaType()
+    val fileLength = audioFile.length()
+    val encodedLength = ((fileLength + 2L) / 3L) * 4L
+    val bodyLength = prefix.toByteArray(Charsets.UTF_8).size.toLong() +
+        encodedLength +
+        suffix.toByteArray(Charsets.UTF_8).size.toLong()
+
+    return object : RequestBody() {
+        override fun contentType() = contentType
+
+        override fun contentLength(): Long = bodyLength
+
+        override fun writeTo(sink: BufferedSink) {
+            sink.writeUtf8(prefix)
+            Base64.getEncoder().wrap(NonClosingSinkOutputStream(sink)).use { encoded ->
+                audioFile.inputStream().use { input ->
+                    input.copyTo(encoded)
+                }
+            }
+            sink.writeUtf8(suffix)
+        }
+    }
+}
+
+/** Lets the Base64 encoder finish padding without closing OkHttp's request sink. */
+private class NonClosingSinkOutputStream(
+    private val sink: BufferedSink,
+) : OutputStream() {
+    override fun write(value: Int) {
+        sink.writeByte(value)
+    }
+
+    override fun write(bytes: ByteArray, offset: Int, length: Int) {
+        sink.write(bytes, offset, length)
+    }
+
+    override fun close() = Unit
 }
 
 private class StandardHermesSpeechStream(
