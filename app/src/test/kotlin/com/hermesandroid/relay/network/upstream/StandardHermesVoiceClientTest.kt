@@ -5,6 +5,9 @@ import com.hermesandroid.relay.network.shared.VoiceSpeechStreamCallbacks
 import com.hermesandroid.relay.network.shared.VoiceSpeechStreamStatus
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
@@ -12,6 +15,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okio.Buffer
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.junit.After
@@ -20,6 +24,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -71,6 +76,30 @@ class StandardHermesVoiceClientTest {
         assertEquals("research", speak?.queryParameter("profile"))
         assertEquals("/api/audio/transcribe", transcribe?.encodedPath)
         assertEquals("research", transcribe?.queryParameter("profile"))
+    }
+
+    @Test
+    fun transcriptionRequestBodyStreamsExactUpstreamJson() {
+        val audio = File.createTempFile("standard-hermes-transcription", ".wav")
+        try {
+            val bytes = byteArrayOf(0, 1, 2, 3, 4, 5, 0x7f)
+            audio.writeBytes(bytes)
+            val requestBody = standardHermesTranscriptionRequestBody(audio, "audio/wav")
+            val sink = Buffer()
+
+            requestBody.writeTo(sink)
+            val bodyBytes = sink.readByteArray()
+            val payload = Json.parseToJsonElement(bodyBytes.decodeToString()).jsonObject
+
+            assertEquals(requestBody.contentLength(), bodyBytes.size.toLong())
+            assertEquals("audio/wav", payload.getValue("mime_type").jsonPrimitive.content)
+            assertEquals(
+                "data:audio/wav;base64,AAECAwQFfw==",
+                payload.getValue("data_url").jsonPrimitive.content,
+            )
+        } finally {
+            audio.delete()
+        }
     }
 
     @Test

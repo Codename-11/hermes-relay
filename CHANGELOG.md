@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Hermes appears and activates in OEM Android assistant pickers.** The app now advertises the standard Assist and Voice activity categories plus required recognition-service metadata alongside its voice-interaction service, while routing invocation through the existing single-microphone assistant lifecycle.
 - **Experimental Android wake detection follows sherpa’s completed-result contract.** Decoder confirmation now maps to sherpa’s trailing-blank setting, completed keyword streams reset immediately, Voice settings can run a real local microphone/model test, and an empty post-wake transcript returns to ready state instead of presenting a fatal server error.
 - **Voice transcripts retain stable rows after chat-history reconciliation.** Focus mode uses the same stable Compose identity as the main conversation, preventing duplicate-key crashes when live rows adopt persisted server IDs.
+- **Long Standard Voice recordings no longer exhaust Android memory before upload.** Transcription requests stream Base64 audio into the Dashboard request instead of retaining multiple full-size encoded copies in the app heap.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
 ## [Android 1.5.2] - 2026-07-28
