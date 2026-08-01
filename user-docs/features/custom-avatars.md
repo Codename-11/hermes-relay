@@ -122,12 +122,17 @@ normal Hermes Relay screens.
   edge and remembers a proportional vertical position across rotation, resizing,
   relaunches, and RTL layouts.
 - Turn on **Walk around the interface** to let it roam while Hermes is idle. This
-  is off by default and docks the pet onto the measured top edge of Chat's
-  existing composer. The pet is a true overlay—no blank strip or transcript
-  space is added—and avoids the composer controls. A long-hold drag temporarily
-  yields roaming; release it off the perch and its `jumping` animation settles
-  it back before left/right travel resumes. TalkBack up/down actions pause
-  roaming and keep the new free-form position. On other screens the pet stays docked.
+  is off by default. The first supported ledges are the measured top edges of
+  Chat's composer and Terminal's extra-keys bar. Hermes Relay uses only these
+  deliberately supported controls—it does not scan every button or text field—
+  and adds no blank strip or lost content space.
+- When Chat's scroll-to-bottom button or Terminal's jump-to-latest pill is
+  visible, the pet shortens or leaves that part of the ledge clear. Moves between
+  supported screen perches, ledge hops, and a drop away from a ledge use its jump
+  animation to settle onto the next safe perch; left/right travel along a ledge
+  uses directional walking. TalkBack up/down actions pause roaming and keep the
+  new free-form position. On a screen without a supported ledge, the pet stays
+  docked.
 - Use the pet menu to pause roaming, reset position, open Appearance, or hide it.
   TalkBack offers move-to-start/end, move-up/down, and reset actions so dragging
   is never required.

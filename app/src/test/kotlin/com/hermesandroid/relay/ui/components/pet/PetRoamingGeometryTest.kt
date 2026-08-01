@@ -153,6 +153,47 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `perch obstacles trim only the occupied rail segment`() {
+        val outer = PetSafeBounds(0f, 0f, 300f, 300f)
+        val footprint = PetFootprint(width = 40f, height = 40f)
+        val perch = PetMeasuredPerch(
+            key = "composer",
+            bounds = PetObstacle(0f, 200f, 300f, 260f),
+        )
+        val obstacle = PetMeasuredObstacle(
+            key = "jump-latest",
+            bounds = PetObstacle(230f, 140f, 280f, 195f),
+        )
+
+        assertEquals(
+            listOf(PetSafeBounds(20f, 180f, 210f, 180f)),
+            petPerchSegments(perch, listOf(obstacle), footprint, outer),
+        )
+    }
+
+    @Test
+    fun `perch obstacle can split one ledge into two reachable rails`() {
+        val outer = PetSafeBounds(0f, 0f, 300f, 300f)
+        val footprint = PetFootprint(width = 40f, height = 40f)
+        val perch = PetMeasuredPerch(
+            key = "toolbar",
+            bounds = PetObstacle(0f, 200f, 300f, 260f),
+        )
+        val obstacle = PetMeasuredObstacle(
+            key = "center-pill",
+            bounds = PetObstacle(125f, 150f, 175f, 195f),
+        )
+
+        assertEquals(
+            listOf(
+                PetSafeBounds(20f, 180f, 105f, 180f),
+                PetSafeBounds(195f, 180f, 280f, 180f),
+            ),
+            petPerchSegments(perch, listOf(obstacle), footprint, outer),
+        )
+    }
+
+    @Test
     fun `overlay route detours around registered control instead of crossing it`() {
         val safe = PetSafeBounds(20f, 20f, 180f, 180f)
         val rawControl = PetObstacle(80f, 60f, 120f, 140f)
@@ -218,4 +259,31 @@ class PetRoamingGeometryTest {
             assertFalse(pathIntersectsObstacle(start, end, expanded))
         }
     }
+
+    @Test
+    fun `route templates are query safe and support path arguments`() {
+        assertTrue(petRouteMatches("chat", "chat?openAgentSheet=true"))
+        assertTrue(petRouteMatches("profile/{name}", "profile/default?section=soul"))
+        assertFalse(petRouteMatches("profile/{name}", "profile/default/soul"))
+        assertFalse(petRouteMatches("chat", "settings"))
+    }
+
+    @Test
+    fun `perch rail fits footprint and support follows top edge`() {
+        val perch = PetMeasuredPerch(
+            key = "toolbar",
+            bounds = PetObstacle(10f, 160f, 190f, 200f),
+        )
+        val footprint = PetFootprint(width = 40f, height = 56f, clearance = 4f)
+        val outer = PetSafeBounds(20f, 20f, 180f, 200f)
+
+        assertEquals(
+            PetSafeBounds(34f, 132f, 166f, 132f),
+            petPerchRail(perch, footprint, outer),
+        )
+        assertTrue(isPetSupportedByPerch(PetPoint(100f, 132f), perch, footprint))
+        assertFalse(isPetSupportedByPerch(PetPoint(100f, 129f), perch, footprint))
+        assertFalse(isPetSupportedByPerch(PetPoint(15f, 132f), perch, footprint))
+    }
+
 }

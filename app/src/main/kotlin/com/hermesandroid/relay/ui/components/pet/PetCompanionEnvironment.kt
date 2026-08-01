@@ -24,21 +24,33 @@ data class PetCompanionActivity(
 
 @Stable
 class PetCompanionCoordinator {
-    var activity by mutableStateOf(PetCompanionActivity())
-        private set
+    private var renderState by mutableStateOf(AvatarRenderState(SphereState.Idle))
+    private val surfaces = mutableStateMapOf<String, PetCompanionSurface>()
 
     fun publishRenderState(renderState: AvatarRenderState) {
-        activity = activity.copy(renderState = renderState)
+        this.renderState = renderState
     }
 
-    fun publishSurface(scrolling: Boolean, hidden: Boolean) {
-        activity = activity.copy(scrolling = scrolling, hidden = hidden)
+    fun publishSurface(owner: String, scrolling: Boolean, hidden: Boolean) {
+        require(owner.isNotBlank()) { "Pet surface owner must not be blank." }
+        surfaces[owner] = PetCompanionSurface(scrolling, hidden)
     }
 
-    fun clearSurface() {
-        activity = activity.copy(scrolling = false, hidden = false)
+    fun clearSurface(owner: String) {
+        surfaces.remove(owner)
+    }
+
+    fun activityFor(owner: String?): PetCompanionActivity {
+        val surface = owner?.let(surfaces::get)
+        return PetCompanionActivity(
+            renderState = renderState,
+            scrolling = surface?.scrolling == true,
+            hidden = surface?.hidden == true,
+        )
     }
 }
+
+private data class PetCompanionSurface(val scrolling: Boolean, val hidden: Boolean)
 
 val LocalPetCompanionCoordinator = staticCompositionLocalOf { PetCompanionCoordinator() }
 
@@ -49,26 +61,90 @@ val LocalPetCompanionCoordinator = staticCompositionLocalOf { PetCompanionCoordi
  */
 @Stable
 class PetSafeAreaRegistry {
+    // Compatibility view consumed by the current single-rail host.
     internal val walkRegions = mutableStateMapOf<String, Rect>()
+    private val perchRegions = mutableStateMapOf<String, PetMeasuredPerch>()
+    private val obstacleRegions = mutableStateMapOf<String, PetMeasuredObstacle>()
 
     internal fun updateWalkRegion(key: String, bounds: Rect) {
+        updatePerch(key, bounds, PetRouteScope())
+    }
+
+    internal fun updatePerch(key: String, bounds: Rect, routeScope: PetRouteScope) {
         walkRegions[key] = bounds
+        perchRegions[key] = PetMeasuredPerch(key, bounds.toPetObstacle(), routeScope)
     }
 
     internal fun removeWalkRegion(key: String) {
+        removePerch(key)
+    }
+
+    internal fun removePerch(key: String) {
         walkRegions.remove(key)
+        perchRegions.remove(key)
+    }
+
+    internal fun updateObstacle(key: String, bounds: Rect, routeScope: PetRouteScope) {
+        obstacleRegions[key] = PetMeasuredObstacle(key, bounds.toPetObstacle(), routeScope)
+    }
+
+    internal fun removeObstacle(key: String) {
+        obstacleRegions.remove(key)
+    }
+
+    /** Immutable, deterministic view containing only surfaces valid for [route]. */
+    fun snapshot(route: String?): PetSafeAreaSnapshot = PetSafeAreaSnapshot(
+        route = route,
+        perches = perchRegions.values
+            .filter { it.routeScope.includes(route) }
+            .sortedBy { it.key },
+        obstacles = obstacleRegions.values
+            .filter { it.routeScope.includes(route) }
+            .sortedBy { it.key },
+    )
+
+    private fun Rect.toPetObstacle(): PetObstacle = PetObstacle(left, top, right, bottom)
+}
+
+private fun Set<String>.toPetRouteScope(): PetRouteScope = PetRouteScope(toSet())
+
+private fun Modifier.measuredPetSurface(
+    key: String,
+    routes: Set<String>,
+    update: PetSafeAreaRegistry.(String, Rect, PetRouteScope) -> Unit,
+    remove: PetSafeAreaRegistry.(String) -> Unit,
+): Modifier = composed {
+    require(key.isNotBlank()) { "Pet surface key must not be blank." }
+    val registry = LocalPetSafeAreaRegistry.current
+    val routeScope = routes.toPetRouteScope()
+    DisposableEffect(registry, key, routeScope) {
+        onDispose { remove.invoke(registry, key) }
+    }
+    onGloballyPositioned { coordinates ->
+        update.invoke(registry, key, coordinates.boundsInRoot(), routeScope)
     }
 }
 
 val LocalPetSafeAreaRegistry = staticCompositionLocalOf { PetSafeAreaRegistry() }
 
 /** Register an existing UI element whose top edge is a safe pet perch. */
-fun Modifier.petPerchSurface(key: String): Modifier = composed {
-    val registry = LocalPetSafeAreaRegistry.current
-    DisposableEffect(registry, key) {
-        onDispose { registry.removeWalkRegion(key) }
-    }
-    onGloballyPositioned { coordinates ->
-        registry.updateWalkRegion(key, coordinates.boundsInRoot())
-    }
-}
+fun Modifier.petPerchSurface(
+    key: String,
+    routes: Set<String> = emptySet(),
+): Modifier = measuredPetSurface(
+    key = key,
+    routes = routes,
+    update = PetSafeAreaRegistry::updatePerch,
+    remove = PetSafeAreaRegistry::removePerch,
+)
+
+/** Register an existing UI element as a collision obstacle. */
+fun Modifier.petObstacleSurface(
+    key: String,
+    routes: Set<String> = emptySet(),
+): Modifier = measuredPetSurface(
+    key = key,
+    routes = routes,
+    update = PetSafeAreaRegistry::updateObstacle,
+    remove = PetSafeAreaRegistry::removeObstacle,
+)

@@ -189,6 +189,134 @@ data class PetObstacle(
     }
 }
 
+/**
+ * Route scope for a measured pet surface. An empty set is app-wide. Route
+ * templates may use a whole-segment `{argument}` placeholder and query strings
+ * are ignored, matching Navigation Compose destination templates.
+ */
+data class PetRouteScope(val routes: Set<String> = emptySet()) {
+    val isGlobal: Boolean get() = routes.isEmpty()
+
+    fun includes(route: String?): Boolean =
+        isGlobal || (route != null && routes.any { template -> petRouteMatches(template, route) })
+}
+
+/** Immutable, named UI ledge measured in root coordinates. */
+data class PetMeasuredPerch(
+    val key: String,
+    val bounds: PetObstacle,
+    val routeScope: PetRouteScope = PetRouteScope(),
+) {
+    init {
+        require(key.isNotBlank()) { "Perch key must not be blank." }
+    }
+}
+
+/** Immutable, named UI obstacle measured in root coordinates. */
+data class PetMeasuredObstacle(
+    val key: String,
+    val bounds: PetObstacle,
+    val routeScope: PetRouteScope = PetRouteScope(),
+) {
+    init {
+        require(key.isNotBlank()) { "Obstacle key must not be blank." }
+    }
+}
+
+/** Route-filtered registry view. It cannot leak stale surfaces from another destination. */
+data class PetSafeAreaSnapshot(
+    val route: String?,
+    val perches: List<PetMeasuredPerch>,
+    val obstacles: List<PetMeasuredObstacle>,
+)
+
+/** Pure Navigation-style route matching used by registry snapshots. */
+fun petRouteMatches(template: String, actual: String): Boolean {
+    fun segments(value: String): List<String> = value
+        .substringBefore('?')
+        .trim()
+        .trim('/')
+        .takeIf(String::isNotEmpty)
+        ?.split('/')
+        .orEmpty()
+
+    val expected = segments(template)
+    val observed = segments(actual)
+    if (expected.size != observed.size) return false
+    return expected.zip(observed).all { (left, right) ->
+        (left.startsWith('{') && left.endsWith('}') && left.length > 2) || left == right
+    }
+}
+
+/** Center-coordinate rail that stands the pet on the measured surface's top edge. */
+fun petPerchRail(
+    perch: PetMeasuredPerch,
+    footprint: PetFootprint,
+    outer: PetSafeBounds,
+): PetSafeBounds? {
+    val left = (perch.bounds.left + footprint.horizontalRadius).coerceIn(outer.left, outer.right)
+    val right = (perch.bounds.right - footprint.horizontalRadius).coerceIn(outer.left, outer.right)
+    if (right < left) return null
+    val centerY = (perch.bounds.top - footprint.height / 2f).coerceIn(outer.top, outer.bottom)
+    return PetSafeBounds(left, centerY, right, centerY)
+}
+
+/** Whether the pet's bottom edge is resting on this curated ledge. */
+fun isPetSupportedByPerch(
+    center: PetPoint,
+    perch: PetMeasuredPerch,
+    footprint: PetFootprint,
+    tolerance: Float = 1f,
+): Boolean {
+    require(tolerance >= 0f && tolerance.isFinite()) { "Support tolerance must be finite and non-negative." }
+    val supportedY = perch.bounds.top - footprint.height / 2f
+    val minimumX = perch.bounds.left + footprint.width / 2f
+    val maximumX = perch.bounds.right - footprint.width / 2f
+    return maximumX >= minimumX &&
+        center.x in (minimumX - tolerance)..(maximumX + tolerance) &&
+        abs(center.y - supportedY) <= tolerance
+}
+
+/**
+ * Split a measured perch into collision-free horizontal rails. Obstacles are
+ * expanded by the pet footprint first, so a transient control trims only the
+ * portion of a ledge it actually occupies instead of disabling the whole page.
+ */
+fun petPerchSegments(
+    perch: PetMeasuredPerch,
+    obstacles: Iterable<PetMeasuredObstacle>,
+    footprint: PetFootprint,
+    outer: PetSafeBounds,
+    minimumWidth: Float = 1f,
+): List<PetSafeBounds> {
+    require(minimumWidth >= 0f && minimumWidth.isFinite()) {
+        "Minimum perch width must be finite and non-negative."
+    }
+    val rail = petPerchRail(perch, footprint, outer) ?: return emptyList()
+    var intervals = listOf(rail.left to rail.right)
+    obstacles.asSequence()
+        .map { it.bounds.expanded(footprint.horizontalRadius, footprint.verticalRadius) }
+        .filter { rail.top in it.top..it.bottom }
+        .sortedWith(compareBy<PetObstacle> { it.left }.thenBy { it.right })
+        .forEach { obstacle ->
+            intervals = intervals.flatMap { (left, right) ->
+                if (obstacle.right <= left || obstacle.left >= right) {
+                    listOf(left to right)
+                } else {
+                    buildList {
+                        val before = obstacle.left.coerceIn(left, right)
+                        val after = obstacle.right.coerceIn(left, right)
+                        if (before - left >= minimumWidth) add(left to before)
+                        if (right - after >= minimumWidth) add(after to right)
+                    }
+                }
+            }
+        }
+    return intervals
+        .filter { (left, right) -> right - left >= minimumWidth }
+        .map { (left, right) -> PetSafeBounds(left, rail.top, right, rail.top) }
+}
+
 /** Raw measured UI bounds expanded into forbidden pet-center coordinates. */
 fun expandObstaclesForPet(
     obstacles: Iterable<PetObstacle>,
