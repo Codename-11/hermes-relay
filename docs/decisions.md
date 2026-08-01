@@ -1120,17 +1120,25 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
   over a higher one. Reachability is only the tiebreaker for candidates
   that share the same priority. This is the DNS SRV priority/weight
   contract — known-good semantics, nothing new to debate.
-- **Reachability probe**: `HEAD` against `${api.tls?https:http}://
-  ${api.host}:${api.port}/health` with a 2-second timeout. The result is
-  cached for 30 seconds per-endpoint so repeated `connect()` calls don't
-  hammer the network. Relay-side reachability is implied — if the API
-  server is reachable the relay usually is too, and the first WSS connect
-  will loudly fail otherwise.
+- **Reachability probes are per surface.** Standard routing probes Dashboard
+  `/api/status` when present, otherwise an explicitly configured API `/health`,
+  with Relay `/health` used only for Relay-only records. Relay socket selection probes the
+  candidate's own Relay `/health`; a healthy Dashboard or API listener never
+  vouches for Relay on another port. Results are cached independently by
+  candidate and surface, so a Relay outage cannot poison healthy standard chat,
+  Manage, sessions, or Vanilla Hermes voice.
 - **Network-change re-probe**: Android's `ConnectivityManager
   .NetworkCallback.onAvailable` / `onLost` triggers a re-probe. If a
   higher-priority candidate became reachable after a network transition,
   the phone reconnects to it; if the current one became unreachable, the
   phone falls through to the next candidate in priority order.
+- **Relay retry state is route-aware.** Transport-failure streaks are scoped to
+  the Relay socket URL, so one LAN failure plus one Tailscale failure cannot
+  evict Tailscale as though it had failed twice. Automatic route replacement
+  preserves the accumulated exponential-backoff attempt; explicit user/network
+  handoff and a successful socket open reset it. If every Relay surface is
+  unavailable, the standard route remains stable while Relay retries the last
+  configured socket with bounded backoff.
 - **TTL defaults by role** (informational — operator can override at
   pair time): `lan` → 7 days, `tailscale` → 30 days, `public` → 30 days,
   unknown role → 7 days (conservative). The longer `tailscale` default

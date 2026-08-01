@@ -16,6 +16,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.relay.models.Envelope
 import com.hermesandroid.relay.network.shared.EndpointResolver
+import com.hermesandroid.relay.network.shared.EndpointSurface
 import com.hermesandroid.relay.network.shutdownOffMainThread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -161,7 +162,7 @@ class ConnectionManager(
 
     @Volatile
     private var serverUrl: String? = null
-    private var reconnectAttempt = 0
+    private val reconnectState = RelayReconnectState()
     private var shouldReconnect = true
     // Last HTTP status seen during WSS upgrade, captured in onFailure.
     // Used by scheduleReconnect() to pick an appropriate backoff — notably
@@ -169,14 +170,6 @@ class ConnectionManager(
     // we don't re-fill the ban bucket and brick our own auth window.
     @Volatile
     private var lastUpgradeResponseCode: Int? = null
-
-    // Consecutive relay socket failures (response == null) since the last
-    // successful onOpen. One slow Tailscale/DERP cold-start handshake must not
-    // immediately evict the active route from the SHARED resolver cache (chat +
-    // dashboard ride the same resolver), so we only poison the route after a
-    // couple of consecutive transport-level failures.
-    @Volatile
-    private var consecutiveSocketFailures = 0
 
     // The relay requires the FIRST frame on a socket to be `system/auth` and
     // rejects the whole connection otherwise ("expected system/auth, got
@@ -205,6 +198,10 @@ class ConnectionManager(
     // Endpoints card in Settings.
     private val _activeEndpoint = MutableStateFlow<EndpointCandidate?>(null)
     val activeEndpoint: StateFlow<EndpointCandidate?> = _activeEndpoint.asStateFlow()
+
+    /** Relay-only winner, deliberately separate from the standard route. */
+    @Volatile
+    private var activeRelayEndpoint: EndpointCandidate? = null
 
     /**
      * Manual role override. When non-null, the resolver's output is replaced
@@ -262,9 +259,9 @@ class ConnectionManager(
         private const val TAG = "ConnectionManager"
         private const val MAX_BACKOFF_MS = 30_000L
         private const val BASE_BACKOFF_MS = 1_000L
-        // How many consecutive relay socket failures before we mark the active
-        // endpoint unreachable in the shared resolver cache. Tolerates a single
-        // cold-start blip on a slow remote (Tailscale DERP) link.
+        // How many consecutive failures on one relay socket URL before we mark
+        // that candidate's Relay surface unreachable. Standard Dashboard/API
+        // reachability is cached independently and remains healthy.
         private const val MARK_UNREACHABLE_AFTER_FAILURES = 2
         // Settle window before re-resolving after a network event. Long
         // enough to coalesce the onAvailable burst of a handoff, short
@@ -325,17 +322,19 @@ class ConnectionManager(
         // behavior for freshly-upgraded installs and for v1/v2 QRs where
         // the synthesized list just collapses to the same URL anyway.
         scope.launch {
-            val resolved = resolveBestEndpointSafe()
-            val resolvedRelayUrl = resolved?.relay?.url?.takeIf { it.isNotBlank() }
+            val resolved = resolveBestEndpointSafe(EndpointSurface.Standard)
+            val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+            val resolvedRelayUrl = relayResolved?.relay?.url?.takeIf { it.isNotBlank() }
             val targetUrl = resolvedRelayUrl ?: url.takeIf { it.isNotBlank() }
+            activeRelayEndpoint = relayResolved
             if (resolved != null) {
                 _activeEndpoint.value = resolved
-                Log.i(TAG, "connect: resolver picked role=${resolved.role} " +
-                    "route=${resolved.primaryRouteUrl()} (relay fallback would have been $url)")
+                Log.i(TAG, "connect: standard resolver picked role=${resolved.role} " +
+                    "route=${resolved.primaryRouteUrl()}")
                 DiagnosticsLog.record(
-                    category = DiagnosticCategory.Relay,
+                    category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Info,
-                    title = context?.getString(R.string.conn_diag_route_selected) ?: "Relay route selected",
+                    title = context?.getString(R.string.conn_diag_route_selected) ?: "Route selected",
                     endpointRole = resolved.role,
                     url = resolved.primaryRouteUrl(),
                 )
@@ -348,6 +347,13 @@ class ConnectionManager(
                     title = context?.getString(R.string.conn_diag_using_configured_url) ?: "Using configured relay URL",
                     detail = "No resolver winner",
                     url = url,
+                )
+            }
+            relayResolved?.let { relayRoute ->
+                Log.i(
+                    TAG,
+                    "connect: relay resolver picked role=${relayRoute.role} " +
+                        "url=${relayRoute.relay?.url}",
                 )
             }
             if (targetUrl != null) {
@@ -368,6 +374,7 @@ class ConnectionManager(
     private fun connectToUrlOnMainPath(
         url: String,
         replaceReason: String = "Relay socket replaced",
+        preserveReconnectBackoff: Boolean = false,
     ) {
         val isInsecure = url.startsWith("ws://") && !url.startsWith("wss://")
         if (isInsecure && !_insecureMode.value) {
@@ -429,7 +436,11 @@ class ConnectionManager(
 
         serverUrl = normalized
         shouldReconnect = true
-        reconnectAttempt = 0
+        if (preserveReconnectBackoff) {
+            reconnectState.beginAutomaticRouteSwap(normalized)
+        } else {
+            reconnectState.beginExplicitConnect(normalized)
+        }
         doConnect(normalized, previousSocket, replaceReason)
     }
 
@@ -445,9 +456,12 @@ class ConnectionManager(
      * Wraps the DataStore read in a 1-second timeout; if DataStore stalls
      * for any reason we don't block the connect loop forever.
      */
-    suspend fun resolveBestEndpoint(): EndpointCandidate? = resolveBestEndpointSafe()
+    suspend fun resolveBestEndpoint(): EndpointCandidate? =
+        resolveBestEndpointSafe(EndpointSurface.Standard)
 
-    private suspend fun resolveBestEndpointSafe(): EndpointCandidate? {
+    private suspend fun resolveBestEndpointSafe(
+        surface: EndpointSurface,
+    ): EndpointCandidate? {
         val resolver = endpointResolver ?: return null
         val ctx = context ?: return null
 
@@ -486,14 +500,14 @@ class ConnectionManager(
             }
             if (preferred != null) {
                 // Single-element list still respects the 2s probe gate.
-                val winner = resolver.resolve(listOf(preferred))
+                val winner = resolver.resolve(listOf(preferred), surface)
                 if (winner != null) return winner
                 Log.i(TAG, "manualRoleOverride=$preferredRole not reachable — " +
                     "falling through to strict-priority resolve")
             }
         }
 
-        return resolver.resolve(endpoints)
+        return resolver.resolve(endpoints, surface)
     }
 
     /**
@@ -521,7 +535,8 @@ class ConnectionManager(
     suspend fun probeAndReconnectNow(): EndpointCandidate? {
         endpointResolver?.clearCache()
         val current = serverUrl
-        val resolved = resolveBestEndpointSafe()
+        val resolved = resolveBestEndpointSafe(EndpointSurface.Standard)
+        val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
             // — keep the live route published rather than downgrading every
@@ -529,7 +544,8 @@ class ConnectionManager(
             return _activeEndpoint.value
         }
         _activeEndpoint.value = resolved
-        val targetUrl = resolved?.relay?.url ?: current ?: return resolved
+        if (relayResolved != null) activeRelayEndpoint = relayResolved
+        val targetUrl = relayResolved?.relay?.url ?: current ?: return resolved
         val normalizedTarget = normalizeRelayUrl(targetUrl)
         // Reconnect when the winner changed, and also when the socket is
         // stale/disconnected on the same winner. The latter makes the
@@ -566,7 +582,7 @@ class ConnectionManager(
      */
     suspend fun refreshActiveEndpoint(clearProbeCache: Boolean = false): EndpointCandidate? {
         if (clearProbeCache) endpointResolver?.clearCache()
-        val resolved = resolveBestEndpointSafe()
+        val resolved = resolveBestEndpointSafe(EndpointSurface.Standard)
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
             // (slow resume, mid-handoff blip) — keep publishing the live
@@ -590,9 +606,9 @@ class ConnectionManager(
 
     fun getManualRoleOverride(): String? = _manualRoleOverride.value
 
-    private fun markActiveEndpointUnreachable(reason: String) {
-        val active = _activeEndpoint.value ?: return
-        endpointResolver?.markUnreachable(active)
+    private fun markActiveRelayEndpointUnreachable(reason: String) {
+        val active = activeRelayEndpoint ?: return
+        endpointResolver?.markUnreachable(active, EndpointSurface.Relay)
         Log.i(TAG, "marked endpoint role=${active.role} unreachable ($reason)")
     }
 
@@ -615,9 +631,9 @@ class ConnectionManager(
             // Tailscale's tun churns onAvailable repeatedly — coalesces into a
             // single cache wipe + re-probe instead of one per event. onLost
             // manages its own cache (clear + markUnreachable) and passes false.
-            if (wipeCache) endpointResolver?.clearCache()
+            if (wipeCache) endpointResolver.clearCache()
             val current = serverUrl
-            val resolved = resolveBestEndpointSafe()
+            val resolved = resolveBestEndpointSafe(EndpointSurface.Standard)
             if (resolved == null) {
                 // Hysteresis for the AUTOMATIC (network-callback) path. A
                 // transient cold-route probe miss must NOT null the published
@@ -662,7 +678,10 @@ class ConnectionManager(
             // (connectToUrlOnMainPath force-sets shouldReconnect = true, so
             // the swap path never re-checked it.)
             if (!shouldReconnect) return@launch
-            val relayUrl = resolved.relay?.url?.takeIf { it.isNotBlank() } ?: return@launch
+            val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+            if (relayResolved != null) activeRelayEndpoint = relayResolved
+            val relayUrl = relayResolved?.relay?.url?.takeIf { it.isNotBlank() }
+                ?: return@launch
             val normalizedNew = normalizeRelayUrl(relayUrl)
             if (normalizedNew != current) {
                 Log.i(TAG, "network change: swapping $current → $normalizedNew")
@@ -708,7 +727,9 @@ class ConnectionManager(
                     Log.i(TAG, "network loss sustained past grace — marking active endpoint unreachable and resolving fallback")
                     sustainedLossDeclared = true
                     endpointResolver?.clearCache()
-                    markActiveEndpointUnreachable("network lost (sustained)")
+                    _activeEndpoint.value?.let { active ->
+                        endpointResolver?.markUnreachable(active, EndpointSurface.Standard)
+                    }
                     // wipeCache=false: we just cleared + poisoned the dead route
                     // above; re-wiping inside the job would drop that negative
                     // entry and let the dead route win the resolve again.
@@ -779,6 +800,8 @@ class ConnectionManager(
         // the ViewModel on the next connection load.
         _manualRoleOverride.value = null
         _activeEndpoint.value = null
+        activeRelayEndpoint = null
+        reconnectState.reset()
     }
 
     fun shutdown() {
@@ -827,7 +850,7 @@ class ConnectionManager(
             return
         }
 
-        _connectionState.value = if (reconnectAttempt > 0) {
+        _connectionState.value = if (reconnectState.reconnectAttempt > 0) {
             ConnectionState.Reconnecting
         } else {
             ConnectionState.Connecting
@@ -884,9 +907,8 @@ class ConnectionManager(
                     webSocket.cancel()
                     return
                 }
-                reconnectAttempt = 0
+                reconnectState.connected(url)
                 lastUpgradeResponseCode = null
-                consecutiveSocketFailures = 0
                 _connectionState.value = ConnectionState.Connected
                 Log.i(TAG, "onOpen: WSS handshake complete ($url)")
                 DiagnosticsLog.record(
@@ -983,14 +1005,14 @@ class ConnectionManager(
                 if (response == null) {
                     // Transport-level failure (no HTTP upgrade response): on a
                     // remote (Tailscale) link the first handshake can fail cold.
-                    // Don't evict the only working route from the shared resolver
-                    // on a single blip — wait for it to repeat. A genuinely
-                    // sustained network loss is handled separately by onLost.
-                    consecutiveSocketFailures++
-                    if (consecutiveSocketFailures >= MARK_UNREACHABLE_AFTER_FAILURES) {
-                        markActiveEndpointUnreachable("socket failure x$consecutiveSocketFailures")
+                    // Don't evict this Relay surface on a single blip — wait
+                    // for the same socket URL to fail again. Standard route
+                    // health is separate and is never poisoned here.
+                    val failureCount = reconnectState.recordSocketFailure(url)
+                    if (failureCount >= MARK_UNREACHABLE_AFTER_FAILURES) {
+                        markActiveRelayEndpointUnreachable("socket failure x$failureCount")
                     } else {
-                        Log.i(TAG, "relay socket failure $consecutiveSocketFailures/$MARK_UNREACHABLE_AFTER_FAILURES — not yet poisoning route")
+                        Log.i(TAG, "relay socket failure $failureCount/$MARK_UNREACHABLE_AFTER_FAILURES — not yet poisoning route")
                     }
                 }
                 authenticated = false
@@ -1029,7 +1051,12 @@ class ConnectionManager(
         }
 
         val url = serverUrl ?: return
-        reconnectAttempt++
+        val reconnectAttempt = reconnectState.nextReconnectAttempt()
+        // Keep the socket lifecycle visibly in-flight for the whole backoff
+        // window. Callers such as reconnectIfStale() treat Disconnected as an
+        // invitation to call connect() again; leaving this state Disconnected
+        // let screen entry restart both the route resolve and the retry counter.
+        _connectionState.value = ConnectionState.Reconnecting
 
         // Server-issued 429 means we're IP-banned — keep retrying at our
         // normal exponential cadence and we'll re-fill the ban bucket on
@@ -1083,7 +1110,7 @@ class ConnectionManager(
             // expires, auth state may have changed (e.g., user hit Revoke
             // during the retry window).
             if (shouldReconnect && reconnectGate()) {
-                val resolved = resolveBestEndpointSafe()
+                val resolved = resolveBestEndpointSafe(EndpointSurface.Relay)
                 val targetUrl = resolved?.relay?.url
                 if (resolved != null) {
                     // Mirror scheduleNetworkReResolve: clear the sustained-loss
@@ -1092,17 +1119,14 @@ class ConnectionManager(
                     // in onLost's grace job but can be cleared on EITHER success
                     // edge — network-callback or relay-timer.)
                     sustainedLossDeclared = false
-                    _activeEndpoint.value = resolved
-                } else if (sustainedLossDeclared || _activeEndpoint.value == null) {
-                    // Same hysteresis as scheduleNetworkReResolve: a transient
-                    // miss during a relay reconnect must not flip every effective
-                    // URL back to the dead saved host. Keep the last-known route;
-                    // we fall through to doConnect(url) and retry it with backoff.
-                    _activeEndpoint.value = null
+                    activeRelayEndpoint = resolved
                 }
                 if (targetUrl != null && normalizeRelayUrl(targetUrl) != url) {
                     Log.i(TAG, "scheduleReconnect: switching $url → ${normalizeRelayUrl(targetUrl)}")
-                    connectToUrlOnMainPath(targetUrl)
+                    connectToUrlOnMainPath(
+                        targetUrl,
+                        preserveReconnectBackoff = true,
+                    )
                 } else {
                     doConnect(url)
                 }
