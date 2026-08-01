@@ -312,48 +312,63 @@ class PetLoaderTest {
     }
 
     @Test
-    fun `locomotion is used only at idle while agent work remains in-place running`() {
+    fun `animation priority keeps manipulation and travel ahead of agent activity`() {
         val dir = tempDir()
         writePack(
             dir,
-            "petdex",
-            """{ "id": "petdex", "states": {
+            "priority",
+            """{ "id": "priority", "states": {
                  "idle": { "frames": ["idle.png"] },
-                 "running-left": { "frames": ["left.png"] },
-                 "running": { "frames": ["working.png"] }
+                 "walking-left": { "frames": ["walk-left.png"] },
+                 "running-right": { "frames": ["run-right.png"] },
+                 "jumping": { "frames": ["jump.png"] },
+                 "falling": { "frames": ["fall.png"] },
+                 "held": { "frames": ["held.png"] },
+                 "writing": { "frames": ["writing.png"] },
+                 "error": { "frames": ["error.png"] }
             } }""",
-            imageFiles = listOf("idle.png", "left.png", "working.png"),
+            imageFiles = listOf(
+                "idle.png",
+                "walk-left.png",
+                "run-right.png",
+                "jump.png",
+                "fall.png",
+                "held.png",
+                "writing.png",
+                "error.png",
+            ),
         )
         val avatar = PetLoader.loadPets(dir).single()
 
         fun PetClip?.fileName(): String = ((this as FrameSequenceClip).files.single().name)
-        val leftWalk = avatar.resolveBaseSelection(
-            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkLeft),
+        data class PriorityCase(
+            val activity: SphereState,
+            val locomotion: PetLocomotion,
+            val expectedFile: String,
         )
-        assertEquals(
-            "left.png",
-            leftWalk.clip.fileName(),
-        )
-        assertFalse(leftWalk.mirrorHorizontally)
 
-        val rightWalk = avatar.resolveBaseSelection(
-            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkRight),
+        val cases = listOf(
+            PriorityCase(SphereState.Streaming, PetLocomotion.Held, "held.png"),
+            PriorityCase(SphereState.Error, PetLocomotion.Jump, "jump.png"),
+            PriorityCase(SphereState.Streaming, PetLocomotion.Fall, "fall.png"),
+            PriorityCase(SphereState.Error, PetLocomotion.WalkLeft, "walk-left.png"),
+            PriorityCase(SphereState.Streaming, PetLocomotion.RunRight, "run-right.png"),
+            PriorityCase(SphereState.Streaming, PetLocomotion.None, "writing.png"),
+            PriorityCase(SphereState.Error, PetLocomotion.None, "error.png"),
+            PriorityCase(SphereState.Listening, PetLocomotion.None, "idle.png"),
         )
-        assertEquals("left.png", rightWalk.clip.fileName())
-        assertTrue(rightWalk.mirrorHorizontally)
 
-        val activeWork = avatar.resolveBaseSelection(
-            AvatarRenderState(SphereState.Streaming, petLocomotion = PetLocomotion.WalkLeft),
-        )
-        assertEquals("working.png", activeWork.clip.fileName())
-        assertFalse(activeWork.mirrorHorizontally)
-
-        assertEquals(
-            "working.png",
-            avatar.resolveBaseClip(
-                AvatarRenderState(SphereState.Thinking, toolCallBurst = 1f),
-            ).fileName(),
-        )
+        cases.forEach { case ->
+            val selection = avatar.resolveBaseSelection(
+                AvatarRenderState(case.activity, petLocomotion = case.locomotion),
+            )
+            assertEquals(
+                "${case.locomotion} over ${case.activity}",
+                case.expectedFile,
+                selection.clip.fileName(),
+            )
+            assertFalse(selection.mirrorHorizontally)
+        }
     }
 
     @Test
@@ -438,6 +453,12 @@ class PetLoaderTest {
             "idle.png",
             avatar.resolveBaseSelection(
                 AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Jump),
+            ).clip.fileName(),
+        )
+        assertEquals(
+            "idle.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Error, petLocomotion = PetLocomotion.RunRight),
             ).clip.fileName(),
         )
         assertEquals(

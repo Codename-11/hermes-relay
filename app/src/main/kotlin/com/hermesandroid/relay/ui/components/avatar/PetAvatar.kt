@@ -160,9 +160,10 @@ internal data class PetClipSelection(
  *   the base loop on its trigger, then returns; one-frame clips show as a brief
  *   still reaction. Empty → no reactions (today's behavior). Triggers are
  *   derived from activity-state transitions in [Render].
- * @property locomotionClips optional directional travel clips. These are used
- *   only while the agent is idle, keeping the upstream `running-left` /
- *   `running-right` rows separate from the in-place agent-work `running` row.
+ * @property locomotionClips optional manipulation and directional travel clips.
+ *   They take priority over agent activity, keeping direct movement visible and
+ *   the upstream `running-left` / `running-right` rows separate from the
+ *   in-place agent-work `running` row.
  * @property legacyTravelClip optional `run`/`running` fallback for packs without
  *   directional rows. Tool-only `working` is deliberately excluded.
  */
@@ -188,63 +189,58 @@ class PetAvatar(
 
     /** Resolve sustained motion without one-shot overlays; pure for focused tests. */
     internal fun resolveBaseSelection(state: AvatarRenderState): PetClipSelection {
-        if (state.state == SphereState.Idle && state.petLocomotion != PetLocomotion.None) {
-            if (state.petLocomotion == PetLocomotion.Jump) {
+        when (state.petLocomotion) {
+            PetLocomotion.Held -> {
+                return PetClipSelection(
+                    locomotionClips[PetLocomotion.Held] ?: activityClips[SphereState.Idle],
+                )
+            }
+            PetLocomotion.Jump -> {
                 return PetClipSelection(
                     locomotionClips[PetLocomotion.Jump] ?: activityClips[SphereState.Idle],
                 )
             }
-            if (state.petLocomotion == PetLocomotion.Fall) {
+            PetLocomotion.Fall -> {
                 return PetClipSelection(
                     locomotionClips[PetLocomotion.Fall]
                         ?: locomotionClips[PetLocomotion.Jump]
                         ?: activityClips[SphereState.Idle],
                 )
             }
-            if (state.petLocomotion == PetLocomotion.Held) {
+            PetLocomotion.WalkLeft,
+            PetLocomotion.WalkRight,
+            PetLocomotion.RunLeft,
+            PetLocomotion.RunRight -> {
+                val exact = state.petLocomotion
+                val movingRight = exact == PetLocomotion.WalkRight || exact == PetLocomotion.RunRight
+                val sameDirectionAlternate = when (exact) {
+                    PetLocomotion.WalkLeft -> PetLocomotion.RunLeft
+                    PetLocomotion.WalkRight -> PetLocomotion.RunRight
+                    PetLocomotion.RunLeft -> PetLocomotion.WalkLeft
+                    PetLocomotion.RunRight -> PetLocomotion.WalkRight
+                    else -> error("Non-directional locomotion reached directional resolver")
+                }
+                listOf(exact, sameDirectionAlternate).firstNotNullOfOrNull(locomotionClips::get)?.let {
+                    return PetClipSelection(it)
+                }
+                val oppositeDirection = when (exact) {
+                    PetLocomotion.WalkLeft -> listOf(PetLocomotion.WalkRight, PetLocomotion.RunRight)
+                    PetLocomotion.WalkRight -> listOf(PetLocomotion.WalkLeft, PetLocomotion.RunLeft)
+                    PetLocomotion.RunLeft -> listOf(PetLocomotion.RunRight, PetLocomotion.WalkRight)
+                    PetLocomotion.RunRight -> listOf(PetLocomotion.RunLeft, PetLocomotion.WalkLeft)
+                    else -> emptyList()
+                }
+                oppositeDirection.firstNotNullOfOrNull(locomotionClips::get)?.let {
+                    return PetClipSelection(it, mirrorHorizontally = true)
+                }
+                // Upstream treats the legacy in-place run row as left-facing
+                // for travel, mirroring it only for rightward motion.
                 return PetClipSelection(
-                    locomotionClips[PetLocomotion.Held] ?: activityClips[SphereState.Idle],
+                    clip = legacyTravelClip ?: activityClips[SphereState.Idle],
+                    mirrorHorizontally = legacyTravelClip != null && movingRight,
                 )
             }
-            val movingRight = state.petLocomotion == PetLocomotion.WalkRight ||
-                state.petLocomotion == PetLocomotion.RunRight
-            val exact = state.petLocomotion
-            val sameDirectionAlternate = when (exact) {
-                PetLocomotion.WalkLeft -> PetLocomotion.RunLeft
-                PetLocomotion.WalkRight -> PetLocomotion.RunRight
-                PetLocomotion.RunLeft -> PetLocomotion.WalkLeft
-                PetLocomotion.RunRight -> PetLocomotion.WalkRight
-                PetLocomotion.Jump -> PetLocomotion.Jump
-                PetLocomotion.Fall -> PetLocomotion.Fall
-                PetLocomotion.Held -> PetLocomotion.Held
-                PetLocomotion.None -> PetLocomotion.None
-            }
-            val sameDirection = if (movingRight) {
-                listOf(exact, sameDirectionAlternate)
-            } else {
-                listOf(exact, sameDirectionAlternate)
-            }
-            val oppositeDirection = when (exact) {
-                PetLocomotion.WalkLeft -> listOf(PetLocomotion.WalkRight, PetLocomotion.RunRight)
-                PetLocomotion.WalkRight -> listOf(PetLocomotion.WalkLeft, PetLocomotion.RunLeft)
-                PetLocomotion.RunLeft -> listOf(PetLocomotion.RunRight, PetLocomotion.WalkRight)
-                PetLocomotion.RunRight -> listOf(PetLocomotion.RunLeft, PetLocomotion.WalkLeft)
-                PetLocomotion.Jump -> emptyList()
-                PetLocomotion.Fall -> emptyList()
-                PetLocomotion.Held -> emptyList()
-                PetLocomotion.None -> emptyList()
-            }
-            sameDirection.firstNotNullOfOrNull(locomotionClips::get)?.let {
-                return PetClipSelection(it)
-            }
-            oppositeDirection.firstNotNullOfOrNull(locomotionClips::get)?.let {
-                return PetClipSelection(it, mirrorHorizontally = true)
-            }
-            // Upstream treats the legacy in-place run row as left-facing for
-            // travel, mirroring it only for rightward motion.
-            legacyTravelClip?.let {
-                return PetClipSelection(it, mirrorHorizontally = movingRight)
-            }
+            PetLocomotion.None -> Unit
         }
         val toolActive = workingClip != null &&
             state.toolCallBurst >= WORKING_BURST_THRESHOLD &&
