@@ -837,12 +837,16 @@ fun ChatScreen(
     // Publish only surface-local visibility signals. Live turn state is owned at
     // the app root so navigation cannot reset an in-flight companion to Idle.
     val petCompanionCoordinator = LocalPetCompanionCoordinator.current
-    SideEffect {
-        petCompanionCoordinator.publishSurface(
-            owner = "chat",
-            scrolling = listState.isScrollInProgress,
-            hidden = ambientMode,
-        )
+    LaunchedEffect(listState, petCompanionCoordinator) {
+        snapshotFlow { listState.isScrollInProgress to ambientMode }
+            .distinctUntilChanged()
+            .collect { (scrolling, hidden) ->
+                petCompanionCoordinator.publishSurface(
+                    owner = "chat",
+                    scrolling = scrolling,
+                    hidden = hidden,
+                )
+            }
     }
     DisposableEffect(petCompanionCoordinator) {
         onDispose { petCompanionCoordinator.clearSurface("chat") }

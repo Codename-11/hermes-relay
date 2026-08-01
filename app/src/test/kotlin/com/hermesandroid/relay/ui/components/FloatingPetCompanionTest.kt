@@ -1,11 +1,31 @@
 package com.hermesandroid.relay.ui.components
 
+import com.hermesandroid.relay.ui.components.avatar.PetLocomotion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FloatingPetCompanionTest {
+    @Test
+    fun `roaming starts immediately then uses the normal repeat delay`() {
+        assertEquals(0L, floatingPetRoamDelayMs(hasMoved = false))
+        assertEquals(4_800L, floatingPetRoamDelayMs(hasMoved = true))
+    }
+
+    @Test
+    fun `vertical transfer distinguishes jump from fall`() {
+        assertEquals(PetLocomotion.Jump, petVerticalLocomotion(fromY = 200f, toY = 100f))
+        assertEquals(PetLocomotion.Fall, petVerticalLocomotion(fromY = 100f, toY = 200f))
+        assertEquals(PetLocomotion.Jump, petVerticalLocomotion(fromY = 100f, toY = 100f))
+    }
+
+    @Test
+    fun `dragging presents held locomotion until drop settles`() {
+        assertEquals(PetLocomotion.Held, presentedPetLocomotion(true, PetLocomotion.WalkRight))
+        assertEquals(PetLocomotion.WalkRight, presentedPetLocomotion(false, PetLocomotion.WalkRight))
+    }
+
     @Test
     fun `keyboard and short screens use compact 40dp pet`() {
         assertTrue(shouldCompactFloatingPet(imeVisible = true, screenHeightDp = 844))
@@ -51,6 +71,34 @@ class FloatingPetCompanionTest {
     fun `scrolling pet remains present but subdued`() {
         assertEquals(0.6f, floatingPetAlpha(isScrolling = true), 0f)
         assertEquals(1f, floatingPetAlpha(isScrolling = false), 0f)
+    }
+
+    @Test
+    fun `keyboard compacts pet and host pause signal dims it`() {
+        assertTrue(shouldCompactFloatingPet(imeVisible = true, screenHeightDp = 844))
+        assertEquals(40, floatingPetVisualSizeDp(compact = true))
+        assertEquals(0.6f, floatingPetAlpha(isScrolling = true), 0f)
+    }
+
+    @Test
+    fun `eligible roam gate reopens immediately when drag hold ends`() {
+        fun canRoam(dragging: Boolean) = shouldRoamFloatingPet(
+            roamingEnabled = true,
+            roamingAllowed = true,
+            hasWalkRegion = true,
+            state = SphereState.Idle,
+            animationEnabled = true,
+            appForeground = true,
+            osAnimations = true,
+            touchExploration = false,
+            paused = false,
+            isScrolling = false,
+            dragging = dragging,
+            menuExpanded = false,
+        )
+
+        assertFalse(canRoam(dragging = true))
+        assertTrue(canRoam(dragging = false))
     }
 
     @Test

@@ -2499,8 +2499,12 @@ fun RelayApp() {
                 state = petActivity.renderState,
                 placement = petPlacement,
                 roamingEnabled = petRoamingEnabled,
-                roamingAllowed = roamingRoute != null,
-                isScrolling = petActivity.scrolling,
+                // Surface scrolling suspends autonomous movement without
+                // visually muting the companion. Dimming is reserved for the
+                // keyboard-compressed layout, where subdued chrome keeps the
+                // composer/terminal input readable.
+                roamingAllowed = roamingRoute != null && !petActivity.scrolling,
+                isScrolling = isKeyboardVisible,
                 compact = shouldCompactFloatingPet(
                     imeVisible = isKeyboardVisible,
                     screenHeightDp = LocalConfiguration.current.screenHeightDp,

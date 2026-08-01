@@ -194,6 +194,18 @@ class PetAvatar(
                     locomotionClips[PetLocomotion.Jump] ?: activityClips[SphereState.Idle],
                 )
             }
+            if (state.petLocomotion == PetLocomotion.Fall) {
+                return PetClipSelection(
+                    locomotionClips[PetLocomotion.Fall]
+                        ?: locomotionClips[PetLocomotion.Jump]
+                        ?: activityClips[SphereState.Idle],
+                )
+            }
+            if (state.petLocomotion == PetLocomotion.Held) {
+                return PetClipSelection(
+                    locomotionClips[PetLocomotion.Held] ?: activityClips[SphereState.Idle],
+                )
+            }
             val movingRight = state.petLocomotion == PetLocomotion.WalkRight ||
                 state.petLocomotion == PetLocomotion.RunRight
             val exact = state.petLocomotion
@@ -203,6 +215,8 @@ class PetAvatar(
                 PetLocomotion.RunLeft -> PetLocomotion.WalkLeft
                 PetLocomotion.RunRight -> PetLocomotion.WalkRight
                 PetLocomotion.Jump -> PetLocomotion.Jump
+                PetLocomotion.Fall -> PetLocomotion.Fall
+                PetLocomotion.Held -> PetLocomotion.Held
                 PetLocomotion.None -> PetLocomotion.None
             }
             val sameDirection = if (movingRight) {
@@ -216,6 +230,8 @@ class PetAvatar(
                 PetLocomotion.RunLeft -> listOf(PetLocomotion.RunRight, PetLocomotion.WalkRight)
                 PetLocomotion.RunRight -> listOf(PetLocomotion.RunLeft, PetLocomotion.WalkLeft)
                 PetLocomotion.Jump -> emptyList()
+                PetLocomotion.Fall -> emptyList()
+                PetLocomotion.Held -> emptyList()
                 PetLocomotion.None -> emptyList()
             }
             sameDirection.firstNotNullOfOrNull(locomotionClips::get)?.let {

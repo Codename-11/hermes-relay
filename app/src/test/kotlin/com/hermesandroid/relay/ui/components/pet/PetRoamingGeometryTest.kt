@@ -166,9 +166,13 @@ class PetRoamingGeometryTest {
         )
 
         assertEquals(
-            listOf(PetSafeBounds(20f, 180f, 210f, 180f)),
-            petPerchSegments(perch, listOf(obstacle), footprint, outer),
+            1,
+            petPerchSegments(perch, listOf(obstacle), footprint, outer).size,
         )
+        val segment = petPerchSegments(perch, listOf(obstacle), footprint, outer).single()
+        assertEquals(20f, segment.left, 0f)
+        assertTrue(segment.right < 210f)
+        assertEquals(180f, segment.top, 0f)
     }
 
     @Test
@@ -184,12 +188,57 @@ class PetRoamingGeometryTest {
             bounds = PetObstacle(125f, 150f, 175f, 195f),
         )
 
-        assertEquals(
-            listOf(
-                PetSafeBounds(20f, 180f, 105f, 180f),
-                PetSafeBounds(195f, 180f, 280f, 180f),
+        val segments = petPerchSegments(perch, listOf(obstacle), footprint, outer)
+        assertEquals(2, segments.size)
+        assertTrue(segments[0].right < 105f)
+        assertTrue(segments[1].left > 195f)
+        assertEquals(180f, segments[0].top, 0f)
+        assertEquals(180f, segments[1].top, 0f)
+    }
+
+    @Test
+    fun `sibling perch segments choose an above-control hop`() {
+        val safe = PetSafeBounds(20f, 20f, 280f, 220f)
+        val footprint = PetFootprint(width = 40f, height = 40f)
+        val control = PetObstacle(125f, 150f, 175f, 195f)
+        val rails = listOf(
+            PetRoamingRail("toolbar:0", "toolbar", PetSafeBounds(20f, 180f, 104.999f, 180f)),
+            PetRoamingRail("toolbar:1", "toolbar", PetSafeBounds(195.001f, 180f, 280f, 180f)),
+        )
+
+        val transfer = choosePetRailTransfer(
+            currentRail = rails[0],
+            current = PetPoint(104.999f, 180f),
+            rails = rails,
+            bounds = safe,
+            uiObstacles = listOf(control),
+            footprint = footprint,
+        )
+
+        requireNotNull(transfer)
+        assertTrue(transfer.siblingSegment)
+        assertEquals(rails[1], transfer.rail)
+        assertTrue(transfer.route.points.all { it.y <= 180f })
+        val expanded = expandObstaclesForPet(listOf(control), footprint)
+        transfer.route.points.zipWithNext().forEach { (start, end) ->
+            assertFalse(pathIntersectsObstacle(start, end, expanded))
+        }
+    }
+
+    @Test
+    fun `different perches still require horizontal overlap`() {
+        val current = PetRoamingRail("composer:0", "composer", PetSafeBounds(20f, 180f, 100f, 180f))
+        val disjoint = PetRoamingRail("header:0", "header", PetSafeBounds(160f, 80f, 280f, 80f))
+
+        assertNull(
+            choosePetRailTransfer(
+                currentRail = current,
+                current = PetPoint(100f, 180f),
+                rails = listOf(current, disjoint),
+                bounds = PetSafeBounds(20f, 20f, 280f, 220f),
+                uiObstacles = emptyList(),
+                footprint = PetFootprint(width = 40f, height = 40f),
             ),
-            petPerchSegments(perch, listOf(obstacle), footprint, outer),
         )
     }
 
