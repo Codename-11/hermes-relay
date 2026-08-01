@@ -3,6 +3,8 @@ package com.hermesandroid.relay.ui.components.pet
 import kotlin.math.abs
 import kotlin.math.sqrt
 
+private const val PET_ROUTE_EPSILON = 0.001f
+
 /** Logical docking edge so persisted placement remains correct under RTL. */
 enum class PetLogicalEdge { Start, End }
 
@@ -230,6 +232,21 @@ data class PetSafeAreaSnapshot(
     val obstacles: List<PetMeasuredObstacle>,
 )
 
+/** One collision-trimmed segment of a measured perch. */
+data class PetRoamingRail(
+    val key: String,
+    val perchKey: String,
+    val bounds: PetSafeBounds,
+)
+
+/** A deterministic, already-validated transfer to another roaming rail. */
+data class PetRailTransfer(
+    val rail: PetRoamingRail,
+    val destinationX: Float,
+    val siblingSegment: Boolean,
+    val route: PetRoute,
+)
+
 /** Pure Navigation-style route matching used by registry snapshots. */
 fun petRouteMatches(template: String, actual: String): Boolean {
     fun segments(value: String): List<String> = value
@@ -304,8 +321,12 @@ fun petPerchSegments(
                     listOf(left to right)
                 } else {
                     buildList {
-                        val before = obstacle.left.coerceIn(left, right)
-                        val after = obstacle.right.coerceIn(left, right)
+                        // PetObstacle containment is inclusive. Keep the rail
+                        // endpoints just outside the expanded obstacle so a
+                        // transfer never starts from a point the router must
+                        // silently project elsewhere.
+                        val before = (obstacle.left - PET_ROUTE_EPSILON).coerceIn(left, right)
+                        val after = (obstacle.right + PET_ROUTE_EPSILON).coerceIn(left, right)
                         if (before - left >= minimumWidth) add(left to before)
                         if (right - after >= minimumWidth) add(after to right)
                     }
@@ -333,6 +354,69 @@ data class PetRoute(val points: List<PetPoint>) {
     val start: PetPoint get() = points.first()
     val destination: PetPoint get() = points.last()
 }
+
+/**
+ * Route between sibling segments without entering the UI surface below them.
+ * The generic visibility router remains the source of collision truth; this
+ * wrapper clips its search space to the half-plane at or above both rails.
+ */
+fun findAbovePerchRoute(
+    start: PetPoint,
+    requestedDestination: PetPoint,
+    bounds: PetSafeBounds,
+    uiObstacles: Iterable<PetObstacle>,
+    footprint: PetFootprint,
+): PetRoute? {
+    val perchTop = minOf(start.y, requestedDestination.y)
+    if (perchTop < bounds.top) return null
+    return findOverlayRoute(
+        start = start,
+        requestedDestination = requestedDestination,
+        bounds = PetSafeBounds(bounds.left, bounds.top, bounds.right, perchTop),
+        uiObstacles = uiObstacles,
+        footprint = footprint,
+    )
+}
+
+/**
+ * Pick the nearest collision-free transfer with stable key ordering.
+ *
+ * Different measured perches retain Hermes Desktop's horizontal-overlap rule.
+ * Sibling segments may cross their explicitly registered obstacle, but only by
+ * a route constrained above the shared perch.
+ */
+fun choosePetRailTransfer(
+    currentRail: PetRoamingRail,
+    current: PetPoint,
+    rails: Iterable<PetRoamingRail>,
+    bounds: PetSafeBounds,
+    uiObstacles: Iterable<PetObstacle>,
+    footprint: PetFootprint,
+): PetRailTransfer? = rails.asSequence()
+    .filter { it.key != currentRail.key }
+    .mapNotNull { candidate ->
+        val samePerch = candidate.perchKey == currentRail.perchKey
+        val destinationX = if (samePerch) {
+            current.x.coerceIn(candidate.bounds.left, candidate.bounds.right)
+        } else {
+            val overlapLeft = maxOf(candidate.bounds.left, currentRail.bounds.left)
+            val overlapRight = minOf(candidate.bounds.right, currentRail.bounds.right)
+            if (overlapLeft > overlapRight) return@mapNotNull null
+            current.x.coerceIn(overlapLeft, overlapRight)
+        }
+        val destination = PetPoint(destinationX, candidate.bounds.top)
+        val route = if (samePerch) {
+            findAbovePerchRoute(current, destination, bounds, uiObstacles, footprint)
+        } else {
+            findOverlayRoute(current, destination, bounds, uiObstacles, footprint)
+        } ?: return@mapNotNull null
+        PetRailTransfer(candidate, destinationX, samePerch, route)
+    }
+    .sortedWith(
+        compareBy<PetRailTransfer> { it.route.destination.distanceSquaredTo(current) }
+            .thenBy { it.rail.key },
+    )
+    .firstOrNull()
 
 /**
  * Clamp [requested] into [bounds], then move it to the nearest unblocked point.

@@ -54,7 +54,10 @@ import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetFootprint
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.ui.components.pet.PetPoint
+import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
+import com.hermesandroid.relay.ui.components.pet.PetRoute
 import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
+import com.hermesandroid.relay.ui.components.pet.choosePetRailTransfer
 import com.hermesandroid.relay.ui.components.pet.expandObstaclesForPet
 import com.hermesandroid.relay.ui.components.pet.findOverlayRoute
 import com.hermesandroid.relay.ui.components.pet.petPerchSegments
@@ -186,7 +189,13 @@ fun FloatingPetCompanion(
                 footprint = footprint,
                 outer = safeBounds,
                 minimumWidth = targetSizePx / 2f,
-            ).mapIndexed { index, bounds -> ActivePetRail("${perch.key}:$index", bounds) }
+            ).mapIndexed { index, bounds ->
+                PetRoamingRail(
+                    key = "${perch.key}:$index",
+                    perchKey = perch.key,
+                    bounds = bounds,
+                )
+            }
         }
     }
     val registeredObstacles = remember(safeAreaSnapshot, footprint) {
@@ -270,19 +279,28 @@ fun FloatingPetCompanion(
     LaunchedEffect(pet.id, canRoam, roamingRails, homePoint, positioned) {
         if (!canRoam || !positioned) return@LaunchedEffect
 
-        fun railSupporting(point: PetPoint): ActivePetRail? = roamingRails.firstOrNull { rail ->
+        fun railSupporting(point: PetPoint): PetRoamingRail? = roamingRails.firstOrNull { rail ->
             point.x in rail.bounds.left..rail.bounds.right && abs(point.y - rail.bounds.top) <= 1f
         }
 
-        suspend fun jumpToRail(rail: ActivePetRail, requestedX: Float = x.value): Boolean {
+        suspend fun jumpToRail(
+            rail: PetRoamingRail,
+            requestedX: Float = x.value,
+            plannedRoute: PetRoute? = null,
+        ): Boolean {
             val destinationX = requestedX.coerceIn(rail.bounds.left, rail.bounds.right)
-            val routePlan = findOverlayRoute(
+            val currentPoint = PetPoint(x.value, y.value)
+            val routePlan = plannedRoute ?: findOverlayRoute(
                 start = PetPoint(x.value, y.value),
                 requestedDestination = PetPoint(destinationX, rail.bounds.top),
                 bounds = safeBounds,
                 uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
                 footprint = footprint,
             ) ?: return false
+            // A valid autonomous route must begin at the live pet position.
+            // Silently accepting a projected start would visually teleport the
+            // pet and could skip across the control that caused the projection.
+            if (routePlan.start.distanceSquaredTo(currentPoint) > 1f) return false
             routePlan.points.drop(1).forEach { waypoint ->
                 locomotion = petVerticalLocomotion(y.value, waypoint.y)
                 coroutineScope {
@@ -324,23 +342,26 @@ fun FloatingPetCompanion(
                 hasMoved = true
                 delay(2_400L)
 
-                // Hermes Desktop hops only between ledges with real horizontal
-                // overlap: approach the shared x first, then transfer vertically.
-                val nextRail = roamingRails.firstOrNull { candidate ->
-                    candidate.key != rail.key &&
-                        maxOf(candidate.bounds.left, rail.bounds.left) <=
-                        minOf(candidate.bounds.right, rail.bounds.right)
-                }
-                if (nextRail != null) {
-                    val overlapLeft = maxOf(nextRail.bounds.left, rail.bounds.left)
-                    val overlapRight = minOf(nextRail.bounds.right, rail.bounds.right)
-                    val hopX = x.value.coerceIn(overlapLeft, overlapRight)
+                // Different ledges retain Desktop's overlap rule. Android may
+                // also hop between sibling segments when its registered-control
+                // router proves an above-perch route around the obstacle.
+                val transfer = choosePetRailTransfer(
+                    currentRail = rail,
+                    current = PetPoint(x.value, y.value),
+                    rails = roamingRails,
+                    bounds = safeBounds,
+                    uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
+                    footprint = footprint,
+                )
+                if (transfer != null) {
+                    val nextRail = transfer.rail
+                    val hopX = transfer.destinationX
                     if (abs(x.value - hopX) > 1f) {
                         locomotion = if (hopX < x.value) PetLocomotion.WalkLeft else PetLocomotion.WalkRight
                         x.animateTo(hopX, tween(durationMillis = 900))
                         locomotion = PetLocomotion.None
                     }
-                    if (jumpToRail(nextRail, hopX)) rail = nextRail
+                    if (jumpToRail(nextRail, hopX, transfer.route)) rail = nextRail
                 }
             }
         } finally {
@@ -530,8 +551,6 @@ fun FloatingPetCompanion(
         }
     }
 }
-
-private data class ActivePetRail(val key: String, val bounds: PetSafeBounds)
 
 private fun SphereState.floatingPetStateLabelRes(): Int = when (this) {
     SphereState.Idle -> R.string.floating_pet_state_idle

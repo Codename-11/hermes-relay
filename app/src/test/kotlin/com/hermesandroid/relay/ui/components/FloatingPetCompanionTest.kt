@@ -74,10 +74,10 @@ class FloatingPetCompanionTest {
     }
 
     @Test
-    fun `keyboard compacts pet without applying scroll dim`() {
+    fun `keyboard compacts pet and host pause signal dims it`() {
         assertTrue(shouldCompactFloatingPet(imeVisible = true, screenHeightDp = 844))
         assertEquals(40, floatingPetVisualSizeDp(compact = true))
-        assertEquals(1f, floatingPetAlpha(isScrolling = false), 0f)
+        assertEquals(0.6f, floatingPetAlpha(isScrolling = true), 0f)
     }
 
     @Test
