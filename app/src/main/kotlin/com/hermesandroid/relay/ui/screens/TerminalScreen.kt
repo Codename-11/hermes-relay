@@ -129,7 +129,10 @@ fun TerminalScreen(
     SideEffect {
         petCompanionCoordinator.publishSurface(
             owner = "terminal",
-            scrolling = activeTab?.scrolledUp == true,
+            // scrolledUp describes a durable history position, not an active
+            // gesture. Treating it as motion left the pet permanently dimmed
+            // and paused until the user returned to the live tail.
+            scrolling = false,
             hidden = terminalBlocksPet,
         )
     }
