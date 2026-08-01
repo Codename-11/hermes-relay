@@ -76,6 +76,7 @@ import com.hermesandroid.relay.ui.components.decodeInlineImageDataUrl
 import com.hermesandroid.relay.ui.components.withInlineImageDecodeLock
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -579,44 +580,66 @@ private class PetdexThumbnailLoader(
 
     suspend fun load(pet: PetdexPet): ImageBitmap? {
         val cacheKey = "${pet.slug}\u0000${pet.spritesheetUrl}"
-        cacheMutex.withLock {
-            bitmapCache[cacheKey]?.let { return it }
-            if (cacheKey in missingKeys || thumbnailsUnsupported) return null
-            if ((retryAfterMs[cacheKey] ?: 0L) > System.currentTimeMillis()) return null
-        }
-        return requestSlots.withPermit {
-            cacheMutex.withLock {
-                bitmapCache[cacheKey]?.let { return@withPermit it }
-                if (cacheKey in missingKeys || thumbnailsUnsupported) return@withPermit null
-                if ((retryAfterMs[cacheKey] ?: 0L) > System.currentTimeMillis()) {
-                    return@withPermit null
-                }
-            }
-            val result = request(pet.slug, pet.spritesheetUrl)
-            val methodUnavailable = (result?.exceptionOrNull() as? GatewayRpcException)?.code ==
-                JSONRPC_METHOD_NOT_FOUND
-            val failed = result == null || result.isFailure
-            val dataUri = result?.getOrNull()
-            val bitmap = dataUri?.let { decodePetdexThumbnail(it) }
-            cacheMutex.withLock {
-                when {
-                    methodUnavailable -> thumbnailsUnsupported = true
-                    failed || (dataUri != null && bitmap == null) -> {
-                        retryAfterMs[cacheKey] = System.currentTimeMillis() + PETDEX_THUMB_RETRY_MS
+        while (true) {
+            val outcome = requestSlots.withPermit {
+                cacheMutex.withLock {
+                    bitmapCache[cacheKey]?.let {
+                        return@withPermit PetdexThumbnailLoadOutcome.Loaded(it)
                     }
-                    dataUri == null -> missingKeys += cacheKey
-                    bitmap != null -> {
-                        retryAfterMs.remove(cacheKey)
-                        bitmapCache[cacheKey] = bitmap
-                        while (bitmapCache.size > PETDEX_THUMB_CACHE_SIZE) {
-                            bitmapCache.remove(bitmapCache.entries.first().key)
+                    if (cacheKey in missingKeys || thumbnailsUnsupported) {
+                        return@withPermit PetdexThumbnailLoadOutcome.Unavailable
+                    }
+                    val remainingBackoff = (retryAfterMs[cacheKey] ?: 0L) -
+                        System.currentTimeMillis()
+                    if (remainingBackoff > 0L) {
+                        return@withPermit PetdexThumbnailLoadOutcome.Retry(remainingBackoff)
+                    }
+                }
+                val result = request(pet.slug, pet.spritesheetUrl)
+                val methodUnavailable = (result?.exceptionOrNull() as? GatewayRpcException)?.code ==
+                    JSONRPC_METHOD_NOT_FOUND
+                val failed = result == null || result.isFailure
+                val dataUri = result?.getOrNull()
+                val bitmap = dataUri?.let { decodePetdexThumbnail(it) }
+                cacheMutex.withLock {
+                    when {
+                        methodUnavailable -> {
+                            thumbnailsUnsupported = true
+                            PetdexThumbnailLoadOutcome.Unavailable
                         }
+                        failed || (dataUri != null && bitmap == null) -> {
+                            retryAfterMs[cacheKey] = System.currentTimeMillis() + PETDEX_THUMB_RETRY_MS
+                            PetdexThumbnailLoadOutcome.Retry(PETDEX_THUMB_RETRY_MS)
+                        }
+                        dataUri == null -> {
+                            missingKeys += cacheKey
+                            PetdexThumbnailLoadOutcome.Unavailable
+                        }
+                        bitmap != null -> {
+                            retryAfterMs.remove(cacheKey)
+                            bitmapCache[cacheKey] = bitmap
+                            while (bitmapCache.size > PETDEX_THUMB_CACHE_SIZE) {
+                                bitmapCache.remove(bitmapCache.entries.first().key)
+                            }
+                            PetdexThumbnailLoadOutcome.Loaded(bitmap)
+                        }
+                        else -> PetdexThumbnailLoadOutcome.Unavailable
                     }
                 }
             }
-            bitmap
+            when (outcome) {
+                is PetdexThumbnailLoadOutcome.Loaded -> return outcome.bitmap
+                PetdexThumbnailLoadOutcome.Unavailable -> return null
+                is PetdexThumbnailLoadOutcome.Retry -> delay(outcome.delayMs)
+            }
         }
     }
+}
+
+private sealed interface PetdexThumbnailLoadOutcome {
+    data object Unavailable : PetdexThumbnailLoadOutcome
+    data class Loaded(val bitmap: ImageBitmap) : PetdexThumbnailLoadOutcome
+    data class Retry(val delayMs: Long) : PetdexThumbnailLoadOutcome
 }
 
 private suspend fun decodePetdexThumbnail(dataUri: String): ImageBitmap? = withInlineImageDecodeLock {
