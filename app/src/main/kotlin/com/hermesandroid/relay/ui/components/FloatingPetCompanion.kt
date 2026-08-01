@@ -229,8 +229,17 @@ fun FloatingPetCompanion(
     LaunchedEffect(pet.id, canRoam, walkBounds, homePoint) {
         val rail = walkBounds ?: return@LaunchedEffect
         if (!canRoam) return@LaunchedEffect
-        x.snapTo(homePoint.x)
-        y.snapTo(homePoint.y)
+        // Resume from a user drop like Desktop's platformer loop: preserve the
+        // horizontal drop point when it fits, then visibly settle onto the
+        // measured perch before the next directional stroll.
+        x.snapTo(x.value.coerceIn(rail.left, rail.right))
+        if (abs(y.value - rail.top) > 1f) {
+            locomotion = PetLocomotion.Jump
+            y.animateTo(rail.top, tween(durationMillis = 460))
+            locomotion = PetLocomotion.None
+        } else {
+            y.snapTo(rail.top)
+        }
         while (true) {
             delay(8_000L)
             val destinationX = if (abs(x.value - rail.left) <= abs(x.value - rail.right)) {
@@ -314,7 +323,6 @@ fun FloatingPetCompanion(
                         onDragEnd = {
                             val dropped = draggedPoint ?: PetPoint(x.value, y.value)
                             dragging = false
-                            if (roamingEnabled) onRoamingEnabledChanged(false)
                             persistAt(dropped)
                             scope.launch {
                                 x.snapTo(dropped.x)

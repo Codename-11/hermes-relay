@@ -279,6 +279,7 @@ class PetLoaderTest {
         assertEquals("right.png", avatar.locomotionClips.getValue(PetLocomotion.WalkRight).fileName())
         assertEquals("left.png", avatar.locomotionClips.getValue(PetLocomotion.RunLeft).fileName())
         assertEquals("right.png", avatar.locomotionClips.getValue(PetLocomotion.RunRight).fileName())
+        assertEquals("jump.png", avatar.locomotionClips.getValue(PetLocomotion.Jump).fileName())
         val travelLeft = avatar.resolveBaseSelection(
             AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkLeft),
         )
@@ -289,6 +290,12 @@ class PetLoaderTest {
         assertFalse(travelLeft.mirrorHorizontally)
         assertEquals("right.png", travelRight.clip!!.fileName())
         assertFalse(travelRight.mirrorHorizontally)
+        assertEquals(
+            "jump.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Jump),
+            ).clip!!.fileName(),
+        )
     }
 
     @Test
@@ -414,6 +421,12 @@ class PetLoaderTest {
         )
         assertEquals("idle.png", roaming.clip.fileName())
         assertFalse(roaming.mirrorHorizontally)
+        assertEquals(
+            "idle.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Jump),
+            ).clip.fileName(),
+        )
         assertEquals(
             "tool.png",
             avatar.resolveBaseSelection(

@@ -33,8 +33,9 @@ Desktop and Codex while adapting it to a phone-sized viewport.
 - Autonomous roaming is separately opt-in and defaults off. Chat registers a
   live measurement of the existing composer; its top edge is the only region
   where the pet walks on its own, with no reserved layout spacer. Enabling
-  roaming docks onto that perch; manual
-  drag or a vertical accessibility move pauses roaming before applying free-form
+  roaming docks onto that perch. Drag temporarily yields to the user, then an
+  off-perch drop uses `jumping` to settle before directional travel resumes;
+  vertical accessibility moves pause roaming before applying free-form
   placement. Other app screens show the pet docked.
 - Roaming runs only while Hermes is idle and the app is foregrounded. Thinking,
   streaming, tool work, errors, transcript scrolling, dragging, the pet menu,
