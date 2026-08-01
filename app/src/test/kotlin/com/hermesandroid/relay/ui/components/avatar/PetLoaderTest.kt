@@ -280,6 +280,7 @@ class PetLoaderTest {
         assertEquals("left.png", avatar.locomotionClips.getValue(PetLocomotion.RunLeft).fileName())
         assertEquals("right.png", avatar.locomotionClips.getValue(PetLocomotion.RunRight).fileName())
         assertEquals("jump.png", avatar.locomotionClips.getValue(PetLocomotion.Jump).fileName())
+        assertEquals("jump.png", avatar.locomotionClips.getValue(PetLocomotion.Fall).fileName())
         val travelLeft = avatar.resolveBaseSelection(
             AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkLeft),
         )
@@ -294,6 +295,18 @@ class PetLoaderTest {
             "jump.png",
             avatar.resolveBaseSelection(
                 AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Jump),
+            ).clip!!.fileName(),
+        )
+        assertEquals(
+            "jump.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Fall),
+            ).clip!!.fileName(),
+        )
+        assertEquals(
+            "idle.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Held),
             ).clip!!.fileName(),
         )
     }
@@ -432,6 +445,28 @@ class PetLoaderTest {
             avatar.resolveBaseSelection(
                 AvatarRenderState(SphereState.Streaming, toolCallBurst = 1f),
             ).clip.fileName(),
+        )
+    }
+
+    @Test
+    fun `dedicated falling clip is preferred over jump fallback`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "falling",
+            """{ "id": "falling", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "jumping": { "frames": ["jump.png"] },
+                 "falling": { "frames": ["fall.png"] }
+            } }""",
+            imageFiles = listOf("idle.png", "jump.png", "fall.png"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        assertEquals(
+            "fall.png",
+            (avatar.locomotionClips.getValue(PetLocomotion.Fall) as FrameSequenceClip).files.single().name,
         )
     }
 

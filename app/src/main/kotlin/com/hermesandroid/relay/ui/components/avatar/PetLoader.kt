@@ -112,6 +112,8 @@ private val LOCOMOTION_CLIP_CHAIN: Map<PetLocomotion, List<String>> = mapOf(
     PetLocomotion.RunLeft to listOf("running-left", "run-left", "walking-left", "walk-left"),
     PetLocomotion.RunRight to listOf("running-right", "run-right", "walking-right", "walk-right"),
     PetLocomotion.Jump to listOf("jumping", "jump"),
+    PetLocomotion.Fall to listOf("falling", "fall", "jumping", "jump"),
+    PetLocomotion.Held to listOf("held", "hold"),
 )
 
 /**

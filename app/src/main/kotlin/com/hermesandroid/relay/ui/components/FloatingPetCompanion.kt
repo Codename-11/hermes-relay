@@ -67,6 +67,7 @@ import kotlin.math.roundToInt
 
 internal const val FLOATING_PET_COMPACT_HEIGHT_DP = 700
 internal const val CHAT_PET_WALK_REGION = "chat-composer-perch"
+private const val PET_ROAM_REPEAT_DELAY_MS = 4_800L
 
 internal fun shouldCompactFloatingPet(imeVisible: Boolean, screenHeightDp: Int): Boolean =
     imeVisible || screenHeightDp < FLOATING_PET_COMPACT_HEIGHT_DP
@@ -80,6 +81,15 @@ internal fun shouldPauseFloatingPet(
 ): Boolean = alreadyPaused || !animationEnabled || isScrolling
 
 internal fun floatingPetAlpha(isScrolling: Boolean): Float = if (isScrolling) 0.6f else 1f
+
+internal fun floatingPetRoamDelayMs(hasMoved: Boolean): Long =
+    if (hasMoved) PET_ROAM_REPEAT_DELAY_MS else 0L
+
+internal fun petVerticalLocomotion(fromY: Float, toY: Float): PetLocomotion =
+    if (toY > fromY) PetLocomotion.Fall else PetLocomotion.Jump
+
+internal fun presentedPetLocomotion(dragging: Boolean, movement: PetLocomotion): PetLocomotion =
+    if (dragging) PetLocomotion.Held else movement
 
 internal fun shouldRoamFloatingPet(
     roamingEnabled: Boolean,
@@ -144,6 +154,7 @@ fun FloatingPetCompanion(
     val targetSize = if (compact) 48.dp else 56.dp
     val visualSize = floatingPetVisualSizeDp(compact).dp
     val targetSizePx = with(density) { targetSize.toPx() }
+    val heldLiftPx = with(density) { 6.dp.toPx() }
     val safeMarginPx = with(density) { 12.dp.toPx() }
     val topClearancePx = with(density) { 76.dp.toPx() }
     val bottomClearancePx = with(density) { (if (compact) 84.dp else 104.dp).toPx() }
@@ -220,6 +231,11 @@ fun FloatingPetCompanion(
     } else {
         targetAlpha
     }
+    val heldProgress by animateFloatAsState(
+        targetValue = if (dragging) 1f else 0f,
+        animationSpec = tween(durationMillis = 140),
+        label = "floating-pet-held",
+    )
     val canRoam = shouldRoamFloatingPet(
         roamingEnabled = roamingEnabled,
         roamingAllowed = roamingAllowed,
@@ -267,8 +283,8 @@ fun FloatingPetCompanion(
                 uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
                 footprint = footprint,
             ) ?: return false
-            locomotion = PetLocomotion.Jump
             routePlan.points.drop(1).forEach { waypoint ->
+                locomotion = petVerticalLocomotion(y.value, waypoint.y)
                 coroutineScope {
                     launch { x.animateTo(waypoint.x, tween(durationMillis = 460)) }
                     launch { y.animateTo(waypoint.y, tween(durationMillis = 460)) }
@@ -290,8 +306,10 @@ fun FloatingPetCompanion(
                 return@LaunchedEffect
             }
 
+            var hasMoved = false
             while (true) {
-                delay(4_800L)
+                val delayMs = floatingPetRoamDelayMs(hasMoved)
+                if (delayMs > 0L) delay(delayMs)
                 val destinationX = if (abs(x.value - rail.bounds.left) <= abs(x.value - rail.bounds.right)) {
                     rail.bounds.right
                 } else {
@@ -303,6 +321,7 @@ fun FloatingPetCompanion(
                     .coerceIn(1_800, 6_000)
                 x.animateTo(destinationX, tween(duration))
                 locomotion = PetLocomotion.None
+                hasMoved = true
                 delay(2_400L)
 
                 // Hermes Desktop hops only between ledges with real horizontal
@@ -367,9 +386,10 @@ fun FloatingPetCompanion(
                 .size(targetSize)
                 .alpha(if (positioned) renderedAlpha else 0f)
                 .graphicsLayer {
-                    val scale = if (dragging) 1.10f else 1f
+                    val scale = 1f + heldProgress * 0.10f
                     scaleX = scale
                     scaleY = scale
+                    translationY = -heldLiftPx * heldProgress
                 }
                 .pointerInput(pet.id, safeBounds, roamingRails, registeredObstacles) {
                     detectDragGesturesAfterLongPress(
@@ -389,12 +409,13 @@ fun FloatingPetCompanion(
                         },
                         onDragEnd = {
                             val dropped = draggedPoint ?: PetPoint(x.value, y.value)
-                            dragging = false
                             persistAt(dropped)
                             scope.launch {
                                 x.snapTo(dropped.x)
                                 y.snapTo(dropped.y)
                                 draggedPoint = null
+                                locomotion = PetLocomotion.None
+                                dragging = false
                             }
                         },
                         onDrag = { change, dragAmount ->
@@ -449,7 +470,7 @@ fun FloatingPetCompanion(
             key(pet.id) {
                 pet.Render(
                     state = state.copy(
-                        petLocomotion = locomotion,
+                        petLocomotion = presentedPetLocomotion(dragging, locomotion),
                         paused = shouldPauseFloatingPet(
                             alreadyPaused = state.paused || !accessibleMotion.osAnimations ||
                                 accessibleMotion.touchExploration,
