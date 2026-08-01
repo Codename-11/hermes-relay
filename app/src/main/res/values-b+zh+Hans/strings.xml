@@ -1145,6 +1145,15 @@
     <string name="floating_pet_companion_description">伙伴 %1$s，%2$s。打开伙伴菜单</string>
     <string name="floating_pet_menu_appearance">外观</string>
     <string name="floating_pet_menu_hide">隐藏伙伴</string>
+    <string name="floating_pet_menu_enable_roaming">让伙伴四处走动</string>
+    <string name="floating_pet_menu_pause_roaming">暂停走动</string>
+    <string name="floating_pet_action_move_start">移到起始边缘</string>
+    <string name="floating_pet_action_move_end">移到结束边缘</string>
+    <string name="floating_pet_action_move_up">向上移动</string>
+    <string name="floating_pet_action_move_down">向下移动</string>
+    <string name="floating_pet_action_reset">重置位置</string>
+    <string name="appearance_pet_roaming">在界面中走动</string>
+    <string name="appearance_pet_roaming_desc">Hermes 空闲时，所选 Petdex 或自定义伙伴只会在界面的安全区域走动。思考、工具操作、语音、滚动、减少动态效果和全屏界面会暂停走动。</string>
     <string name="floating_pet_state_idle">空闲</string>
     <string name="floating_pet_state_thinking">思考中</string>
     <string name="floating_pet_state_streaming">回复中</string>

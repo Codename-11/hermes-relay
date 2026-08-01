@@ -28,9 +28,35 @@ Android keeps these concepts separate:
    visualization (see [`sphere-spec.md`](./sphere-spec.md)).
 3. **Floating pet** — None or one selected pet companion.
 
-Pick a companion in **Settings → Appearance → Floating pet**. The pet occupies
-a fixed perch above the composer so it cannot cover messages or composer
-controls. Selecting a pet does not replace the profile identity or Sphere.
+Pick a companion in **Settings → Appearance → Floating pet**. One app-level host
+keeps it present across normal in-app navigation. Selecting a pet does not
+replace the profile identity or Sphere.
+
+## Placement and roaming
+
+The companion has a durable home and an optional autonomous roaming mode:
+
+- Long hold the pet, drag it, and release. It stays inside a protected viewport,
+  snaps to the nearest logical start/end edge, and stores the edge plus a
+  normalized vertical position—not raw pixels. The placement therefore adapts
+  to rotation, resizing, and RTL layouts. **Reset position** restores the default
+  start-edge home near the lower part of the viewport.
+- **Walk around the interface** is opt-in and off by default. In the current
+  Android implementation, enabling it docks the pet onto Chat's measured 56 dp
+  rail above the composer. A manual drag or TalkBack vertical move pauses
+  roaming before applying the free-form placement. The pet remains docked on
+  other screens.
+- Only the pet-sized target consumes touch input; the root positioning layer is
+  click-through. The safe rail is a real layout slot, so autonomous movement
+  does not cover transcript or composer controls.
+- Roaming requires an idle agent, the foreground app, enabled animation, and an
+  available safe rail. Agent activity, scrolling, dragging, an open pet menu,
+  startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
+  exploration stops travel. Activity state takes priority over locomotion.
+
+The pet menu can enable/pause roaming, reset position, open Appearance, or hide
+the companion. TalkBack users also get actions to move to start/end, move
+up/down, and reset without performing a drag gesture.
 
 ## Petdex catalog and custom packs
 
@@ -85,20 +111,28 @@ Petdex atlases. Cells are 192 × 208 pixels; each generated Relay clip plays the
 first six cells of its mapped row at roughly 5.45 fps. `startFrame` selects that
 row without copying the atlas into separate images.
 
-The adapter maps Petdex motion rows to Relay states as follows:
+The adapter preserves Petdex's source row names instead of flattening them:
 
-| Relay state | Petdex row | Fallback |
-|-------------|------------|----------|
-| `idle` | `idle` | required by the supported layout |
-| `thinking` | `review` | `idle` |
-| `working`, `writing` | `run` | `idle` |
-| `listening` | `waiting` | `idle` (legacy atlas has no waiting row) |
-| `speaking`, `greet`, `done` | `wave` | `idle` |
-| `error` | `failed` | `idle` |
+| Meaning | Current Petdex row | Relay use |
+|---------|--------------------|-----------|
+| Rest | `idle` | Idle and ultimate fallback |
+| Review | `review` | Thinking fallback |
+| In-place work | `running` | Working/tool and streaming fallback |
+| Horizontal travel | `running-left`, `running-right` | Physical locomotion only while the agent is idle |
+| Waiting | `waiting` | Listening compatibility |
+| Greeting/completion | `waving` | Speaking compatibility and greet/done reaction fallback |
+| Failure | `failed` | Error fallback |
+| Celebration | `jumping` | Success/celebrate fallback |
 
-Only the Android Chat state subset is live on the Composer Perch; the broader
-mapping preserves the generated pack's compatibility with previews and future
-hosts.
+Legacy `wave`, `run`, and `jump` row names remain accepted. Legacy atlases do
+not contain directional rows, so they remain valid activity-reactive pets but
+stay visually idle while the host changes position. Custom Relay packs may add
+`walking-left`/`walking-right`, `walk-left`/`walk-right`,
+`running-left`/`running-right`, or `run-left`/`run-right` clips.
+
+Locomotion and activity are intentionally separate. Directional clips can be
+selected only when the agent state is Idle; thinking, streaming, tool work,
+errors, and one-shot reactions always win.
 
 ## Where pets live
 
@@ -234,22 +268,21 @@ through a fallback chain (first existing clip wins). The names you write are
 | Agent activity | What it means | Author clip (alias) | Fallback chain |
 |----------------|---------------|---------------------|----------------|
 | **Idle** | Waiting between turns | `idle` | `idle` |
-| **Thinking** | Reasoning before output | `thinking` | `thinking` → `idle` |
-| **Working** | Running a tool, mid-turn | `working` | *opt-in overlay — see below* |
-| **Streaming** | Writing / producing output | `writing` *(or `streaming`)* | `writing` → `streaming` → `speaking` → `thinking` → `idle` |
-| **Listening** | Mic open (voice) | `listening` | `listening` → `idle` |
-| **Speaking** | Talking via TTS (voice) | `speaking` | `speaking` → `writing` → `thinking` → `idle` |
-| **Error** | A turn failed | `error` | `error` → `thinking` → `idle` |
+| **Thinking** | Reasoning before output | `thinking` *(or `review`)* | `thinking` → `review` → `idle` |
+| **Working** | Running a tool, mid-turn | `working` *(or `run`/`running`)* | *opt-in overlay — see below* |
+| **Streaming** | Writing / producing output | `writing` *(or `streaming`)* | `writing` → `streaming` → `working` → `run` → `running` → `review` → `thinking` → `idle` |
+| **Listening** | Mic open (voice) | `listening` *(or `waiting`)* | `listening` → `waiting` → `idle` |
+| **Speaking** | Talking via TTS (voice) | `speaking` *(or `talking`)* | `speaking` → `talking` → `wave` → `waving` → `writing` → `idle` |
+| **Error** | A turn failed | `error` *(or `failed`)* | `error` → `failed` → `review` → `thinking` → `idle` |
 
 `idle` is the **only** hard requirement; every other state falls back to it.
 Author the subset you want and the chain fills the rest.
 
-The manifest vocabulary retains `listening` and `speaking` for pack
-compatibility and preview tooling, but the Android floating pet currently lives
-only in Chat. Its live perch drives Idle, Thinking, Streaming, Error, the
-Working tool overlay, and greet/done reactions; it does not receive microphone,
-TTS, or voice-amplitude signals. The Sphere and voice presentation remain
-separate systems.
+The app-level host receives Chat's Idle, Thinking, Streaming, Error, tool-burst,
+and completion signals. The manifest vocabulary retains `listening` and
+`speaking` for pack compatibility and preview tooling, but Android hides the pet
+during its full-screen voice presentation. The Sphere and voice presentation
+remain separate systems.
 
 ### The `working` overlay — tool use vs. thinking
 
@@ -414,11 +447,12 @@ live in the user guide under **Custom Avatars → Generate a pet with AI**
 
 ## Reduced motion / accessibility
 
-When the user disables animations or scrolls the transcript, the pet is rendered
-**paused**. During scrolling it also dims; with the keyboard open or on a short
-screen it compacts from 48 dp to 40 dp. Author the first `idle` frame to be a
-good, legible still. The fixed perch is exposed as a button with the pet name and
-current state; its menu can open Appearance or hide the companion.
+When the user disables animations, Android animator scale is 0, or TalkBack touch
+exploration is active, autonomous roaming stops and the pet is rendered
+**paused**. During transcript scrolling it also pauses and dims; with the
+keyboard open or on a short screen it compacts from 48 dp to 40 dp. Author the
+first `idle` frame to be a good, legible still. The companion exposes its name
+and current state, plus non-drag move/reset/configure/hide accessibility actions.
 
 ## Minimal example
 

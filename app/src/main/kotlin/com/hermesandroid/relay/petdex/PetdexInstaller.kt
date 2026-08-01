@@ -160,20 +160,14 @@ internal data class PetdexAtlasLayout(
                 fps = PETDEX_FPS,
             )
         }
-        val idle = requireNotNull(clip("idle"))
-        val run = clip("run") ?: idle
-        val wave = clip("wave") ?: idle
-        val states = buildMap {
-            put("idle", idle)
-            put("thinking", clip("review") ?: idle)
-            put("working", run)
-            put("writing", run)
-            put("listening", clip("waiting") ?: idle)
-            put("speaking", wave)
-            put("error", clip("failed") ?: idle)
-            put("greet", wave)
-            put("done", wave)
-        }
+        requireNotNull(clip("idle"))
+        // Preserve the source atlas taxonomy. PetLoader owns the backwards-
+        // compatible semantic mapping from these upstream names to Android
+        // activity and locomotion, so directional travel rows are not discarded
+        // or confused with the in-place `running` agent-work row.
+        val states = rows.keys.mapNotNull { rowName ->
+            clip(rowName)?.let { rowName to it }
+        }.toMap()
         return PetSpec(
             schemaVersion = 1,
             id = pet.installedAvatarId,
@@ -195,11 +189,13 @@ internal data class PetdexAtlasLayout(
 
         private val CURRENT_ROWS = mapOf(
             "idle" to 0,
-            "wave" to 3,
-            "jump" to 4,
+            "running-right" to 1,
+            "running-left" to 2,
+            "waving" to 3,
+            "jumping" to 4,
             "failed" to 5,
             "waiting" to 6,
-            "run" to 7,
+            "running" to 7,
             "review" to 8,
         )
         private val LEGACY_ROWS = mapOf(
@@ -212,7 +208,9 @@ internal data class PetdexAtlasLayout(
         )
 
         fun fromDimensions(width: Int, height: Int): PetdexAtlasLayout? = when {
-            width == 8 * FRAME_WIDTH && height == 9 * FRAME_HEIGHT -> PetdexAtlasLayout(8, CURRENT_ROWS)
+            width == 8 * FRAME_WIDTH &&
+                (height == 9 * FRAME_HEIGHT || height == 11 * FRAME_HEIGHT) ->
+                PetdexAtlasLayout(8, CURRENT_ROWS)
             width == 9 * FRAME_WIDTH && height == 8 * FRAME_HEIGHT -> PetdexAtlasLayout(9, LEGACY_ROWS)
             else -> null
         }

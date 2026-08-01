@@ -1250,6 +1250,15 @@
     <string name="floating_pet_companion_description">Companion %1$s, %2$s. Open companion menu</string>
     <string name="floating_pet_menu_appearance">Appearance</string>
     <string name="floating_pet_menu_hide">Hide companion</string>
+    <string name="floating_pet_menu_enable_roaming">Let companion roam</string>
+    <string name="floating_pet_menu_pause_roaming">Pause roaming</string>
+    <string name="floating_pet_action_move_start">Move to start edge</string>
+    <string name="floating_pet_action_move_end">Move to end edge</string>
+    <string name="floating_pet_action_move_up">Move up</string>
+    <string name="floating_pet_action_move_down">Move down</string>
+    <string name="floating_pet_action_reset">Reset position</string>
+    <string name="appearance_pet_roaming">Walk around the interface</string>
+    <string name="appearance_pet_roaming_desc">When Hermes is idle, the selected Petdex or custom companion walks only on UI-safe perches. Thinking, tool work, speech, scrolling, reduced motion, and full-screen surfaces pause it.</string>
     <string name="floating_pet_state_idle">Idle</string>
     <string name="floating_pet_state_thinking">Thinking</string>
     <string name="floating_pet_state_streaming">Streaming</string>

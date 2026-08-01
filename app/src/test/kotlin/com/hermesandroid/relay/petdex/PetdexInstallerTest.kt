@@ -22,28 +22,44 @@ class PetdexInstallerTest {
     val temp = TemporaryFolder()
 
     @Test
-    fun `current and legacy atlas layouts map state rows to cell offsets`() {
+    fun `current v1 v2 and legacy atlas layouts map state rows to cell offsets`() {
         val current = PetdexAtlasLayout.fromDimensions(1536, 1872)
+        val currentV2 = PetdexAtlasLayout.fromDimensions(1536, 2288)
         val legacy = PetdexAtlasLayout.fromDimensions(1728, 1664)
         assertNotNull(current)
+        assertNotNull(currentV2)
         assertNotNull(legacy)
 
         val currentSpec = current!!.toPetSpec(PET, META, "spritesheet.webp")
         assertEquals(0, currentSpec.states.getValue("idle").startFrame)
-        assertEquals(8 * 8, currentSpec.states.getValue("thinking").startFrame)
-        assertEquals(7 * 8, currentSpec.states.getValue("working").startFrame)
-        assertEquals(5 * 8, currentSpec.states.getValue("error").startFrame)
-        assertEquals(6 * 8, currentSpec.states.getValue("listening").startFrame)
+        assertEquals(1 * 8, currentSpec.states.getValue("running-right").startFrame)
+        assertEquals(2 * 8, currentSpec.states.getValue("running-left").startFrame)
+        assertEquals(3 * 8, currentSpec.states.getValue("waving").startFrame)
+        assertEquals(4 * 8, currentSpec.states.getValue("jumping").startFrame)
+        assertEquals(5 * 8, currentSpec.states.getValue("failed").startFrame)
+        assertEquals(6 * 8, currentSpec.states.getValue("waiting").startFrame)
+        assertEquals(7 * 8, currentSpec.states.getValue("running").startFrame)
+        assertEquals(8 * 8, currentSpec.states.getValue("review").startFrame)
+
+        val currentV2Spec = currentV2!!.toPetSpec(PET, META, "spritesheet.webp")
+        assertEquals(currentSpec.states, currentV2Spec.states)
+        assertEquals(9, currentV2Spec.states.size)
+        assertFalse(currentV2Spec.states.containsKey("look-row-9"))
+        assertFalse(currentV2Spec.states.containsKey("look-row-10"))
 
         val legacySpec = legacy!!.toPetSpec(PET, META, "spritesheet.webp")
-        assertEquals(4 * 9, legacySpec.states.getValue("thinking").startFrame)
-        assertEquals(2 * 9, legacySpec.states.getValue("working").startFrame)
-        assertEquals(0, legacySpec.states.getValue("listening").startFrame)
+        assertEquals(0, legacySpec.states.getValue("idle").startFrame)
+        assertEquals(1 * 9, legacySpec.states.getValue("wave").startFrame)
+        assertEquals(2 * 9, legacySpec.states.getValue("run").startFrame)
+        assertEquals(3 * 9, legacySpec.states.getValue("failed").startFrame)
+        assertEquals(4 * 9, legacySpec.states.getValue("review").startFrame)
+        assertEquals(5 * 9, legacySpec.states.getValue("jump").startFrame)
     }
 
     @Test
     fun `unsupported atlas dimensions are rejected`() {
         assertEquals(null, PetdexAtlasLayout.fromDimensions(1536, 1664))
+        assertEquals(null, PetdexAtlasLayout.fromDimensions(1536, 2080))
         assertEquals(null, PetdexAtlasLayout.fromDimensions(20_000, 20_000))
     }
 

@@ -23,21 +23,31 @@ Desktop and Codex while adapting it to a phone-sized viewport.
 
 ## Android interaction contract
 
-- The pet uses a fixed, non-draggable perch immediately above the composer.
-  Keeping it in layout prevents it from covering transcript content, snackbars,
-  scroll controls, or composer actions.
-- The normal size is 48 dp. The pet compacts to 40 dp when the IME is visible or
-  the screen is shorter than 700 dp.
-- Scrolling pauses the pet and dims it to 60 percent opacity. Disabling
-  animations also pauses it on a stable frame.
-- The Chat perch receives idle, thinking, writing, error, tool-burst, and
-  completion signals. Listening, speaking, and voice-amplitude aliases remain
-  valid pack/preview vocabulary but are not driven by the Android Chat perch.
-- The companion is not rendered in clean/ambient mode, where the Sphere remains
-  the intentional large-format presentation.
-- The pet is an accessible button whose menu identifies its current state and
-  offers **Appearance** and **Hide companion**.
-- V1 is intentionally fixed-position: no dragging or free roaming on mobile.
+- One app-root host renders the selected companion across normal in-app
+  navigation. The full-screen positioning layer is click-through; only the
+  48/56 dp pet target accepts pointer input.
+- Long hold starts a haptic drag. Movement is clamped to the protected viewport;
+  release snaps to the nearest logical start/end edge and persists that edge plus
+  a normalized vertical fraction. Pixel coordinates are not stored, so the home
+  position remains meaningful after rotation, resizing, and RTL changes.
+- Autonomous roaming is separately opt-in and defaults off. Chat registers a
+  real 56 dp layout rail immediately above the composer; that is the only region
+  where the pet walks on its own. Enabling roaming docks onto that rail; manual
+  drag or a vertical accessibility move pauses roaming before applying free-form
+  placement. Other app screens show the pet docked.
+- Roaming runs only while Hermes is idle and the app is foregrounded. Thinking,
+  streaming, tool work, errors, transcript scrolling, dragging, the pet menu,
+  voice, clean/ambient mode, startup, and loss of a safe rail return it home or
+  hide/suspend it as appropriate.
+- App animation-off, Android animator scale 0, and TalkBack touch exploration
+  disable autonomous travel and freeze the sprite on a stable frame. Scrolling
+  also pauses and dims it to 60 percent opacity.
+- The normal art size is 48 dp and compacts to 40 dp with the IME or a screen
+  shorter than 700 dp.
+- The pet remains a semantic button with its label and agent state. Its menu can
+  enable/pause roaming, reset position, open Appearance, or hide the companion.
+  TalkBack custom actions additionally move to logical start/end, move up/down in
+  bounded steps, and reset without requiring drag.
 
 ## Appearance contract
 
@@ -47,7 +57,8 @@ surfaces:
 - **Background visualization:** Off or Sphere. Sphere skins remain available
   when Sphere is enabled.
 - **Floating pet:** None or an imported pet, followed by add/manage, live preview,
-  playback speed, activity reaction, and stabilization controls.
+  playback speed, activity reaction, stabilization, opt-in roaming, and reset
+  position controls.
 
 Deleting the selected pet resets only the companion selection to None. It does
 not change the Sphere or active profile identity.
@@ -75,6 +86,9 @@ identity data is unchanged.
 - Petdex URLs and redirects are constrained to the exact HTTPS catalog/asset
   hosts; bounded metadata and PNG/WebP spritesheets are layout-checked before an
   atomic install. Catalog availability does not assert a uniform asset license.
+- Petdex's canonical `running-left` and `running-right` rows are preserved as
+  physical locomotion. The in-place `running` row remains agent work; movement
+  clips never override thinking, streaming, tool, error, or reaction clips.
 - Sphere skins remain a separate data system documented in
   [`../sphere-spec.md`](../sphere-spec.md).
 - `MorphingSphereCore` and its web parity harness remain the source of truth for
@@ -86,4 +100,5 @@ identity data is unchanged.
 
 - Using a pet as a sender/profile avatar.
 - Coupling pet selection to Sphere visibility or skin selection.
-- A draggable overlay or free-roaming pet on Android.
+- A system-wide, always-on-top Android overlay outside Hermes Relay. The
+  companion is app-level and requires no overlay permission.

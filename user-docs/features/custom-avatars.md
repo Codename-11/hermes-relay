@@ -1,17 +1,17 @@
-# Custom Avatars
+# Custom avatars and pets
 
-The agent has a face — the animated embodiment you see on the empty chat screen, in full-screen clean/ambient mode, on the voice overlay, during onboarding, and on the startup splash. You can change it. Pick the built-in **Sphere** and recolor it, or drop in your own animated **pet** as a complete replacement.
+Hermes Relay has three separate visual concepts. Changing one does not replace
+the others:
 
-Everything lives under **Settings → Appearance → Agent avatar**, and adding your own is pure data — frames and JSON, never code.
+1. **Profile identity** — the profile image or letter beside the agent name and
+   the first assistant message in a group.
+2. **Background visualization** — Off or the animated **Sphere**, with an
+   optional Sphere skin.
+3. **Floating pet** — None or an installed bitmap companion that stays with you
+   across the app.
 
-## The two-level model
-
-Appearance is two stacked choices:
-
-1. **Agent avatar** — *what* the embodiment is. Either the built-in **Sphere** (an animated ASCII orb) or one of your **pets** (an animated bitmap companion).
-2. **Sphere skin** — *how the Sphere looks*. A second row of chips that recolors the orb. It only appears when the Sphere avatar is selected; pets carry no skins, so the row hides when a pet is chosen.
-
-So the flow is: choose an avatar, and if that avatar is the Sphere, optionally choose a skin.
+Profile identity is managed from the agent sheet. Sphere and pet controls live
+under **Settings → Appearance**.
 
 ## Profile badge image
 
@@ -30,23 +30,25 @@ The imported copy stays on the phone and is scoped to that Connection and
 profile. Changing or removing the host file later does not silently change the
 phone icon; tap import again to refresh it.
 
-## Choosing an avatar
+## Choosing a floating pet
 
-Open **Settings → Appearance → Agent avatar**. The Sphere is always the first chip; any valid pets you've installed appear beside it. Selecting a chip switches every surface — chat, clean mode, voice, onboarding, splash — at once.
+Open **Settings → Appearance → Floating pet**. Choose **None** or an installed
+pet. This does not change the profile badge or Sphere.
 
-Each chip shows a small summary of the **live signals** the avatar reacts to, so you know what it does before you pick it:
+Each pet shows a summary of the **live signals** its pack supports:
 
 | Badge | Meaning |
 |-------|---------|
-| **Voice** | Reacts to mic/speech amplitude — swells or bounces while listening and speaking |
+| **Voice** | Pack/renderer supports mic or speech amplitude on hosts that provide it; Android's app-level companion is hidden during full-screen voice |
 | **Tools** | Pulses on tool-call activity during a turn |
 | **Activity** | General turn activity drives motion (turbulence, ripple, flow) |
 
-With no pets installed and the Sphere selected, the app behaves exactly as it always has.
+With no pet selected, no floating companion is shown. The Sphere setting remains
+independent.
 
 ## Sphere skins
 
-When the Sphere is your avatar, a **Sphere skin** row appears. A skin changes the orb's **colors** (and, optionally, fine motion parameters) — the underlying orb animation stays the same.
+When **Background visualization** is set to Sphere, the **Sphere skin** row changes the orb's colors (and, optionally, fine motion parameters). Pet selection does not affect it.
 
 Built-in skins include:
 
@@ -76,11 +78,16 @@ The app creates the folder on first launch, so it's there waiting after your fir
 For the full format — every state key, the optional motion `params`, color rules, and the reactivity flags — see the Sphere skin spec: [`docs/sphere-spec.md`](https://github.com/Codename-11/hermes-relay/blob/main/docs/sphere-spec.md).
 :::
 
-## Pets — bring your own avatar
+## Pets — bring your own companion
 
-A **pet** is a bitmap companion that replaces the Sphere entirely. It can be animated or still, and it's a **self-contained pack**: a small `pet.json` manifest plus the images it plays back — either PNG frames or a single sprite sheet. Pets are **pure data** — frames and numbers, never code — and the renderer is dependency-free, so a pet is really just a folder of PNGs the app displays or animates.
+A **pet** is a floating bitmap companion, independent of the Sphere and profile
+identity. It can be animated or still, and it is a self-contained pack: a small
+`pet.json` manifest plus PNG/WebP frames or a sprite sheet. Pets are pure data—
+frames and numbers, never executable code.
 
-A pet can have separate clips for the agent's **idle**, **thinking**, and **speaking** states, but the only hard requirement is `idle`. A minimal pet is one idle image and a one-line manifest — a static picture avatar.
+A pet can have separate clips for idle, thinking, writing, tool work, errors,
+reactions, and optional left/right locomotion. Only `idle` is required; one idle
+image and a one-line manifest make a complete static pet.
 
 ### Add a pet
 
@@ -94,15 +101,41 @@ adb push blob/ /sdcard/Android/data/com.axiomlabs.hermesrelay.sideload/files/pet
 On the **googlePlay** flavor, drop the `.sideload` suffix:
 `/sdcard/Android/data/com.axiomlabs.hermesrelay/files/pets/`.
 
-Neither path needs a runtime permission — app-scoped external storage is reachable by `adb push` (or a file manager) directly. Reopen **Settings → Appearance → Agent avatar** and your pet appears as a chip alongside the Sphere.
+Neither path needs a runtime permission—app-scoped external storage is reachable
+by `adb push` or a file manager. Reopen **Settings → Appearance → Floating pet**
+and the pack appears as a companion choice.
 
 ::: tip Easiest: import in the app
-You don't need `adb`. In **Settings → Appearance → Agent avatar**, tap **Add a pet** and pick a file — it accepts a pet pack (`.zip`) **or a single image** (PNG/JPG), which becomes a one-frame **static avatar** with no manifest authoring. A pet zip may contain `pet.json` at the archive root or inside one top-level folder. Imported pets appear immediately; remove them from the **Installed pets** list.
+You don't need `adb`. In **Settings → Appearance → Floating pet**, tap **Add a pet** and pick a Relay pet pack (`.zip`) or a single image, which becomes a one-frame static companion. You can also tap **Browse Petdex** to search the public gallery, review creator/source attribution, and explicitly install a supported pet. Petdex atlases download only after you tap Install and remain available offline afterward. Imported and Petdex pets appear in the same installed list.
 :::
 
 ::: tip Authoring reference
 For the manifest format — clips, sprite sheets, frame-rate limits, reactivity flags, and image best practices — see the Pet spec: [`docs/pet-spec.md`](https://github.com/Codename-11/hermes-relay/blob/main/docs/pet-spec.md).
 :::
+
+### Move or let the pet roam
+
+The companion is app-level, so it keeps the same home while you move between
+normal Hermes Relay screens.
+
+- Long hold the pet, drag it, and release. It snaps to the nearest start/end
+  edge and remembers a proportional vertical position across rotation, resizing,
+  relaunches, and RTL layouts.
+- Turn on **Walk around the interface** to let it roam while Hermes is idle. This
+  is off by default and docks the pet onto Chat's reserved strip above the
+  composer. Dragging it elsewhere or using TalkBack's up/down actions pauses
+  roaming first and keeps the new position. On other screens the pet stays docked.
+- Use the pet menu to pause roaming, reset position, open Appearance, or hide it.
+  TalkBack offers move-to-start/end, move-up/down, and reset actions so dragging
+  is never required.
+
+Agent state and locomotion are separate. `running`/`working` means Hermes is
+performing work in place; `walking-left`/`walking-right` or
+`running-left`/`running-right` means the pet is physically crossing the safe
+strip. Directional motion is used only while Hermes is idle, so thinking,
+writing, tool work, errors, and reactions always take priority. Petdex's current
+directional rows are preserved automatically; legacy Petdex pets without those
+rows still move but show their idle art during travel.
 
 ### Generate a pet with AI
 
@@ -272,8 +305,8 @@ A 256 px cell is the **canvas**, not the size the character should fill. After b
 Sprite animation is frame-stepped, so smoothness comes from **frame count**, not speed — which is why this kit defaults to a **4×4 grid (16 frames)**. If a 16-frame sheet drifts, keep the 4×4 grid and fix registration first: generate states one at a time, keep the same reference and seed, or use one stable state-specific frame as a locked base and animate only blink, mouth, glow, sparkles, or a contained prop. Only drop to **3×3** or **2×2** when frame count is negotiable. And **match fps to frame count** so the loop length stays sane: 16 frames at `fps: 8` is a calm ~2 s cycle, while *4* frames at `fps: 8` is a frantic half-second. Keep calm states (`idle`/`listening`) a little slower than active ones (`speaking`/`done`).
 :::
 
-::: tip Resolution: size for the biggest surface
-The avatar is **contain-fit** into whatever space it occupies, and *one* asset set serves every surface — so author for the **largest** place it appears (the full-screen chat background) and small placements (the voice overlay) just downscale and stay sharp. For static per-state packs, use native **2048×2048** stills when you care about full-width, high-DPI phones; **1024×1024** is a lighter default. Avoid generating a 256 px still and upscaling it later — that makes a bigger file, not real detail. For animated sheets, **256 px cells** (a 1024×1024 sheet for a 4×4 grid) are a good default; 512 px cells (2048×2048 sheet) add crispness at a modest memory cost because a sheet decodes as one bitmap. You can also fine-tune the running speed live in **Settings → Appearance** without re-authoring.
+::: tip Resolution: size for the companion target
+The pet art is contain-fit into a 48 dp target (40 dp in compact layouts), so huge full-screen assets waste memory. A 1024×1024 still is already generous; downsize finished assets when practical. For animated sheets, 256 px cells are a good default. You can also fine-tune playback speed in **Settings → Appearance** without re-authoring.
 :::
 
 ::: warning Three things AI image models get wrong
@@ -283,14 +316,14 @@ The avatar is **contain-fit** into whatever space it occupies, and *one* asset s
 :::
 
 ::: tip Static packs are first-class
-Want to confirm the pipeline today before perfecting nine animated sheets? Generate nine expressive stills and reference each as a one-frame `frames` clip (`"frames": ["idle.png"]`) instead of a `sheet`. Use `1024×1024` for a light pack or native `2048×2048` for crisp expanded mobile rendering. No in-state motion, but every state is visibly distinct, including brief still `greet` and `done` reactions.
+Want to confirm the pipeline today before perfecting nine animated sheets? Generate expressive stills and reference each as a one-frame `frames` clip (`"frames": ["idle.png"]`) instead of a `sheet`. `1024×1024` is already generous for the mobile companion target. No in-state motion, but every authored state remains visibly distinct, including brief still `greet` and `done` reactions.
 :::
 
 For a smooth, perfectly-stable animated character, hand-drawn pixel art still wins — but for a charming "good enough" companion, AI stills or sprite sheets get you there without ever opening a drawing app.
 
 ## Accessibility & reduced motion
 
-If you disable animations — either the app's own setting or your phone's OS-level **reduce motion** — or if a screen reader is active, the avatar renders as a **still frame** instead of looping. The Sphere pins to a single frame; a pet freezes on its current frame and its voice bounce is suppressed.
+If you disable app animations, Android's animator scale is 0, or TalkBack touch exploration is active, autonomous roaming stops and the pet renders as a still frame. Scrolling the transcript also pauses and dims it. TalkBack custom actions provide movement and reset without long-hold dragging. The Sphere follows its own independent motion setting.
 
 When authoring a pet, make the first `idle` frame a good, legible still — that's what people who prefer reduced motion will see.
 
@@ -302,4 +335,4 @@ When authoring a pet, make the first `idle` frame a good, legible still — that
 
 **My pet appears but renders blank.** A file that exists but isn't a decodable image (a corrupt or mislabeled `.png`) passes the manifest check but can't be drawn. Confirm your images actually open before shipping a pack.
 
-**I deleted a pet that was selected.** No problem — if the selected pet is removed, the avatar falls back to the **Sphere** automatically.
+**I deleted a pet that was selected.** The floating-pet choice resets to **None**. The profile identity and Sphere are unchanged.
