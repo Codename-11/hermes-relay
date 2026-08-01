@@ -581,19 +581,18 @@ private class PetdexThumbnailLoader(
     suspend fun load(pet: PetdexPet): ImageBitmap? {
         val cacheKey = "${pet.slug}\u0000${pet.spritesheetUrl}"
         while (true) {
+            when (val cached = cacheMutex.withLock { cachedOutcome(cacheKey) }) {
+                is PetdexThumbnailLoadOutcome.Loaded -> return cached.bitmap
+                PetdexThumbnailLoadOutcome.Unavailable -> return null
+                is PetdexThumbnailLoadOutcome.Retry -> {
+                    delay(cached.delayMs)
+                    continue
+                }
+                null -> Unit
+            }
             val outcome = requestSlots.withPermit {
                 cacheMutex.withLock {
-                    bitmapCache[cacheKey]?.let {
-                        return@withPermit PetdexThumbnailLoadOutcome.Loaded(it)
-                    }
-                    if (cacheKey in missingKeys || thumbnailsUnsupported) {
-                        return@withPermit PetdexThumbnailLoadOutcome.Unavailable
-                    }
-                    val remainingBackoff = (retryAfterMs[cacheKey] ?: 0L) -
-                        System.currentTimeMillis()
-                    if (remainingBackoff > 0L) {
-                        return@withPermit PetdexThumbnailLoadOutcome.Retry(remainingBackoff)
-                    }
+                    cachedOutcome(cacheKey)?.let { return@withPermit it }
                 }
                 val result = request(pet.slug, pet.spritesheetUrl)
                 val methodUnavailable = (result?.exceptionOrNull() as? GatewayRpcException)?.code ==
@@ -632,6 +631,20 @@ private class PetdexThumbnailLoader(
                 PetdexThumbnailLoadOutcome.Unavailable -> return null
                 is PetdexThumbnailLoadOutcome.Retry -> delay(outcome.delayMs)
             }
+        }
+    }
+
+    /** Must be called while [cacheMutex] is held. Null means a network attempt is needed. */
+    private fun cachedOutcome(cacheKey: String): PetdexThumbnailLoadOutcome? {
+        bitmapCache[cacheKey]?.let { return PetdexThumbnailLoadOutcome.Loaded(it) }
+        if (cacheKey in missingKeys || thumbnailsUnsupported) {
+            return PetdexThumbnailLoadOutcome.Unavailable
+        }
+        val remainingBackoff = (retryAfterMs[cacheKey] ?: 0L) - System.currentTimeMillis()
+        return if (remainingBackoff > 0L) {
+            PetdexThumbnailLoadOutcome.Retry(remainingBackoff)
+        } else {
+            null
         }
     }
 }
