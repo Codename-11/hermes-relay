@@ -40,7 +40,8 @@ The companion has a durable home and an optional autonomous roaming mode:
   snaps to the nearest logical start/end edge, and stores the edge plus a
   normalized vertical position—not raw pixels. The placement therefore adapts
   to rotation, resizing, and RTL layouts. **Reset position** restores the default
-  start-edge home near the lower part of the viewport.
+  end-edge home near the lower-right Chat area in left-to-right layouts (and
+  mirrors correctly in right-to-left layouts).
 - **Walk around the interface** is opt-in and off by default. In the current
   Android implementation, enabling it docks the pet onto Chat's measured 56 dp
   rail above the composer. A manual drag or TalkBack vertical move pauses
