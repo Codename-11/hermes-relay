@@ -1,16 +1,28 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,24 +51,48 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.petdex.PetdexCatalogClient
 import com.hermesandroid.relay.petdex.PetdexInstallResult
 import com.hermesandroid.relay.petdex.PetdexInstaller
 import com.hermesandroid.relay.petdex.PetdexPet
+import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
+import com.hermesandroid.relay.ui.components.decodeInlineImageDataUrl
+import com.hermesandroid.relay.ui.components.withInlineImageDecodeLock
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 
 private const val PETDEX_URL = "https://petdex.dev"
+private const val PETDEX_THUMB_MAX_BYTES = 512 * 1024
+private const val PETDEX_THUMB_MAX_WIDTH = 192
+private const val PETDEX_THUMB_MAX_HEIGHT = 208
+private const val PETDEX_THUMB_CACHE_SIZE = 24
+private const val PETDEX_THUMB_CONCURRENCY = 4
+private const val PETDEX_THUMB_RETRY_MS = 10_000L
+private const val JSONRPC_METHOD_NOT_FOUND = -32601
+private const val PETDEX_FRAME_ASPECT = 192f / 208f
 
-/** Lightweight Petdex catalog browser. Atlas files are downloaded only after Install. */
+/** Petdex gallery with upstream-compatible, lazily loaded idle-frame previews. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PetdexBrowseScreen(
@@ -70,8 +106,15 @@ fun PetdexBrowseScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val catalogClient = remember { PetdexCatalogClient() }
     val installer = remember { PetdexInstaller() }
+    val thumbnailLoader = remember(connectionViewModel) {
+        PetdexThumbnailLoader { slug, url ->
+            connectionViewModel.activeGatewayChatClient()
+                ?.petThumbnail(slug, url)
+        }
+    }
     val availablePets = LocalAvailablePets.current
     val selectedPetId by connectionViewModel.floatingPet.collectAsState()
+    val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
 
     var catalog by remember { mutableStateOf<List<PetdexPet>>(emptyList()) }
     var query by remember { mutableStateOf("") }
@@ -109,11 +152,12 @@ fun PetdexBrowseScreen(
         }
     }
 
-    val visiblePets = remember(catalog, query) {
-        filterPetdexPets(catalog, query)
-    }
+    val visiblePets = remember(catalog, query) { filterPetdexPets(catalog, query) }
     val installedIds = remember(availablePets, installedThisSession.toList()) {
         availablePets.mapTo(mutableSetOf()) { it.id }.apply { addAll(installedThisSession) }
+    }
+    val selectedPet = remember(availablePets, selectedPetId) {
+        availablePets.firstOrNull { it.id == selectedPetId }
     }
 
     Scaffold(
@@ -135,14 +179,16 @@ fun PetdexBrowseScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
-        LazyColumn(
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(156.dp),
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
             contentPadding = PaddingValues(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = stringResource(R.string.petdex_description),
@@ -161,25 +207,27 @@ fun PetdexBrowseScreen(
                 }
             }
 
+            if (selectedPet != null) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SelectedPetPreview(
+                        pet = selectedPet,
+                        animationEnabled = animationEnabled,
+                    )
+                }
+            }
+
             when {
-                loading -> item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 32.dp),
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        CircularProgressIndicator()
-                    }
+                loading -> items(6) {
+                    PetdexLoadingCard()
                 }
 
-                loadFailed -> item {
+                loadFailed -> item(span = { GridItemSpan(maxLineSpan) }) {
                     PetdexErrorCard(
                         onRetry = { loadCatalog(forceRefresh = true) },
                     )
                 }
 
-                visiblePets.isEmpty() -> item {
+                visiblePets.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
                     Text(
                         text = stringResource(R.string.petdex_no_results),
                         modifier = Modifier.padding(vertical = 24.dp),
@@ -196,6 +244,7 @@ fun PetdexBrowseScreen(
 
                     PetdexPetCard(
                         pet = pet,
+                        thumbnailLoader = thumbnailLoader,
                         installed = installed,
                         selected = selected,
                         installing = installing,
@@ -244,17 +293,59 @@ fun PetdexBrowseScreen(
 
 internal fun filterPetdexPets(catalog: List<PetdexPet>, query: String): List<PetdexPet> {
     val normalizedQuery = query.trim()
-    if (normalizedQuery.isEmpty()) return catalog
-    return catalog.filter { pet ->
-        pet.displayName.contains(normalizedQuery, ignoreCase = true) ||
-            pet.slug.contains(normalizedQuery, ignoreCase = true) ||
-            pet.submittedBy.contains(normalizedQuery, ignoreCase = true)
+    val matches = if (normalizedQuery.isEmpty()) {
+        catalog
+    } else {
+        catalog.filter { pet ->
+            pet.displayName.contains(normalizedQuery, ignoreCase = true) ||
+                pet.slug.contains(normalizedQuery, ignoreCase = true) ||
+                pet.submittedBy.contains(normalizedQuery, ignoreCase = true)
+        }
+    }
+    return matches
+}
+
+@Composable
+private fun SelectedPetPreview(
+    pet: AgentAvatar,
+    animationEnabled: Boolean,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            pet.Render(
+                state = AvatarRenderState(
+                    state = SphereState.Idle,
+                    paused = !animationEnabled,
+                ),
+                modifier = Modifier.size(88.dp),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = stringResource(R.string.petdex_selected),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                Text(
+                    text = pet.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun PetdexPetCard(
     pet: PetdexPet,
+    thumbnailLoader: PetdexThumbnailLoader,
     installed: Boolean,
     selected: Boolean,
     installing: Boolean,
@@ -264,15 +355,49 @@ private fun PetdexPetCard(
     onUse: () -> Unit,
     onInstall: () -> Unit,
 ) {
+    val shape = RoundedCornerShape(16.dp)
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
+                else Modifier
+            ),
+        shape = shape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(text = pet.displayName, style = MaterialTheme.typography.titleMedium)
+            PetdexThumbnail(
+                pet = pet,
+                loader = thumbnailLoader,
+                installing = installing,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = pet.displayName,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                IconButton(
+                    onClick = onViewSource,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = stringResource(R.string.petdex_view_source),
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+            }
             Text(
                 text = if (pet.submittedBy.isBlank()) {
                     stringResource(R.string.petdex_unknown_creator)
@@ -281,43 +406,132 @@ private fun PetdexPetCard(
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            TextButton(onClick = onViewSource) {
-                Text(stringResource(R.string.petdex_view_source))
-            }
             if (installFailed) {
                 Text(
                     text = stringResource(R.string.petdex_install_error),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                when {
-                    selected -> Text(
-                        text = stringResource(R.string.petdex_selected),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
+            when {
+                selected -> Text(
+                    text = stringResource(R.string.petdex_selected),
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                installed -> Button(
+                    onClick = onUse,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.petdex_use))
+                }
+                else -> Button(
+                    onClick = onInstall,
+                    enabled = installEnabled,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (installing) stringResource(R.string.petdex_installing)
+                        else stringResource(R.string.petdex_install)
                     )
-                    installed -> Button(onClick = onUse) {
-                        Text(stringResource(R.string.petdex_use))
-                    }
-                    installing -> Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        CircularProgressIndicator()
-                        Text(stringResource(R.string.petdex_installing))
-                    }
-                    else -> Button(onClick = onInstall, enabled = installEnabled) {
-                        Text(stringResource(R.string.petdex_install))
-                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PetdexThumbnail(
+    pet: PetdexPet,
+    loader: PetdexThumbnailLoader,
+    installing: Boolean,
+) {
+    var phase by remember(pet.slug, pet.spritesheetUrl) {
+        mutableStateOf<PetdexThumbnailPhase>(PetdexThumbnailPhase.Loading)
+    }
+    LaunchedEffect(pet.slug, pet.spritesheetUrl, loader) {
+        phase = loader.load(pet)
+            ?.let(PetdexThumbnailPhase::Loaded)
+            ?: PetdexThumbnailPhase.Unavailable
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(PETDEX_FRAME_ASPECT)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (val current = phase) {
+            PetdexThumbnailPhase.Loading -> CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                strokeWidth = 2.dp,
+            )
+            PetdexThumbnailPhase.Unavailable -> Icon(
+                imageVector = Icons.Filled.Pets,
+                contentDescription = null,
+                modifier = Modifier.size(32.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            is PetdexThumbnailPhase.Loaded -> Image(
+                bitmap = current.bitmap,
+                contentDescription = pet.displayName,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+                filterQuality = FilterQuality.None,
+            )
+        }
+        if (installing) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.38f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                    strokeWidth = 2.5.dp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PetdexLoadingCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(PETDEX_FRAME_ASPECT)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.72f)
+                    .size(width = 96.dp, height = 14.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(MaterialTheme.colorScheme.surface),
+            )
         }
     }
 }
@@ -341,4 +555,80 @@ private fun PetdexErrorCard(onRetry: () -> Unit) {
             }
         }
     }
+}
+
+private sealed interface PetdexThumbnailPhase {
+    data object Loading : PetdexThumbnailPhase
+    data object Unavailable : PetdexThumbnailPhase
+    data class Loaded(val bitmap: ImageBitmap) : PetdexThumbnailPhase
+}
+
+private class PetdexThumbnailLoader(
+    private val request: suspend (slug: String, url: String) -> Result<String?>?,
+) {
+    private val bitmapCache = LinkedHashMap<String, ImageBitmap>(
+        PETDEX_THUMB_CACHE_SIZE,
+        0.75f,
+        true,
+    )
+    private val missingKeys = mutableSetOf<String>()
+    private val retryAfterMs = mutableMapOf<String, Long>()
+    private val cacheMutex = Mutex()
+    private val requestSlots = Semaphore(PETDEX_THUMB_CONCURRENCY)
+    private var thumbnailsUnsupported = false
+
+    suspend fun load(pet: PetdexPet): ImageBitmap? {
+        val cacheKey = "${pet.slug}\u0000${pet.spritesheetUrl}"
+        cacheMutex.withLock {
+            bitmapCache[cacheKey]?.let { return it }
+            if (cacheKey in missingKeys || thumbnailsUnsupported) return null
+            if ((retryAfterMs[cacheKey] ?: 0L) > System.currentTimeMillis()) return null
+        }
+        return requestSlots.withPermit {
+            cacheMutex.withLock {
+                bitmapCache[cacheKey]?.let { return@withPermit it }
+                if (cacheKey in missingKeys || thumbnailsUnsupported) return@withPermit null
+                if ((retryAfterMs[cacheKey] ?: 0L) > System.currentTimeMillis()) {
+                    return@withPermit null
+                }
+            }
+            val result = request(pet.slug, pet.spritesheetUrl)
+            val methodUnavailable = (result?.exceptionOrNull() as? GatewayRpcException)?.code ==
+                JSONRPC_METHOD_NOT_FOUND
+            val failed = result == null || result.isFailure
+            val dataUri = result?.getOrNull()
+            val bitmap = dataUri?.let { decodePetdexThumbnail(it) }
+            cacheMutex.withLock {
+                when {
+                    methodUnavailable -> thumbnailsUnsupported = true
+                    failed || (dataUri != null && bitmap == null) -> {
+                        retryAfterMs[cacheKey] = System.currentTimeMillis() + PETDEX_THUMB_RETRY_MS
+                    }
+                    dataUri == null -> missingKeys += cacheKey
+                    bitmap != null -> {
+                        retryAfterMs.remove(cacheKey)
+                        bitmapCache[cacheKey] = bitmap
+                        while (bitmapCache.size > PETDEX_THUMB_CACHE_SIZE) {
+                            bitmapCache.remove(bitmapCache.entries.first().key)
+                        }
+                    }
+                }
+            }
+            bitmap
+        }
+    }
+}
+
+private suspend fun decodePetdexThumbnail(dataUri: String): ImageBitmap? = withInlineImageDecodeLock {
+    val decoded = decodeInlineImageDataUrl(dataUri, PETDEX_THUMB_MAX_BYTES)
+        ?: return@withInlineImageDecodeLock null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(decoded.bytes, 0, decoded.bytes.size, bounds)
+    if (bounds.outWidth !in 1..PETDEX_THUMB_MAX_WIDTH ||
+        bounds.outHeight !in 1..PETDEX_THUMB_MAX_HEIGHT
+    ) {
+        return@withInlineImageDecodeLock null
+    }
+    BitmapFactory.decodeByteArray(decoded.bytes, 0, decoded.bytes.size)
+        ?.asImageBitmap()
 }

@@ -110,6 +110,13 @@ class GatewayClientHarness(
     @Volatile
     var approvalResolved = 1
 
+    @Volatile
+    var petThumbPayload: JsonObject = buildJsonObject {
+        put("ok", true)
+        put("slug", "boba")
+        put("dataUri", "data:image/png;base64,iVBORw0KGgo=")
+    }
+
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
     val methodNotFound: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -269,6 +276,7 @@ class GatewayClientHarness(
                         json.parseToJsonElement("""[["/help","Show help"],["/model","Pick model"]]"""),
                     )
                 }
+                "pet.thumb" -> petThumbPayload
                 "model.options" -> buildJsonObject {
                     put("model", "gpt-5.5")
                     put("provider", "openai")
@@ -1730,6 +1738,86 @@ class GatewayChatClientTest {
         val result = runBlocking { client.commandsCatalog(connectIfNeeded = true) }
         assertTrue(result.isSuccess)
         assertTrue(harness.ticketMints.get() >= 1)
+    }
+
+    // --- Pet thumbnails ---
+
+    @Test
+    fun `pet thumbnail connects on demand and sends upstream params`() {
+        client.sessionProfileProvider = { "work" }
+
+        val result = runBlocking {
+            client.petThumbnail(
+                slug = "boba",
+                spritesheetUrl = "https://assets.petdex.dev/pets/boba/sprites.png",
+            )
+        }
+
+        assertEquals("data:image/png;base64,iVBORw0KGgo=", result.getOrThrow())
+        assertTrue(harness.ticketMints.get() >= 1)
+        val params = harness.awaitRpc("pet.thumb")
+        assertEquals("boba", (params["slug"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(
+            "https://assets.petdex.dev/pets/boba/sprites.png",
+            (params["url"] as? JsonPrimitive)?.contentOrNull,
+        )
+        assertEquals("work", (params["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `pet thumbnail fail-open response is a successful cache miss`() {
+        harness.petThumbPayload = buildJsonObject {
+            put("ok", false)
+            put("slug", "boba")
+        }
+
+        val result = runBlocking { client.petThumbnail("boba") }
+
+        assertTrue(result.isSuccess)
+        assertNull(result.getOrThrow())
+    }
+
+    @Test
+    fun `pet thumbnail preserves method-not-found for compatibility fallback`() {
+        harness.methodNotFound += "pet.thumb"
+
+        val result = runBlocking { client.petThumbnail("boba") }
+
+        assertTrue(result.isFailure)
+        assertEquals(-32601, (result.exceptionOrNull() as? GatewayRpcException)?.code)
+    }
+
+    @Test
+    fun `pet thumbnail rejects unsafe inputs before connecting`() {
+        val badSlug = runBlocking { client.petThumbnail("../boba") }
+        val badUrl = runBlocking {
+            client.petThumbnail("boba", "https://example.com/boba.png")
+        }
+
+        assertTrue(badSlug.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(badUrl.exceptionOrNull() is IllegalArgumentException)
+        assertEquals(0, harness.ticketMints.get())
+        assertEquals(0, harness.rpcLog.count { it.first == "pet.thumb" })
+    }
+
+    @Test
+    fun `pet thumbnail rejects malformed success payloads`() {
+        harness.petThumbPayload = buildJsonObject {
+            put("ok", true)
+            put("slug", "someone-else")
+            put("dataUri", "data:image/png;base64,iVBORw0KGgo=")
+        }
+        val mismatchedSlug = runBlocking { client.petThumbnail("boba") }
+
+        harness.petThumbPayload = buildJsonObject {
+            put("ok", true)
+            put("slug", "boba")
+            put("dataUri", "data:image/jpeg;base64,iVBORw0KGgo=")
+        }
+        val wrongMediaType = runBlocking { client.petThumbnail("boba") }
+
+        assertTrue(mismatchedSlug.exceptionOrNull() is GatewayRpcException)
+        assertTrue(wrongMediaType.exceptionOrNull() is GatewayRpcException)
     }
 
     // --- Reasoning config ---

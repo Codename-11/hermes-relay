@@ -27,6 +27,17 @@ class PetdexBrowseScreenTest {
         assertEquals(emptyList<PetdexPet>(), filterPetdexPets(pets, "dog"))
     }
 
+    @Test
+    fun virtualizedGalleryKeepsTheFullMatchingCatalogReachable() {
+        val largeCatalog = (0 until 75).map { index ->
+            pet(slug = "pet-$index", name = "Pet $index", creator = "Creator")
+        }
+
+        assertEquals(75, filterPetdexPets(largeCatalog, "").size)
+        assertEquals(75, filterPetdexPets(largeCatalog, "creator").size)
+        assertEquals("pet-74", filterPetdexPets(largeCatalog, "").last().slug)
+    }
+
     private fun pet(slug: String, name: String, creator: String) = PetdexPet(
         slug = slug,
         displayName = name,

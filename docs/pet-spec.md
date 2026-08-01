@@ -38,8 +38,10 @@ Appearance offers two installation paths:
 
 - **Browse Petdex** opens a searchable public catalog. Android prefers Petdex's
   compact v2 manifest and falls back to the v1 manifest if v2 cannot be loaded.
-  Catalog metadata is cached in memory for five minutes. Sprites are not
-  downloaded while browsing; each install is an explicit user action.
+  Catalog metadata is cached in memory for five minutes. The gallery requests
+  the same cropped, cached idle-frame thumbnails as Hermes Desktop while a
+  virtualized grid keeps the full catalog reachable; the full atlas is
+  downloaded to the phone only after an explicit Install action.
 - **Add a pet** imports a custom Relay-format `.zip` or single image from device
   storage. This path remains independent of Petdex and accepts the manifest
   format documented below.
@@ -53,9 +55,9 @@ Installing converts the supported Petdex atlas into a normal local Relay pet
 pack under `files/pets/petdex-<slug>/`, retaining `source: "petdex"`, the source
 URL, and creator attribution in `pet.json`. The installed `pet.json` and
 spritesheet are sufficient for rendering, so the selected companion continues
-to work offline. Network access is needed only to refresh the catalog or install
-another pet. An installed Petdex pet can be selected, hidden, or removed like a
-custom pack.
+to work offline. Network access is needed to refresh the catalog, load an
+uncached gallery thumbnail, or install another pet. An installed Petdex pet can
+be selected, hidden, or removed like a custom pack.
 
 ### Petdex trust and resource limits
 
