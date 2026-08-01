@@ -65,6 +65,25 @@ class MessageBubblePetVisitTargetTest {
         assertTrue(newestPetVisitTargetUiKey(listOf(older, newerInteractive)) == null)
     }
 
+    @Test
+    fun `later tool-only or empty response does not revisit an older bubble`() {
+        val older = message(id = "older").copy(uiKey = "stable-older")
+        val toolOnly = message(id = "tool-only", content = "").copy(
+            toolCalls = listOf(
+                ToolCall(
+                    name = "search",
+                    args = null,
+                    result = "done",
+                    success = true,
+                ),
+            ),
+        )
+        val empty = message(id = "empty", content = "")
+
+        assertTrue(newestPetVisitTargetUiKey(listOf(older, toolOnly)) == null)
+        assertTrue(newestPetVisitTargetUiKey(listOf(older, empty)) == null)
+    }
+
     private fun message(
         id: String = "assistant-1",
         role: MessageRole = MessageRole.ASSISTANT,

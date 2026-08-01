@@ -799,11 +799,7 @@ internal fun newestPetVisitTargetUiKey(messages: List<ChatMessage>): String? =
     messages.lastOrNull { message ->
         message.role == MessageRole.ASSISTANT &&
             !message.isStreaming &&
-            (
-                message.content.isNotBlank() ||
-                    message.cards.isNotEmpty() ||
-                    message.attachments.isNotEmpty()
-            )
+            !message.isThinkingStreaming
     }?.takeIf(::isPetVisitTargetCandidate)?.uiKey
 
 internal fun shouldShowSpeakResponseAction(
