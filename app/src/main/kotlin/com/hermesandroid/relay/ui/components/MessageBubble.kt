@@ -147,6 +147,7 @@ fun MessageBubble(
     imageGenerationStylePreference: String = "rotate",
     imageGenerationRotationIndex: Int = 0,
     petVisitTargetKey: String? = null,
+    petPerchKey: String? = null,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -506,8 +507,15 @@ fun MessageBubble(
                         Modifier.petVisitTargetSurface(
                             key = petVisitTargetKey,
                             routes = setOf("chat"),
-                        ).petPerchSurface(
-                            key = "perch:$petVisitTargetKey",
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
+                .then(
+                    if (petPerchKey != null) {
+                        Modifier.petPerchSurface(
+                            key = petPerchKey,
                             routes = setOf("chat"),
                         )
                     } else {
@@ -799,12 +807,30 @@ internal fun isPetVisitTargetCandidate(message: ChatMessage): Boolean =
         message.agentName != "Phone action" &&
         !message.id.startsWith("voice-intent-")
 
+/** A settled text response can provide a top-edge ledge without becoming a visit target. */
+internal fun isPetPerchCandidate(message: ChatMessage): Boolean =
+    message.role == MessageRole.ASSISTANT &&
+        !message.isStreaming &&
+        !message.isThinkingStreaming &&
+        message.content.isNotBlank() &&
+        message.backgroundTask == null &&
+        message.agentName != "Voice action" &&
+        message.agentName != "Phone action" &&
+        !message.id.startsWith("voice-intent-")
+
 internal fun newestPetVisitTargetUiKey(messages: List<ChatMessage>): String? =
     messages.lastOrNull { message ->
         message.role == MessageRole.ASSISTANT &&
             !message.isStreaming &&
             !message.isThinkingStreaming
     }?.takeIf(::isPetVisitTargetCandidate)?.uiKey
+
+internal fun newestPetPerchUiKey(messages: List<ChatMessage>): String? =
+    messages.lastOrNull { message ->
+        message.role == MessageRole.ASSISTANT &&
+            !message.isStreaming &&
+            !message.isThinkingStreaming
+    }?.takeIf(::isPetPerchCandidate)?.uiKey
 
 internal fun shouldShowSpeakResponseAction(
     message: ChatMessage,

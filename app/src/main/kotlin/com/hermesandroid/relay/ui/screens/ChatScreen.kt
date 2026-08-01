@@ -183,12 +183,14 @@ import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
+import com.hermesandroid.relay.ui.components.CHAT_PET_MESSAGE_PERCH_PREFIX
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.newestPetPerchUiKey
 import com.hermesandroid.relay.ui.components.newestPetVisitTargetUiKey
 import com.hermesandroid.relay.ui.components.SyntheticProcessNotificationNotice
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
@@ -2455,6 +2457,9 @@ fun ChatScreen(
                     val petVisitTargetUiKey = remember(messages) {
                         newestPetVisitTargetUiKey(messages)
                     }
+                    val petPerchUiKey = remember(messages) {
+                        newestPetPerchUiKey(messages)
+                    }
                     val visibleMessageKeys by remember(listState) {
                         derivedStateOf {
                             listState.layoutInfo.visibleItemsInfo
@@ -2551,6 +2556,14 @@ fun ChatScreen(
                                         message.uiKey in visibleMessageKeys
                                     ) {
                                         "chat-message:${message.uiKey}"
+                                    } else {
+                                        null
+                                    },
+                                    petPerchKey = if (
+                                        message.uiKey == petPerchUiKey &&
+                                        message.uiKey in visibleMessageKeys
+                                    ) {
+                                        "$CHAT_PET_MESSAGE_PERCH_PREFIX${message.uiKey}"
                                     } else {
                                         null
                                     },

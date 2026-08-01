@@ -31,6 +31,22 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `composer patrol prefers a visible chat message perch`() {
+        assertTrue(
+            shouldPreferChatMessagePerch(
+                currentPerchKey = CHAT_PET_WALK_REGION,
+                candidatePerchKey = "${CHAT_PET_MESSAGE_PERCH_PREFIX}assistant-1",
+            ),
+        )
+        assertFalse(
+            shouldPreferChatMessagePerch(
+                currentPerchKey = "terminal-toolbar",
+                candidatePerchKey = "${CHAT_PET_MESSAGE_PERCH_PREFIX}assistant-1",
+            ),
+        )
+    }
+
+    @Test
     fun `vertical transfer distinguishes jump from fall`() {
         assertEquals(PetLocomotion.Jump, petVerticalLocomotion(fromY = 200f, toY = 100f))
         assertEquals(PetLocomotion.Fall, petVerticalLocomotion(fromY = 100f, toY = 200f))

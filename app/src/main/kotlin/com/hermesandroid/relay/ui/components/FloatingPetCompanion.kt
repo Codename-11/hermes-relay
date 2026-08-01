@@ -74,6 +74,7 @@ import kotlin.math.roundToInt
 
 internal const val FLOATING_PET_COMPACT_HEIGHT_DP = 700
 internal const val CHAT_PET_WALK_REGION = "chat-composer-perch"
+internal const val CHAT_PET_MESSAGE_PERCH_PREFIX = "chat-message-perch:"
 private const val PET_ROAM_REPEAT_DELAY_MS = 4_800L
 private const val PET_AMBIENT_HOP_HEIGHT_DP = 24
 
@@ -123,6 +124,12 @@ internal fun shouldDockFloatingPet(
     roamingEnabled: Boolean,
     roamingAllowed: Boolean,
 ): Boolean = !roamingEnabled || !roamingAllowed
+
+internal fun shouldPreferChatMessagePerch(
+    currentPerchKey: String,
+    candidatePerchKey: String,
+): Boolean = currentPerchKey == CHAT_PET_WALK_REGION &&
+    candidatePerchKey.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX)
 
 private data class PendingPetDrop(
     val point: PetPoint,
@@ -460,6 +467,32 @@ fun FloatingPetCompanion(
                 ?: return@LaunchedEffect
             if (railSupporting(PetPoint(x.value, y.value)) == null && !jumpToRail(rail)) {
                 return@LaunchedEffect
+            }
+
+            // The composer remains the stable home rail, but a visible
+            // assistant response is the more expressive chat destination.
+            // Prefer that vertical transfer before beginning another long
+            // composer traverse.
+            val preferredMessageTransfer = choosePetRailTransfer(
+                currentRail = rail,
+                current = PetPoint(x.value, y.value),
+                rails = roamingRails.filter { candidate ->
+                    candidate.key == rail.key || shouldPreferChatMessagePerch(
+                        currentPerchKey = rail.perchKey,
+                        candidatePerchKey = candidate.perchKey,
+                    )
+                },
+                bounds = safeBounds,
+                uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
+                footprint = footprint,
+            )
+            if (preferredMessageTransfer != null && jumpToRail(
+                    preferredMessageTransfer.rail,
+                    preferredMessageTransfer.destinationX,
+                    preferredMessageTransfer.route,
+                )
+            ) {
+                rail = preferredMessageTransfer.rail
             }
 
             var hasMoved = false

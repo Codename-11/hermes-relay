@@ -176,6 +176,24 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `perch keeps the full pet footprint above element content`() {
+        val footprint = PetFootprint(width = 40f, height = 40f)
+        val surfaceTop = 200f
+        val rail = requireNotNull(
+            petPerchRail(
+                perch = PetMeasuredPerch(
+                    key = "message",
+                    bounds = PetObstacle(20f, surfaceTop, 280f, 260f),
+                ),
+                footprint = footprint,
+                outer = PetSafeBounds(0f, 0f, 300f, 300f),
+            ),
+        )
+
+        assertEquals(surfaceTop, rail.top + footprint.verticalRadius, 0f)
+    }
+
+    @Test
     fun `perch obstacle can split one ledge into two reachable rails`() {
         val outer = PetSafeBounds(0f, 0f, 300f, 300f)
         val footprint = PetFootprint(width = 40f, height = 40f)
