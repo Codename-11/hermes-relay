@@ -395,7 +395,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         private val KEY_PET_ROAMING_ENABLED = booleanPreferencesKey("pet_roaming_enabled")
         private val KEY_PET_PLACEMENT_EDGE = stringPreferencesKey("pet_placement_edge")
         private val KEY_PET_PLACEMENT_FRACTION = floatPreferencesKey("pet_placement_fraction")
-        private val DEFAULT_PET_PLACEMENT = PetPlacement(PetLogicalEdge.Start, 0.82f)
+        private val DEFAULT_PET_PLACEMENT = PetPlacement(PetLogicalEdge.End, 0.82f)
         private val KEY_PET_SPEED = floatPreferencesKey("pet_speed")
         private val KEY_PET_STABILIZE = booleanPreferencesKey("pet_stabilize")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
