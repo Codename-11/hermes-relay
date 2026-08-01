@@ -125,6 +125,7 @@ android {
         }
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             ndk {
                 debugSymbolLevel = "SYMBOL_TABLE"
             }
