@@ -189,6 +189,11 @@ class PetAvatar(
     /** Resolve sustained motion without one-shot overlays; pure for focused tests. */
     internal fun resolveBaseSelection(state: AvatarRenderState): PetClipSelection {
         if (state.state == SphereState.Idle && state.petLocomotion != PetLocomotion.None) {
+            if (state.petLocomotion == PetLocomotion.Jump) {
+                return PetClipSelection(
+                    locomotionClips[PetLocomotion.Jump] ?: activityClips[SphereState.Idle],
+                )
+            }
             val movingRight = state.petLocomotion == PetLocomotion.WalkRight ||
                 state.petLocomotion == PetLocomotion.RunRight
             val exact = state.petLocomotion
@@ -197,6 +202,7 @@ class PetAvatar(
                 PetLocomotion.WalkRight -> PetLocomotion.RunRight
                 PetLocomotion.RunLeft -> PetLocomotion.WalkLeft
                 PetLocomotion.RunRight -> PetLocomotion.WalkRight
+                PetLocomotion.Jump -> PetLocomotion.Jump
                 PetLocomotion.None -> PetLocomotion.None
             }
             val sameDirection = if (movingRight) {
@@ -209,6 +215,7 @@ class PetAvatar(
                 PetLocomotion.WalkRight -> listOf(PetLocomotion.WalkLeft, PetLocomotion.RunLeft)
                 PetLocomotion.RunLeft -> listOf(PetLocomotion.RunRight, PetLocomotion.WalkRight)
                 PetLocomotion.RunRight -> listOf(PetLocomotion.RunLeft, PetLocomotion.WalkLeft)
+                PetLocomotion.Jump -> emptyList()
                 PetLocomotion.None -> emptyList()
             }
             sameDirection.firstNotNullOfOrNull(locomotionClips::get)?.let {

@@ -26,6 +26,7 @@ enum class PetLocomotion {
     WalkRight,
     RunLeft,
     RunRight,
+    Jump,
 }
 
 /**

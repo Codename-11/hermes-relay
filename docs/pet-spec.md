@@ -45,9 +45,11 @@ The companion has a durable home and an optional autonomous roaming mode:
 - **Walk around the interface** is opt-in and off by default. In the current
   Android implementation, Chat measures the existing composer and uses its top
   edge as a walkable perch. Enabling roaming docks the pet there; it does not
-  insert a spacer or reduce transcript space. A manual drag or TalkBack vertical
-  move pauses roaming before applying the free-form placement. The pet remains
-  docked on other screens.
+  insert a spacer or reduce transcript space. A manual drag temporarily yields
+  the roam loop; when released off the perch, `jumping` settles the pet back and
+  directional travel resumes. TalkBack vertical moves intentionally pause
+  roaming before applying free-form placement. The pet remains docked on other
+  screens.
 - Only the pet-sized target consumes touch input; the root positioning layer is
   click-through. Registered UI bounds keep autonomous movement and drag
   placement clear of composer controls while content may pass behind the overlay.
