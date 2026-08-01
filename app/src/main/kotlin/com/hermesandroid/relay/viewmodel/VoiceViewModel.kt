@@ -103,6 +103,11 @@ private enum class StandardSpeechStreamState {
 internal fun shouldFallbackStandardSpeech(outcome: VoiceSpeechStreamOutcome): Boolean =
     !outcome.audioStarted && outcome.status != VoiceSpeechStreamStatus.Stopped
 
+internal fun shouldFallbackRelayVoiceOutput(
+    requestSucceeded: Boolean,
+    audioStarted: Boolean,
+): Boolean = !requestSucceeded || !audioStarted
+
 internal fun isNoSpeechTranscriptionFailure(error: Throwable?): Boolean =
     generateSequence(error) { it.cause }
         .mapNotNull { it.message?.lowercase() }
@@ -4853,7 +4858,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         pendingInTtsQueue.decrementAndGet()
-        if (result.isSuccess) {
+        if (!shouldFallbackRelayVoiceOutput(result.isSuccess, audioSeen.get())) {
             spokenChunks.add(sentence)
             val latencyMs = System.currentTimeMillis() - startedAtMs
             recordTtsChunkFinished(
@@ -4867,7 +4872,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val err = result.exceptionOrNull()
-        Log.w(TAG, "Voice output failed; falling back to basic TTS: ${err?.message}")
+            ?: IOException("Voice output completed without audio")
+        Log.w(TAG, "Voice output failed; falling back to basic TTS: ${err.message}")
         voiceOutputAvailable = false
         if (!audioSeen.get()) {
             enqueueSentenceForLegacyTts(sentence)

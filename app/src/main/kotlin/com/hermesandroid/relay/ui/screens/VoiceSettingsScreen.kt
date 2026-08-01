@@ -534,6 +534,10 @@ fun VoiceSettingsScreen(
 
             when (selectedSection) {
                 VoiceSettingsSection.Output -> {
+                    AnswerDeliveryCard(
+                        voiceSettings = voiceSettings,
+                        prefsRepo = prefsRepo,
+                    )
                     if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
                         val useRelayOutput = relayVoiceReady && currentAudioRoute != VoiceAudioRoute.Standard
                         if (useRelayOutput) {
@@ -3403,17 +3407,6 @@ private fun GlobalVoiceControlsCard(
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-        SettingSwitchRow(
-            title = stringResource(R.string.voice_settings_final_answer_only),
-            detail = stringResource(R.string.voice_settings_final_answer_only_desc),
-            checked = voiceSettings.finalAnswerOnly,
-            onCheckedChange = { enabled ->
-                scope.launch { prefsRepo.setFinalAnswerOnly(enabled) }
-            },
-        )
-
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
         Text(
             text = stringResource(R.string.voice_settings_interaction_mode),
             style = MaterialTheme.typography.labelLarge,
@@ -3506,6 +3499,24 @@ private fun GlobalVoiceControlsCard(
                     focusManager.clearFocus()
                 },
             ),
+        )
+    }
+}
+
+@Composable
+private fun AnswerDeliveryCard(
+    voiceSettings: VoiceSettings,
+    prefsRepo: VoicePreferencesRepository,
+) {
+    val scope = rememberCoroutineScope()
+    SectionCard(title = stringResource(R.string.voice_settings_tts_title)) {
+        SettingSwitchRow(
+            title = stringResource(R.string.voice_settings_final_answer_only),
+            detail = stringResource(R.string.voice_settings_final_answer_only_desc),
+            checked = voiceSettings.finalAnswerOnly,
+            onCheckedChange = { enabled ->
+                scope.launch { prefsRepo.setFinalAnswerOnly(enabled) }
+            },
         )
     }
 }
