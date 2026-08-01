@@ -824,6 +824,32 @@ fun AppearanceSettingsScreen(
                             )
                         }
 
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.appearance_pet_roaming),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = stringResource(R.string.appearance_pet_roaming_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
+                            Switch(
+                                checked = petRoamingEnabled,
+                                onCheckedChange = { connectionViewModel.setPetRoamingEnabled(it) },
+                            )
+                        }
+                        TextButton(onClick = connectionViewModel::resetPetPlacement) {
+                            Text(stringResource(R.string.floating_pet_action_reset))
+                        }
+
                         // Live state preview — drive the pet through each state to
                         // verify look/speed/stabilization without running the agent.
                         HorizontalDivider()

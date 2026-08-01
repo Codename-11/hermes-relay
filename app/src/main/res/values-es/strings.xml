@@ -1038,6 +1038,15 @@
     <string name="floating_pet_companion_description">Mascota %1$s, %2$s. Abrir menú de la mascota</string>
     <string name="floating_pet_menu_appearance">Apariencia</string>
     <string name="floating_pet_menu_hide">Ocultar mascota</string>
+    <string name="floating_pet_menu_enable_roaming">Permitir que la mascota se mueva</string>
+    <string name="floating_pet_menu_pause_roaming">Pausar movimiento</string>
+    <string name="floating_pet_action_move_start">Mover al borde inicial</string>
+    <string name="floating_pet_action_move_end">Mover al borde final</string>
+    <string name="floating_pet_action_move_up">Mover arriba</string>
+    <string name="floating_pet_action_move_down">Mover abajo</string>
+    <string name="floating_pet_action_reset">Restablecer posición</string>
+    <string name="appearance_pet_roaming">Moverse por la interfaz</string>
+    <string name="appearance_pet_roaming_desc">Cuando Hermes está inactivo, la mascota seleccionada de Petdex o personalizada camina solo por zonas seguras de la interfaz. El pensamiento, las herramientas, la voz, el desplazamiento, el movimiento reducido y las vistas de pantalla completa la pausan.</string>
     <string name="floating_pet_state_idle">Inactiva</string>
     <string name="floating_pet_state_thinking">Pensando</string>
     <string name="floating_pet_state_streaming">Respondiendo</string>

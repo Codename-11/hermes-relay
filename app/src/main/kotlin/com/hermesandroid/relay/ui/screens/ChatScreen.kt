@@ -182,8 +182,7 @@ import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
-import com.hermesandroid.relay.ui.components.FloatingPetCompanion
-import com.hermesandroid.relay.ui.components.shouldCompactFloatingPet
+import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
@@ -198,6 +197,8 @@ import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
 import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petWalkRegion
 import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.SphereState
@@ -831,6 +832,18 @@ fun ChatScreen(
         }
     }
     val listState = rememberLazyListState()
+    // Publish only surface-local visibility signals. Live turn state is owned at
+    // the app root so navigation cannot reset an in-flight companion to Idle.
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    SideEffect {
+        petCompanionCoordinator.publishSurface(
+            scrolling = listState.isScrollInProgress,
+            hidden = ambientMode,
+        )
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface() }
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val copiedToClipboardMsg = stringResource(R.string.chat_copied_to_clipboard)
@@ -3142,30 +3155,16 @@ fun ChatScreen(
                 null
             }
 
-            // The pet is a persistent companion, not the agent's identity and
-            // not the ambient Sphere. Keep it in a real layout slot directly
-            // above the composer so it cannot cover messages, snackbars, the
-            // scroll-to-bottom affordance, or composer actions.
+            // Reserve and register a real safe walking perch above the composer.
+            // The app-level host renders the one companion; keeping this as a
+            // layout slot means it cannot cover messages or composer actions.
             val floatingPet = LocalFloatingPet.current
             if (floatingPet != null && !ambientMode) {
-                val density = LocalDensity.current
-                val imeVisible = WindowInsets.ime.getBottom(density) > 0
-                val compactPet = shouldCompactFloatingPet(
-                    imeVisible = imeVisible,
-                    screenHeightDp = LocalConfiguration.current.screenHeightDp,
-                )
-                FloatingPetCompanion(
-                    pet = floatingPet,
-                    state = AvatarRenderState(
-                        state = sphereState,
-                        intensity = streamingIntensity,
-                        toolCallBurst = toolCallBurst,
-                    ),
-                    isScrolling = listState.isScrollInProgress,
-                    compact = compactPet,
-                    animationEnabled = animationEnabled,
-                    onHide = { connectionViewModel.setFloatingPet(null) },
-                    onOpenAppearance = onNavigateToAppearanceSettings,
+                Spacer(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .petWalkRegion(CHAT_PET_WALK_REGION),
                 )
             }
 

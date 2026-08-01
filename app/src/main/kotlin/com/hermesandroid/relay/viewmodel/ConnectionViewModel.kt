@@ -18,6 +18,8 @@ import com.hermesandroid.relay.ui.components.avatar.PetImporter
 import com.hermesandroid.relay.ui.components.avatar.PetImportResult
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
+import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.AgentDisplay
@@ -390,6 +392,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Reserved storage sentinel. Pet ids may legitimately be ordinary words
         // such as "none", so keep the no-selection marker outside that space.
         private const val NO_FLOATING_PET = "__none__"
+        private val KEY_PET_ROAMING_ENABLED = booleanPreferencesKey("pet_roaming_enabled")
+        private val KEY_PET_PLACEMENT_EDGE = stringPreferencesKey("pet_placement_edge")
+        private val KEY_PET_PLACEMENT_FRACTION = floatPreferencesKey("pet_placement_fraction")
+        private val DEFAULT_PET_PLACEMENT = PetPlacement(PetLogicalEdge.Start, 0.82f)
         private val KEY_PET_SPEED = floatPreferencesKey("pet_speed")
         private val KEY_PET_STABILIZE = booleanPreferencesKey("pet_stabilize")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
@@ -1300,6 +1306,24 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             selected.takeUnless { it == NO_FLOATING_PET || it == SphereAvatar.id }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Whether the selected companion may autonomously move between safe perches. */
+    val petRoamingEnabled: StateFlow<Boolean> = application.relayDataStore.data
+        .map { preferences -> preferences[KEY_PET_ROAMING_ENABLED] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** Durable logical placement; pixels are resolved from the current safe viewport. */
+    val petPlacement: StateFlow<PetPlacement> = application.relayDataStore.data
+        .map { preferences ->
+            PetPlacement(
+                edge = preferences[KEY_PET_PLACEMENT_EDGE]
+                    ?.let { stored -> PetLogicalEdge.entries.firstOrNull { it.name == stored } }
+                    ?: DEFAULT_PET_PLACEMENT.edge,
+                verticalFraction = preferences[KEY_PET_PLACEMENT_FRACTION]
+                    ?: DEFAULT_PET_PLACEMENT.verticalFraction,
+            ).sanitized()
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_PLACEMENT)
 
     /**
      * One-release source compatibility for callers still using the old combined
@@ -6441,6 +6465,26 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
     }
+
+    fun setPetRoamingEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_PET_ROAMING_ENABLED] = enabled
+            }
+        }
+    }
+
+    fun setPetPlacement(placement: PetPlacement) {
+        val safe = placement.sanitized()
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_PET_PLACEMENT_EDGE] = safe.edge.name
+                preferences[KEY_PET_PLACEMENT_FRACTION] = safe.verticalFraction
+            }
+        }
+    }
+
+    fun resetPetPlacement() = setPetPlacement(DEFAULT_PET_PLACEMENT)
 
     /** One-release compatibility shim for the former combined picker. */
     @Deprecated("Use setFloatingPet")

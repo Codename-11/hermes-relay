@@ -1161,6 +1161,15 @@
     <string name="floating_pet_companion_description">ペット %1$s、%2$s。ペットメニューを開く</string>
     <string name="floating_pet_menu_appearance">外観</string>
     <string name="floating_pet_menu_hide">ペットを隠す</string>
+    <string name="floating_pet_menu_enable_roaming">ペットを歩き回らせる</string>
+    <string name="floating_pet_menu_pause_roaming">移動を一時停止</string>
+    <string name="floating_pet_action_move_start">開始側の端へ移動</string>
+    <string name="floating_pet_action_move_end">終了側の端へ移動</string>
+    <string name="floating_pet_action_move_up">上へ移動</string>
+    <string name="floating_pet_action_move_down">下へ移動</string>
+    <string name="floating_pet_action_reset">位置をリセット</string>
+    <string name="appearance_pet_roaming">画面内を歩き回る</string>
+    <string name="appearance_pet_roaming_desc">Hermes が待機中のとき、選択した Petdex またはカスタムペットは UI の安全な場所だけを歩きます。思考中、ツールの使用、発話、スクロール、視覚効果の軽減、全画面表示では一時停止します。</string>
     <string name="floating_pet_state_idle">待機中</string>
     <string name="floating_pet_state_thinking">思考中</string>
     <string name="floating_pet_state_streaming">応答中</string>

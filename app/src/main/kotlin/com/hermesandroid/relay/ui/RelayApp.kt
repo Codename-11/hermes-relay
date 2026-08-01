@@ -92,6 +92,13 @@ import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
+import com.hermesandroid.relay.ui.components.FloatingPetCompanion
+import com.hermesandroid.relay.ui.components.shouldCompactFloatingPet
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.LocalPetSafeAreaRegistry
+import com.hermesandroid.relay.ui.components.pet.PetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.PetSafeAreaRegistry
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
 import com.hermesandroid.relay.ui.components.ChatTransportTier
@@ -656,6 +663,50 @@ fun RelayApp() {
     }
     val petSpeed by connectionViewModel.petSpeed.collectAsState()
     val petStabilize by connectionViewModel.petStabilize.collectAsState()
+    val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
+    val petPlacement by connectionViewModel.petPlacement.collectAsState()
+    val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
+    val petCompanionCoordinator = remember { PetCompanionCoordinator() }
+    val petSafeAreaRegistry = remember { PetSafeAreaRegistry() }
+    // Turn activity belongs to the app, not the Chat destination. Keeping the
+    // authoritative flows here lets the companion remain thinking/working when
+    // the user opens Settings or Manage during an in-flight response.
+    val petMessages by chatViewModel.messages.collectAsState()
+    val petIsStreaming by chatViewModel.isStreaming.collectAsState()
+    val petError by chatViewModel.error.collectAsState()
+    val rawPetState = when {
+        petError != null -> SphereState.Error
+        petIsStreaming && petMessages.lastOrNull()?.isThinkingStreaming == true -> SphereState.Thinking
+        petIsStreaming -> SphereState.Streaming
+        else -> SphereState.Idle
+    }
+    var appPetState by remember(chatViewModel) { mutableStateOf(SphereState.Idle) }
+    LaunchedEffect(rawPetState) {
+        if (appPetState == SphereState.Thinking && rawPetState == SphereState.Streaming) {
+            delay(1_500L)
+        }
+        appPetState = rawPetState
+    }
+    val appPetIntensity by animateFloatAsState(
+        targetValue = if (petIsStreaming) 0.7f else 0f,
+        animationSpec = tween(if (petIsStreaming) 1_000 else 2_000),
+        label = "app-pet-intensity",
+    )
+    val appPetHasActiveTools = petMessages.lastOrNull()?.toolCalls?.any { !it.isComplete } == true
+    val appPetToolBurst by animateFloatAsState(
+        targetValue = if (appPetHasActiveTools) 1f else 0f,
+        animationSpec = tween(if (appPetHasActiveTools) 200 else 1_200),
+        label = "app-pet-tool-burst",
+    )
+    LaunchedEffect(appPetState, appPetIntensity, appPetToolBurst) {
+        petCompanionCoordinator.publishRenderState(
+            AvatarRenderState(
+                state = appPetState,
+                intensity = appPetIntensity,
+                toolCallBurst = appPetToolBurst,
+            ),
+        )
+    }
     val backgroundVisualizationEnabled by
         connectionViewModel.backgroundVisualizationEnabled.collectAsState()
     val agentIconPath by connectionViewModel.profileIcon.collectAsState()
@@ -672,6 +723,8 @@ fun RelayApp() {
         LocalBackgroundVisualizationEnabled provides backgroundVisualizationEnabled,
         LocalPetPlaybackSpeed provides petSpeed,
         LocalPetStabilize provides petStabilize,
+        LocalPetCompanionCoordinator provides petCompanionCoordinator,
+        LocalPetSafeAreaRegistry provides petSafeAreaRegistry,
         LocalAgentIconPath provides agentIconPath,
     ) {
     HermesRelayTheme(
@@ -2424,6 +2477,42 @@ fun RelayApp() {
             } // end CompositionLocalProvider
         }
         } // end Column (wraps banner + Scaffold)
+
+        // One companion host survives navigation. Screens register real-layout
+        // walk strips; without one the pet remains docked at its persisted edge.
+        // The host's empty full-screen area has no pointer input, so only the
+        // 48/56dp pet target intercepts touches.
+        val petActivity = petCompanionCoordinator.activity
+        val showFloatingPet = activeFloatingPet != null &&
+            !petActivity.hidden &&
+            !suppressGlobalChrome &&
+            !showStartupSphere &&
+            !voiceUiState.voiceMode
+        if (showFloatingPet) {
+            val onChatRoute = currentRoute == Screen.Chat.route
+            FloatingPetCompanion(
+                pet = requireNotNull(activeFloatingPet),
+                state = petActivity.renderState,
+                placement = petPlacement,
+                roamingEnabled = petRoamingEnabled,
+                roamingAllowed = onChatRoute,
+                isScrolling = petActivity.scrolling,
+                compact = shouldCompactFloatingPet(
+                    imeVisible = isKeyboardVisible,
+                    screenHeightDp = LocalConfiguration.current.screenHeightDp,
+                ),
+                animationEnabled = animationEnabled,
+                appForeground = appIsForeground,
+                walkRegionKey = if (onChatRoute) CHAT_PET_WALK_REGION else null,
+                onPlacementChanged = connectionViewModel::setPetPlacement,
+                onRoamingEnabledChanged = connectionViewModel::setPetRoamingEnabled,
+                onResetPlacement = connectionViewModel::resetPetPlacement,
+                onHide = { connectionViewModel.setFloatingPet(null) },
+                onOpenAppearance = {
+                    navController.navigate(Screen.AppearanceSettings.route) { launchSingleTop = true }
+                },
+            )
+        }
 
         // Floating overlay toasts (update + connection status). Rendered in the
         // Box, stacked top-down in one status-bar-padded Column so they slide

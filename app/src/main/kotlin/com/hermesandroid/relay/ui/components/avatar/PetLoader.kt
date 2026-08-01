@@ -18,9 +18,10 @@ const val PET_SPEC_SCHEMA_VERSION = 1
  * validated, and converted to a [PetAvatar] by [toAvatar]; see
  * `docs/pet-spec.md` for the authoring reference.
  *
- * Clips are keyed by name in [states]; the loader maps the agent's six
- * [SphereState]s onto the three core clips (`idle`/`thinking`/`speaking`) with a
- * fallback chain, so a minimal pack only needs an `idle` clip.
+ * Clips are keyed by name in [states]; the loader accepts both the original
+ * Android names and Hermes/Petdex's current atlas taxonomy. Agent activity
+ * (`review`, `running`) and horizontal locomotion (`running-left` /
+ * `running-right`) remain separate. A minimal pack still needs only `idle`.
  *
  * Example:
  * ```json
@@ -49,7 +50,7 @@ data class PetSpec(
     val sourceUrl: String = "",
     val creator: String = "",
     val reactive: PetReactiveSpec = PetReactiveSpec(),
-    /** Clip definitions keyed by `idle`/`thinking`/`speaking` (or a full state name). */
+    /** Clip definitions keyed by an Android activity name or Hermes/Petdex row name. */
     val states: Map<String, PetClipSpec> = emptyMap(),
     /** Fallback clip for any state with no usable clip in [states]. */
     val defaults: PetClipSpec? = null,
@@ -84,18 +85,32 @@ data class PetClipSpec(
     val fps: Float = 8f,
 )
 
-// Each agent state maps onto an ordered clip-name fallback chain ending at
-// "idle" — so authors can supply just idle/thinking/speaking, or override any
-// individual state by name. The Streaming state accepts a friendly "writing"
-// alias (the agent producing output text) ahead of the internal "streaming"
-// key. See docs/pet-spec.md "Agent states & pet behavior".
+// Android activity names and upstream Hermes/Petdex row names are both accepted.
+// `running` is the in-place agent-work row; directional rows are resolved by
+// LOCOMOTION_CLIP_CHAIN and never substituted for agent activity.
 private val STATE_CLIP_CHAIN: Map<SphereState, List<String>> = mapOf(
     SphereState.Idle to listOf("idle"),
-    SphereState.Thinking to listOf("thinking", "idle"),
-    SphereState.Streaming to listOf("writing", "streaming", "speaking", "thinking", "idle"),
-    SphereState.Listening to listOf("listening", "idle"),
-    SphereState.Speaking to listOf("speaking", "writing", "thinking", "idle"),
-    SphereState.Error to listOf("error", "thinking", "idle"),
+    SphereState.Thinking to listOf("thinking", "review", "idle"),
+    SphereState.Streaming to listOf(
+        "writing",
+        "streaming",
+        "working",
+        "run",
+        "running",
+        "review",
+        "thinking",
+        "idle",
+    ),
+    SphereState.Listening to listOf("listening", "waiting", "idle"),
+    SphereState.Speaking to listOf("speaking", "talking", "wave", "waving", "writing", "idle"),
+    SphereState.Error to listOf("error", "failed", "review", "thinking", "idle"),
+)
+
+private val LOCOMOTION_CLIP_CHAIN: Map<PetLocomotion, List<String>> = mapOf(
+    PetLocomotion.WalkLeft to listOf("walking-left", "walk-left", "running-left", "run-left"),
+    PetLocomotion.WalkRight to listOf("walking-right", "walk-right", "running-right", "run-right"),
+    PetLocomotion.RunLeft to listOf("running-left", "run-left", "walking-left", "walk-left"),
+    PetLocomotion.RunRight to listOf("running-right", "run-right", "walking-right", "walk-right"),
 )
 
 /**
@@ -120,16 +135,23 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
         resolveStateClip(state, dir) ?: idleClip
     }
 
-    // Opt-in tool-use clip: resolved only from an explicit `working` key (no
-    // fallback — without it there's no distinct tool behavior, and the pet just
-    // keeps its base-state clip during tool use, exactly as before).
-    val workingClip = states["working"]?.toClip(dir)
+    // The upstream in-place `run`/`running` row means agent work. It must not be
+    // confused with the dedicated left/right rows used for screen locomotion.
+    val workingClip = resolveAliasClip(listOf("working", "run", "running"), dir)
 
-    // Opt-in one-shot reaction clips, by friendly alias — resolved from explicit
-    // keys only (no fallback). Absent reactions simply don't play.
+    val locomotionClips = LOCOMOTION_CLIP_CHAIN.mapNotNull { (motion, keys) ->
+        resolveAliasClip(keys, dir)?.let { motion to it }
+    }.toMap()
+
+    // Hermes maps a clean completion/greeting to wave; jump is the stronger
+    // success/celebration fallback. Explicit Android names retain priority.
     val oneShots = buildMap {
-        resolveAliasClip(listOf("greet", "wake"), dir)?.let { put(PetOneShot.Greet, it) }
-        resolveAliasClip(listOf("done", "celebrate"), dir)?.let { put(PetOneShot.Done, it) }
+        resolveAliasClip(listOf("greet", "wake", "wave", "waving"), dir)
+            ?.let { put(PetOneShot.Greet, it) }
+        resolveAliasClip(
+            listOf("done", "wave", "waving", "success", "celebrate", "jump", "jumping"),
+            dir,
+        )?.let { put(PetOneShot.Done, it) }
     }
 
     return PetAvatar(
@@ -147,8 +169,9 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
             intensity = reactive.intensity && PET_RENDERER_CAPABILITIES.intensity,
             gaze = false,
         ),
-        clips = clips,
+        activityClips = clips,
         workingClip = workingClip,
+        locomotionClips = locomotionClips,
         oneShots = oneShots,
     )
 }

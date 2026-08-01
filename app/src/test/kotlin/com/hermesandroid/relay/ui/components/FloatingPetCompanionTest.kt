@@ -54,6 +54,35 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `roaming requires idle safe foreground motion`() {
+        fun allowed(
+            state: SphereState = SphereState.Idle,
+            osAnimations: Boolean = true,
+            touchExploration: Boolean = false,
+            scrolling: Boolean = false,
+        ) = shouldRoamFloatingPet(
+            roamingEnabled = true,
+            roamingAllowed = true,
+            hasWalkRegion = true,
+            state = state,
+            animationEnabled = true,
+            appForeground = true,
+            osAnimations = osAnimations,
+            touchExploration = touchExploration,
+            paused = false,
+            isScrolling = scrolling,
+            dragging = false,
+            menuExpanded = false,
+        )
+
+        assertTrue(allowed())
+        assertFalse(allowed(state = SphereState.Thinking))
+        assertFalse(allowed(osAnimations = false))
+        assertFalse(allowed(touchExploration = true))
+        assertFalse(allowed(scrolling = true))
+    }
+
+    @Test
     fun `profile identity is shown only for first assistant message in group`() {
         assertTrue(
             shouldShowMessageGroupAvatar(

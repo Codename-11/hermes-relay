@@ -16,6 +16,19 @@ import com.hermesandroid.relay.ui.components.SphereState
 enum class AvatarSource { BUILT_IN, USER }
 
 /**
+ * Pet-only horizontal travel. This is deliberately separate from
+ * [SphereState]: `run`/`running` describes agent work, while these values
+ * describe the floating companion moving across the screen.
+ */
+enum class PetLocomotion {
+    None,
+    WalkLeft,
+    WalkRight,
+    RunLeft,
+    RunRight,
+}
+
+/**
  * Per-frame reactive input bundle handed to [AgentAvatar.Render].
  *
  * Deliberately REUSES the sphere's existing vocabulary — the [SphereState] enum
@@ -28,6 +41,8 @@ enum class AvatarSource { BUILT_IN, USER }
  * @property toolCallBurst tool-call pulse spike, slow decay.
  * @property voiceAmplitude live mic/output amplitude (0..1) in voice mode.
  * @property voiceMode whether a voice session is active (expands/animates the avatar).
+ * @property petLocomotion optional pet-only travel pose. It is considered only
+ *   while [state] is [SphereState.Idle], so agent activity always wins.
  * @property paused render a single still frame instead of animating — the
  *   avatar-agnostic reduced-motion signal. The sphere honors it by pinning its
  *   time/color phase; a sprite "pet" (C3) honors it by freezing its clip. This
@@ -41,6 +56,7 @@ data class AvatarRenderState(
     val toolCallBurst: Float = 0f,
     val voiceAmplitude: Float = 0f,
     val voiceMode: Boolean = false,
+    val petLocomotion: PetLocomotion = PetLocomotion.None,
     val paused: Boolean = false,
 )
 

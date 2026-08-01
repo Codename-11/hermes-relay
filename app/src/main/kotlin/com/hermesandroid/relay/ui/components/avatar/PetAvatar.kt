@@ -142,7 +142,7 @@ data class SpriteSheetClip(
  *
  * Built by [PetSpec.toAvatar]; discovered by [PetLoader].
  *
- * @property clips a fully-resolved clip for every [SphereState] (the loader
+ * @property activityClips a fully-resolved clip for every [SphereState] (the loader
  *   pre-applies the idle/thinking/speaking fallback chain), so [Render] is a
  *   simple lookup.
  * @property workingClip optional distinct "agent is running a tool" loop. When
@@ -154,20 +154,39 @@ data class SpriteSheetClip(
  *   the base loop on its trigger, then returns; one-frame clips show as a brief
  *   still reaction. Empty → no reactions (today's behavior). Triggers are
  *   derived from activity-state transitions in [Render].
+ * @property locomotionClips optional directional travel clips. These are used
+ *   only while the agent is idle, keeping the upstream `running-left` /
+ *   `running-right` rows separate from the in-place agent-work `running` row.
  */
 class PetAvatar(
     override val id: String,
     override val label: String,
     override val description: String,
     override val reactivity: SphereReactivity,
-    private val clips: Map<SphereState, PetClip>,
-    private val workingClip: PetClip? = null,
-    private val oneShots: Map<PetOneShot, PetClip> = emptyMap(),
+    internal val activityClips: Map<SphereState, PetClip>,
+    internal val workingClip: PetClip? = null,
+    internal val locomotionClips: Map<PetLocomotion, PetClip> = emptyMap(),
+    internal val oneShots: Map<PetOneShot, PetClip> = emptyMap(),
 ) : AgentAvatar {
     override val source: AvatarSource = AvatarSource.USER
+    private val decodedSheets = mutableMapOf<String, DecodedSheet>()
+
+    private fun decode(clip: PetClip, stabilize: Boolean): PetFrames? =
+        decodeClip(clip, stabilize, decodedSheets)
 
     /** A one-shot is fireable only if it ships a clip that can actually show. */
     private fun fireable(kind: PetOneShot): Boolean = (oneShots[kind]?.frameCount ?: 0) > 0
+
+    /** Resolve sustained motion without one-shot overlays; pure for focused tests. */
+    internal fun resolveBaseClip(state: AvatarRenderState): PetClip? {
+        if (state.state == SphereState.Idle && state.petLocomotion != PetLocomotion.None) {
+            locomotionClips[state.petLocomotion]?.let { return it }
+        }
+        val toolActive = workingClip != null &&
+            state.toolCallBurst >= WORKING_BURST_THRESHOLD &&
+            (state.state == SphereState.Thinking || state.state == SphereState.Streaming)
+        return if (toolActive) workingClip else (activityClips[state.state] ?: activityClips[SphereState.Idle])
+    }
 
     @Composable
     override fun Render(state: AvatarRenderState, modifier: Modifier) {
@@ -203,12 +222,9 @@ class PetAvatar(
         // `working` clip if the pet ships one; otherwise the base-state clip.
         // toolCallBurst is ~0 outside tool activity, and Error keeps its own clip,
         // so this only fires while the agent actually operates a tool.
-        val toolActive = workingClip != null &&
-            state.toolCallBurst >= WORKING_BURST_THRESHOLD &&
-            (state.state == SphereState.Thinking || state.state == SphereState.Streaming)
         // A live reaction overlays everything; otherwise working overlays the base.
         val oneShotClip = activeOneShot?.let { oneShots[it] }
-        val baseClip = if (toolActive) workingClip else (clips[state.state] ?: clips[SphereState.Idle])
+        val baseClip = resolveBaseClip(state)
         val clip = oneShotClip ?: baseClip
         val playOnce = oneShotClip != null
 
@@ -224,7 +240,7 @@ class PetAvatar(
             value = if (clip == null) {
                 null
             } else {
-                withContext(Dispatchers.IO) { runCatching { decodeClip(clip, stabilize) }.getOrNull() }
+                withContext(Dispatchers.IO) { runCatching { decode(clip, stabilize) }.getOrNull() }
             }
         }
 
@@ -246,7 +262,7 @@ class PetAvatar(
             // the base loop wraps with modulo. With intensity modulation on, fps
             // is recomputed each tick from the live activity level.
             LaunchedEffect(current, playOnce) {
-                val f = current ?: return@LaunchedEffect
+                val f = current
                 val baseFps = f.fps.coerceIn(1f, PET_MAX_FPS)
                 var acc = 0f
                 var last = withFrameNanos { it }
@@ -312,7 +328,14 @@ private class PetFrames(
     val centerOffsets: List<IntOffset>? = null,
 )
 
-private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (clip) {
+/** One decoded atlas per selected pet; all of its row clips share these pixels. */
+private data class DecodedSheet(val bitmap: Bitmap, val image: ImageBitmap)
+
+private fun decodeClip(
+    clip: PetClip,
+    stabilize: Boolean,
+    decodedSheets: MutableMap<String, DecodedSheet>,
+): PetFrames? = when (clip) {
     is FrameSequenceClip -> {
         val bitmaps = clip.files.mapNotNull { file -> BitmapFactory.decodeFile(file.absolutePath) }
         if (bitmaps.isEmpty()) {
@@ -332,10 +355,17 @@ private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (cl
 
     is SpriteSheetClip -> {
         if (clip.startFrame < 0) return null
-        val bmp = BitmapFactory.decodeFile(clip.sheet.absolutePath)
-        if (bmp == null) {
+        val decoded = synchronized(decodedSheets) {
+            decodedSheets[clip.sheet.absolutePath] ?: BitmapFactory.decodeFile(clip.sheet.absolutePath)?.let { bitmap ->
+                DecodedSheet(bitmap, bitmap.asImageBitmap()).also {
+                    decodedSheets[clip.sheet.absolutePath] = it
+                }
+            }
+        }
+        if (decoded == null) {
             null
         } else {
+            val bmp = decoded.bitmap
             // Clamp the declared frame count to what the sheet can actually hold.
             val cols = (bmp.width / clip.frameWidth).coerceAtLeast(1)
             val rows = (bmp.height / clip.frameHeight).coerceAtLeast(1)
@@ -344,7 +374,7 @@ private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (cl
             val count = clip.frameCount.coerceIn(1, available)
             PetFrames(
                 frames = emptyList(),
-                sheet = bmp.asImageBitmap(),
+                sheet = decoded.image,
                 frameWidth = clip.frameWidth,
                 frameHeight = clip.frameHeight,
                 frameCount = count,
