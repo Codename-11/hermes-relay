@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui
 
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -75,6 +76,7 @@ import com.hermesandroid.relay.ui.components.CrashReportGate
 import com.hermesandroid.relay.ui.components.DemoModeBanner
 import com.hermesandroid.relay.ui.components.DemoUnavailableContent
 import com.hermesandroid.relay.ui.components.MessageBannerHost
+import com.hermesandroid.relay.ui.components.newestPetVisitTargetUiKey
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
@@ -704,6 +706,18 @@ fun RelayApp() {
                 intensity = appPetIntensity,
                 toolCallBurst = appPetToolBurst,
             ),
+        )
+    }
+    val completedPetVisitUiKey = remember(petMessages) {
+        newestPetVisitTargetUiKey(petMessages)
+    }
+    // Arm on stream start and emit exactly once on its falling edge. Message
+    // deltas never create requests; the stable uiKey survives ID reconciliation.
+    LaunchedEffect(petIsStreaming, completedPetVisitUiKey, petCompanionCoordinator) {
+        petCompanionCoordinator.observeChatStream(
+            isStreaming = petIsStreaming,
+            assistantUiKey = completedPetVisitUiKey,
+            nowElapsedMs = SystemClock.elapsedRealtime(),
         )
     }
     val backgroundVisualizationEnabled by

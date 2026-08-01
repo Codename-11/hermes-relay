@@ -3,10 +3,101 @@ package com.hermesandroid.relay.ui.components.pet
 import androidx.compose.ui.geometry.Rect
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PetCompanionEnvironmentTest {
+
+    @Test
+    fun `settled history without a streaming edge creates no visit`() {
+        val state = reducePetVisitRequestState(
+            state = PetVisitRequestState(),
+            isStreaming = false,
+            assistantUiKey = "history-answer",
+            nowElapsedMs = 1_000L,
+        )
+
+        assertFalse(state.streamArmed)
+        assertNull(state.pending)
+    }
+
+    @Test
+    fun `stream falling edge creates one delayed stable-key request`() {
+        val armed = reducePetVisitRequestState(
+            state = PetVisitRequestState(),
+            isStreaming = true,
+            assistantUiKey = null,
+            nowElapsedMs = 1_000L,
+        )
+        val afterDelta = reducePetVisitRequestState(
+            state = armed,
+            isStreaming = true,
+            assistantUiKey = "answer-7",
+            nowElapsedMs = 1_100L,
+        )
+        val settled = reducePetVisitRequestState(
+            state = afterDelta,
+            isStreaming = false,
+            assistantUiKey = "answer-7",
+            nowElapsedMs = 2_000L,
+        )
+        val duplicateIdleObservation = reducePetVisitRequestState(
+            state = settled,
+            isStreaming = false,
+            assistantUiKey = "answer-7",
+            nowElapsedMs = 2_100L,
+        )
+
+        val request = requireNotNull(settled.pending)
+        assertEquals("answer-7", request.assistantUiKey)
+        assertEquals("chat-message:answer-7", request.targetKey)
+        assertEquals(
+            2_000L + deterministicPetVisitCooldownMs("answer-7"),
+            request.notBeforeElapsedMs,
+        )
+        assertEquals(request, duplicateIdleObservation.pending)
+        assertFalse(duplicateIdleObservation.streamArmed)
+    }
+
+    @Test
+    fun `cooldown is deterministic bounded and exposes readiness window`() {
+        val cooldown = deterministicPetVisitCooldownMs("stable-answer")
+        assertEquals(cooldown, deterministicPetVisitCooldownMs("stable-answer"))
+        assertTrue(cooldown in 12_000L..20_000L)
+
+        val request = PetVisitRequest(
+            assistantUiKey = "stable-answer",
+            targetKey = "chat-message:stable-answer",
+            notBeforeElapsedMs = 50_000L,
+            expiresAtElapsedMs = 70_000L,
+        )
+        assertEquals(PetVisitReadiness.CoolingDown, request.readinessAt(49_999L))
+        assertEquals(PetVisitReadiness.Ready, request.readinessAt(50_000L))
+        assertEquals(PetVisitReadiness.Ready, request.readinessAt(70_000L))
+        assertEquals(PetVisitReadiness.Expired, request.readinessAt(70_001L))
+    }
+
+    @Test
+    fun `new completion replaces pending visit and expired request is pruned`() {
+        fun complete(state: PetVisitRequestState, key: String, now: Long): PetVisitRequestState {
+            val armed = reducePetVisitRequestState(state, true, null, now - 1L)
+            return reducePetVisitRequestState(armed, false, key, now)
+        }
+
+        val first = complete(PetVisitRequestState(), "first", 1_000L)
+        val latest = complete(first, "latest", 2_000L)
+        assertEquals("latest", latest.pending?.assistantUiKey)
+
+        val expiredAt = requireNotNull(latest.pending).expiresAtElapsedMs + 1L
+        val pruned = reducePetVisitRequestState(
+            state = latest,
+            isStreaming = false,
+            assistantUiKey = "latest",
+            nowElapsedMs = expiredAt,
+        )
+        assertNull(pruned.pending)
+    }
 
     @Test
     fun `surface state is isolated by navigation owner`() {
