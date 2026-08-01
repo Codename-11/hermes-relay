@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Pets can stay with you during everyday chat without replacing the agent.** A selected pet now occupies a fixed companion perch above the composer, reacts to agent activity, compacts for the keyboard and short screens, and pauses and dims while you scroll. Its menu can open Appearance or hide it. (#267)
+- **Petdex browsing and one-tap pet installation.** Appearance can search the public Petdex catalog, shows creator attribution and a source link, and downloads an atlas only after you tap Install. The app prefers the compact v2 catalog with v1 fallback, converts supported current or legacy layouts into a validated local pet, and keeps installed companions available offline. Petdex assets retain their own creator-provided licensing terms. (#267)
+
+### Changed
+
+- **Profile identity, the Sphere, and pets are now separate appearance choices.** Profile images and letter fallbacks continue to identify assistant message groups; Background visualization independently controls Off or Sphere and its skins; Floating pet independently controls None or an imported companion. Existing pet selections migrate to the companion setting, while the old Sphere selection becomes no companion. (#267)
+
 ### Fixed
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.

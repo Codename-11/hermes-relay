@@ -44,6 +44,10 @@ data class PetSpec(
     val id: String = "",
     val label: String = "",
     val description: String = "",
+    /** Optional origin metadata for gallery-installed packs. Never fetched or executed. */
+    val source: String = "",
+    val sourceUrl: String = "",
+    val creator: String = "",
     val reactive: PetReactiveSpec = PetReactiveSpec(),
     /** Clip definitions keyed by `idle`/`thinking`/`speaking` (or a full state name). */
     val states: Map<String, PetClipSpec> = emptyMap(),
@@ -75,6 +79,8 @@ data class PetClipSpec(
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
     val frameCount: Int = 0,
+    /** Zero-based cell offset into [sheet], read row-major. */
+    val startFrame: Int = 0,
     val fps: Float = 8f,
 )
 
@@ -168,10 +174,10 @@ private fun PetClipSpec.toClip(dir: File): PetClip? {
         if (files.isEmpty()) return null
         return FrameSequenceClip(files, fpsSafe)
     }
-    if (sheet.isNotBlank() && frameWidth > 0 && frameHeight > 0 && frameCount > 0) {
+    if (sheet.isNotBlank() && frameWidth > 0 && frameHeight > 0 && frameCount > 0 && startFrame >= 0) {
         val sheetFile = safeChild(dir, sheet) ?: return null
         if (!sheetFile.isFile) return null
-        return SpriteSheetClip(sheetFile, frameWidth, frameHeight, frameCount, fpsSafe)
+        return SpriteSheetClip(sheetFile, frameWidth, frameHeight, frameCount, fpsSafe, startFrame)
     }
     return null
 }
@@ -202,6 +208,7 @@ private fun safeChild(dir: File, name: String): File? {
 object PetLoader {
     private const val TAG = "PetLoader"
     private const val DIR = "pets"
+    private const val PETDEX_TRANSACTION_PREFIX = ".petdex-"
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -221,7 +228,9 @@ object PetLoader {
      * discovery/skip-invalid behavior is unit-testable against a temp directory.
      */
     fun loadPets(dir: File): List<PetAvatar> {
-        val packs = dir.listFiles { file -> file.isDirectory } ?: return emptyList()
+        val packs = dir.listFiles { file ->
+            file.isDirectory && !file.name.startsWith(PETDEX_TRANSACTION_PREFIX)
+        } ?: return emptyList()
         return packs.sortedBy { it.name }.mapNotNull { packDir ->
             val manifest = File(packDir, "pet.json")
             if (!manifest.isFile) return@mapNotNull null
@@ -246,7 +255,9 @@ object PetLoader {
 
     /** Pure overload (no Android Context) for tests against a temp directory. */
     fun deletePet(dir: File, avatarId: String): Boolean {
-        val packs = dir.listFiles { file -> file.isDirectory } ?: return false
+        val packs = dir.listFiles { file ->
+            file.isDirectory && !file.name.startsWith(PETDEX_TRANSACTION_PREFIX)
+        } ?: return false
         for (packDir in packs) {
             val manifest = File(packDir, "pet.json")
             if (!manifest.isFile) continue

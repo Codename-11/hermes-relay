@@ -78,6 +78,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.RelayRefresh
@@ -501,12 +502,9 @@ private fun CleanModeComposer(
  * the caller as plain UI-local state; this is a presentation over the same
  * conversation, not new ViewModel state.
  *
- * Honors [animationEnabled], OS reduce-motion, and TalkBack: the sphere
- * renders a static frame and the text stays readable + announced when motion
- * is suppressed.
- *
- * The avatar is rendered through the [LocalAgentAvatar] seam (WP-C2), so clean
- * mode gets future "pets" for free alongside chat and the voice overlay.
+ * Honors the ambient-visualization preference independently from motion.
+ * When visible, [animationEnabled] and OS reduce-motion pause the sphere on a
+ * static frame; TalkBack keeps the text readable and announced.
  */
 @Composable
 fun CleanChatMode(
@@ -522,6 +520,7 @@ fun CleanChatMode(
     modifier: Modifier = Modifier,
 ) {
     val motion = rememberAccessibleMotionState()
+    val backgroundVisualizationEnabled = LocalBackgroundVisualizationEnabled.current
     val sphereAnimated = animationEnabled && motion.osAnimations
     // Faded text is unreadable to touch exploration, so the text path goes
     // static (readable + announced) whenever TalkBack is exploring.
@@ -608,29 +607,32 @@ fun CleanChatMode(
             // sphere rises toward the top third.
             Spacer(modifier = Modifier.weight(1f))
 
-            // Bounded, centered sphere — a fixed size so the group grows via the
-            // text, sliding the sphere upward as the conversation lengthens.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(sphereHeight),
-                contentAlignment = Alignment.Center,
-            ) {
+            // The ambient sphere is optional. Hiding it collapses the visual's
+            // slot so the conversation remains centered instead of leaving a
+            // large blank region above the text.
+            if (backgroundVisualizationEnabled) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .semantics { contentDescription = sphereDescription },
+                        .fillMaxWidth()
+                        .height(sphereHeight),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    LocalAgentAvatar.current.Render(
-                        state = AvatarRenderState(
-                            state = sphereState,
-                            intensity = streamingIntensity,
-                            toolCallBurst = toolCallBurst,
-                            // Pin to a still frame when motion is suppressed.
-                            paused = !sphereAnimated,
-                        ),
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .semantics { contentDescription = sphereDescription },
+                    ) {
+                        LocalAgentAvatar.current.Render(
+                            state = AvatarRenderState(
+                                state = sphereState,
+                                intensity = streamingIntensity,
+                                toolCallBurst = toolCallBurst,
+                                // Pin to a still frame when motion is suppressed.
+                                paused = !sphereAnimated,
+                            ),
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
 

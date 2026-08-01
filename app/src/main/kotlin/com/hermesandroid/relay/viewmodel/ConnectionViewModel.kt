@@ -375,9 +375,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
         // active theme's preferred skin; any other id pins a specific skin.
         private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
-        // Selected agent avatar id. "sphere" (SphereAvatar.id) is the default
-        // built-in; any other id selects a loaded user "pet" by id.
+        // Legacy combined sphere/pet choice. Read for one release so existing
+        // users keep their selected pet when the concepts split.
         private val KEY_AGENT_AVATAR = stringPreferencesKey("agent_avatar")
+        // Optional floating companion id. The explicit sentinel distinguishes
+        // "no pet" from a preference that has not yet been migrated.
+        private val KEY_FLOATING_PET = stringPreferencesKey("floating_pet")
+        // Reserved storage sentinel. Pet ids may legitimately be ordinary words
+        // such as "none", so keep the no-selection marker outside that space.
+        private const val NO_FLOATING_PET = "__none__"
         private val KEY_PET_SPEED = floatPreferencesKey("pet_speed")
         private val KEY_PET_STABILIZE = booleanPreferencesKey("pet_stabilize")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
@@ -408,6 +414,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Animation
         private val KEY_ANIMATION_ENABLED = booleanPreferencesKey("animation_enabled")
         private val KEY_ANIMATION_BEHIND_CHAT = booleanPreferencesKey("animation_behind_chat")
+        private val KEY_BACKGROUND_VISUALIZATION_ENABLED =
+            booleanPreferencesKey("background_visualization_enabled")
         private val KEY_IMAGE_GENERATION_STYLE = stringPreferencesKey("image_generation_style")
         private val KEY_CHAT_RECENT_PROMPTS = booleanPreferencesKey("chat_recent_prompts")
 
@@ -1276,14 +1284,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 
-    // Selected agent avatar id ("sphere" = the built-in orb; any other id is a
-    // loaded user pet). Resolved against [SphereAvatar] + PetLoader.loadPets() at
-    // the Compose root; an unknown id (pet removed) falls back to the sphere.
-    val agentAvatar: StateFlow<String> = application.relayDataStore.data
+    // Optional floating companion. For one release, an absent new key reads the
+    // legacy combined selection: sphere -> no companion; a pet id -> companion.
+    val floatingPet: StateFlow<String?> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_AGENT_AVATAR] ?: "sphere"
+            val selected = preferences[KEY_FLOATING_PET]
+                ?: preferences[KEY_AGENT_AVATAR]
+                ?: NO_FLOATING_PET
+            selected.takeUnless { it == NO_FLOATING_PET || it == SphereAvatar.id }
         }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "sphere")
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * One-release source compatibility for callers still using the old combined
+     * selector. New code should use [floatingPet].
+     */
+    @Deprecated("Use floatingPet")
+    val agentAvatar: StateFlow<String> = floatingPet
+        .map { it ?: SphereAvatar.id }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SphereAvatar.id)
 
     // Bumped to force the Compose root to re-scan the pets/ directory — after an
     // in-app import or delete, or when the Appearance screen opens (so a pack
@@ -1711,6 +1730,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     init {
+        // Materialize the split preference once. Keeping the legacy read above
+        // for one release also covers interrupted upgrades and older backups.
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                if (preferences[KEY_FLOATING_PET] == null) {
+                    preferences[KEY_FLOATING_PET] = preferences[KEY_AGENT_AVATAR]
+                        ?.takeUnless { it == SphereAvatar.id }
+                        ?: NO_FLOATING_PET
+                }
+                // Before presence and motion were split, animation_enabled also
+                // controlled whether the Sphere was shown. Preserve that choice
+                // on upgrade; users can then re-enable a static Sphere separately.
+                if (preferences[KEY_BACKGROUND_VISUALIZATION_ENABLED] == null) {
+                    preferences[KEY_BACKGROUND_VISUALIZATION_ENABLED] =
+                        preferences[KEY_ANIMATION_ENABLED] ?: true
+                }
+            }
+        }
+
         // Drive the keep-alive from either the user's always-on preference or
         // work the user already started. Active-turn leases are session scoped,
         // so sibling turns release independently. Both flavors — the
@@ -1782,6 +1820,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         .map { it[KEY_ANIMATION_BEHIND_CHAT] ?: true }
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    /** Controls Sphere/background visibility independently of motion. */
+    val backgroundVisualizationEnabled: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_BACKGROUND_VISUALIZATION_ENABLED] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     val imageGenerationStyle: StateFlow<String> = application.relayDataStore.data
         .map { it[KEY_IMAGE_GENERATION_STYLE] ?: "rotate" }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "rotate")
@@ -1814,6 +1857,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_ANIMATION_BEHIND_CHAT] = enabled
+            }
+        }
+    }
+
+    fun setBackgroundVisualizationEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_BACKGROUND_VISUALIZATION_ENABLED] = enabled
             }
         }
     }
@@ -6316,13 +6367,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun setAgentAvatar(avatarId: String) {
+    fun setFloatingPet(avatarId: String?) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_AGENT_AVATAR] = avatarId
+                preferences[KEY_FLOATING_PET] = avatarId
+                    ?.takeUnless { it == SphereAvatar.id }
+                    ?: NO_FLOATING_PET
             }
         }
     }
+
+    /** One-release compatibility shim for the former combined picker. */
+    @Deprecated("Use setFloatingPet")
+    fun setAgentAvatar(avatarId: String) = setFloatingPet(avatarId)
 
     /** Set the global pet playback-speed multiplier (clamped 0.5×–1.5×). */
     fun setPetSpeed(speed: Float) {
@@ -6358,14 +6415,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /** Delete a user pet by id; if it was the selected avatar, fall back to the sphere. */
+    /** Delete a user pet by id; clear it if it was the selected companion. */
     fun deleteUserAvatar(avatarId: String, label: String) {
         viewModelScope.launch {
             val deleted = withContext(Dispatchers.IO) {
                 PetLoader.deletePet(getApplication<Application>(), avatarId)
             }
             if (deleted) {
-                if (agentAvatar.value == avatarId) setAgentAvatar(SphereAvatar.id)
+                if (floatingPet.value == avatarId) setFloatingPet(null)
                 refreshAgentAvatars()
                 _avatarEvents.tryEmit("Removed “$label”")
             } else {

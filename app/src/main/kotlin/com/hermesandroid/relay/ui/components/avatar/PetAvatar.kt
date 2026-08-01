@@ -125,13 +125,14 @@ data class SpriteSheetClip(
     val frameHeight: Int,
     override val frameCount: Int,
     override val fps: Float,
+    /** Zero-based first cell in the atlas, read row-major. */
+    val startFrame: Int = 0,
 ) : PetClip
 
 /**
- * User-loaded "pet" avatar — a bitmap frame-sequence / sprite-atlas companion
- * that replaces the sphere. Implements the C2 [AgentAvatar] seam, so once
- * selected it renders across chat, clean mode, the voice overlay, onboarding,
- * and the splash with no per-surface code.
+ * User-loaded bitmap frame-sequence / sprite-atlas companion. It renders in the
+ * floating-pet surface and remains separate from profile identity and the
+ * optional ambient Sphere.
  *
  * Rendering is deliberately dependency-free: frames are decoded with
  * [BitmapFactory] and drawn through a Compose [Canvas]. The frame loop is
@@ -306,6 +307,7 @@ private class PetFrames(
     val frameHeight: Int,
     val frameCount: Int,
     val fps: Float,
+    val startFrame: Int = 0,
     /** Per-frame recenter offset (source px) when stabilization is on; null = off. */
     val centerOffsets: List<IntOffset>? = null,
 )
@@ -329,6 +331,7 @@ private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (cl
     }
 
     is SpriteSheetClip -> {
+        if (clip.startFrame < 0) return null
         val bmp = BitmapFactory.decodeFile(clip.sheet.absolutePath)
         if (bmp == null) {
             null
@@ -336,7 +339,9 @@ private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (cl
             // Clamp the declared frame count to what the sheet can actually hold.
             val cols = (bmp.width / clip.frameWidth).coerceAtLeast(1)
             val rows = (bmp.height / clip.frameHeight).coerceAtLeast(1)
-            val count = clip.frameCount.coerceIn(1, cols * rows)
+            val available = (cols * rows - clip.startFrame).coerceAtLeast(0)
+            if (available == 0) return null
+            val count = clip.frameCount.coerceIn(1, available)
             PetFrames(
                 frames = emptyList(),
                 sheet = bmp.asImageBitmap(),
@@ -344,8 +349,9 @@ private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (cl
                 frameHeight = clip.frameHeight,
                 frameCount = count,
                 fps = clip.fps,
+                startFrame = clip.startFrame,
                 centerOffsets = if (stabilize) {
-                    sheetRecenter(bmp, cols, clip.frameWidth, clip.frameHeight, count)
+                    sheetRecenter(bmp, cols, clip.frameWidth, clip.frameHeight, clip.startFrame, count)
                 } else {
                     null
                 },
@@ -355,10 +361,18 @@ private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (cl
 }
 
 /** Per-cell recenter offsets for a sprite sheet (see [contentRecenter]). */
-private fun sheetRecenter(bmp: Bitmap, cols: Int, fw: Int, fh: Int, count: Int): List<IntOffset> {
+private fun sheetRecenter(
+    bmp: Bitmap,
+    cols: Int,
+    fw: Int,
+    fh: Int,
+    startFrame: Int,
+    count: Int,
+): List<IntOffset> {
     val buf = IntArray(fw * fh)
     return (0 until count).map { i ->
-        contentRecenter(bmp, (i % cols) * fw, (i / cols) * fh, fw, fh, buf)
+        val cell = startFrame + i
+        contentRecenter(bmp, (cell % cols) * fw, (cell / cols) * fh, fw, fh, buf)
     }
 }
 
@@ -401,8 +415,9 @@ private fun DrawScope.drawPetFrame(f: PetFrames, index: Int, bounce: Float) {
         val fh = f.frameHeight
         if (fw <= 0 || fh <= 0) return
         val cols = (f.sheet.width / fw).coerceAtLeast(1)
-        val col = index % cols
-        val row = index / cols
+        val cell = f.startFrame + index
+        val col = cell % cols
+        val row = cell / cols
         val (dstOffset, dstSize) = containFit(fw.toFloat(), fh.toFloat(), bounce)
         drawImage(
             image = f.sheet,
