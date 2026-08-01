@@ -116,4 +116,106 @@ class PetRoamingGeometryTest {
             ),
         )
     }
+
+    @Test
+    fun `overlay safe bounds account for logical insets and pet footprint without layout reservation`() {
+        val footprint = PetFootprint(width = 40f, height = 60f, clearance = 5f)
+        assertEquals(
+            PetSafeBounds(left = 35f, top = 50f, right = 165f, bottom = 155f),
+            overlaySafeBounds(
+                viewportWidth = 200f,
+                viewportHeight = 220f,
+                insets = PetInsets(start = 10f, top = 15f, end = 10f, bottom = 30f),
+                footprint = footprint,
+                layoutDirection = PetLayoutDirection.Ltr,
+            ),
+        )
+        assertNull(
+            overlaySafeBounds(
+                viewportWidth = 40f,
+                viewportHeight = 40f,
+                insets = PetInsets(),
+                footprint = PetFootprint(width = 60f, height = 60f),
+                layoutDirection = PetLayoutDirection.Ltr,
+            ),
+        )
+    }
+
+    @Test
+    fun `registered UI bounds expand by pet hit target and clearance`() {
+        assertEquals(
+            listOf(PetObstacle(left = 65f, top = 65f, right = 135f, bottom = 135f)),
+            expandObstaclesForPet(
+                obstacles = listOf(PetObstacle(90f, 90f, 110f, 110f)),
+                footprint = PetFootprint(width = 40f, height = 40f, clearance = 5f),
+            ),
+        )
+    }
+
+    @Test
+    fun `overlay route detours around registered control instead of crossing it`() {
+        val safe = PetSafeBounds(20f, 20f, 180f, 180f)
+        val rawControl = PetObstacle(80f, 60f, 120f, 140f)
+        val footprint = PetFootprint(width = 20f, height = 20f, clearance = 4f)
+        val expanded = expandObstaclesForPet(listOf(rawControl), footprint)
+
+        val route = findOverlayRoute(
+            start = PetPoint(30f, 100f),
+            requestedDestination = PetPoint(170f, 100f),
+            bounds = safe,
+            uiObstacles = listOf(rawControl),
+            footprint = footprint,
+        )
+        requireNotNull(route)
+        assertEquals(PetPoint(30f, 100f), route.start)
+        assertEquals(PetPoint(170f, 100f), route.destination)
+        assertTrue(route.points.size >= 3)
+        route.points.zipWithNext().forEach { (start, end) ->
+            assertFalse(pathIntersectsObstacle(start, end, expanded))
+        }
+    }
+
+    @Test
+    fun `overlay route returns null when registered controls form a full barrier`() {
+        assertNull(
+            findOverlayRoute(
+                start = PetPoint(20f, 50f),
+                requestedDestination = PetPoint(180f, 50f),
+                bounds = PetSafeBounds(10f, 10f, 190f, 90f),
+                uiObstacles = listOf(PetObstacle(90f, 0f, 110f, 100f)),
+                footprint = PetFootprint(width = 20f, height = 20f),
+            ),
+        )
+    }
+
+    @Test
+    fun `deterministic overlay route is candidate order independent and collision free`() {
+        val safe = PetSafeBounds(10f, 10f, 190f, 190f)
+        val obstacle = PetObstacle(80f, 70f, 120f, 130f)
+        val candidates = listOf(PetPoint(170f, 100f), PetPoint(20f, 170f), PetPoint(170f, 170f))
+        val footprint = PetFootprint(width = 16f, height = 16f, clearance = 2f)
+
+        val route = chooseDeterministicOverlayRoute(
+            current = PetPoint(20f, 100f),
+            candidates = candidates,
+            bounds = safe,
+            uiObstacles = listOf(obstacle),
+            footprint = footprint,
+            seed = 88L,
+        )
+        val reordered = chooseDeterministicOverlayRoute(
+            current = PetPoint(20f, 100f),
+            candidates = candidates.reversed(),
+            bounds = safe,
+            uiObstacles = listOf(obstacle),
+            footprint = footprint,
+            seed = 88L,
+        )
+        assertEquals(route, reordered)
+        requireNotNull(route)
+        val expanded = expandObstaclesForPet(listOf(obstacle), footprint)
+        route.points.zipWithNext().forEach { (start, end) ->
+            assertFalse(pathIntersectsObstacle(start, end, expanded))
+        }
+    }
 }

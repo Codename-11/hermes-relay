@@ -52,9 +52,12 @@ import com.hermesandroid.relay.ui.components.avatar.PetLocomotion
 import com.hermesandroid.relay.ui.components.pet.LocalPetSafeAreaRegistry
 import com.hermesandroid.relay.ui.components.pet.PetLayoutDirection
 import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
+import com.hermesandroid.relay.ui.components.pet.PetFootprint
+import com.hermesandroid.relay.ui.components.pet.PetObstacle
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.ui.components.pet.PetPoint
 import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
+import com.hermesandroid.relay.ui.components.pet.expandObstaclesForPet
 import com.hermesandroid.relay.ui.components.pet.projectIntoSafeBounds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -97,7 +100,7 @@ internal fun shouldRoamFloatingPet(
 /**
  * One app-level, Petdex-compatible companion. Only the pet-sized child accepts
  * pointer input; the full-screen positioning box remains click-through.
- * Autonomous walking is restricted to a screen-registered safe strip.
+ * Autonomous walking is restricted to screen-registered UI perches.
  */
 @Composable
 fun FloatingPetCompanion(
@@ -159,9 +162,18 @@ fun FloatingPetCompanion(
     }
     val registry = LocalPetSafeAreaRegistry.current
     val rawWalkRegion = walkRegionKey?.let { registry.walkRegions[it] }
-    val walkBounds = rawWalkRegion?.toPetCenterBounds(radius, safeBounds)
-    val manualHomePoint = remember(placement, safeBounds, petLayoutDirection) {
-        placement.sanitized().resolve(safeBounds, petLayoutDirection)
+    val walkBounds = rawWalkRegion?.toPetPerchBounds(radius, safeBounds)
+    val registeredObstacles = remember(rawWalkRegion, targetSizePx, safeMarginPx) {
+        rawWalkRegion?.let { rect ->
+            expandObstaclesForPet(
+                obstacles = listOf(PetObstacle(rect.left, rect.top, rect.right, rect.bottom)),
+                footprint = PetFootprint(targetSizePx, targetSizePx, safeMarginPx / 2f),
+            )
+        }.orEmpty()
+    }
+    val manualHomePoint = remember(placement, safeBounds, petLayoutDirection, registeredObstacles) {
+        val requested = placement.sanitized().resolve(safeBounds, petLayoutDirection)
+        projectIntoSafeBounds(requested, safeBounds, registeredObstacles) ?: requested
     }
     val roamingHomePoint = remember(placement.edge, walkBounds, petLayoutDirection) {
         walkBounds?.let { rail ->
@@ -226,7 +238,7 @@ fun FloatingPetCompanion(
             } else {
                 rail.left
             }
-            locomotion = if (destinationX < x.value) PetLocomotion.WalkLeft else PetLocomotion.WalkRight
+            locomotion = if (destinationX < x.value) PetLocomotion.RunLeft else PetLocomotion.RunRight
             val duration = ((abs(destinationX - x.value) / density.density) * 18f)
                 .roundToInt()
                 .coerceIn(1_800, 6_000)
@@ -234,7 +246,7 @@ fun FloatingPetCompanion(
             locomotion = PetLocomotion.None
             delay(2_400L)
             if (x.value != homePoint.x) {
-                locomotion = if (homePoint.x < x.value) PetLocomotion.WalkLeft else PetLocomotion.WalkRight
+                locomotion = if (homePoint.x < x.value) PetLocomotion.RunLeft else PetLocomotion.RunRight
                 x.animateTo(homePoint.x, tween(duration))
                 locomotion = PetLocomotion.None
             }
@@ -283,7 +295,7 @@ fun FloatingPetCompanion(
                     scaleX = scale
                     scaleY = scale
                 }
-                .pointerInput(pet.id, safeBounds, walkBounds) {
+                .pointerInput(pet.id, safeBounds, walkBounds, registeredObstacles) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = {
                             dragging = true
@@ -316,7 +328,7 @@ fun FloatingPetCompanion(
                             val projected = projectIntoSafeBounds(
                                 requested = PetPoint(current.x + dragAmount.x, current.y + dragAmount.y),
                                 bounds = safeBounds,
-                                obstacles = emptyList(),
+                                obstacles = registeredObstacles,
                             ) ?: return@detectDragGesturesAfterLongPress
                             draggedPoint = projected
                         },
@@ -423,10 +435,17 @@ fun FloatingPetCompanion(
     }
 }
 
-private fun Rect.toPetCenterBounds(radius: Float, outer: PetSafeBounds): PetSafeBounds? {
+/** Center bounds for standing on an existing element's top edge as an overlay. */
+private fun Rect.toPetPerchBounds(
+    radius: Float,
+    outer: PetSafeBounds,
+): PetSafeBounds? {
     val left = (this.left + radius).coerceIn(outer.left, outer.right)
     val right = (this.right - radius).coerceIn(outer.left, outer.right)
-    val centerY = ((top + bottom) / 2f).coerceIn(outer.top, outer.bottom)
+    // The interactive target stays entirely above the measured element. Any
+    // transparent sprite padding remains inside this target and cannot steal
+    // touches from the composer's top edge.
+    val centerY = (top - radius).coerceIn(outer.top, outer.bottom)
     if (right < left) return null
     return PetSafeBounds(left, centerY, right, centerY)
 }

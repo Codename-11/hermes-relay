@@ -43,9 +43,9 @@ class PetCompanionCoordinator {
 val LocalPetCompanionCoordinator = staticCompositionLocalOf { PetCompanionCoordinator() }
 
 /**
- * Explicit walkable surfaces measured by their owners. The host never guesses
- * from the semantics tree: screens opt in only where a pet cannot cover a
- * control. Coordinates use the shared Compose root space.
+ * Explicit UI surfaces measured by their owners. Their top edges become
+ * walkable perches, matching Hermes Desktop's live-DOM ledge model without
+ * inserting layout space or guessing from the semantics tree.
  */
 @Stable
 class PetSafeAreaRegistry {
@@ -62,8 +62,8 @@ class PetSafeAreaRegistry {
 
 val LocalPetSafeAreaRegistry = staticCompositionLocalOf { PetSafeAreaRegistry() }
 
-/** Register a real-layout strip as a safe autonomous walking surface. */
-fun Modifier.petWalkRegion(key: String): Modifier = composed {
+/** Register an existing UI element whose top edge is a safe pet perch. */
+fun Modifier.petPerchSurface(key: String): Modifier = composed {
     val registry = LocalPetSafeAreaRegistry.current
     DisposableEffect(registry, key) {
         onDispose { registry.removeWalkRegion(key) }

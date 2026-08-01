@@ -138,6 +138,9 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
     // The upstream in-place `run`/`running` row means agent work. It must not be
     // confused with the dedicated left/right rows used for screen locomotion.
     val workingClip = resolveAliasClip(listOf("working", "run", "running"), dir)
+    // Only the canonical/legacy in-place run row may substitute for directional
+    // travel. A tool-specific `working` pose is never locomotion.
+    val legacyTravelClip = resolveAliasClip(listOf("run", "running"), dir)
 
     val locomotionClips = LOCOMOTION_CLIP_CHAIN.mapNotNull { (motion, keys) ->
         resolveAliasClip(keys, dir)?.let { motion to it }
@@ -171,6 +174,7 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
         ),
         activityClips = clips,
         workingClip = workingClip,
+        legacyTravelClip = legacyTravelClip,
         locomotionClips = locomotionClips,
         oneShots = oneShots,
     )

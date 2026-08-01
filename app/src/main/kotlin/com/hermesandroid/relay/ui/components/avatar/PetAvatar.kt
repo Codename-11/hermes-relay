@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.hermesandroid.relay.ui.components.SphereReactivity
@@ -129,6 +130,11 @@ data class SpriteSheetClip(
     val startFrame: Int = 0,
 ) : PetClip
 
+internal data class PetClipSelection(
+    val clip: PetClip?,
+    val mirrorHorizontally: Boolean = false,
+)
+
 /**
  * User-loaded bitmap frame-sequence / sprite-atlas companion. It renders in the
  * floating-pet surface and remains separate from profile identity and the
@@ -157,6 +163,8 @@ data class SpriteSheetClip(
  * @property locomotionClips optional directional travel clips. These are used
  *   only while the agent is idle, keeping the upstream `running-left` /
  *   `running-right` rows separate from the in-place agent-work `running` row.
+ * @property legacyTravelClip optional `run`/`running` fallback for packs without
+ *   directional rows. Tool-only `working` is deliberately excluded.
  */
 class PetAvatar(
     override val id: String,
@@ -165,6 +173,7 @@ class PetAvatar(
     override val reactivity: SphereReactivity,
     internal val activityClips: Map<SphereState, PetClip>,
     internal val workingClip: PetClip? = null,
+    internal val legacyTravelClip: PetClip? = null,
     internal val locomotionClips: Map<PetLocomotion, PetClip> = emptyMap(),
     internal val oneShots: Map<PetOneShot, PetClip> = emptyMap(),
 ) : AgentAvatar {
@@ -178,15 +187,50 @@ class PetAvatar(
     private fun fireable(kind: PetOneShot): Boolean = (oneShots[kind]?.frameCount ?: 0) > 0
 
     /** Resolve sustained motion without one-shot overlays; pure for focused tests. */
-    internal fun resolveBaseClip(state: AvatarRenderState): PetClip? {
+    internal fun resolveBaseSelection(state: AvatarRenderState): PetClipSelection {
         if (state.state == SphereState.Idle && state.petLocomotion != PetLocomotion.None) {
-            locomotionClips[state.petLocomotion]?.let { return it }
+            val movingRight = state.petLocomotion == PetLocomotion.WalkRight ||
+                state.petLocomotion == PetLocomotion.RunRight
+            val exact = state.petLocomotion
+            val sameDirectionAlternate = when (exact) {
+                PetLocomotion.WalkLeft -> PetLocomotion.RunLeft
+                PetLocomotion.WalkRight -> PetLocomotion.RunRight
+                PetLocomotion.RunLeft -> PetLocomotion.WalkLeft
+                PetLocomotion.RunRight -> PetLocomotion.WalkRight
+                PetLocomotion.None -> PetLocomotion.None
+            }
+            val sameDirection = if (movingRight) {
+                listOf(exact, sameDirectionAlternate)
+            } else {
+                listOf(exact, sameDirectionAlternate)
+            }
+            val oppositeDirection = when (exact) {
+                PetLocomotion.WalkLeft -> listOf(PetLocomotion.WalkRight, PetLocomotion.RunRight)
+                PetLocomotion.WalkRight -> listOf(PetLocomotion.WalkLeft, PetLocomotion.RunLeft)
+                PetLocomotion.RunLeft -> listOf(PetLocomotion.RunRight, PetLocomotion.WalkRight)
+                PetLocomotion.RunRight -> listOf(PetLocomotion.RunLeft, PetLocomotion.WalkLeft)
+                PetLocomotion.None -> emptyList()
+            }
+            sameDirection.firstNotNullOfOrNull(locomotionClips::get)?.let {
+                return PetClipSelection(it)
+            }
+            oppositeDirection.firstNotNullOfOrNull(locomotionClips::get)?.let {
+                return PetClipSelection(it, mirrorHorizontally = true)
+            }
+            // Upstream treats the legacy in-place run row as left-facing for
+            // travel, mirroring it only for rightward motion.
+            legacyTravelClip?.let {
+                return PetClipSelection(it, mirrorHorizontally = movingRight)
+            }
         }
         val toolActive = workingClip != null &&
             state.toolCallBurst >= WORKING_BURST_THRESHOLD &&
             (state.state == SphereState.Thinking || state.state == SphereState.Streaming)
-        return if (toolActive) workingClip else (activityClips[state.state] ?: activityClips[SphereState.Idle])
+        val clip = if (toolActive) workingClip else (activityClips[state.state] ?: activityClips[SphereState.Idle])
+        return PetClipSelection(clip)
     }
+
+    internal fun resolveBaseClip(state: AvatarRenderState): PetClip? = resolveBaseSelection(state).clip
 
     @Composable
     override fun Render(state: AvatarRenderState, modifier: Modifier) {
@@ -224,8 +268,9 @@ class PetAvatar(
         // so this only fires while the agent actually operates a tool.
         // A live reaction overlays everything; otherwise working overlays the base.
         val oneShotClip = activeOneShot?.let { oneShots[it] }
-        val baseClip = resolveBaseClip(state)
-        val clip = oneShotClip ?: baseClip
+        val baseSelection = resolveBaseSelection(state)
+        val clip = oneShotClip ?: baseSelection.clip
+        val mirrorHorizontally = oneShotClip == null && baseSelection.mirrorHorizontally
         val playOnce = oneShotClip != null
 
         // Re-center each frame on its own opaque content at decode time —
@@ -310,7 +355,14 @@ class PetAvatar(
 
         Canvas(modifier = modifier) {
             val f = current ?: return@Canvas
-            drawPetFrame(f, frameIndex.coerceIn(0, (f.frameCount - 1).coerceAtLeast(0)), bounce)
+            val index = frameIndex.coerceIn(0, (f.frameCount - 1).coerceAtLeast(0))
+            if (mirrorHorizontally) {
+                scale(scaleX = -1f, scaleY = 1f, pivot = center) {
+                    drawPetFrame(f, index, bounce)
+                }
+            } else {
+                drawPetFrame(f, index, bounce)
+            }
         }
     }
 }
