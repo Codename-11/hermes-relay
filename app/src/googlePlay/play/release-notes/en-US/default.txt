@@ -1,1 +1,1 @@
-Dashboard sign-in now completes reliably for self-hosted OIDC and Nous Portal, including private-LAN and Tailscale routes. Nous opens securely in the system browser, while compatible providers retain full-screen in-app sign-in. Replayed chat updates no longer duplicate conversation rows.
+Voice Focus now keeps transcript rows stable while live messages reconcile with persisted chat history, preventing the duplicate-key crash that could close the app.

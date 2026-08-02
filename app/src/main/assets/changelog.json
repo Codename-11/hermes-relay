@@ -1,6 +1,19 @@
 {
  "versions": [
   {
+   "version": "1.5.3",
+   "title": "Voice stays open",
+   "date": "2026-07-31",
+   "sections": [
+    {
+     "header": "Stable voice transcripts",
+     "bullets": [
+      "Voice Focus keeps stable transcript rows while live messages reconcile with persisted chat history, preventing duplicate-key crashes that could close the app."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.5.2",
    "title": "Sign in without detours",
    "date": "2026-07-28",
