@@ -71,6 +71,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,6 +102,7 @@ import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
@@ -293,6 +295,19 @@ fun SettingsScreen(
     // gated on the post-update "seen" state that drives the auto dialog.
     var showChangelog by remember { mutableStateOf(false) }
 
+    val settingsScrollState = rememberScrollState()
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    SideEffect {
+        petCompanionCoordinator.publishSurface(
+            owner = "settings",
+            scrolling = settingsScrollState.isScrollInProgress,
+            hidden = showAgentSheet || showProfileLockDialog || showChangelog,
+        )
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface("settings") }
+    }
+
     // Profile lock state — this card/dialog is the ONE surface that always
     // lists every profile, so it does NOT gate on isProfileLocked.
     val isProfileLocked by connectionViewModel.isProfileLocked.collectAsState()
@@ -322,7 +337,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(settingsScrollState)
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {

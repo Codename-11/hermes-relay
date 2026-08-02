@@ -41,6 +41,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +64,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -100,6 +103,19 @@ fun AboutScreen(
     var showWhatsNew by remember { mutableStateOf(false) }
     var showChangelog by remember { mutableStateOf(false) }
 
+    val aboutScrollState = rememberScrollState()
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    SideEffect {
+        petCompanionCoordinator.publishSurface(
+            owner = "settings/about",
+            scrolling = aboutScrollState.isScrollInProgress,
+            hidden = showWhatsNew || showChangelog,
+        )
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface("settings/about") }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -122,7 +138,7 @@ fun AboutScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(aboutScrollState)
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
