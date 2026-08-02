@@ -271,10 +271,19 @@ class MobilePluginStore:
             )
 
     def _path(self, plugin_id: str) -> Path:
-        path = self.root / f"{plugin_id}.json"
+        safe_id = self.validate_id(plugin_id)
+        root = os.path.realpath(os.fspath(self.root))
+        root_prefix = root.rstrip(os.sep) + os.sep
+        candidate = os.path.normpath(os.path.join(root, f"{safe_id}.json"))
+        if not os.path.normcase(candidate).startswith(os.path.normcase(root_prefix)):
+            raise MobilePluginStoreError("plugin entry escapes the mobile-plugin directory")
+        path = Path(candidate)
         if path.is_symlink():
             raise MobilePluginStoreError("symbolic-link plugin entries are not allowed")
-        return path
+        resolved = os.path.realpath(candidate)
+        if not os.path.normcase(resolved).startswith(os.path.normcase(root_prefix)):
+            raise MobilePluginStoreError("plugin entry escapes the mobile-plugin directory")
+        return Path(resolved)
 
     @staticmethod
     def _digest(entry: dict[str, Any]) -> str:

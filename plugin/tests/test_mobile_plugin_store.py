@@ -128,6 +128,19 @@ class MobilePluginStoreTests(unittest.TestCase):
                 document=document,
             )
 
+    def test_rejects_symbolic_link_entries(self) -> None:
+        self.store.root.mkdir(parents=True)
+        outside = Path(self.temp.name) / "outside.json"
+        outside.write_text("{}", encoding="utf-8")
+        link = self.store.root / "linked.json"
+        try:
+            link.symlink_to(outside)
+        except OSError as exc:
+            self.skipTest(f"symbolic links unavailable: {exc}")
+
+        with self.assertRaisesRegex(MobilePluginStoreError, "symbolic-link"):
+            self.store.get("linked")
+
 
 if __name__ == "__main__":
     unittest.main()
