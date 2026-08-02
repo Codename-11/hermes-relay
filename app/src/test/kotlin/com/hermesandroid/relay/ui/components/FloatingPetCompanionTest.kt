@@ -16,6 +16,18 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `temperament pacing controls repeat roam delay`() {
+        assertEquals(
+            12_000L,
+            floatingPetRoamDelayMs(hasMoved = true, roamIntervalMs = 12_000L),
+        )
+        assertEquals(
+            0L,
+            floatingPetRoamDelayMs(hasMoved = false, roamIntervalMs = 12_000L),
+        )
+    }
+
+    @Test
     fun `ambient roaming cycles through hop wave and rest`() {
         assertEquals(PetAmbientAction.Hop, petAmbientAction(0))
         assertEquals(PetAmbientAction.Wave, petAmbientAction(1))

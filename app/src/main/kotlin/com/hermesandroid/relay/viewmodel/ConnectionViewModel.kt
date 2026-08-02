@@ -1328,7 +1328,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         )
 
     val petTemperament: StateFlow<PetTemperament> = petBehaviorPreferences
-        .map(PetBehaviorPreferences::temperament)
+        .map { preferences -> preferences.temperament }
         .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_TEMPERAMENT)
 
     /** Durable logical placement; pixels are resolved from the current safe viewport. */

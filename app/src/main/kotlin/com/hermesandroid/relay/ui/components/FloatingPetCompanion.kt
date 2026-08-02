@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.PetBehaviorPreferences
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.PetLocomotion
@@ -109,8 +110,13 @@ internal fun shouldPauseFloatingPet(
 
 internal fun floatingPetAlpha(isScrolling: Boolean): Float = if (isScrolling) 0.6f else 1f
 
-internal fun floatingPetRoamDelayMs(hasMoved: Boolean): Long =
-    if (hasMoved) PET_ROAM_REPEAT_DELAY_MS else 0L
+internal fun floatingPetRoamDelayMs(
+    hasMoved: Boolean,
+    roamIntervalMs: Long = PET_ROAM_REPEAT_DELAY_MS,
+): Long {
+    require(roamIntervalMs > 0L) { "Roam interval must be positive." }
+    return if (hasMoved) roamIntervalMs else 0L
+}
 
 internal fun petAmbientAction(step: Int): PetAmbientAction = when (step % 3) {
     0 -> PetAmbientAction.Hop
@@ -209,6 +215,7 @@ fun FloatingPetCompanion(
     placement: PetPlacement,
     roamingEnabled: Boolean,
     roamingAllowed: Boolean,
+    behaviorPreferences: PetBehaviorPreferences,
     surfaceScrolling: Boolean,
     isScrolling: Boolean,
     compact: Boolean,
@@ -369,6 +376,10 @@ fun FloatingPetCompanion(
         isScrolling = isScrolling || surfaceScrolling,
         dragging = dragging || pendingDrop != null,
         menuExpanded = menuExpanded,
+    )
+    val behaviorPacing = behaviorPreferences.pacingWhenMotionAllowed(
+        motionAllowed = animationEnabled && appForeground && accessibleMotion.osAnimations &&
+            !accessibleMotion.touchExploration && !state.paused,
     )
     val behaviorPriority = petBehaviorPriority(
         userInteraction = dragging || pendingDrop != null || tapReactionActive,
@@ -642,8 +653,9 @@ fun FloatingPetCompanion(
         }
     }
 
-    LaunchedEffect(pet.id, canPatrol, roamingRails, homePoint, positioned) {
+    LaunchedEffect(pet.id, canPatrol, roamingRails, homePoint, positioned, behaviorPacing) {
         if (!canPatrol || !positioned) return@LaunchedEffect
+        val pacing = behaviorPacing ?: return@LaunchedEffect
         val patrolRails = roamingRails.filterNot {
             it.perchKey.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX)
         }
@@ -689,8 +701,9 @@ fun FloatingPetCompanion(
 
             var hasMoved = false
             var ambientStep = 0
+            var nextIdleReactionAt = SystemClock.elapsedRealtime() + pacing.idleReactionCadenceMs
             while (true) {
-                val delayMs = floatingPetRoamDelayMs(hasMoved)
+                val delayMs = floatingPetRoamDelayMs(hasMoved, pacing.roamIntervalMs)
                 if (delayMs > 0L) delay(delayMs)
                 val destinationX = if (abs(x.value - rail.bounds.left) <= abs(x.value - rail.bounds.right)) {
                     rail.bounds.right
@@ -731,7 +744,7 @@ fun FloatingPetCompanion(
                     }
                     val plannedRoute = transfer.route.takeUnless { walkedToTransfer }
                     if (jumpToRail(nextRail, hopX, plannedRoute)) rail = nextRail
-                } else {
+                } else if (SystemClock.elapsedRealtime() >= nextIdleReactionAt) {
                     when (petAmbientAction(ambientStep++)) {
                         PetAmbientAction.Hop -> {
                             val railY = y.value
@@ -744,6 +757,7 @@ fun FloatingPetCompanion(
                         }
                         PetAmbientAction.Rest -> Unit
                     }
+                    nextIdleReactionAt = SystemClock.elapsedRealtime() + pacing.idleReactionCadenceMs
                 }
             }
         } finally {

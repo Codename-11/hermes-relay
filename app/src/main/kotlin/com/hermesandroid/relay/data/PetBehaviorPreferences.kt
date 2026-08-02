@@ -85,7 +85,7 @@ class PetBehaviorPreferencesRepository(
         .distinctUntilChanged()
 
     val temperament: Flow<PetTemperament> = flow
-        .map(PetBehaviorPreferences::temperament)
+        .map { preferences -> preferences.temperament }
         .distinctUntilChanged()
 
     suspend fun setTemperament(temperament: PetTemperament) {

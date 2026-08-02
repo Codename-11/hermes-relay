@@ -79,6 +79,26 @@ class PetCompanionEnvironmentTest {
     }
 
     @Test
+    fun `temperament response delay overrides legacy deterministic cooldown`() {
+        val armed = reducePetVisitRequestState(
+            state = PetVisitRequestState(),
+            isStreaming = true,
+            assistantUiKey = null,
+            nowElapsedMs = 1_000L,
+            responseVisitDelayMs = 750L,
+        )
+        val settled = reducePetVisitRequestState(
+            state = armed,
+            isStreaming = false,
+            assistantUiKey = "answer-playful",
+            nowElapsedMs = 2_000L,
+            responseVisitDelayMs = 750L,
+        )
+
+        assertEquals(2_750L, requireNotNull(settled.pending).notBeforeElapsedMs)
+    }
+
+    @Test
     fun `new completion replaces pending visit and expired request is pruned`() {
         fun complete(state: PetVisitRequestState, key: String, now: Long): PetVisitRequestState {
             val armed = reducePetVisitRequestState(state, true, null, now - 1L)

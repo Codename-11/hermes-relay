@@ -685,6 +685,7 @@ fun RelayApp() {
     val petSpeed by connectionViewModel.petSpeed.collectAsState()
     val petStabilize by connectionViewModel.petStabilize.collectAsState()
     val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
+    val petBehaviorPreferences by connectionViewModel.petBehaviorPreferences.collectAsState()
     val petPlacement by connectionViewModel.petPlacement.collectAsState()
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val petCompanionCoordinator = remember { PetCompanionCoordinator() }
@@ -733,11 +734,17 @@ fun RelayApp() {
     }
     // Arm on stream start and emit exactly once on its falling edge. Message
     // deltas never create requests; the stable uiKey survives ID reconciliation.
-    LaunchedEffect(petIsStreaming, completedPetVisitUiKey, petCompanionCoordinator) {
+    LaunchedEffect(
+        petIsStreaming,
+        completedPetVisitUiKey,
+        petBehaviorPreferences,
+        petCompanionCoordinator,
+    ) {
         petCompanionCoordinator.observeChatStream(
             isStreaming = petIsStreaming,
             assistantUiKey = completedPetVisitUiKey,
             nowElapsedMs = SystemClock.elapsedRealtime(),
+            responseVisitDelayMs = petBehaviorPreferences.temperament.pacing.responseVisitDelayMs,
         )
     }
     val backgroundVisualizationEnabled by
@@ -2533,6 +2540,7 @@ fun RelayApp() {
                 state = petActivity.renderState,
                 placement = petPlacement,
                 roamingEnabled = petRoamingEnabled,
+                behaviorPreferences = petBehaviorPreferences,
                 // Surface scrolling suspends autonomous movement without
                 // visually muting the companion. Dimming is reserved for the
                 // keyboard-compressed layout, where subdued chrome keeps the
