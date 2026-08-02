@@ -262,6 +262,7 @@ class PetRoamingGeometryTest {
         assertEquals(PetPoint(180f, 94f), plan.entry)
         assertEquals(PetPoint(60f, 94f), plan.opposite)
         assertEquals(PetBubbleEntryMode.ClearGutter, plan.entryMode)
+        assertEquals(bubble.bounds.right, plan.entry.x + footprint.horizontalRadius, 0f)
         assertTrue(plan.gutter.x > bubble.bounds.right + footprint.horizontalRadius)
         assertTrue(plan.entry.y + footprint.height / 2f < bubble.bounds.top)
     }

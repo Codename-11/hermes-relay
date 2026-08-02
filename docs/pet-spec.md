@@ -74,7 +74,9 @@ The companion has a durable home and an optional autonomous roaming mode:
 - After a plain assistant response settles, the pet may make one deterministic
   visit: walk along the composer to a clear screen-side gutter, jump vertically
   beside the message, step onto a rail raised above the bubble, walk across its
-  top, pause and wave, walk back, then drop beside the message to the composer.
+  top, pause and wave, walk back to the measured edge, then hop outward and fall
+  through the clear gutter to the composer. Exterior gutter travel remains
+  airborne rather than presenting an invisible walkable ledge.
   The full sprite footprint remains above the bubble and its jump/drop path does
   not cross text. Cards, attachments, tool rows, phone/voice actions, narrow
   bubbles, and bubbles without a safe gutter are skipped.
@@ -587,9 +589,10 @@ fallback checks with a pack missing one or more optional rows:
   the same edge, and drops to the composer without covering message text.
 - [ ] A narrow bubble or blocked gutter is skipped; cards, attachments, tool
   rows, and phone/voice action bubbles are never visited.
-- [ ] Scrolling Chat, Settings, and About freezes the pet at its current screen
-  coordinate with no teleport, edge snap, or scroll-only dimming; motion replans
-  after scrolling stops. Settings/About dialogs suspend it.
+- [ ] Scrolling Chat, Settings, and About keeps the pet attached to valid
+  measured or synthetic habitat, with no teleport, edge snap, or scroll-only
+  dimming; motion replans after scrolling stops. Settings/About dialogs suspend
+  it.
 - [ ] Left/right travel faces correctly. The Petdex preview reports and visibly
   demonstrates direct, mirrored, fallback, and mirrored-fallback selection for
   Walk left/right, Jump, Fall, Held, Wave, Working, Review, Waiting, and Error.

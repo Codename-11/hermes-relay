@@ -599,6 +599,47 @@ fun FloatingPetCompanion(
         animateLanding()
     }
 
+    suspend fun animateClearGutterEntry(
+        gutter: PetPoint,
+        entry: PetPoint,
+    ) {
+        landingSquash.animateTo(0.55f, tween(durationMillis = 90))
+        landingSquash.animateTo(0f, tween(durationMillis = 70))
+        locomotion = PetLocomotion.Jump
+        coroutineScope {
+            launch { y.animateTo(gutter.y, tween(durationMillis = 300)) }
+            launch { airborneProgress.animateTo(0.78f, tween(durationMillis = 300)) }
+        }
+        coroutineScope {
+            launch { x.animateTo(entry.x, tween(durationMillis = 180)) }
+            launch { airborneProgress.animateTo(1f, tween(durationMillis = 180)) }
+        }
+        locomotion = PetLocomotion.Fall
+        airborneProgress.animateTo(0f, tween(durationMillis = 110))
+        locomotion = PetLocomotion.None
+        animateLanding()
+    }
+
+    suspend fun animateClearGutterExit(
+        gutter: PetPoint,
+        composerApproach: PetPoint,
+    ) {
+        landingSquash.animateTo(0.55f, tween(durationMillis = 90))
+        landingSquash.animateTo(0f, tween(durationMillis = 70))
+        locomotion = PetLocomotion.Jump
+        coroutineScope {
+            launch { x.animateTo(gutter.x, tween(durationMillis = 180)) }
+            launch { airborneProgress.animateTo(1f, tween(durationMillis = 180)) }
+        }
+        locomotion = PetLocomotion.Fall
+        coroutineScope {
+            launch { y.animateTo(composerApproach.y, tween(durationMillis = 300)) }
+            launch { airborneProgress.animateTo(0f, tween(durationMillis = 300)) }
+        }
+        locomotion = PetLocomotion.None
+        animateLanding()
+    }
+
     suspend fun animatePetRoute(routePlan: PetRoute) {
         val livePoint = PetPoint(x.value, y.value)
         if (routePlan.start.distanceSquaredTo(livePoint) > 1f) return
@@ -703,10 +744,8 @@ fun FloatingPetCompanion(
         if (!animatePetRouteOrEscape(routeToComposerApproach, routeObstacles)) return null
 
         when (excursion.entryMode) {
-            PetBubbleEntryMode.ClearGutter -> {
-                animateBallisticVerticalTo(excursion.gutter.y)
-                animateHorizontalTo(excursion.entry.x)
-            }
+            PetBubbleEntryMode.ClearGutter ->
+                animateClearGutterEntry(excursion.gutter, excursion.entry)
             PetBubbleEntryMode.EdgeHop -> animateBallisticTransferTo(excursion.entry)
         }
         animateHorizontalTo(excursion.opposite.x)
@@ -717,10 +756,8 @@ fun FloatingPetCompanion(
         delay(PET_TURN_PAUSE_MS)
         animateHorizontalTo(excursion.entry.x)
         when (excursion.entryMode) {
-            PetBubbleEntryMode.ClearGutter -> {
-                animateHorizontalTo(excursion.gutter.x)
-                animateBallisticVerticalTo(excursion.composerApproach.y)
-            }
+            PetBubbleEntryMode.ClearGutter ->
+                animateClearGutterExit(excursion.gutter, excursion.composerApproach)
             PetBubbleEntryMode.EdgeHop -> animateBallisticTransferTo(excursion.composerApproach)
         }
         return composerRail
@@ -764,10 +801,8 @@ fun FloatingPetCompanion(
         ) ?: return false
         if (!animatePetRouteOrEscape(routeToApproach, routeObstacles)) return false
         when (excursion.entryMode) {
-            PetBubbleEntryMode.ClearGutter -> {
-                animateBallisticVerticalTo(excursion.gutter.y)
-                animateHorizontalTo(excursion.entry.x)
-            }
+            PetBubbleEntryMode.ClearGutter ->
+                animateClearGutterEntry(excursion.gutter, excursion.entry)
             PetBubbleEntryMode.EdgeHop -> animateBallisticTransferTo(excursion.entry)
         }
         animateHorizontalTo(
