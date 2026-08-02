@@ -571,7 +571,9 @@ visible valid lower rail (or jumps to the nearest remaining rail when none is
 below). An incidental message rail is never selected as the recovery landing;
 the latest text-safe Chat habitat remains eligible. The pet does not scroll
 off-screen with content, and no unregistered Settings card becomes terrain
-automatically.
+automatically. If changing layout leaves the pet already intersecting a bubble,
+the collision router's projected safe start becomes a visible escape hop; a
+valid live position still cannot be silently projected or teleported.
 
 ## On-device visual review checklist
 

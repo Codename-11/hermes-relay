@@ -2,12 +2,15 @@ package com.hermesandroid.relay.ui.components
 
 import com.hermesandroid.relay.ui.components.avatar.PetLocomotion
 import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
+import com.hermesandroid.relay.ui.components.pet.PetFootprint
+import com.hermesandroid.relay.ui.components.pet.PetObstacle
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.ui.components.pet.PetPoint
 import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
 import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
 import com.hermesandroid.relay.ui.components.pet.PetSettledChatHabitat
 import com.hermesandroid.relay.ui.components.pet.PetSettledChatMode
+import com.hermesandroid.relay.ui.components.pet.findOverlayRoute
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -243,6 +246,49 @@ class FloatingPetCompanionTest {
         assertEquals(
             after,
             petScrollTrackingRails(emptyList(), habitat).firstOrNull { it.key == before.key },
+        )
+    }
+
+    @Test
+    fun `pet overlapping a message bubble requires an animated escape`() {
+        val bounds = PetSafeBounds(30f, 30f, 600f, 1_260f)
+        val bubble = PetObstacle(80f, 975f, 450f, 1_065f)
+        val footprint = PetFootprint(width = 60f, height = 60f, clearance = 4f)
+        val blockedPoint = PetPoint(370f, 1_015f)
+
+        assertTrue(
+            petPositionNeedsEscape(
+                point = blockedPoint,
+                bounds = bounds,
+                uiObstacles = listOf(bubble),
+                footprint = footprint,
+            ),
+        )
+        assertFalse(
+            petPositionNeedsEscape(
+                point = PetPoint(520f, 1_015f),
+                bounds = bounds,
+                uiObstacles = listOf(bubble),
+                footprint = footprint,
+            ),
+        )
+        val recoveryRoute = requireNotNull(
+            findOverlayRoute(
+                start = blockedPoint,
+                requestedDestination = PetPoint(520f, 1_015f),
+                bounds = bounds,
+                uiObstacles = listOf(bubble),
+                footprint = footprint,
+            ),
+        )
+        assertTrue(recoveryRoute.start.distanceSquaredTo(blockedPoint) > 1f)
+        assertFalse(
+            petPositionNeedsEscape(
+                point = recoveryRoute.start,
+                bounds = bounds,
+                uiObstacles = listOf(bubble),
+                footprint = footprint,
+            ),
         )
     }
 

@@ -60,6 +60,7 @@ import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetFootprint
 import com.hermesandroid.relay.ui.components.pet.PetMeasuredPerch
 import com.hermesandroid.relay.ui.components.pet.PetMeasuredObstacle
+import com.hermesandroid.relay.ui.components.pet.PetObstacle
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.ui.components.pet.PetPoint
 import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
@@ -256,6 +257,20 @@ internal fun petScrollLandingRails(
     settledHabitat: PetSettledChatHabitat?,
 ): List<PetRoamingRail> = petScrollTrackingRails(roamingRails, settledHabitat)
     .filterNot { rail -> rail.perchKey.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX) }
+
+internal fun petPositionNeedsEscape(
+    point: PetPoint,
+    bounds: PetSafeBounds,
+    uiObstacles: List<PetObstacle>,
+    footprint: PetFootprint,
+): Boolean {
+    if (point.x !in bounds.left..bounds.right || point.y !in bounds.top..bounds.bottom) {
+        return true
+    }
+    return expandObstaclesForPet(uiObstacles, footprint).any { obstacle ->
+        obstacle.contains(point)
+    }
+}
 
 private data class PendingPetDrop(
     val point: PetPoint,
@@ -617,6 +632,24 @@ fun FloatingPetCompanion(
         locomotion = PetLocomotion.None
     }
 
+    suspend fun animatePetRouteOrEscape(
+        routePlan: PetRoute,
+        uiObstacles: List<PetObstacle>,
+    ): Boolean {
+        val livePoint = PetPoint(x.value, y.value)
+        if (routePlan.start.distanceSquaredTo(livePoint) > 1f) {
+            if (!petPositionNeedsEscape(livePoint, safeBounds, uiObstacles, footprint)) {
+                return false
+            }
+            // The router projected an already-invalid position to the nearest
+            // safe edge. Animate that correction as a visible hop rather than
+            // accepting a teleport or leaving roaming permanently stalled.
+            animateBallisticTransferTo(routePlan.start)
+        }
+        animatePetRoute(routePlan)
+        return true
+    }
+
     suspend fun animateScrollLanding(destination: PetPoint) {
         if (destination.y < y.value - 1f) {
             animateBallisticTransferTo(destination)
@@ -659,17 +692,15 @@ fun FloatingPetCompanion(
             }
             ?: return null
         val (composerRail, excursion) = planned
+        val routeObstacles = safeAreaSnapshot.obstacles.map { it.bounds } + bubblePerch.bounds
         val routeToComposerApproach = findOverlayRoute(
             start = PetPoint(x.value, y.value),
             requestedDestination = excursion.composerApproach,
             bounds = safeBounds,
-            uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds } + bubblePerch.bounds,
+            uiObstacles = routeObstacles,
             footprint = footprint,
         ) ?: return null
-        if (routeToComposerApproach.start.distanceSquaredTo(PetPoint(x.value, y.value)) > 1f) {
-            return null
-        }
-        animatePetRoute(routeToComposerApproach)
+        if (!animatePetRouteOrEscape(routeToComposerApproach, routeObstacles)) return null
 
         when (excursion.entryMode) {
             PetBubbleEntryMode.ClearGutter -> {
@@ -723,15 +754,15 @@ fun FloatingPetCompanion(
             }
             ?: return false
         val (_, excursion) = planned
+        val routeObstacles = safeAreaSnapshot.obstacles.map { it.bounds } + bubblePerch.bounds
         val routeToApproach = findOverlayRoute(
             start = PetPoint(x.value, y.value),
             requestedDestination = excursion.composerApproach,
             bounds = safeBounds,
-            uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds } + bubblePerch.bounds,
+            uiObstacles = routeObstacles,
             footprint = footprint,
         ) ?: return false
-        if (routeToApproach.start.distanceSquaredTo(PetPoint(x.value, y.value)) > 1f) return false
-        animatePetRoute(routeToApproach)
+        if (!animatePetRouteOrEscape(routeToApproach, routeObstacles)) return false
         when (excursion.entryMode) {
             PetBubbleEntryMode.ClearGutter -> {
                 animateBallisticVerticalTo(excursion.gutter.y)
@@ -1034,27 +1065,23 @@ fun FloatingPetCompanion(
             plannedRoute: PetRoute? = null,
         ): Boolean {
             val destinationX = requestedX.coerceIn(rail.bounds.left, rail.bounds.right)
-            val currentPoint = PetPoint(x.value, y.value)
+            val routeObstacles = safeAreaSnapshot.obstacles.map { it.bounds } +
+                if (
+                    rail.key == settledHabitat?.rail?.key &&
+                    settledHabitat.mode != PetSettledChatMode.BubbleTop
+                ) {
+                    listOfNotNull(settledMessagePerch?.bounds)
+                } else {
+                    emptyList()
+                }
             val routePlan = plannedRoute ?: findOverlayRoute(
                 start = PetPoint(x.value, y.value),
                 requestedDestination = PetPoint(destinationX, rail.bounds.top),
                 bounds = safeBounds,
-                uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds } +
-                    if (
-                        rail.key == settledHabitat?.rail?.key &&
-                        settledHabitat.mode != PetSettledChatMode.BubbleTop
-                    ) {
-                        listOfNotNull(settledMessagePerch?.bounds)
-                    } else {
-                        emptyList()
-                    },
+                uiObstacles = routeObstacles,
                 footprint = footprint,
             ) ?: return false
-            // A valid autonomous route must begin at the live pet position.
-            // Silently accepting a projected start would visually teleport the
-            // pet and could skip across the control that caused the projection.
-            if (routePlan.start.distanceSquaredTo(currentPoint) > 1f) return false
-            animatePetRoute(routePlan)
+            if (!animatePetRouteOrEscape(routePlan, routeObstacles)) return false
             activeRailKey = rail.key
             return true
         }
