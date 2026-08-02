@@ -3,6 +3,9 @@ package com.hermesandroid.relay.ui.components
 import com.hermesandroid.relay.ui.components.avatar.PetLocomotion
 import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
+import com.hermesandroid.relay.ui.components.pet.PetPoint
+import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
+import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -173,6 +176,29 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `scroll support follows the same measured rail`() {
+        val upper = PetRoamingRail("upper:0", "upper", PetSafeBounds(20f, 100f, 180f, 100f))
+        val lower = PetRoamingRail("lower:0", "lower", PetSafeBounds(20f, 260f, 180f, 260f))
+
+        assertEquals(upper, petRailSupportingPoint(listOf(upper, lower), PetPoint(80f, 101f)))
+        assertEquals(null, petRailSupportingPoint(listOf(upper, lower), PetPoint(80f, 140f)))
+    }
+
+    @Test
+    fun `lost scroll support falls to the nearest lower rail before jumping upward`() {
+        val upper = PetRoamingRail("upper:0", "upper", PetSafeBounds(20f, 80f, 180f, 80f))
+        val nearBelow = PetRoamingRail("near:0", "near", PetSafeBounds(20f, 230f, 180f, 230f))
+        val farBelow = PetRoamingRail("far:0", "far", PetSafeBounds(20f, 360f, 180f, 360f))
+        val point = PetPoint(80f, 180f)
+
+        assertEquals(
+            nearBelow,
+            choosePetScrollLandingRail(listOf(upper, farBelow, nearBelow), point),
+        )
+        assertEquals(upper, choosePetScrollLandingRail(listOf(upper), point))
+    }
+
+    @Test
     fun `walk timing lands on complete Petdex gait cycles`() {
         assertEquals(480, petWalkDurationMs(1f))
         assertEquals(960, petWalkDurationMs(44f))
@@ -212,48 +238,37 @@ class FloatingPetCompanionTest {
     }
 
     @Test
-    fun `scrolling and reduced motion pause pet animation`() {
-        assertTrue(
-            shouldPauseFloatingPet(
-                alreadyPaused = false,
-                animationEnabled = true,
-                isScrolling = true,
-            ),
-        )
+    fun `reduced motion pauses pet animation`() {
         assertTrue(
             shouldPauseFloatingPet(
                 alreadyPaused = false,
                 animationEnabled = false,
-                isScrolling = false,
             ),
         )
         assertTrue(
             shouldPauseFloatingPet(
                 alreadyPaused = true,
                 animationEnabled = true,
-                isScrolling = false,
             ),
         )
         assertFalse(
             shouldPauseFloatingPet(
                 alreadyPaused = false,
                 animationEnabled = true,
-                isScrolling = false,
             ),
         )
     }
 
     @Test
-    fun `scrolling pet remains present but subdued`() {
-        assertEquals(0.6f, floatingPetAlpha(isScrolling = true), 0f)
-        assertEquals(1f, floatingPetAlpha(isScrolling = false), 0f)
-    }
-
-    @Test
-    fun `keyboard compacts pet and host pause signal dims it`() {
+    fun `keyboard compacts pet without changing its playback state`() {
         assertTrue(shouldCompactFloatingPet(imeVisible = true, screenHeightDp = 844))
         assertEquals(50, floatingPetVisualSizeDp(compact = true))
-        assertEquals(0.6f, floatingPetAlpha(isScrolling = true), 0f)
+        assertFalse(
+            shouldPauseFloatingPet(
+                alreadyPaused = false,
+                animationEnabled = true,
+            ),
+        )
     }
 
     @Test

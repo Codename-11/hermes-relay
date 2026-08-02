@@ -133,10 +133,7 @@ internal fun floatingPetDimensions(compact: Boolean, sizeScale: Float): Floating
 internal fun shouldPauseFloatingPet(
     alreadyPaused: Boolean,
     animationEnabled: Boolean,
-    isScrolling: Boolean,
-): Boolean = alreadyPaused || !animationEnabled || isScrolling
-
-internal fun floatingPetAlpha(isScrolling: Boolean): Float = if (isScrolling) 0.6f else 1f
+): Boolean = alreadyPaused || !animationEnabled
 
 internal fun floatingPetRoamDelayMs(
     hasMoved: Boolean,
@@ -222,6 +219,28 @@ internal fun shouldDockFloatingPet(
     roamingAllowed: Boolean,
 ): Boolean = !roamingEnabled || !roamingAllowed
 
+internal fun petRailSupportingPoint(
+    rails: Iterable<PetRoamingRail>,
+    point: PetPoint,
+    verticalTolerancePx: Float = 2f,
+): PetRoamingRail? = rails.firstOrNull { rail ->
+    point.x in rail.bounds.left..rail.bounds.right &&
+        abs(point.y - rail.bounds.top) <= verticalTolerancePx
+}
+
+/** Prefer falling to visible terrain below the pet; jump upward only as recovery. */
+internal fun choosePetScrollLandingRail(
+    rails: Iterable<PetRoamingRail>,
+    point: PetPoint,
+): PetRoamingRail? {
+    val candidates = rails.toList()
+    if (candidates.isEmpty()) return null
+    val below = candidates.filter { it.bounds.top >= point.y - 1f }
+    return (below.ifEmpty { candidates }).minByOrNull { rail ->
+        rail.bounds.clamp(point).distanceSquaredTo(point)
+    }
+}
+
 private data class PendingPetDrop(
     val point: PetPoint,
     val expectedPlacement: PetPlacement,
@@ -261,7 +280,6 @@ fun FloatingPetCompanion(
     behaviorPreferences: PetBehaviorPreferences,
     sizeScale: Float = behaviorPreferences.sizeScale,
     surfaceScrolling: Boolean,
-    isScrolling: Boolean,
     compact: Boolean,
     animationEnabled: Boolean,
     appForeground: Boolean,
@@ -284,6 +302,10 @@ fun FloatingPetCompanion(
     var tapReactionActive by remember(pet.id) { mutableStateOf(false) }
     var locomotion by remember(pet.id) { mutableStateOf(PetLocomotion.None) }
     var positioned by remember(pet.id) { mutableStateOf(false) }
+    var activeRailKey by remember(pet.id) { mutableStateOf<String?>(null) }
+    var scrollingRailKey by remember(pet.id) { mutableStateOf<String?>(null) }
+    var scrollSupportLost by remember(pet.id) { mutableStateOf(false) }
+    var scrollRecoveryPending by remember(pet.id) { mutableStateOf(false) }
     var viewportWidth by remember { mutableStateOf(0) }
     var viewportHeight by remember { mutableStateOf(0) }
     val x = remember(pet.id) { Animatable(0f) }
@@ -438,17 +460,6 @@ fun FloatingPetCompanion(
         manualHomePoint
     }
 
-    val targetAlpha = floatingPetAlpha(isScrolling)
-    val renderedAlpha = if (animationEnabled) {
-        val animated by animateFloatAsState(
-            targetValue = targetAlpha,
-            animationSpec = tween(durationMillis = 140),
-            label = "floating-pet-alpha",
-        )
-        animated
-    } else {
-        targetAlpha
-    }
     val heldProgress by animateFloatAsState(
         targetValue = if (dragging) 1f else 0f,
         animationSpec = tween(durationMillis = 140),
@@ -464,8 +475,8 @@ fun FloatingPetCompanion(
         osAnimations = accessibleMotion.osAnimations,
         touchExploration = accessibleMotion.touchExploration,
         paused = state.paused,
-        isScrolling = isScrolling || surfaceScrolling,
-        dragging = dragging || pendingDrop != null,
+        isScrolling = surfaceScrolling,
+        dragging = dragging || pendingDrop != null || scrollRecoveryPending,
         menuExpanded = menuExpanded,
     )
     val behaviorPacing = behaviorPreferences.pacingWhenMotionAllowed(
@@ -579,6 +590,22 @@ fun FloatingPetCompanion(
             }
         }
         locomotion = PetLocomotion.None
+    }
+
+    suspend fun animateScrollLanding(destination: PetPoint) {
+        if (destination.y < y.value - 1f) {
+            animateBallisticTransferTo(destination)
+            return
+        }
+        locomotion = PetLocomotion.Fall
+        airborneProgress.snapTo(maxOf(airborneProgress.value, 0.45f))
+        coroutineScope {
+            launch { x.animateTo(destination.x, tween(durationMillis = 260)) }
+            launch { y.animateTo(destination.y, tween(durationMillis = 260)) }
+            launch { airborneProgress.animateTo(0f, tween(durationMillis = 260)) }
+        }
+        locomotion = PetLocomotion.None
+        animateLanding()
     }
 
     suspend fun performBubbleExcursion(bubblePerch: PetMeasuredPerch): PetRoamingRail? {
@@ -699,6 +726,80 @@ fun FloatingPetCompanion(
             y.snapTo(homePoint.y)
             positioned = true
         }
+    }
+
+    // A measured scrolling ledge moves under the app-level overlay. Ride that
+    // ledge while it remains valid; if it leaves the viewport, retain the last
+    // safe screen coordinate and show the falling row until scrolling settles.
+    LaunchedEffect(surfaceScrolling, roamingRails, positioned, dragging, pendingDrop) {
+        if (!surfaceScrolling || !positioned || dragging || pendingDrop != null) {
+            return@LaunchedEffect
+        }
+        val current = PetPoint(x.value, y.value)
+        val supporting = petRailSupportingPoint(roamingRails, current)
+            ?: activeRailKey?.let { key -> roamingRails.firstOrNull { it.key == key } }
+        if (scrollingRailKey == null) {
+            scrollingRailKey = supporting?.key
+            scrollRecoveryPending = supporting != null
+        }
+        val attached = scrollingRailKey?.let { key ->
+            roamingRails.firstOrNull { it.key == key }
+        }
+        if (attached != null) {
+            x.snapTo(x.value.coerceIn(attached.bounds.left, attached.bounds.right))
+            y.snapTo(attached.bounds.top)
+            activeRailKey = attached.key
+            scrollSupportLost = false
+            locomotion = PetLocomotion.None
+        } else if (scrollRecoveryPending) {
+            activeRailKey = null
+            scrollSupportLost = true
+            locomotion = PetLocomotion.Fall
+            airborneProgress.snapTo(maxOf(airborneProgress.value, 0.35f))
+        }
+    }
+
+    // Once the gesture/fling settles, land on the attached ledge at its new
+    // coordinate or fall to the nearest visible lower rail if support vanished.
+    LaunchedEffect(
+        surfaceScrolling,
+        scrollRecoveryPending,
+        roamingRails,
+        positioned,
+        dragging,
+        pendingDrop,
+    ) {
+        if (
+            surfaceScrolling || !scrollRecoveryPending || !positioned || dragging ||
+            pendingDrop != null
+        ) return@LaunchedEffect
+        val current = PetPoint(x.value, y.value)
+        val attached = scrollingRailKey?.let { key ->
+            roamingRails.firstOrNull { it.key == key }
+        }
+        val landingRail = attached ?: choosePetScrollLandingRail(roamingRails, current)
+        if (landingRail != null) {
+            val destination = PetPoint(
+                x = x.value.coerceIn(landingRail.bounds.left, landingRail.bounds.right),
+                y = landingRail.bounds.top,
+            )
+            if (scrollSupportLost || current.distanceSquaredTo(destination) > 4f) {
+                animateScrollLanding(destination)
+            } else {
+                x.snapTo(destination.x)
+                y.snapTo(destination.y)
+                locomotion = PetLocomotion.None
+                airborneProgress.snapTo(0f)
+            }
+            activeRailKey = landingRail.key
+        } else {
+            locomotion = PetLocomotion.None
+            airborneProgress.snapTo(0f)
+            activeRailKey = null
+        }
+        scrollingRailKey = null
+        scrollSupportLost = false
+        scrollRecoveryPending = false
     }
 
     val shouldDock = shouldDockFloatingPet(roamingEnabled, roamingAllowed)
@@ -889,6 +990,7 @@ fun FloatingPetCompanion(
             // pet and could skip across the control that caused the projection.
             if (routePlan.start.distanceSquaredTo(currentPoint) > 1f) return false
             animatePetRoute(routePlan)
+            activeRailKey = rail.key
             return true
         }
 
@@ -912,11 +1014,13 @@ fun FloatingPetCompanion(
                     it.bounds.clamp(PetPoint(x.value, y.value)).distanceSquaredTo(PetPoint(x.value, y.value))
                 }
                 ?: return@LaunchedEffect
+            activeRailKey = supportedRail?.key ?: activeRailKey
             if (supportedRail?.key != rail.key) {
                 val moved = if (settledHabitat?.rail?.key == rail.key) {
                     moveToSettledHabitat()
                 } else jumpToRail(rail)
                 if (!moved) return@LaunchedEffect
+                activeRailKey = rail.key
             }
 
             var hasMoved = false
@@ -969,6 +1073,7 @@ fun FloatingPetCompanion(
                         } else {
                             returnRail
                         }
+                        activeRailKey = rail.key
                         cyclesUntilBubbleVisit = PET_PATROL_CYCLES_BETWEEN_BUBBLE_VISITS
                         continue
                     }
@@ -997,7 +1102,10 @@ fun FloatingPetCompanion(
                         animateHorizontalTo(hopX)
                     }
                     val plannedRoute = transfer.route.takeUnless { walkedToTransfer }
-                    if (jumpToRail(nextRail, hopX, plannedRoute)) rail = nextRail
+                    if (jumpToRail(nextRail, hopX, plannedRoute)) {
+                        rail = nextRail
+                        activeRailKey = rail.key
+                    }
                 } else if (SystemClock.elapsedRealtime() >= nextIdleReactionAt) {
                     when (petAmbientAction(ambientStep++)) {
                         PetAmbientAction.Hop -> {
@@ -1051,7 +1159,7 @@ fun FloatingPetCompanion(
                     )
                 }
                 .size(targetSize)
-                .alpha(if (positioned) renderedAlpha else 0f)
+                .alpha(if (positioned) 1f else 0f)
                 .graphicsLayer {
                     val scale = 1f + heldProgress * 0.10f
                     scaleX = scale * (1f + landingSquash.value * 0.08f)
@@ -1174,7 +1282,6 @@ fun FloatingPetCompanion(
                             alreadyPaused = state.paused || !accessibleMotion.osAnimations ||
                                 accessibleMotion.touchExploration,
                             animationEnabled = animationEnabled,
-                            isScrolling = isScrolling,
                         ),
                     ),
                     modifier = Modifier.size(visualSize),
