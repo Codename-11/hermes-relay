@@ -129,10 +129,10 @@ The companion is app-level, so it keeps the same home while you move between
 normal Hermes Relay screens.
 
 - Long hold the pet, drag it, and release. It snaps to the nearest start/end
-  edge with a visible falling/landing animation, disables roaming, and remembers
-  a proportional vertical position across rotation, resizing, relaunches, and
-  RTL layouts. Dragging lifts into the held animation and stays clear of
-  registered controls.
+  edge or valid roaming surface with a visible falling/landing animation and
+  remembers a proportional vertical position across rotation, resizing,
+  relaunches, and RTL layouts. Dragging lifts into the held animation, stays
+  clear of registered controls, and does not turn roaming off.
 - Tap the pet to make it wave and open its menu.
 - Turn on **Walk around the interface** to let it roam while Hermes is idle. This
   is off by default. Supported ledges are the measured top edges of Chat's
@@ -140,9 +140,10 @@ normal Hermes Relay screens.
   bar, and the bottom status strip on Settings and About. Hermes Relay uses only
   these deliberately supported surfaces—it does not scan every button or text
   field—and the overlay adds no blank strip or lost text space.
-- **Pet size** in Appearance adjusts the companion from 75–125%. Art, touch
-  target, and routing footprint change together, so a larger pet skips a tight
-  ledge instead of overlapping a control or message.
+- **Pet size** in Appearance adjusts the companion from 60–120%, with the former
+  maximum size now shown as the 100% default. Existing saved choices keep their
+  physical size. Art, touch target, and routing footprint change together, so a
+  larger pet skips a tight ledge instead of overlapping a control or message.
 - At the settled Chat bottom, the pet rests in blank space beside the latest
   bubble when that fits, otherwise on its safe top edge, then at the outer
   composer corner. Selected Settings ledges can register dynamically; ordinary
@@ -357,7 +358,7 @@ Sprite animation is frame-stepped, so smoothness comes from **frame count**, not
 :::
 
 ::: tip Resolution: size for the companion target
-The pet art uses a 48 dp base size (40 dp in compact layouts), followed by the 75–125% Appearance scale, so huge full-screen assets waste memory. A 1024×1024 still is already generous; downsize finished assets when practical. For animated sheets, 256 px cells are a good default. You can also fine-tune playback speed in **Settings → Appearance** without re-authoring.
+The pet art uses a 60 dp base size (50 dp in compact layouts), followed by the 60–120% Appearance scale, so huge full-screen assets waste memory. A 1024×1024 still is already generous; downsize finished assets when practical. For animated sheets, 256 px cells are a good default. You can also fine-tune playback speed in **Settings → Appearance** without re-authoring.
 :::
 
 ::: warning Three things AI image models get wrong
@@ -374,7 +375,7 @@ For a smooth, perfectly-stable animated character, hand-drawn pixel art still wi
 
 ## Accessibility & reduced motion
 
-If you disable app animations, Android's animator scale is 0, or TalkBack touch exploration is active, autonomous roaming stops and the pet renders as a still frame. Scrolling Chat, Settings, or About pauses it in place without teleporting or dimming it. The keyboard/short-screen layout changes the base art from 48 dp to 40 dp while the saved size scale remains effective, and the keyboard pause is visually subdued. TalkBack custom actions provide movement, reset, Appearance, and hide controls without long-hold dragging. The Sphere follows its own independent motion setting.
+If you disable app animations, Android's animator scale is 0, or TalkBack touch exploration is active, autonomous roaming stops and the pet renders as a still frame. Scrolling Chat, Settings, or About pauses it in place without teleporting or dimming it. The keyboard/short-screen layout changes the base art from 60 dp to 50 dp while the saved size scale remains effective, and the keyboard pause is visually subdued. TalkBack custom actions provide movement, reset, Appearance, and hide controls without long-hold dragging. The Sphere follows its own independent motion setting.
 
 When authoring a pet, make the first `idle` frame a good, legible still — that's what people who prefer reduced motion will see.
 

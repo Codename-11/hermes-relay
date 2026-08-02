@@ -109,7 +109,7 @@ class FloatingPetCompanionTest {
     }
 
     @Test
-    fun `pending drop releases only after local snap and both prop acknowledgements`() {
+    fun `pending drop releases after animation and placement acknowledgement while roaming`() {
         val oldPlacement = PetPlacement(PetLogicalEdge.Start, 0.2f)
         val droppedPlacement = PetPlacement(PetLogicalEdge.End, 0.7f)
 
@@ -118,7 +118,14 @@ class FloatingPetCompanionTest {
                 expectedPlacement = droppedPlacement,
                 positionSettled = false,
                 animationFinished = false,
-                roamingEnabled = false,
+                observedPlacement = droppedPlacement,
+            ),
+        )
+        assertFalse(
+            shouldReleasePendingPetDrop(
+                expectedPlacement = null,
+                positionSettled = true,
+                animationFinished = true,
                 observedPlacement = droppedPlacement,
             ),
         )
@@ -127,16 +134,6 @@ class FloatingPetCompanionTest {
                 expectedPlacement = droppedPlacement,
                 positionSettled = true,
                 animationFinished = true,
-                roamingEnabled = true,
-                observedPlacement = droppedPlacement,
-            ),
-        )
-        assertFalse(
-            shouldReleasePendingPetDrop(
-                expectedPlacement = droppedPlacement,
-                positionSettled = true,
-                animationFinished = true,
-                roamingEnabled = false,
                 observedPlacement = oldPlacement,
             ),
         )
@@ -145,7 +142,6 @@ class FloatingPetCompanionTest {
                 expectedPlacement = droppedPlacement,
                 positionSettled = true,
                 animationFinished = false,
-                roamingEnabled = false,
                 observedPlacement = droppedPlacement,
             ),
         )
@@ -154,7 +150,23 @@ class FloatingPetCompanionTest {
                 expectedPlacement = droppedPlacement,
                 positionSettled = true,
                 animationFinished = true,
-                roamingEnabled = false,
+                observedPlacement = droppedPlacement,
+            ),
+        )
+
+        assertFalse(
+            shouldAnimatePendingPetDrop(
+                expectedPlacement = droppedPlacement,
+                positionSettled = true,
+                animationFinished = false,
+                observedPlacement = oldPlacement,
+            ),
+        )
+        assertTrue(
+            shouldAnimatePendingPetDrop(
+                expectedPlacement = droppedPlacement,
+                positionSettled = true,
+                animationFinished = false,
                 observedPlacement = droppedPlacement,
             ),
         )
@@ -177,22 +189,26 @@ class FloatingPetCompanionTest {
     }
 
     @Test
-    fun `keyboard and short screens use compact 40dp pet`() {
+    fun `keyboard and short screens use compact 50dp pet`() {
         assertTrue(shouldCompactFloatingPet(imeVisible = true, screenHeightDp = 844))
         assertTrue(shouldCompactFloatingPet(imeVisible = false, screenHeightDp = 640))
         assertFalse(shouldCompactFloatingPet(imeVisible = false, screenHeightDp = 844))
-        assertEquals(40, floatingPetVisualSizeDp(compact = true))
-        assertEquals(48, floatingPetVisualSizeDp(compact = false))
+        assertEquals(50, floatingPetVisualSizeDp(compact = true))
+        assertEquals(60, floatingPetVisualSizeDp(compact = false))
     }
 
     @Test
     fun `pet scale updates art hit target and collision footprint together`() {
-        assertEquals(FloatingPetDimensions(48f, 56f), floatingPetDimensions(false, 1f))
-        assertEquals(FloatingPetDimensions(36f, 48f), floatingPetDimensions(false, 0.75f))
-        assertEquals(FloatingPetDimensions(60f, 70f), floatingPetDimensions(false, 1.25f))
-        assertEquals(FloatingPetDimensions(30f, 48f), floatingPetDimensions(true, 0.75f))
-        assertEquals(FloatingPetDimensions(50f, 60f), floatingPetDimensions(true, 1.25f))
-        assertEquals(FloatingPetDimensions(48f, 56f), floatingPetDimensions(false, Float.NaN))
+        assertEquals(FloatingPetDimensions(60f, 70f), floatingPetDimensions(false, 1f))
+        assertEquals(FloatingPetDimensions(36f, 48f), floatingPetDimensions(false, 0.6f))
+        assertEquals(FloatingPetDimensions(72f, 84f), floatingPetDimensions(false, 1.2f))
+        val compactMinimum = floatingPetDimensions(true, 0.6f)
+        assertEquals(30f, compactMinimum.visualSizeDp, 0.001f)
+        assertEquals(48f, compactMinimum.targetSizeDp, 0.001f)
+        val compactMaximum = floatingPetDimensions(true, 1.2f)
+        assertEquals(60f, compactMaximum.visualSizeDp, 0.001f)
+        assertEquals(72f, compactMaximum.targetSizeDp, 0.001f)
+        assertEquals(FloatingPetDimensions(60f, 70f), floatingPetDimensions(false, Float.NaN))
     }
 
     @Test
@@ -236,7 +252,7 @@ class FloatingPetCompanionTest {
     @Test
     fun `keyboard compacts pet and host pause signal dims it`() {
         assertTrue(shouldCompactFloatingPet(imeVisible = true, screenHeightDp = 844))
-        assertEquals(40, floatingPetVisualSizeDp(compact = true))
+        assertEquals(50, floatingPetVisualSizeDp(compact = true))
         assertEquals(0.6f, floatingPetAlpha(isScrolling = true), 0f)
     }
 

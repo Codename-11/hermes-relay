@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -56,12 +57,20 @@ enum class PetTemperament(val pacing: PetBehaviorPacing) {
 
 val DEFAULT_PET_TEMPERAMENT: PetTemperament = PetTemperament.Balanced
 const val DEFAULT_PET_SIZE_SCALE: Float = 1f
-const val MIN_PET_SIZE_SCALE: Float = 0.75f
-const val MAX_PET_SIZE_SCALE: Float = 1.25f
+const val MIN_PET_SIZE_SCALE: Float = 0.6f
+const val MAX_PET_SIZE_SCALE: Float = 1.2f
+private const val LEGACY_PET_SIZE_BASE_SCALE: Float = 1.25f
+private const val CURRENT_PET_SIZE_SCALE_VERSION: Int = 2
 
 internal fun sanitizedPetSizeScale(value: Float?): Float =
     value?.takeIf(Float::isFinite)?.coerceIn(MIN_PET_SIZE_SCALE, MAX_PET_SIZE_SCALE)
         ?: DEFAULT_PET_SIZE_SCALE
+
+internal fun decodeStoredPetSizeScale(value: Float?, version: Int?): Float {
+    if (value == null) return DEFAULT_PET_SIZE_SCALE
+    val rebased = if (version == null) value / LEGACY_PET_SIZE_BASE_SCALE else value
+    return sanitizedPetSizeScale(rebased)
+}
 
 data class PetBehaviorPreferences(
     val temperament: PetTemperament = DEFAULT_PET_TEMPERAMENT,
@@ -84,13 +93,17 @@ class PetBehaviorPreferencesRepository(
     companion object {
         internal val KEY_TEMPERAMENT = stringPreferencesKey("pet_temperament")
         internal val KEY_SIZE_SCALE = floatPreferencesKey("pet_size_scale")
+        internal val KEY_SIZE_SCALE_VERSION = intPreferencesKey("pet_size_scale_version")
     }
 
     val flow: Flow<PetBehaviorPreferences> = dataStore.data
         .map { preferences ->
             PetBehaviorPreferences(
                 temperament = decodeTemperament(preferences[KEY_TEMPERAMENT]),
-                sizeScale = sanitizedPetSizeScale(preferences[KEY_SIZE_SCALE]),
+                sizeScale = decodeStoredPetSizeScale(
+                    value = preferences[KEY_SIZE_SCALE],
+                    version = preferences[KEY_SIZE_SCALE_VERSION],
+                ),
             )
         }
         .distinctUntilChanged()
@@ -112,6 +125,7 @@ class PetBehaviorPreferencesRepository(
     suspend fun setSizeScale(sizeScale: Float) {
         dataStore.edit { preferences ->
             preferences[KEY_SIZE_SCALE] = sanitizedPetSizeScale(sizeScale)
+            preferences[KEY_SIZE_SCALE_VERSION] = CURRENT_PET_SIZE_SCALE_VERSION
         }
     }
 

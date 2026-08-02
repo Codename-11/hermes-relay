@@ -37,12 +37,13 @@ replace the profile identity or Sphere.
 The companion has a durable home and an optional autonomous roaming mode:
 
 - Long hold the pet, drag it, and release. It stays inside a protected viewport,
-  avoids registered controls, disables roaming, and visibly falls to the nearest
-  logical start/end edge. The app stores that edge plus a normalized vertical
-  position—not raw pixels. The placement therefore adapts to rotation, resizing,
-  and RTL layouts. **Reset position** restores the default end-edge home near the
-  lower-right Chat area in left-to-right layouts (and mirrors correctly in
-  right-to-left layouts).
+  avoids registered controls, and visibly falls to the nearest valid manual or
+  roaming surface. Dragging never changes the roaming preference, so an enabled
+  pet resumes exploring after it lands. The app stores a logical edge plus a
+  normalized vertical position—not raw pixels. The placement therefore adapts to
+  rotation, resizing, and RTL layouts. **Reset position** restores the default
+  end-edge home near the lower-right Chat area in left-to-right layouts (and
+  mirrors correctly in right-to-left layouts).
 - Tap the pet for a wave and its menu. The tap reaction is lower priority than
   active Hermes work and never interrupts a drag or drop. The menu can enable or
   pause roaming, reset position, open Appearance, or hide the companion.
@@ -61,7 +62,9 @@ The companion has a durable home and an optional autonomous roaming mode:
   beside the latest bubble, its raised top edge, then the outer composer corner.
   A wide pocket permits pacing; a narrow valid pocket becomes an idle point.
   Layout and scroll updates replan from the live coordinate without teleporting.
-- Appearance scales the pet from 75–125% (100% default). The same value drives
+- Appearance scales the pet from 60–120% (100% default). The new 100% default is
+  the previous control's 125% physical size; stored values are rebased once so
+  existing choices keep the same rendered size. The same value drives
   art, the minimum-accessible touch target, collision footprint, perch fit, and
   route clearance. A larger pet skips a narrow ledge instead of covering UI.
 - Visible jump-to-latest controls are registered as temporary obstacles: Chat's
@@ -90,7 +93,7 @@ The companion has a durable home and an optional autonomous roaming mode:
   startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
   exploration stops travel. Scrolling freezes the current screen position at
   full opacity; it does not re-dock or teleport the pet. The IME/short-screen
-  compact layout uses 40 dp base art before the saved size scale, and the IME
+  compact layout uses 50 dp base art before the saved size scale, and the IME
   pause is visually subdued. Settings
   and About publish their scroll state and hide the companion while their dialogs
   are open.
@@ -480,7 +483,7 @@ intensity-driven playback speed add live motion on top.
   **sprite sheet** over a long frame sequence — a sheet decodes as one bitmap, so
   its cells can be larger (256–512 px) without the per-frame cost of a sequence.
   **Size art for the companion perch**: a 128 px cell or still is sufficient
-  for the 40/48 dp base rendered pet, even at the 125% setting, and avoids
+  for the 50/60 dp base rendered pet, even at the 120% setting, and avoids
   unnecessary decode cost.
   Only the **selected** pet's **current** clip is decoded, off the main thread.
 - File names must stay **inside the pack directory** — paths that escape it
@@ -547,8 +550,8 @@ When the user disables animations, Android animator scale is 0, or TalkBack touc
 exploration is active, autonomous roaming stops and the pet is rendered
 **paused**. Transcript, Settings, and About scrolling pause travel at the current
 screen coordinate without re-docking, teleporting, or dimming the companion.
-With the keyboard open or on a short screen its base art compacts from 48 dp to
-40 dp before the persisted 75–125% scale is applied; the
+With the keyboard open or on a short screen its base art compacts from 60 dp to
+50 dp before the persisted 60–120% scale is applied; the
 keyboard pause is visually subdued so input remains readable. Dialogs on
 supported Settings/About routes suspend the companion entirely. Temperament
 never overrides these gates. Author the first `idle` frame to be a good, legible
@@ -574,8 +577,8 @@ fallback checks with a pack missing one or more optional rows:
   demonstrates direct, mirrored, fallback, and mirrored-fallback selection for
   Walk left/right, Jump, Fall, Held, Wave, Working, Review, Waiting, and Error.
 - [ ] A tap waves and opens the menu. Long hold lifts into held art; drag avoids
-  registered controls; release visibly falls and settles at the persisted edge,
-  with a landing squash, and disables roaming.
+  registered controls; release visibly falls and settles on a valid persisted or
+  roaming surface with a landing squash, without changing the roaming preference.
 - [ ] Jump anticipation, apex transition to falling, altitude-responsive shadow,
   landing squash, turn pauses, and foot-speed synchronization read naturally.
 - [ ] Calm, Balanced, and Playful produce visibly different response/patrol/idle

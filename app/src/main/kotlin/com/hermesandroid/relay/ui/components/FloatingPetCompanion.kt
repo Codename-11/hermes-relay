@@ -111,7 +111,7 @@ internal enum class PetBehaviorPriority {
 internal fun shouldCompactFloatingPet(imeVisible: Boolean, screenHeightDp: Int): Boolean =
     imeVisible || screenHeightDp < FLOATING_PET_COMPACT_HEIGHT_DP
 
-internal fun floatingPetVisualSizeDp(compact: Boolean): Int = if (compact) 40 else 48
+internal fun floatingPetVisualSizeDp(compact: Boolean): Int = if (compact) 50 else 60
 
 internal data class FloatingPetDimensions(
     val visualSizeDp: Float,
@@ -123,7 +123,7 @@ internal fun floatingPetDimensions(compact: Boolean, sizeScale: Float): Floating
     val safeScale = sizeScale.takeIf(Float::isFinite)
         ?.coerceIn(MIN_PET_SIZE_SCALE, MAX_PET_SIZE_SCALE) ?: 1f
     val baseVisual = floatingPetVisualSizeDp(compact).toFloat()
-    val baseTarget = if (compact) 48f else 56f
+    val baseTarget = if (compact) 60f else 70f
     return FloatingPetDimensions(
         visualSizeDp = baseVisual * safeScale,
         targetSizeDp = maxOf(48f, baseTarget * safeScale),
@@ -205,9 +205,16 @@ internal fun shouldReleasePendingPetDrop(
     expectedPlacement: PetPlacement?,
     positionSettled: Boolean,
     animationFinished: Boolean,
-    roamingEnabled: Boolean,
     observedPlacement: PetPlacement,
-): Boolean = expectedPlacement != null && positionSettled && animationFinished && !roamingEnabled &&
+): Boolean = expectedPlacement != null && positionSettled && animationFinished &&
+    observedPlacement == expectedPlacement
+
+internal fun shouldAnimatePendingPetDrop(
+    expectedPlacement: PetPlacement?,
+    positionSettled: Boolean,
+    animationFinished: Boolean,
+    observedPlacement: PetPlacement,
+): Boolean = expectedPlacement != null && positionSettled && !animationFinished &&
     observedPlacement == expectedPlacement
 
 internal fun shouldDockFloatingPet(
@@ -703,14 +710,13 @@ fun FloatingPetCompanion(
         }
     }
 
-    LaunchedEffect(pendingDrop, roamingEnabled, placement) {
+    LaunchedEffect(pendingDrop, placement) {
         val pending = pendingDrop ?: return@LaunchedEffect
         if (
             shouldReleasePendingPetDrop(
                 expectedPlacement = pending.expectedPlacement,
                 positionSettled = pending.positionSettled,
                 animationFinished = pending.animationFinished,
-                roamingEnabled = roamingEnabled,
                 observedPlacement = placement,
             )
         ) {
@@ -719,13 +725,21 @@ fun FloatingPetCompanion(
         }
     }
 
-    LaunchedEffect(pendingDrop?.positionSettled, homePoint, registeredObstacles) {
+    LaunchedEffect(pendingDrop?.positionSettled, homePoint, registeredObstacles, placement) {
         val pending = pendingDrop ?: return@LaunchedEffect
-        if (!pending.positionSettled || pending.animationFinished) return@LaunchedEffect
+        if (
+            !shouldAnimatePendingPetDrop(
+                expectedPlacement = pending.expectedPlacement,
+                positionSettled = pending.positionSettled,
+                animationFinished = pending.animationFinished,
+                observedPlacement = placement,
+            )
+        ) return@LaunchedEffect
 
         // Releasing a held pet is a visible fall rather than a state snap. The
-        // edge destination is reached through the existing obstacle router;
-        // the fall clip owns the descent, followed by a small landing squash.
+        // active manual or roaming destination is reached through the existing
+        // obstacle router; the fall clip owns the descent, followed by a small
+        // landing squash. Dragging never changes the roaming preference.
         locomotion = PetLocomotion.Fall
         airborneProgress.snapTo(0.45f)
         val route = findOverlayRoute(
@@ -1070,7 +1084,6 @@ fun FloatingPetCompanion(
                                 placement.edge,
                             )
                             pendingDrop = PendingPetDrop(dropped, updatedPlacement)
-                            if (roamingEnabled) onRoamingEnabledChanged(false)
                             onPlacementChanged(updatedPlacement)
                             scope.launch {
                                 x.snapTo(dropped.x)

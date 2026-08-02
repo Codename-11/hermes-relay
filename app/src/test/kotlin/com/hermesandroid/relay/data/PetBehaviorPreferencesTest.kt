@@ -20,15 +20,15 @@ class PetBehaviorPreferencesTest {
         val repository = PetBehaviorPreferencesRepository(InMemoryDataStore())
 
         assertEquals(PetTemperament.Balanced, repository.flow.first().temperament)
-        assertEquals(1f, repository.flow.first().sizeScale)
+        assertEquals(DEFAULT_PET_SIZE_SCALE, repository.flow.first().sizeScale)
     }
 
     @Test
     fun `pet size round trips and clamps unsafe stored values`() = runTest {
         val repository = PetBehaviorPreferencesRepository(InMemoryDataStore())
 
-        repository.setSizeScale(1.125f)
-        assertEquals(1.125f, repository.sizeScale.first())
+        repository.setSizeScale(1.1f)
+        assertEquals(1.1f, repository.sizeScale.first())
         repository.setSizeScale(9f)
         assertEquals(MAX_PET_SIZE_SCALE, repository.sizeScale.first())
 
@@ -40,6 +40,23 @@ class PetBehaviorPreferencesTest {
             mutablePreferencesOf(PetBehaviorPreferencesRepository.KEY_SIZE_SCALE to -3f),
         )
         assertEquals(MIN_PET_SIZE_SCALE, PetBehaviorPreferencesRepository(lowStore).sizeScale.first())
+    }
+
+    @Test
+    fun `legacy size values preserve their physical rendered size after rebase`() = runTest {
+        val oldMaximum = InMemoryDataStore(
+            mutablePreferencesOf(PetBehaviorPreferencesRepository.KEY_SIZE_SCALE to 1.25f),
+        )
+        val oldDefault = InMemoryDataStore(
+            mutablePreferencesOf(PetBehaviorPreferencesRepository.KEY_SIZE_SCALE to 1f),
+        )
+
+        assertEquals(1f, PetBehaviorPreferencesRepository(oldMaximum).sizeScale.first())
+        assertEquals(0.8f, PetBehaviorPreferencesRepository(oldDefault).sizeScale.first())
+
+        val current = PetBehaviorPreferencesRepository(InMemoryDataStore())
+        current.setSizeScale(1.2f)
+        assertEquals(1.2f, current.sizeScale.first())
     }
 
     @Test

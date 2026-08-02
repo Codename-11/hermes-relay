@@ -820,7 +820,7 @@ fun AppearanceSettingsScreen(
                             value = petSizeScale,
                             onValueChange = connectionViewModel::setPetSizeScale,
                             valueRange = MIN_PET_SIZE_SCALE..MAX_PET_SIZE_SCALE,
-                            steps = 3,
+                            steps = 5,
                         )
                         Text(
                             text = stringResource(R.string.appearance_pet_size_desc),

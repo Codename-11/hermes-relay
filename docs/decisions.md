@@ -2456,9 +2456,11 @@ top of a response bubble without ever covering its text or jumping through it.
 
 - One root overlay owns position and arbitration. It consumes no transcript or
   control-bar layout space; only the pet-sized target handles pointer input.
-- Appearance persists one 75–125% scale, default 100%, that changes art, touch
-  target, collision footprint, perch eligibility, and route clearance together;
-  visual and planner geometry may never scale independently.
+- Appearance persists one 60–120% scale, default 100%, that changes art, touch
+  target, collision footprint, perch eligibility, and route clearance together.
+  The 100% base equals the previous 125% physical size, and legacy stored values
+  are rebased to preserve their rendered size; visual and planner geometry may
+  never scale independently.
 - Screen owners opt in by publishing live-measured perches, obstacles, scrolling,
   and modal visibility. The supported terrain is Chat's composer and newest
   visible settled assistant bubble, Terminal's extra-keys toolbar, and the
@@ -2467,6 +2469,9 @@ top of a response bubble without ever covering its text or jumping through it.
 - Direct interaction has priority over agent activity, followed by a pending
   response visit, autonomous roaming, and idle reactions. Activity clips remain
   truthful because locomotion is eligible only while Hermes is idle.
+- Drag/drop changes placement without changing the roaming preference. The held
+  and falling states suspend autonomous movement until the placement and landing
+  animation settle, then an enabled pet resumes from the valid landing surface.
 - A response visit is a deterministic composer-to-bubble excursion. The planner
   proves a clear outer gutter and a raised top rail for the complete pet
   footprint, walks across the bubble, and returns through the same edge before
