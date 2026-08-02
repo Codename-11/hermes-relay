@@ -31,18 +31,26 @@ class FloatingPetCompanionTest {
     }
 
     @Test
-    fun `composer patrol prefers a visible chat message perch`() {
-        assertTrue(
-            shouldPreferChatMessagePerch(
-                currentPerchKey = CHAT_PET_WALK_REGION,
-                candidatePerchKey = "${CHAT_PET_MESSAGE_PERCH_PREFIX}assistant-1",
-            ),
+    fun `behavior director applies user agent response roam idle priority`() {
+        assertEquals(
+            PetBehaviorPriority.UserInteraction,
+            petBehaviorPriority(true, true, true, true),
         )
-        assertFalse(
-            shouldPreferChatMessagePerch(
-                currentPerchKey = "terminal-toolbar",
-                candidatePerchKey = "${CHAT_PET_MESSAGE_PERCH_PREFIX}assistant-1",
-            ),
+        assertEquals(
+            PetBehaviorPriority.AgentActivity,
+            petBehaviorPriority(false, true, true, true),
+        )
+        assertEquals(
+            PetBehaviorPriority.ResponseVisit,
+            petBehaviorPriority(false, false, true, true),
+        )
+        assertEquals(
+            PetBehaviorPriority.Roam,
+            petBehaviorPriority(false, false, false, true),
+        )
+        assertEquals(
+            PetBehaviorPriority.Idle,
+            petBehaviorPriority(false, false, false, false),
         )
     }
 
@@ -54,9 +62,23 @@ class FloatingPetCompanionTest {
     }
 
     @Test
-    fun `dragging presents held locomotion until drop settles`() {
-        assertEquals(PetLocomotion.Held, presentedPetLocomotion(true, PetLocomotion.WalkRight))
-        assertEquals(PetLocomotion.WalkRight, presentedPetLocomotion(false, PetLocomotion.WalkRight))
+    fun `user manipulation wins while agent activity suppresses ambient travel`() {
+        assertEquals(
+            PetLocomotion.Held,
+            presentedPetLocomotion(true, false, SphereState.Streaming, PetLocomotion.WalkRight),
+        )
+        assertEquals(
+            PetLocomotion.Fall,
+            presentedPetLocomotion(false, true, SphereState.Streaming, PetLocomotion.WalkRight),
+        )
+        assertEquals(
+            PetLocomotion.None,
+            presentedPetLocomotion(false, false, SphereState.Streaming, PetLocomotion.WalkRight),
+        )
+        assertEquals(
+            PetLocomotion.WalkRight,
+            presentedPetLocomotion(false, false, SphereState.Idle, PetLocomotion.WalkRight),
+        )
     }
 
     @Test
@@ -68,6 +90,7 @@ class FloatingPetCompanionTest {
             shouldReleasePendingPetDrop(
                 expectedPlacement = droppedPlacement,
                 positionSettled = false,
+                animationFinished = false,
                 roamingEnabled = false,
                 observedPlacement = droppedPlacement,
             ),
@@ -76,6 +99,7 @@ class FloatingPetCompanionTest {
             shouldReleasePendingPetDrop(
                 expectedPlacement = droppedPlacement,
                 positionSettled = true,
+                animationFinished = true,
                 roamingEnabled = true,
                 observedPlacement = droppedPlacement,
             ),
@@ -84,18 +108,45 @@ class FloatingPetCompanionTest {
             shouldReleasePendingPetDrop(
                 expectedPlacement = droppedPlacement,
                 positionSettled = true,
+                animationFinished = true,
                 roamingEnabled = false,
                 observedPlacement = oldPlacement,
+            ),
+        )
+        assertFalse(
+            shouldReleasePendingPetDrop(
+                expectedPlacement = droppedPlacement,
+                positionSettled = true,
+                animationFinished = false,
+                roamingEnabled = false,
+                observedPlacement = droppedPlacement,
             ),
         )
         assertTrue(
             shouldReleasePendingPetDrop(
                 expectedPlacement = droppedPlacement,
                 positionSettled = true,
+                animationFinished = true,
                 roamingEnabled = false,
                 observedPlacement = droppedPlacement,
             ),
         )
+    }
+
+    @Test
+    fun `walk timing lands on complete Petdex gait cycles`() {
+        assertEquals(480, petWalkDurationMs(1f))
+        assertEquals(960, petWalkDurationMs(44f))
+        assertEquals(1_920, petWalkDurationMs(88f))
+        assertEquals(480, petWalkDurationMs(Float.NaN))
+    }
+
+    @Test
+    fun `airborne shadow shrinks and softens`() {
+        assertEquals(1f, petShadowScale(0f), 0f)
+        assertEquals(0.58f, petShadowScale(1f), 0.0001f)
+        assertEquals(0.20f, petShadowAlpha(0f), 0.0001f)
+        assertEquals(0.08f, petShadowAlpha(1f), 0.0001f)
     }
 
     @Test

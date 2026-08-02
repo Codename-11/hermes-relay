@@ -232,6 +232,85 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `bubble excursion enters through gutter and traverses raised top rail`() {
+        val bubble = PetMeasuredPerch(
+            key = "chat-message-perch:assistant-1",
+            bounds = PetObstacle(40f, 120f, 200f, 190f),
+        )
+        val composer = PetRoamingRail(
+            key = "chat-composer-perch:0",
+            perchKey = "chat-composer-perch",
+            bounds = PetSafeBounds(20f, 250f, 280f, 250f),
+        )
+        val footprint = PetFootprint(width = 40f, height = 40f)
+
+        val plan = requireNotNull(
+            planPetBubbleExcursion(
+                bubble = bubble,
+                composerRail = composer,
+                footprint = footprint,
+                outer = PetSafeBounds(20f, 20f, 280f, 280f),
+                uiObstacles = emptyList(),
+                useLeftGutter = false,
+                verticalClearance = 6f,
+                minimumWalkWidth = 40f,
+            ),
+        )
+
+        assertEquals(PetPoint(226f, 250f), plan.composerApproach)
+        assertEquals(PetPoint(226f, 94f), plan.gutter)
+        assertEquals(PetPoint(180f, 94f), plan.entry)
+        assertEquals(PetPoint(60f, 94f), plan.opposite)
+        assertTrue(plan.gutter.x > bubble.bounds.right + footprint.horizontalRadius)
+        assertTrue(plan.entry.y + footprint.height / 2f < bubble.bounds.top)
+    }
+
+    @Test
+    fun `bubble excursion is skipped without a composer supported clear gutter`() {
+        val bubble = PetMeasuredPerch(
+            key = "chat-message-perch:assistant-1",
+            bounds = PetObstacle(40f, 120f, 240f, 190f),
+        )
+        val narrowComposer = PetRoamingRail(
+            key = "chat-composer-perch:0",
+            perchKey = "chat-composer-perch",
+            bounds = PetSafeBounds(20f, 250f, 200f, 250f),
+        )
+
+        assertNull(
+            planPetBubbleExcursion(
+                bubble = bubble,
+                composerRail = narrowComposer,
+                footprint = PetFootprint(width = 40f, height = 40f),
+                outer = PetSafeBounds(20f, 20f, 300f, 280f),
+                uiObstacles = emptyList(),
+                useLeftGutter = false,
+                verticalClearance = 6f,
+                minimumWalkWidth = 40f,
+            ),
+        )
+        assertNull(
+            planPetBubbleExcursion(
+                bubble = PetMeasuredPerch(
+                    key = "chat-message-perch:assistant-2",
+                    bounds = PetObstacle(40f, 120f, 200f, 190f),
+                ),
+                composerRail = PetRoamingRail(
+                    key = "chat-composer-perch:0",
+                    perchKey = "chat-composer-perch",
+                    bounds = PetSafeBounds(20f, 250f, 280f, 250f),
+                ),
+                footprint = PetFootprint(width = 40f, height = 40f),
+                outer = PetSafeBounds(20f, 20f, 280f, 280f),
+                uiObstacles = listOf(PetObstacle(210f, 80f, 250f, 270f)),
+                useLeftGutter = false,
+                verticalClearance = 6f,
+                minimumWalkWidth = 40f,
+            ),
+        )
+    }
+
+    @Test
     fun `perch obstacle can split one ledge into two reachable rails`() {
         val outer = PetSafeBounds(0f, 0f, 300f, 300f)
         val footprint = PetFootprint(width = 40f, height = 40f)
