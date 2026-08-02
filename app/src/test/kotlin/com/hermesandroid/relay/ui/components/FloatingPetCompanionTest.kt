@@ -6,6 +6,8 @@ import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.ui.components.pet.PetPoint
 import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
 import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
+import com.hermesandroid.relay.ui.components.pet.PetSettledChatHabitat
+import com.hermesandroid.relay.ui.components.pet.PetSettledChatMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -196,6 +198,52 @@ class FloatingPetCompanionTest {
             choosePetScrollLandingRail(listOf(upper, farBelow, nearBelow), point),
         )
         assertEquals(upper, choosePetScrollLandingRail(listOf(upper), point))
+    }
+
+    @Test
+    fun `scroll tracks settled chat habitat but never settles on incidental message rail`() {
+        val composer = PetRoamingRail(
+            "composer:0",
+            CHAT_PET_WALK_REGION,
+            PetSafeBounds(20f, 700f, 380f, 700f),
+        )
+        val message = PetRoamingRail(
+            "message:0",
+            "${CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX}reply-1",
+            PetSafeBounds(70f, 300f, 300f, 300f),
+        )
+        val settled = PetSettledChatHabitat(
+            mode = PetSettledChatMode.SidePocketPace,
+            rail = PetRoamingRail(
+                "chat-settled:reply-1:side",
+                "chat-settled:reply-1",
+                PetSafeBounds(330f, 340f, 380f, 340f),
+            ),
+        )
+
+        val tracking = petScrollTrackingRails(listOf(composer, message), settled)
+        val landing = petScrollLandingRails(listOf(composer, message), settled)
+
+        assertEquals(settled.rail, petRailSupportingPoint(tracking, PetPoint(350f, 340f)))
+        assertTrue(settled.rail in landing)
+        assertTrue(composer in landing)
+        assertFalse(message in landing)
+    }
+
+    @Test
+    fun `scroll reacquires moved settled rail by stable key`() {
+        val before = PetRoamingRail(
+            "chat-settled:reply-1:side",
+            "chat-settled:reply-1",
+            PetSafeBounds(330f, 340f, 380f, 340f),
+        )
+        val after = before.copy(bounds = PetSafeBounds(330f, 220f, 380f, 220f))
+        val habitat = PetSettledChatHabitat(PetSettledChatMode.SidePocketPace, after)
+
+        assertEquals(
+            after,
+            petScrollTrackingRails(emptyList(), habitat).firstOrNull { it.key == before.key },
+        )
     }
 
     @Test

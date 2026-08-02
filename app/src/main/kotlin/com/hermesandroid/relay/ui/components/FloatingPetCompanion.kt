@@ -245,6 +245,18 @@ internal fun choosePetScrollLandingRail(
     }
 }
 
+internal fun petScrollTrackingRails(
+    roamingRails: Iterable<PetRoamingRail>,
+    settledHabitat: PetSettledChatHabitat?,
+): List<PetRoamingRail> = (roamingRails + listOfNotNull(settledHabitat?.rail))
+    .distinctBy { it.key }
+
+internal fun petScrollLandingRails(
+    roamingRails: Iterable<PetRoamingRail>,
+    settledHabitat: PetSettledChatHabitat?,
+): List<PetRoamingRail> = petScrollTrackingRails(roamingRails, settledHabitat)
+    .filterNot { rail -> rail.perchKey.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX) }
+
 private data class PendingPetDrop(
     val point: PetPoint,
     val expectedPlacement: PetPlacement,
@@ -384,7 +396,6 @@ fun FloatingPetCompanion(
             }
         }
     }
-    val latestRoamingRails by rememberUpdatedState(roamingRails)
     val latestSurfaceScrolling by rememberUpdatedState(surfaceScrolling)
     val composerRails = remember(roamingRails) {
         roamingRails.filter { it.perchKey == CHAT_PET_WALK_REGION }
@@ -431,6 +442,13 @@ fun FloatingPetCompanion(
             )
         }
     }
+    val scrollTrackingRails = remember(roamingRails, settledHabitat) {
+        petScrollTrackingRails(roamingRails, settledHabitat)
+    }
+    val scrollLandingRails = remember(roamingRails, settledHabitat) {
+        petScrollLandingRails(roamingRails, settledHabitat)
+    }
+    val latestScrollLandingRails by rememberUpdatedState(scrollLandingRails)
     val registeredObstacles = remember(safeAreaSnapshot, footprint) {
         expandObstaclesForPet(
             obstacles = safeAreaSnapshot.obstacles.map { it.bounds } +
@@ -738,19 +756,20 @@ fun FloatingPetCompanion(
     // A measured scrolling ledge moves under the app-level overlay. Ride that
     // ledge while it remains valid; if it leaves the viewport, retain the last
     // safe screen coordinate and show the falling row until scrolling settles.
-    LaunchedEffect(surfaceScrolling, roamingRails, positioned, dragging, pendingDrop) {
+    LaunchedEffect(surfaceScrolling, scrollTrackingRails, positioned, dragging, pendingDrop) {
         if (!surfaceScrolling || !positioned || dragging || pendingDrop != null) {
             return@LaunchedEffect
         }
         val current = PetPoint(x.value, y.value)
-        val supporting = petRailSupportingPoint(roamingRails, current)
-            ?: activeRailKey?.let { key -> roamingRails.firstOrNull { it.key == key } }
+        val supporting = activeRailKey?.let { key ->
+            scrollTrackingRails.firstOrNull { it.key == key }
+        } ?: petRailSupportingPoint(scrollTrackingRails, current)
         if (scrollingRailKey == null) {
             scrollingRailKey = supporting?.key
             scrollRecoveryPending = supporting != null
         }
         val attached = scrollingRailKey?.let { key ->
-            roamingRails.firstOrNull { it.key == key }
+            scrollTrackingRails.firstOrNull { it.key == key }
         }
         if (attached != null) {
             x.snapTo(x.value.coerceIn(attached.bounds.left, attached.bounds.right))
@@ -797,7 +816,7 @@ fun FloatingPetCompanion(
             // Read current terrain without keying this effect to every measured
             // bounds update. Streaming bubbles and AnimatedVisibility may keep
             // publishing geometry while this landing is in flight.
-            val rails = latestRoamingRails
+            val rails = latestScrollLandingRails
             val current = PetPoint(x.value, y.value)
             val attached = scrollingRailKey?.let { key ->
                 rails.firstOrNull { it.key == key }

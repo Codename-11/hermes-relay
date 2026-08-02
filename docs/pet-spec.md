@@ -91,10 +91,10 @@ The companion has a durable home and an optional autonomous roaming mode:
 - Roaming requires an idle agent, the foreground app, enabled animation, and an
   available safe rail. Agent activity, scrolling, dragging, an open pet menu,
   startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
-  exploration stops travel. Scrolling freezes the current screen position at
-  full opacity; it does not re-dock or teleport the pet. The IME/short-screen
-  compact layout uses 50 dp base art before the saved size scale, and the IME
-  pause is visually subdued. Settings
+  exploration stops autonomous travel. During scrolling, the pet follows its
+  current measured or synthetic habitat rail while it remains valid; it does
+  not re-dock or teleport. The IME/short-screen compact layout uses 50 dp base
+  art before the saved size scale. Settings
   and About publish their scroll state and hide the companion while their dialogs
   are open.
 
@@ -560,14 +560,18 @@ still. The companion exposes its name and current state, plus non-drag
 move/reset/configure/hide accessibility actions.
 
 During a scroll, a pet lifts slightly and remains attached to its registered
-ledge while that ledge stays visible. This makes Settings scrolling visibly
-affect the pet even when its only safe terrain is the fixed status-strip rail.
+ledge or text-safe settled Chat habitat while that terrain stays visible. This
+makes Settings scrolling visibly affect the pet even when its only safe terrain
+is the fixed status-strip rail, and prevents a moving chat bubble from sliding
+under a pet settled beside it.
 If a scrolling content ledge leaves the safe
 viewport, the overlay keeps the pet at its last safe screen coordinate and uses
 the falling state; after the gesture and fling settle, it lands on the nearest
 visible valid lower rail (or jumps to the nearest remaining rail when none is
-below). The pet does not scroll off-screen with content, and no unregistered
-Settings card becomes terrain automatically.
+below). An incidental message rail is never selected as the recovery landing;
+the latest text-safe Chat habitat remains eligible. The pet does not scroll
+off-screen with content, and no unregistered Settings card becomes terrain
+automatically.
 
 ## On-device visual review checklist
 
