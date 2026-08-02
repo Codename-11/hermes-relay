@@ -3515,4 +3515,21 @@
     <string name="voice_settings_barge_in_playback_grace_desc">抑制语音播放刚开始时的误触发。上游默认值：0.50 秒。</string>
     <string name="voice_settings_barge_in_debug">VAD 诊断</string>
     <string name="voice_settings_barge_in_debug_desc">将校准底噪、RMS、触发阈值、阶段和判定写入 Logcat 以便调试。</string>
+    <string name="plugins_title">插件</string>
+    <string name="settings_plugins_desc">来自 Hermes 插件的原生页面和控件</string>
+    <string name="plugins_description">插件可以提供完整的原生页面、响应式控件和由应用渲染的动画。它们不会在此手机上加载可执行代码。</string>
+    <string name="plugins_dashboard_required">连接并登录 Hermes Dashboard 以发现插件。</string>
+    <string name="plugins_empty">当前没有已安装的 Hermes 插件提供 Android 页面。</string>
+    <string name="plugins_allow_changes">允许更改</string>
+    <string name="plugins_allow_changes_desc">允许此插件向其自己的后端发送受限写入请求。</string>
+    <string name="plugins_confirm_action">确认插件操作</string>
+    <string name="plugins_back">返回</string>
+    <string name="plugins_retry">重试</string>
+    <string name="plugins_confirm">确认</string>
+    <string name="plugins_cancel">取消</string>
+    <string name="plugins_draft">草稿预览</string>
+    <string name="plugins_published">已发布</string>
+    <string name="plugins_keep">保留</string>
+    <string name="plugins_remove">移除</string>
+    <string name="plugins_remove_confirm">要移除“%1$s”吗？此插件页面将不再显示在已连接的 Android 设备上。</string>
 </resources>

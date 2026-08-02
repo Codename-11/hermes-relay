@@ -3581,4 +3581,21 @@
     <string name="voice_settings_barge_in_playback_grace_desc">音声再生の開始直後に起きる誤検出を抑制します。Upstream の既定値: 0.50 秒。</string>
     <string name="voice_settings_barge_in_debug">VAD 診断</string>
     <string name="voice_settings_barge_in_debug_desc">較正フロア、RMS、しきい値、フェーズ、判定内容を調整用に Logcat へ記録します。</string>
+    <string name="plugins_title">プラグイン</string>
+    <string name="settings_plugins_desc">Hermes プラグインのネイティブページとコントロール</string>
+    <string name="plugins_description">プラグインは、リアクティブなコントロールとホスト描画のアニメーションを備えた完全なネイティブページを追加できます。この端末に実行可能コードを読み込むことはありません。</string>
+    <string name="plugins_dashboard_required">プラグインを検出するには Hermes Dashboard に接続してサインインしてください。</string>
+    <string name="plugins_empty">Android ページを提供する Hermes プラグインは現在ありません。</string>
+    <string name="plugins_allow_changes">変更を許可</string>
+    <string name="plugins_allow_changes_desc">このプラグインが自身のバックエンドへ限定された書き込み要求を送信することを許可します。</string>
+    <string name="plugins_confirm_action">プラグイン操作の確認</string>
+    <string name="plugins_back">戻る</string>
+    <string name="plugins_retry">再試行</string>
+    <string name="plugins_confirm">確認</string>
+    <string name="plugins_cancel">キャンセル</string>
+    <string name="plugins_draft">下書きプレビュー</string>
+    <string name="plugins_published">公開済み</string>
+    <string name="plugins_keep">保持</string>
+    <string name="plugins_remove">削除</string>
+    <string name="plugins_remove_confirm">「%1$s」を削除しますか？接続された Android 端末にこのプラグインページは表示されなくなります。</string>
 </resources>

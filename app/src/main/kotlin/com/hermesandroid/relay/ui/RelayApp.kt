@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.MaterialTheme
@@ -153,6 +154,8 @@ import com.hermesandroid.relay.ui.screens.PermissionsStatusScreen
 import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
 import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
+import com.hermesandroid.relay.ui.screens.PluginsScreen
+import com.hermesandroid.relay.ui.screens.PluginPageScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProactiveSettingsScreen
@@ -172,6 +175,7 @@ import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.PluginsViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
@@ -347,6 +351,20 @@ sealed class Screen(
         fun route(source: String = SOURCE_GENERAL): String = "dashboard_sign_in?source=$source"
     }
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
+    data object Plugins : Screen("plugins", "Plugins", Icons.Filled.Extension)
+    data object PluginPage : Screen(
+        "plugins/{pluginId}/pages/{pageId}",
+        "Plugin",
+        Icons.Filled.Extension,
+    ) {
+        const val ARG_PLUGIN_ID: String = "pluginId"
+        const val ARG_PAGE_ID: String = "pageId"
+        fun route(pluginId: String, pageId: String): String =
+            "plugins/${encode(pluginId)}/pages/${encode(pageId)}"
+
+        private fun encode(value: String): String =
+            java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+    }
 
     // Non-bottom-nav destinations — reached by explicit navigation, not the
     // NavigationBar. "Relay sessions" is the user-facing label; the Kotlin
@@ -487,6 +505,7 @@ fun RelayApp() {
     val connectionViewModel: ConnectionViewModel = processRuntime.connectionViewModel
     val chatViewModel: ChatViewModel = processRuntime.chatViewModel
     val terminalViewModel: TerminalViewModel = viewModel()
+    val pluginsViewModel: PluginsViewModel = viewModel()
     val voiceViewModel: VoiceViewModel = processRuntime.voiceViewModel
     val runtimeInitializationState by processRuntime.initializationState.collectAsState()
 
@@ -564,6 +583,7 @@ fun RelayApp() {
     val coldStartAuthState by connectionViewModel.authState.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val effectiveSessionProfileName by connectionViewModel.effectiveSessionProfileName.collectAsState()
+    val currentChatSessionId by chatViewModel.currentSessionId.collectAsState()
     val effectiveDisplayProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
@@ -623,6 +643,20 @@ fun RelayApp() {
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
     val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    LaunchedEffect(
+        activeConnectionId,
+        effectiveDashboardUrl,
+        effectiveSessionProfileName,
+        currentChatSessionId,
+    ) {
+        pluginsViewModel.configure(
+            connectionId = activeConnectionId,
+            dashboardUrl = effectiveDashboardUrl.takeIf { it.isNotBlank() },
+            profileName = effectiveSessionProfileName,
+            dashboardFactory = connectionViewModel::dashboardClientForActive,
+            sessionId = currentChatSessionId,
+        )
+    }
 
     // What's New auto-show
     val showWhatsNew by connectionViewModel.showWhatsNew.collectAsState()
@@ -1988,6 +2022,9 @@ fun RelayApp() {
                         onNavigateToManage = {
                             navController.navigate(Screen.Manage.route)
                         },
+                        onNavigateToPlugins = {
+                            navController.navigate(Screen.Plugins.route)
+                        },
                         onNavigateToChatSettings = {
                             navController.navigate(Screen.ChatSettings.route)
                         },
@@ -2041,6 +2078,29 @@ fun RelayApp() {
                                 Screen.ProfileInspector.route(profileName),
                             )
                         },
+                    )
+                }
+                composable(Screen.Plugins.route) {
+                    PluginsScreen(
+                        viewModel = pluginsViewModel,
+                        onBack = { navController.popBackStack() },
+                        onOpenPage = { pluginId, pageId ->
+                            navController.navigate(Screen.PluginPage.route(pluginId, pageId))
+                        },
+                    )
+                }
+                composable(
+                    route = Screen.PluginPage.route,
+                    arguments = listOf(
+                        navArgument(Screen.PluginPage.ARG_PLUGIN_ID) { type = NavType.StringType },
+                        navArgument(Screen.PluginPage.ARG_PAGE_ID) { type = NavType.StringType },
+                    ),
+                ) { entry ->
+                    PluginPageScreen(
+                        viewModel = pluginsViewModel,
+                        pluginId = entry.arguments?.getString(Screen.PluginPage.ARG_PLUGIN_ID).orEmpty(),
+                        pageId = entry.arguments?.getString(Screen.PluginPage.ARG_PAGE_ID).orEmpty(),
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.VoiceSettings.route) {

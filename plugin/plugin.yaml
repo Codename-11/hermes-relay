@@ -82,6 +82,10 @@ provides_tools:
   - desktop_computer_action
   - desktop_computer_grant_request
   - desktop_computer_cancel
+  - relay_plugin_draft
+  - relay_plugin_publish
+  - relay_plugin_remove
+  - relay_plugin_list
 # Gateway platforms this plugin registers programmatically via
 # ctx.register_platform() in register(). Documentation parity with
 # provides_tools — the plugin stays kind=standalone (multi-capability),

@@ -3582,4 +3582,21 @@
     <string name="voice_settings_barge_in_playback_grace_desc">Unterdrückt Fehltrigger direkt nach Beginn der Sprachwiedergabe. Upstream-Standard: 0,50 s.</string>
     <string name="voice_settings_barge_in_debug">VAD-Diagnose</string>
     <string name="voice_settings_barge_in_debug_desc">Schreibt kalibrierten Pegel, RMS, Schwelle, Phase und Entscheidungen zur Abstimmung in Logcat.</string>
+    <string name="plugins_title">Plugins</string>
+    <string name="settings_plugins_desc">Native Seiten und Steuerelemente aus Hermes-Plugins</string>
+    <string name="plugins_description">Plugins können vollständige native Seiten mit reaktiven Steuerelementen und vom Host gerenderten Animationen bereitstellen. Sie laden keinen ausführbaren Code auf dieses Telefon.</string>
+    <string name="plugins_dashboard_required">Verbinde dich mit einem Hermes-Dashboard und melde dich an, um Plugins zu finden.</string>
+    <string name="plugins_empty">Keine installierten Hermes-Plugins bieten derzeit eine Android-Seite an.</string>
+    <string name="plugins_allow_changes">Änderungen zulassen</string>
+    <string name="plugins_allow_changes_desc">Erlaubt diesem Plugin begrenzte Schreibanfragen an sein eigenes Backend.</string>
+    <string name="plugins_confirm_action">Plugin-Aktion bestätigen</string>
+    <string name="plugins_back">Zurück</string>
+    <string name="plugins_retry">Erneut versuchen</string>
+    <string name="plugins_confirm">Bestätigen</string>
+    <string name="plugins_cancel">Abbrechen</string>
+    <string name="plugins_draft">Entwurfsvorschau</string>
+    <string name="plugins_published">Veröffentlicht</string>
+    <string name="plugins_keep">Behalten</string>
+    <string name="plugins_remove">Entfernen</string>
+    <string name="plugins_remove_confirm">„%1$s“ entfernen? Diese Plugin-Seite wird auf verbundenen Android-Geräten nicht mehr angezeigt.</string>
 </resources>

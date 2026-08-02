@@ -16,6 +16,10 @@ from .tools.desktop_tool import (
     _HANDLERS as _DESKTOP_HANDLERS,
     _check_tool as _desktop_check_tool,
 )
+from .tools.relay_plugin_tool import (
+    _SCHEMAS as _RELAY_PLUGIN_SCHEMAS,
+    _HANDLERS as _RELAY_PLUGIN_HANDLERS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,18 @@ def register(ctx):
             schema=schema,
             handler=_DESKTOP_HANDLERS[tool_name],
             check_fn=_make_desktop_check(tool_name),
+        )
+
+    # Declarative Android pages live on the Hermes host and need no paired
+    # device or relay process. They remain available for authoring/inspection
+    # whenever this plugin is loaded.
+    for tool_name, schema in _RELAY_PLUGIN_SCHEMAS.items():
+        ctx.register_tool(
+            name=tool_name,
+            toolset="relay",
+            schema=schema,
+            handler=_RELAY_PLUGIN_HANDLERS[tool_name],
+            check_fn=lambda: True,
         )
 
     # Register the in-session `/relay` slash command (status/devices/pair) and

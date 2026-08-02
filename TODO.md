@@ -6,6 +6,24 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Android Plugin Studio protocol follow-ups
+
+The first live declarative Plugin lane is host-local: Relay tools create bounded
+draft JSON, Android previews it through the authenticated Dashboard namespace,
+and exact-digest Keep/Remove actions require an Android user tap. Complete the
+multi-session protocol before treating `lifecycle=session` as an isolation claim:
+
+- Derive draft ownership from trusted Hermes task context and store only an HMAC
+  of that identifier; never accept a model-supplied session owner.
+- Filter draft discovery by the Android app's active Hermes session while keeping
+  profile and connection publications separate with explicit precedence.
+- Replace foreground five-second catalog polling with authenticated catalog
+  invalidation events plus ETag polling fallback.
+- Expire abandoned drafts and pending approvals, and add revision-bound profile
+  versus connection promotion targets.
+
+---
+
 ## Verify Android native dashboard sign-in on device
 
 Android now selects Custom Tab + PKCE for HTTPS gateways that advertise

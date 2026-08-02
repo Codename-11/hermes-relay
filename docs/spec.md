@@ -1,5 +1,8 @@
 # Hermes-Relay — Android App
 
+Android's declarative plugin surface is specified in
+[Android Plugins](android-plugins.md).
+
 ## Specification v1.4
 
 **Status:** v1.0.0 stable. The default path supports chat, Manage, and voice on vanilla upstream Hermes without installing the Relay plugin. Relay is additive: terminal, bridge/device control, notification companion, remote access, extra/provider-native voice, desktop tooling, and dashboard Relay management. Historical phase notes remain in this file for context; the current route ownership source of truth is [`docs/upstream-surface-matrix.md`](upstream-surface-matrix.md).

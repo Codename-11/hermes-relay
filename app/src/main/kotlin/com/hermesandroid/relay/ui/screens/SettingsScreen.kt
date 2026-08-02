@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Notifications
@@ -155,6 +156,7 @@ fun SettingsScreen(
     // expandable sections, so there's nothing left to link to twice.
     onNavigateToConnections: () -> Unit,
     onNavigateToManage: () -> Unit,
+    onNavigateToPlugins: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
     onNavigateToTerminal: () -> Unit,
     onNavigateToBridge: () -> Unit,
@@ -457,6 +459,14 @@ fun SettingsScreen(
                 subtitle = stringResource(R.string.settings_hermes_management_desc),
                 badge = dashboardPill,
                 onClick = onNavigateToManage,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Extension,
+                title = stringResource(R.string.plugins_title),
+                subtitle = stringResource(R.string.settings_plugins_desc),
+                onClick = onNavigateToPlugins,
                 isDarkTheme = isDarkTheme,
             )
 

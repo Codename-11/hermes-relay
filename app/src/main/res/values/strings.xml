@@ -3588,4 +3588,21 @@
     <string name="voice_settings_barge_in_playback_grace_desc">Suppresses false triggers immediately after speech playback begins. Upstream default: 0.50 s.</string>
     <string name="voice_settings_barge_in_debug">VAD diagnostics</string>
     <string name="voice_settings_barge_in_debug_desc">Write calibrated floor, RMS, trigger, phase, and decision details to logcat for tuning.</string>
+    <string name="plugins_title">Plugins</string>
+    <string name="settings_plugins_desc">Native pages and controls from your Hermes plugins</string>
+    <string name="plugins_description">Plugins can contribute full native pages with reactive controls and host-rendered animation. They never load executable code on this phone.</string>
+    <string name="plugins_dashboard_required">Connect and sign in to a Hermes Dashboard to discover plugins.</string>
+    <string name="plugins_empty">No installed Hermes plugins currently offer an Android page.</string>
+    <string name="plugins_allow_changes">Allow changes</string>
+    <string name="plugins_allow_changes_desc">Let this plugin send scoped write requests to its own backend.</string>
+    <string name="plugins_confirm_action">Confirm plugin action</string>
+    <string name="plugins_back">Back</string>
+    <string name="plugins_retry">Retry</string>
+    <string name="plugins_confirm">Confirm</string>
+    <string name="plugins_cancel">Cancel</string>
+    <string name="plugins_draft">Draft preview</string>
+    <string name="plugins_published">Published</string>
+    <string name="plugins_keep">Keep</string>
+    <string name="plugins_remove">Remove</string>
+    <string name="plugins_remove_confirm">Remove “%1$s”? This plugin page will no longer appear on connected Android devices.</string>
 </resources>
