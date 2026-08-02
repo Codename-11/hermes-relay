@@ -3420,4 +3420,21 @@
     <string name="voice_settings_barge_in_playback_grace_desc">Evita acionamentos falsos logo após o início da reprodução de voz. Padrão upstream: 0,50 s.</string>
     <string name="voice_settings_barge_in_debug">Diagnóstico de VAD</string>
     <string name="voice_settings_barge_in_debug_desc">Grava no Logcat o piso calibrado, RMS, limite, fase e decisões para ajuste.</string>
+    <string name="plugins_title">Plugins</string>
+    <string name="settings_plugins_desc">Páginas e controles nativos dos seus plugins do Hermes</string>
+    <string name="plugins_description">Os plugins podem adicionar páginas nativas completas com controles reativos e animações renderizadas pelo app. Eles nunca carregam código executável neste telefone.</string>
+    <string name="plugins_dashboard_required">Conecte e entre em um Dashboard do Hermes para descobrir plugins.</string>
+    <string name="plugins_empty">Nenhum plugin do Hermes instalado oferece uma página para Android no momento.</string>
+    <string name="plugins_allow_changes">Permitir alterações</string>
+    <string name="plugins_allow_changes_desc">Permite que este plugin envie solicitações de gravação limitadas ao próprio backend.</string>
+    <string name="plugins_confirm_action">Confirmar ação do plugin</string>
+    <string name="plugins_back">Voltar</string>
+    <string name="plugins_retry">Tentar novamente</string>
+    <string name="plugins_confirm">Confirmar</string>
+    <string name="plugins_cancel">Cancelar</string>
+    <string name="plugins_draft">Prévia do rascunho</string>
+    <string name="plugins_published">Publicado</string>
+    <string name="plugins_keep">Manter</string>
+    <string name="plugins_remove">Remover</string>
+    <string name="plugins_remove_confirm">Remover “%1$s”? Esta página do plugin não aparecerá mais nos dispositivos Android conectados.</string>
 </resources>

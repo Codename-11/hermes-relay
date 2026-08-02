@@ -248,6 +248,7 @@ export default defineConfig({
             { text: 'Voice Intents', link: '/features/voice-intents' },
             { text: 'Token Tracking', link: '/features/tokens' },
             { text: 'Tool Progress', link: '/features/tools' },
+            { text: 'Plugins', link: '/features/plugins' },
             { text: 'Phone Control Tools', link: '/features/phone-control-tools' },
             { text: 'Dashboard Plugin', link: '/features/dashboard' },
           ],
