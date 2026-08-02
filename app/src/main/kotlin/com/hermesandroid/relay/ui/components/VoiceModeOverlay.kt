@@ -515,7 +515,7 @@ fun VoiceModeOverlay(
                     // retrying, so a failed/timed-out turn never traps the user
                     // on a retry-only banner.
                     TextButton(onClick = { onClearError() }) {
-                        Text("Dismiss")
+                        Text(stringResource(R.string.common_dismiss))
                     }
                     TextButton(
                         onClick = {
@@ -1759,7 +1759,7 @@ private fun BackgroundRunChip(
                         imageVector = Icons.Filled.Close,
                         // The VM treats ✕ on a DONE chip as a local dismiss,
                         // never a cancel — label it accordingly for TalkBack.
-                        contentDescription = if (done) "Dismiss" else "Cancel background task",
+                        contentDescription = if (done) stringResource(R.string.common_dismiss) else stringResource(R.string.voice_overlay_cancel_task_cd),
                         tint = MaterialTheme.colorScheme.onSecondaryContainer,
                         modifier = Modifier.size(16.dp),
                     )

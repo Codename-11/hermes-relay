@@ -1,6 +1,6 @@
 name: hermes-relay
 manifest_version: 1
-version: 1.4.3
+version: 1.5.0
 description: "Hermes-Relay plugin for QR pairing, relay sessions, dashboard management, remote desktop/phone tooling, and optional legacy compatibility diagnostics. Standard chat, Manage, and dashboard voice remain vanilla upstream Hermes surfaces."
 author: Axiom Labs
 # All three are OPTIONAL — only needed if you use the relay's extra /
@@ -82,6 +82,10 @@ provides_tools:
   - desktop_computer_action
   - desktop_computer_grant_request
   - desktop_computer_cancel
+  - relay_plugin_draft
+  - relay_plugin_publish
+  - relay_plugin_remove
+  - relay_plugin_list
 # Gateway platforms this plugin registers programmatically via
 # ctx.register_platform() in register(). Documentation parity with
 # provides_tools — the plugin stays kind=standalone (multi-capability),

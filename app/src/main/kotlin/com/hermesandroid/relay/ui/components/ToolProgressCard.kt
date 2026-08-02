@@ -144,7 +144,7 @@ fun ToolProgressCard(
     val riskDescription = toolCall.outputRisk?.let {
         stringResource(R.string.tool_output_risk_a11y, it)
     }.orEmpty()
-    val toolDescription = stringResource(R.string.tool_a11y, toolCall.name, statusText, durationDescription) +
+    val toolDescription = stringResource(R.string.tool_a11y, localizeToolName(toolCall.name), statusText, durationDescription) +
         riskDescription
 
     Card(
@@ -177,7 +177,7 @@ fun ToolProgressCard(
 
                 // Tool name — tool.generating may arrive nameless
                 Text(
-                    text = if (isPreparing) toolCall.name.ifBlank { "Preparing tool…" } else toolCall.name,
+                    text = if (isPreparing) localizeToolName(toolCall.name).ifBlank { stringResource(R.string.tool_preparing) } else localizeToolName(toolCall.name),
                     style = MaterialTheme.typography.labelMedium,
                     color = if (isPreparing) MaterialTheme.colorScheme.onSurfaceVariant
                         else androidx.compose.ui.graphics.Color.Unspecified,
@@ -211,7 +211,7 @@ fun ToolProgressCard(
                 // Expand/collapse
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    contentDescription = if (expanded) stringResource(R.string.tool_progress_cd_collapse) else stringResource(R.string.tool_progress_cd_expand),
                     modifier = Modifier.size(16.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )

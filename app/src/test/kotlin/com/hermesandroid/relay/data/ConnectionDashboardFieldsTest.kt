@@ -112,6 +112,75 @@ class ConnectionDashboardFieldsTest {
     }
 
     @Test
+    fun buildRouteCandidates_preservesExplicitSameHostHttpsDashboard() {
+        val routes = Connection.buildRouteCandidates(
+            apiServerUrl = "https://hermes.example.com:8643",
+            relayUrl = "wss://hermes.example.com:8767",
+            dashboardUrl = "https://hermes.example.com:443",
+        )
+
+        assertEquals(1, routes.size)
+        assertEquals("https://hermes.example.com:443", routes.single().dashboard?.url)
+        assertEquals("https://hermes.example.com:8643", routes.single().api?.url)
+    }
+
+    @Test
+    fun reconcileDashboardRoutes_repairsStoredSameHostDerivedPort() {
+        val stored = Connection.buildRouteCandidates(
+            apiServerUrl = "https://hermes.example.com:8643",
+            relayUrl = "wss://hermes.example.com:8767",
+        )
+
+        val repaired = Connection.reconcileDashboardRoutes(
+            dashboardUrl = "https://hermes.example.com:443",
+            candidates = stored,
+        )
+
+        assertEquals("https://hermes.example.com:443", repaired.single().dashboard?.url)
+    }
+
+    @Test
+    fun reconcileDashboardRoutes_keepsDifferentHostRoamingDashboard() {
+        val stored = Connection.buildRouteCandidates(
+            apiServerUrl = "http://100.71.8.56:8642",
+            relayUrl = "ws://100.71.8.56:8767",
+        )
+
+        val repaired = Connection.reconcileDashboardRoutes(
+            dashboardUrl = "https://hermes.example.com:443",
+            candidates = stored,
+        )
+
+        assertEquals("http://100.71.8.56:9119", repaired.single().dashboard?.url)
+    }
+
+    @Test
+    fun persistedSecureDashboard_repairsDerivedGatewayRouteOnReload() {
+        val stored = Connection(
+            id = "conn-https",
+            label = "Secure Hermes",
+            apiServerUrl = "https://hermes.example.com:8643",
+            relayUrl = "wss://hermes.example.com:8767",
+            tokenStoreKey = "hermes_auth_https",
+            dashboardUrl = "https://hermes.example.com:443",
+            routeCandidates = Connection.buildRouteCandidates(
+                apiServerUrl = "https://hermes.example.com:8643",
+                relayUrl = "wss://hermes.example.com:8767",
+            ),
+        )
+
+        val reloaded = json.decodeFromString<Connection>(
+            json.encodeToString(Connection.serializer(), stored),
+        ).withDashboardDefaults()
+
+        assertEquals("https://hermes.example.com:443", reloaded.dashboardUrl)
+        assertEquals(
+            "https://hermes.example.com:443",
+            reloaded.routeCandidates.single().dashboard?.url,
+        )
+    }
+
+    @Test
     fun dashboardRouteBuilder_acceptsBareTailscaleHostWithoutOptionalSurfaces() {
         val route = Connection.endpointCandidateFromDashboardUrl(
             role = "",

@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-02 — Android Russian localization
+
+Android now ships complete Russian catalogs for the main and sideload builds.
+The in-app language picker, Android locale configuration, chat and voice labels,
+tool and status presentation, diagnostics, onboarding, and plural resources are
+registered against the canonical English catalog. Existing non-English catalogs
+were refreshed to retain exact resource and format-argument parity.
+
+The integration preserves PR #276 as the source contribution while excluding
+unrelated recovery, routing, and test-stability changes from the localization
+scope. The localization registry records Android coverage only; Russian public
+documentation and marketing pages continue to use the canonical English
+fallback until those surfaces are translated separately.
+
 ## 2026-07-30 — Voice transcript identity alignment
 
 Android voice Focus mode now keys transcript rows with the same stable UI
@@ -10,6 +24,24 @@ collide during that transition and close the app.
 
 Focused JVM coverage recreates two visible rows with a shared reconciled server
 ID and verifies distinct stable transcript keys.
+
+## 2026-07-28 — Android 1.5.2 production release
+
+Android 1.5.2 shipped from the approved `dev` to `main` release tree as
+versionCode 35. The release adds provider-aware Dashboard sign-in: Nous uses
+the advertised native PKCE system-browser flow, while compatible self-hosted
+providers retain cookie-backed full-page Dashboard authentication. Callback
+origin discovery remains server-driven, private-network HTTP compatibility is
+preserved, and arbitrary public HTTP redirects remain rejected.
+
+The private Play preflight validated the exact application tree before release
+PR #265 merged. The immutable `android-v1.5.2` tag resolves to the resulting
+`main` tip, the production workflow promoted versionCode 35 to the completed
+Google Play production track, and the public GitHub release contains the
+signed AAB, sideload APK, and SHA-256 manifest. The published sideload APK
+checksum was independently verified; replacing the debug-signed phone build
+with the release-signed artifact requires an uninstall because Android
+correctly rejects cross-signature in-place updates.
 
 ## 2026-07-27 — Android replayed-message identity reconciliation
 
