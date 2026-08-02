@@ -130,35 +130,39 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
     require(id.isNotBlank()) { "missing id" }
     val resolvedLabel = label.ifBlank { id }
 
-    val idleClip = resolveStateClip(SphereState.Idle, dir)
-    requireNotNull(idleClip) {
+    val idleResolved = resolveStateClip(SphereState.Idle, dir)
+    requireNotNull(idleResolved) {
         "no usable 'idle' clip — need a frames list or a sprite sheet whose files exist in the pack"
     }
 
-    val clips = SphereState.entries.associateWith { state ->
-        resolveStateClip(state, dir) ?: idleClip
+    val resolvedActivities = SphereState.entries.associateWith { state ->
+        resolveStateClip(state, dir) ?: idleResolved
     }
+    val clips = resolvedActivities.mapValues { it.value.clip }
+    val activitySources = resolvedActivities.mapValues { it.value.key }
 
     // The upstream in-place `run`/`running` row means agent work. It must not be
     // confused with the dedicated left/right rows used for screen locomotion.
-    val workingClip = resolveAliasClip(listOf("working", "run", "running"), dir)
+    val workingResolved = resolveAliasClip(listOf("working", "run", "running"), dir)
     // Only the canonical/legacy in-place run row may substitute for directional
     // travel. A tool-specific `working` pose is never locomotion.
-    val legacyTravelClip = resolveAliasClip(listOf("run", "running"), dir)
+    val legacyTravelResolved = resolveAliasClip(listOf("run", "running"), dir)
 
-    val locomotionClips = LOCOMOTION_CLIP_CHAIN.mapNotNull { (motion, keys) ->
+    val resolvedLocomotion = LOCOMOTION_CLIP_CHAIN.mapNotNull { (motion, keys) ->
         resolveAliasClip(keys, dir)?.let { motion to it }
     }.toMap()
+    val locomotionClips = resolvedLocomotion.mapValues { it.value.clip }
+    val locomotionSources = resolvedLocomotion.mapValues { it.value.key }
 
     // Hermes maps a clean completion/greeting to wave; jump is the stronger
     // success/celebration fallback. Explicit Android names retain priority.
     val oneShots = buildMap {
         resolveAliasClip(listOf("greet", "wake", "wave", "waving"), dir)
-            ?.let { put(PetOneShot.Greet, it) }
+            ?.let { put(PetOneShot.Greet, it.clip) }
         resolveAliasClip(
             listOf("done", "wave", "waving", "success", "celebrate", "jump", "jumping"),
             dir,
-        )?.let { put(PetOneShot.Done, it) }
+        )?.let { put(PetOneShot.Done, it.clip) }
     }
 
     return PetAvatar(
@@ -172,30 +176,36 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
         // it ships one, so the badge is driven by the clip, not the declared flag.
         reactivity = SphereReactivity(
             voice = reactive.voice && PET_RENDERER_CAPABILITIES.voice,
-            tools = (workingClip != null) && PET_RENDERER_CAPABILITIES.tools,
+            tools = (workingResolved != null) && PET_RENDERER_CAPABILITIES.tools,
             intensity = reactive.intensity && PET_RENDERER_CAPABILITIES.intensity,
             gaze = false,
         ),
         activityClips = clips,
-        workingClip = workingClip,
-        legacyTravelClip = legacyTravelClip,
+        activityClipSources = activitySources,
+        workingClip = workingResolved?.clip,
+        workingClipSource = workingResolved?.key,
+        legacyTravelClip = legacyTravelResolved?.clip,
+        legacyTravelClipSource = legacyTravelResolved?.key,
         locomotionClips = locomotionClips,
+        locomotionClipSources = locomotionSources,
         oneShots = oneShots,
     )
 }
 
+private data class ResolvedPetClip(val clip: PetClip, val key: String)
+
 /** First usable clip among [keys] (friendly aliases), or null. No fallback. */
-private fun PetSpec.resolveAliasClip(keys: List<String>, dir: File): PetClip? {
-    for (key in keys) states[key]?.toClip(dir)?.let { return it }
+private fun PetSpec.resolveAliasClip(keys: List<String>, dir: File): ResolvedPetClip? {
+    for (key in keys) states[key]?.toClip(dir)?.let { return ResolvedPetClip(it, key) }
     return null
 }
 
-private fun PetSpec.resolveStateClip(state: SphereState, dir: File): PetClip? {
+private fun PetSpec.resolveStateClip(state: SphereState, dir: File): ResolvedPetClip? {
     for (key in STATE_CLIP_CHAIN[state] ?: listOf("idle")) {
         val clip = states[key]?.toClip(dir)
-        if (clip != null) return clip
+        if (clip != null) return ResolvedPetClip(clip, key)
     }
-    return defaults?.toClip(dir)
+    return defaults?.toClip(dir)?.let { ResolvedPetClip(it, "default") }
 }
 
 private fun PetClipSpec.toClip(dir: File): PetClip? {

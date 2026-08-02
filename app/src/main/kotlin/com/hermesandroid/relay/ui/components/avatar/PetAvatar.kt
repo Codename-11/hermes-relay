@@ -133,6 +133,8 @@ data class SpriteSheetClip(
 internal data class PetClipSelection(
     val clip: PetClip?,
     val mirrorHorizontally: Boolean = false,
+    /** Manifest key that produced [clip], used by the capability preview. */
+    val sourceKey: String? = null,
 )
 
 /**
@@ -173,9 +175,13 @@ class PetAvatar(
     override val description: String,
     override val reactivity: SphereReactivity,
     internal val activityClips: Map<SphereState, PetClip>,
+    internal val activityClipSources: Map<SphereState, String> = emptyMap(),
     internal val workingClip: PetClip? = null,
+    internal val workingClipSource: String? = null,
     internal val legacyTravelClip: PetClip? = null,
+    internal val legacyTravelClipSource: String? = null,
     internal val locomotionClips: Map<PetLocomotion, PetClip> = emptyMap(),
+    internal val locomotionClipSources: Map<PetLocomotion, String> = emptyMap(),
     internal val oneShots: Map<PetOneShot, PetClip> = emptyMap(),
 ) : AgentAvatar {
     override val source: AvatarSource = AvatarSource.USER
@@ -193,24 +199,32 @@ class PetAvatar(
             PetLocomotion.Held -> {
                 return PetClipSelection(
                     locomotionClips[PetLocomotion.Held] ?: activityClips[SphereState.Idle],
+                    sourceKey = locomotionClipSources[PetLocomotion.Held]
+                        ?: activityClipSources[SphereState.Idle],
                 )
             }
             PetLocomotion.Wave -> {
                 return PetClipSelection(
                     locomotionClips[PetLocomotion.Wave] ?: activityClips[SphereState.Idle],
+                    sourceKey = locomotionClipSources[PetLocomotion.Wave]
+                        ?: activityClipSources[SphereState.Idle],
                 )
             }
             PetLocomotion.Jump -> {
                 return PetClipSelection(
                     locomotionClips[PetLocomotion.Jump] ?: activityClips[SphereState.Idle],
+                    sourceKey = locomotionClipSources[PetLocomotion.Jump]
+                        ?: activityClipSources[SphereState.Idle],
                 )
             }
             PetLocomotion.Fall -> {
-                return PetClipSelection(
-                    locomotionClips[PetLocomotion.Fall]
-                        ?: locomotionClips[PetLocomotion.Jump]
-                        ?: activityClips[SphereState.Idle],
-                )
+                val clip = locomotionClips[PetLocomotion.Fall]
+                    ?: locomotionClips[PetLocomotion.Jump]
+                    ?: activityClips[SphereState.Idle]
+                val source = locomotionClipSources[PetLocomotion.Fall]
+                    ?: locomotionClipSources[PetLocomotion.Jump]
+                    ?: activityClipSources[SphereState.Idle]
+                return PetClipSelection(clip, sourceKey = source)
             }
             PetLocomotion.WalkLeft,
             PetLocomotion.WalkRight,
@@ -224,8 +238,13 @@ class PetAvatar(
                     PetLocomotion.RunLeft -> PetLocomotion.WalkLeft
                     PetLocomotion.RunRight -> PetLocomotion.WalkRight
                 }
-                listOf(exact, sameDirectionAlternate).firstNotNullOfOrNull(locomotionClips::get)?.let {
-                    return PetClipSelection(it)
+                val sameDirectionMotion = listOf(exact, sameDirectionAlternate)
+                    .firstOrNull { locomotionClips[it] != null }
+                if (sameDirectionMotion != null) {
+                    return PetClipSelection(
+                        clip = locomotionClips[sameDirectionMotion],
+                        sourceKey = locomotionClipSources[sameDirectionMotion],
+                    )
                 }
                 val oppositeDirection = when (exact) {
                     PetLocomotion.WalkLeft -> listOf(PetLocomotion.WalkRight, PetLocomotion.RunRight)
@@ -233,14 +252,20 @@ class PetAvatar(
                     PetLocomotion.RunLeft -> listOf(PetLocomotion.RunRight, PetLocomotion.WalkRight)
                     PetLocomotion.RunRight -> listOf(PetLocomotion.RunLeft, PetLocomotion.WalkLeft)
                 }
-                oppositeDirection.firstNotNullOfOrNull(locomotionClips::get)?.let {
-                    return PetClipSelection(it, mirrorHorizontally = true)
+                val oppositeMotion = oppositeDirection.firstOrNull { locomotionClips[it] != null }
+                if (oppositeMotion != null) {
+                    return PetClipSelection(
+                        clip = locomotionClips[oppositeMotion],
+                        mirrorHorizontally = true,
+                        sourceKey = locomotionClipSources[oppositeMotion],
+                    )
                 }
                 // Upstream treats the legacy in-place run row as left-facing
                 // for travel, mirroring it only for rightward motion.
                 return PetClipSelection(
                     clip = legacyTravelClip ?: activityClips[SphereState.Idle],
                     mirrorHorizontally = legacyTravelClip != null && movingRight,
+                    sourceKey = legacyTravelClipSource ?: activityClipSources[SphereState.Idle],
                 )
             }
             PetLocomotion.None -> Unit
@@ -249,7 +274,8 @@ class PetAvatar(
             state.toolCallBurst >= WORKING_BURST_THRESHOLD &&
             (state.state == SphereState.Thinking || state.state == SphereState.Streaming)
         val clip = if (toolActive) workingClip else (activityClips[state.state] ?: activityClips[SphereState.Idle])
-        return PetClipSelection(clip)
+        val source = if (toolActive) workingClipSource else activityClipSources[state.state]
+        return PetClipSelection(clip, sourceKey = source)
     }
 
     internal fun resolveBaseClip(state: AvatarRenderState): PetClip? = resolveBaseSelection(state).clip

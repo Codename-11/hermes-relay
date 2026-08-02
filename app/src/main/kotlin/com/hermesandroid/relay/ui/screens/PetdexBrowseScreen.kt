@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,6 +30,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +76,12 @@ import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
+import com.hermesandroid.relay.ui.components.avatar.PetAvatar
+import com.hermesandroid.relay.ui.components.avatar.PetPreviewAction
+import com.hermesandroid.relay.ui.components.avatar.PetPreviewMapping
+import com.hermesandroid.relay.ui.components.avatar.PetPreviewSupport
+import com.hermesandroid.relay.ui.components.avatar.forCapabilityPreview
+import com.hermesandroid.relay.ui.components.avatar.previewMappings
 import com.hermesandroid.relay.ui.components.decodeInlineImageDataUrl
 import com.hermesandroid.relay.ui.components.withInlineImageDecodeLock
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -311,36 +321,107 @@ private fun SelectedPetPreview(
     pet: AgentAvatar,
     animationEnabled: Boolean,
 ) {
+    val mappings = remember(pet) { (pet as? PetAvatar)?.previewMappings().orEmpty() }
+    val previewPet = remember(pet) { (pet as? PetAvatar)?.forCapabilityPreview() ?: pet }
+    var selectedAction by remember(pet.id) { mutableStateOf(PetPreviewAction.Idle) }
+    val selectedMapping = mappings.firstOrNull { it.action == selectedAction }
+        ?: mappings.firstOrNull()
+    val renderState = selectedMapping?.renderState
+        ?: AvatarRenderState(state = SphereState.Idle)
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
     ) {
-        Row(
+        Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            pet.Render(
-                state = AvatarRenderState(
-                    state = SphereState.Idle,
-                    paused = !animationEnabled,
-                ),
-                modifier = Modifier.size(88.dp),
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = stringResource(R.string.petdex_selected),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-                Text(
-                    text = pet.label,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                key(pet.id) {
+                    previewPet.Render(
+                        state = renderState.copy(paused = !animationEnabled),
+                        modifier = Modifier.size(88.dp),
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = stringResource(R.string.petdex_selected),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    Text(
+                        text = pet.label,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    if (selectedMapping != null) {
+                        Text(
+                            text = petPreviewMappingDescription(selectedMapping),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                }
+            }
+            if (mappings.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    mappings.forEach { mapping ->
+                        FilterChip(
+                            selected = mapping.action == selectedMapping?.action,
+                            onClick = { selectedAction = mapping.action },
+                            label = { Text(petPreviewActionLabel(mapping.action)) },
+                        )
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun petPreviewActionLabel(action: PetPreviewAction): String = stringResource(
+    when (action) {
+        PetPreviewAction.Idle -> R.string.pet_preview_idle
+        PetPreviewAction.WalkLeft -> R.string.pet_preview_walk_left
+        PetPreviewAction.WalkRight -> R.string.pet_preview_walk_right
+        PetPreviewAction.Jump -> R.string.pet_preview_jump
+        PetPreviewAction.Fall -> R.string.pet_preview_fall
+        PetPreviewAction.Held -> R.string.pet_preview_held
+        PetPreviewAction.Wave -> R.string.pet_preview_wave
+        PetPreviewAction.Working -> R.string.pet_preview_working
+        PetPreviewAction.Review -> R.string.pet_preview_review
+        PetPreviewAction.Waiting -> R.string.pet_preview_waiting
+        PetPreviewAction.Error -> R.string.pet_preview_error
+    },
+)
+
+@Composable
+private fun petPreviewMappingDescription(mapping: PetPreviewMapping): String = when (mapping.support) {
+    PetPreviewSupport.Direct -> stringResource(
+        R.string.pet_preview_uses_clip,
+        mapping.sourceKey,
+    )
+    PetPreviewSupport.Mirrored -> stringResource(
+        R.string.pet_preview_mirrors_clip,
+        mapping.sourceKey,
+    )
+    PetPreviewSupport.Fallback -> stringResource(
+        R.string.pet_preview_falls_back,
+        mapping.sourceKey,
+    )
+    PetPreviewSupport.MirroredFallback -> stringResource(
+        R.string.pet_preview_mirrors_fallback,
+        mapping.sourceKey,
+    )
 }
 
 @Composable
