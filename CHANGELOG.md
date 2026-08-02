@@ -42,6 +42,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Voice transcripts retain stable rows after chat-history reconciliation.** Focus mode uses the same stable Compose identity as the main conversation, preventing duplicate-key crashes when live rows adopt persisted server IDs.
 
+## [1.5.0] - 2026-08-02
+
+### Added
+
+- **Realtime Agent sessions can speak only settled answers.** Clients may enable an optional per-session `final_answer_only` policy that suppresses routine acknowledgements, progress narration, and intermediate commentary while preserving spoken approvals, confirmation questions, blocking failures, and the final Hermes answer.
+- **Agents can draft native Android plugin pages through Relay.** New tools store bounded declarative JSON pages under the authenticated Relay plugin namespace, while Android retains control of enablement, publication, write grants, and persistent removal. Generated pages cannot include executable code, arbitrary network calls, Android intents, or backend action requests.
+
 ## [Android 1.5.2] - 2026-07-28
 
 ### Fixed
