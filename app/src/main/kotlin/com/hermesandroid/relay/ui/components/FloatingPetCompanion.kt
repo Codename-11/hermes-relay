@@ -214,6 +214,12 @@ internal fun shouldPauseFloatingPet(
     animationEnabled: Boolean,
 ): Boolean = alreadyPaused || !animationEnabled
 
+/** A moving screen owns the gesture; an invisible/unpositioned target must never intercept it. */
+internal fun floatingPetAcceptsPointerInput(
+    positioned: Boolean,
+    surfaceScrolling: Boolean,
+): Boolean = positioned && !surfaceScrolling
+
 internal fun floatingPetRoamDelayMs(
     hasMoved: Boolean,
     roamIntervalMs: Long = PET_ROAM_REPEAT_DELAY_MS,
@@ -2217,7 +2223,17 @@ fun FloatingPetCompanion(
                     scaleY = scale * (1f - landingSquash.value * 0.10f)
                     translationY = -heldLiftPx * heldProgress
                 }
-                .pointerInput(pet.id, safeBounds, roamingRails, settledHabitat) {
+                .pointerInput(
+                    pet.id,
+                    safeBounds,
+                    roamingRails,
+                    settledHabitat,
+                    positioned,
+                    surfaceScrolling,
+                ) {
+                    if (!floatingPetAcceptsPointerInput(positioned, surfaceScrolling)) {
+                        return@pointerInput
+                    }
                     detectDragGesturesAfterLongPress(
                         onDragStart = {
                             pendingDrop = null
@@ -2289,7 +2305,9 @@ fun FloatingPetCompanion(
                         },
                     )
                 }
-                .clickable {
+                .clickable(
+                    enabled = floatingPetAcceptsPointerInput(positioned, surfaceScrolling),
+                ) {
                     tapReactionNonce += 1
                     menuExpanded = true
                 }

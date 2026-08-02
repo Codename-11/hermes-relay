@@ -58,7 +58,8 @@ The companion has a durable home and an optional autonomous roaming mode:
   the persistent bottom status strip on Settings, Appearance, and About. They
   use existing control or content edges, so the overlay inserts no spacer and
   reduces no text or control layout area. Other routes keep the pet docked at
-  its saved edge.
+  its saved edge. The Petdex gallery hides the global companion because it
+  already renders pet previews and its cards contain install/source controls.
   Additional Settings terrain can publish through the same live registry, but
   every card/header remains an explicit opt-in with current scroll/modal state;
   arbitrary Compose or accessibility elements never become terrain.
@@ -91,6 +92,9 @@ The companion has a durable home and an optional autonomous roaming mode:
   scroll-to-bottom button and Terminal's jump-to-latest pill trim the ledge into
   pet-sized safe segments, or block it when no usable segment remains. When the
   controls disappear, their measured obstacle is removed.
+- Interactive thinking blocks and the complete bodies of root Settings and
+  Appearance cards are registered as obstacles. Their measured top edges remain
+  valid rails, but autonomous and recovery paths cannot cross their controls.
 - After a plain assistant response settles, the pet may make one deterministic
   visit. A nearby response uses the direct clear-gutter excursion. A farther
   visible response is reachable only through settled message tops whose
@@ -121,8 +125,10 @@ The companion has a durable home and an optional autonomous roaming mode:
   animation continuously. TalkBack vertical moves intentionally pause roaming
   before applying free-form placement.
 - Only the pet-sized target consumes touch input; the root positioning layer is
-  click-through. Registered UI bounds constrain autonomous movement and drop
-  landing selection, while direct dragging itself remains finger-driven.
+  click-through. While a supported surface is actively scrolling, the target
+  also yields direct gestures to the screen beneath it. Registered UI bounds
+  constrain autonomous movement and drop landing selection, while direct
+  dragging itself remains finger-driven.
 - Roaming requires an idle agent, the foreground app, enabled animation, and an
   available safe rail. Agent activity, scrolling, dragging, an open pet menu,
   startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
@@ -190,7 +196,9 @@ Appearance offers two installation paths:
   downloaded to the phone only after an explicit Install action. Installation
   converts and selects the pet immediately; enabling roaming and optionally
   choosing a temperament are the only behavior settings. Petdex users do not
-  edit a manifest, rename rows, or create extra animations.
+  edit a manifest, rename rows, or create extra animations. The global floating
+  companion is suppressed on this dense gallery route so it cannot cover card
+  actions; the gallery previews remain visible.
 - **Add a pet** imports a custom Relay-format `.zip` or single image from device
   storage. This path remains independent of Petdex and accepts the manifest
   format documented below.
@@ -535,19 +543,21 @@ intensity-driven playback speed add live motion on top.
   non-PNG file with a `.png` name) is **not** caught at load time — the pet still
   appears valid in the picker but renders **blank**. Verify your images actually
   open before shipping a pack.
-- **Memory:** while a pet is selected, every frame of its current clip is decoded
-  into memory at **full resolution** (there is no downscaling). Many large frames
-  can use a lot of RAM, and a single very large image can fail to decode. For a
-  static per-state pack, one `2048×2048` PNG per state is reasonable for
-  full-width, high-density phones because each clip contains only one frame and
-  only the **current** clip is decoded. For animated frame sequences, keep frames
-  smaller and clip lengths modest (≤ ~30 frames); for many frames prefer a
+- **Memory:** bitmap bounds are inspected before allocation. A frame sequence is
+  limited to 120 files and 8 million cumulative decoded pixels; a sprite sheet
+  is limited to 16 million decoded pixels. Assets within those limits are decoded
+  at full resolution (there is no downscaling). For animated frame sequences,
+  keep frames smaller and clip lengths modest (≤ ~30 frames); for many frames prefer a
   **sprite sheet** over a long frame sequence — a sheet decodes as one bitmap, so
   its cells can be larger (256–512 px) without the per-frame cost of a sequence.
   **Size art for the companion perch**: a 128 px cell or still is sufficient
   for the 50/60 dp base rendered pet, even at the 120% setting, and avoids
   unnecessary decode cost.
-  Only the **selected** pet's **current** clip is decoded, off the main thread.
+  Decoding runs off the main thread. The selected avatar keeps a four-entry
+  decoded-clip LRU and a two-sheet LRU so common activity/locomotion transitions
+  avoid repeat disk reads without allowing an unbounded cache. While an uncached
+  state is decoding, the last complete visual remains on screen rather than
+  exposing a blank Canvas frame.
 - File names must stay **inside the pack directory** — paths that escape it
   (`../…`) are rejected.
 
@@ -659,8 +669,8 @@ fallback checks with a pack missing one or more optional rows:
   blocked; recovery and drag/drop paths are labeled separately.
 - [ ] Scrolling Chat, Settings, Appearance, and About keeps the pet attached to valid
   measured or synthetic habitat, with no teleport, edge snap, or scroll-only
-  dimming; motion replans after scrolling stops. Settings/Appearance/About
-  dialogs suspend it.
+  dimming; motion replans after scrolling stops and the moving pet target does
+  not steal the scroll gesture. Settings/Appearance/About dialogs suspend it.
 - [ ] Left/right travel faces correctly. The Petdex preview reports and visibly
   demonstrates direct, mirrored, fallback, and mirrored-fallback selection for
   Walk left/right, Jump, Fall, Held, Wave, Working, Review, Waiting, and Error.
@@ -673,6 +683,7 @@ fallback checks with a pack missing one or more optional rows:
   pacing without interrupting direct interaction or active Hermes work.
 - [ ] Terminal walks the extra-keys toolbar; root Settings and Appearance tour
   several measured card tops and retrace the numbered route to their origin;
+  the pet never crosses or captures the cards' interactive bodies;
   Settings/Appearance/About retain the bottom status rail as persistent terrain.
   Routes without a registered rail stay docked.
 - [ ] App animation-off, Android animator scale 0, and TalkBack touch exploration

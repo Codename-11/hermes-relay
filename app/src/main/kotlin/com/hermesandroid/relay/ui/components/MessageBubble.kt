@@ -333,6 +333,7 @@ fun MessageBubble(
                 thinkingContent = message.thinkingContent,
                 isStreaming = message.isThinkingStreaming,
                 timestamp = message.timestamp,
+                petObstacleKey = "chat-thinking:${message.uiKey}",
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     .padding(bottom = 4.dp)
@@ -348,6 +349,7 @@ fun MessageBubble(
                         "Advisor unavailable."
                     },
                     isStreaming = false,
+                    petObstacleKey = "chat-thinking:${message.uiKey}:advisor:${reference.index}",
                     headerText = buildString {
                         append("Advisor ")
                         append(reference.index)

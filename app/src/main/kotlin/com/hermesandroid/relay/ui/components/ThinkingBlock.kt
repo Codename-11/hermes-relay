@@ -31,6 +31,9 @@ import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
+
+private val THINKING_BLOCK_PET_ROUTES = setOf("chat")
 
 @Composable
 fun ThinkingBlock(
@@ -41,6 +44,8 @@ fun ThinkingBlock(
     timestamp: Long? = null,
     headerText: String? = null,
     accessibilityLabel: String = "Thinking",
+    /** Stable key when this interactive block participates in Chat pet terrain. */
+    petObstacleKey: String? = null,
 ) {
     var expanded by remember { mutableStateOf(isStreaming) }
     val locale = LocalLocale.current.platformLocale
@@ -52,7 +57,18 @@ fun ThinkingBlock(
     }
 
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .then(
+                if (petObstacleKey != null) {
+                    Modifier.petObstacleSurface(
+                        key = petObstacleKey,
+                        routes = THINKING_BLOCK_PET_ROUTES,
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            .fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         )

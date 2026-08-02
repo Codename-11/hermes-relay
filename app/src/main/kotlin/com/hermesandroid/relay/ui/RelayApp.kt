@@ -292,6 +292,10 @@ internal fun petSurfaceOwnerForRoute(route: String?): String? = when (route) {
     else -> null
 }
 
+/** Petdex already supplies interactive pet previews; keep its install cards unobstructed. */
+internal fun floatingPetAllowedOnRoute(route: String?): Boolean =
+    route != Screen.PetdexBrowse.route
+
 sealed class Screen(
     val route: String,
     val label: String,
@@ -2600,6 +2604,7 @@ fun RelayApp() {
         val petSurfaceOwner = petSurfaceOwnerForRoute(currentRoute)
         val petActivity = petCompanionCoordinator.activityFor(petSurfaceOwner)
         val showFloatingPet = activeFloatingPet != null &&
+            floatingPetAllowedOnRoute(currentRoute) &&
             !petActivity.hidden &&
             !suppressGlobalChrome &&
             !showStartupSphere &&

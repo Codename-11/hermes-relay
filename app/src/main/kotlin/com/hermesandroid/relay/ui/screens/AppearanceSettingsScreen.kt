@@ -87,6 +87,7 @@ import com.hermesandroid.relay.ui.components.avatar.AvatarSource
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
 import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppTheme
@@ -103,10 +104,17 @@ import kotlin.math.roundToInt
 private const val APPEARANCE_PET_SURFACE_ROUTE = "settings/appearance"
 private val APPEARANCE_PET_SURFACE_ROUTES = setOf(APPEARANCE_PET_SURFACE_ROUTE)
 
-private fun Modifier.appearancePetPerch(key: String): Modifier = petPerchSurface(
-    key = "appearance-card:$key",
-    routes = APPEARANCE_PET_SURFACE_ROUTES,
-)
+/** Each card remains a top-edge ledge while its controls stay forbidden terrain. */
+private fun Modifier.appearancePetSurface(key: String): Modifier {
+    val surfaceKey = "appearance-card:$key"
+    return petPerchSurface(
+        key = surfaceKey,
+        routes = APPEARANCE_PET_SURFACE_ROUTES,
+    ).petObstacleSurface(
+        key = "$surfaceKey:controls",
+        routes = APPEARANCE_PET_SURFACE_ROUTES,
+    )
+}
 
 /**
  * Dedicated Appearance settings screen. Hosts theme picker (auto/light/dark),
@@ -207,7 +215,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
-                    .appearancePetPerch("theme")
+                    .appearancePetSurface("theme")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -253,7 +261,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
-                    .appearancePetPerch("language")
+                    .appearancePetSurface("language")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -324,7 +332,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
-                    .appearancePetPerch("display")
+                    .appearancePetSurface("display")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -444,7 +452,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
-                    .appearancePetPerch("font")
+                    .appearancePetSurface("font")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -486,7 +494,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
-                    .appearancePetPerch("animation")
+                    .appearancePetSurface("animation")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -618,7 +626,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
-                    .appearancePetPerch("background")
+                    .appearancePetSurface("background")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -705,7 +713,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
-                    .appearancePetPerch("floating-pet")
+                    .appearancePetSurface("floating-pet")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),

@@ -43,6 +43,13 @@ class RelayAppStatusTest {
     }
 
     @Test
+    fun `Petdex gallery uses its own previews without the global companion overlay`() {
+        assertFalse(floatingPetAllowedOnRoute(Screen.PetdexBrowse.route))
+        assertTrue(floatingPetAllowedOnRoute(Screen.Chat.route))
+        assertTrue(floatingPetAllowedOnRoute(Screen.AppearanceSettings.route))
+    }
+
+    @Test
     fun `connection footer remains visible in conversation voice only`() {
         assertTrue(shouldShowConnectionFooter(voiceMode = false, VoicePresentationMode.Focus))
         assertTrue(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Conversation))

@@ -104,6 +104,7 @@ import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -117,6 +118,16 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 
 private const val SETTINGS_PET_SURFACE_ROUTE = "settings"
 private val SETTINGS_PET_SURFACE_ROUTES = setOf(SETTINGS_PET_SURFACE_ROUTE)
+
+/** A settings card is a walkable top edge and a forbidden interactive body. */
+private fun Modifier.settingsPetSurface(key: String): Modifier =
+    petPerchSurface(
+        key = key,
+        routes = SETTINGS_PET_SURFACE_ROUTES,
+    ).petObstacleSurface(
+        key = "$key:controls",
+        routes = SETTINGS_PET_SURFACE_ROUTES,
+    )
 
 /**
  * Root Settings destination. After the 2026-04-11 split, Settings is a
@@ -378,10 +389,7 @@ fun SettingsScreen(
                 statusPills = listOfNotNull(chatPill),
                 onClick = { showAgentSheet = true },
                 isDarkTheme = isDarkTheme,
-                modifier = Modifier.petPerchSurface(
-                    key = "settings-card:active-agent",
-                    routes = SETTINGS_PET_SURFACE_ROUTES,
-                ),
+                modifier = Modifier.settingsPetSurface("settings-card:active-agent"),
             )
 
             // ── Inspect Agent ──────────────────────────────────────────
@@ -397,10 +405,7 @@ fun SettingsScreen(
                 activeProfile = inspectorTarget,
                 onClick = { profileName -> onNavigateToProfileInspector(profileName) },
                 isDarkTheme = isDarkTheme,
-                modifier = Modifier.petPerchSurface(
-                    key = "settings-card:profile-inspector",
-                    routes = SETTINGS_PET_SURFACE_ROUTES,
-                ),
+                modifier = Modifier.settingsPetSurface("settings-card:profile-inspector"),
             )
 
             // ── Profile lock ───────────────────────────────────────────
@@ -424,10 +429,7 @@ fun SettingsScreen(
                 lockedDisplayName = lockedDisplayName,
                 onClick = { showProfileLockDialog = true },
                 isDarkTheme = isDarkTheme,
-                modifier = Modifier.petPerchSurface(
-                    key = "settings-card:profile-lock",
-                    routes = SETTINGS_PET_SURFACE_ROUTES,
-                ),
+                modifier = Modifier.settingsPetSurface("settings-card:profile-lock"),
             )
 
             // ── Quick Controls ─────────────────────────────────────────
@@ -439,10 +441,7 @@ fun SettingsScreen(
             QuickControlsCard(
                 connectionViewModel = connectionViewModel,
                 isDarkTheme = isDarkTheme,
-                modifier = Modifier.petPerchSurface(
-                    key = "settings-card:quick-controls",
-                    routes = SETTINGS_PET_SURFACE_ROUTES,
-                ),
+                modifier = Modifier.settingsPetSurface("settings-card:quick-controls"),
             )
 
             // (The "Active Connection quick-look card" that used to live
@@ -1292,10 +1291,7 @@ private fun SettingsCategoryRow(
 ) {
     Card(
         modifier = Modifier
-            .petPerchSurface(
-                key = "settings-category:$petPerchKey",
-                routes = SETTINGS_PET_SURFACE_ROUTES,
-            )
+            .settingsPetSurface("settings-category:$petPerchKey")
             .fillMaxWidth()
             .gradientBorder(
                 shape = RoundedCornerShape(12.dp),

@@ -103,6 +103,13 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `pet target yields direct gestures while the screen is scrolling`() {
+        assertTrue(floatingPetAcceptsPointerInput(positioned = true, surfaceScrolling = false))
+        assertFalse(floatingPetAcceptsPointerInput(positioned = true, surfaceScrolling = true))
+        assertFalse(floatingPetAcceptsPointerInput(positioned = false, surfaceScrolling = false))
+    }
+
+    @Test
     fun `roaming starts immediately then uses the normal repeat delay`() {
         assertEquals(0L, floatingPetRoamDelayMs(hasMoved = false))
         assertEquals(4_800L, floatingPetRoamDelayMs(hasMoved = true))
