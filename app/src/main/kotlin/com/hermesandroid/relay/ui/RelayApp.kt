@@ -100,6 +100,7 @@ import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import com.hermesandroid.relay.ui.components.pet.LocalPetSafeAreaRegistry
 import com.hermesandroid.relay.ui.components.pet.PetCompanionCoordinator
 import com.hermesandroid.relay.ui.components.pet.PetSafeAreaRegistry
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
 import com.hermesandroid.relay.ui.components.ChatTransportTier
@@ -264,6 +265,25 @@ internal fun shouldShowConnectionFooter(
     voiceMode: Boolean,
     presentationMode: VoicePresentationMode,
 ): Boolean = !voiceMode || presentationMode == VoicePresentationMode.Conversation
+
+internal const val APP_STATUS_PET_WALK_REGION = "app-status-footer"
+
+/**
+ * Routes where the persistent status chrome is deliberately exposed as a
+ * pet ledge. Keep this list small: every entry must publish its active-scroll
+ * and modal state so autonomous motion never fights the screen beneath it.
+ */
+internal val APP_STATUS_PET_ROUTES: Set<String> = setOf(
+    Screen.Settings.route,
+    Screen.About.route,
+)
+
+internal fun petSurfaceOwnerForRoute(route: String?): String? = when (route) {
+    Screen.Chat.route -> "chat"
+    Screen.Terminal.route -> "terminal"
+    in APP_STATUS_PET_ROUTES -> route
+    else -> null
+}
 
 sealed class Screen(
     val route: String,
@@ -1482,6 +1502,10 @@ fun RelayApp() {
                         // Routine in-progress reconnect surfaces here (amber cue)
                         // instead of a take-space banner or a floating toast.
                         reconnecting = connectionReconnecting,
+                        modifier = Modifier.petPerchSurface(
+                            key = APP_STATUS_PET_WALK_REGION,
+                            routes = APP_STATUS_PET_ROUTES,
+                        ),
                     )
                 }
             }
@@ -2495,11 +2519,7 @@ fun RelayApp() {
         // walk strips; without one the pet remains docked at its persisted edge.
         // The host's empty full-screen area has no pointer input, so only the
         // 48/56dp pet target intercepts touches.
-        val petSurfaceOwner = when (currentRoute) {
-            Screen.Chat.route -> "chat"
-            Screen.Terminal.route -> "terminal"
-            else -> null
-        }
+        val petSurfaceOwner = petSurfaceOwnerForRoute(currentRoute)
         val petActivity = petCompanionCoordinator.activityFor(petSurfaceOwner)
         val showFloatingPet = activeFloatingPet != null &&
             !petActivity.hidden &&

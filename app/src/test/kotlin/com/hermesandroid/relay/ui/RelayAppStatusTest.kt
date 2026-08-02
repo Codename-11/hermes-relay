@@ -18,6 +18,24 @@ import org.junit.Test
 class RelayAppStatusTest {
 
     @Test
+    fun `pet roaming supports chat terminal and curated status chrome routes`() {
+        assertEquals("chat", petSurfaceOwnerForRoute(Screen.Chat.route))
+        assertEquals("terminal", petSurfaceOwnerForRoute(Screen.Terminal.route))
+        assertEquals(Screen.Settings.route, petSurfaceOwnerForRoute(Screen.Settings.route))
+        assertEquals(Screen.About.route, petSurfaceOwnerForRoute(Screen.About.route))
+        assertNull(petSurfaceOwnerForRoute(Screen.AppearanceSettings.route))
+        assertNull(petSurfaceOwnerForRoute(Screen.Manage.route))
+    }
+
+    @Test
+    fun `status chrome route allowlist stays intentionally small`() {
+        assertEquals(
+            setOf(Screen.Settings.route, Screen.About.route),
+            APP_STATUS_PET_ROUTES,
+        )
+    }
+
+    @Test
     fun `connection footer remains visible in conversation voice only`() {
         assertTrue(shouldShowConnectionFooter(voiceMode = false, VoicePresentationMode.Focus))
         assertTrue(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Conversation))
