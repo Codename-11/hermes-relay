@@ -72,18 +72,21 @@ The companion has a durable home and an optional autonomous roaming mode:
   pet-sized safe segments, or block it when no usable segment remains. When the
   controls disappear, their measured obstacle is removed.
 - After a plain assistant response settles, the pet may make one deterministic
-  visit: walk along the composer to a clear screen-side gutter, jump vertically
-  beside the message, step onto a rail raised above the bubble, walk across its
-  top, pause and wave, walk back to the measured edge, then hop outward and fall
-  through the clear gutter to the composer. Exterior gutter travel remains
-  airborne rather than presenting an invisible walkable ledge.
+  visit. A nearby response uses the direct clear-gutter excursion. A farther
+  visible response is reachable only through settled message tops whose
+  collision-checked hops each stay within 210 dp; the pet climbs those levels,
+  crosses and greets only at the destination, then returns through bounded
+  levels to the composer. With no complete chain, a sparse new chat defers the
+  visit instead of making a screen-height leap. Exterior gutter and route
+  travel remains airborne rather than presenting an invisible walkable ledge.
   The full sprite footprint remains above the bubble and its jump/drop path does
   not cross text. Cards, attachments, tool rows, phone/voice actions, narrow
   bubbles, and bubbles without a safe gutter are skipped.
 - Horizontal travel uses directional walking aliases and a duration rounded to
   complete walk cycles, preventing sliding feet. Turns pause briefly. Vertical
-  travel uses a squash anticipation, `jumping` through the apex, `falling` on
-  descent, an altitude-responsive shadow, and a small landing squash. Ambient
+  travel scales its duration with route length, uses a squash anticipation,
+  `jumping` through the apex, `falling` on descent, an altitude-responsive
+  shadow, and a small landing squash. Ambient
   idle actions cycle through a hop, wave, and rest rather than repeating one
   animation continuously. TalkBack vertical moves intentionally pause roaming
   before applying free-form placement.
@@ -587,6 +590,9 @@ fallback checks with a pack missing one or more optional rows:
 - [ ] After a plain assistant response, it approaches through the outer gutter,
   jumps beside the bubble, walks across the raised top rail, waves, returns to
   the same edge, and drops to the composer without covering message text.
+- [ ] In a filled viewport, a distant newest response is reached through nearby
+  eligible bubble tops and returned from through the same bounded terrain. In a
+  sparse new chat with no complete chain, no screen-height visit starts.
 - [ ] A narrow bubble or blocked gutter is skipped; cards, attachments, tool
   rows, and phone/voice action bubbles are never visited.
 - [ ] Scrolling Chat, Settings, and About keeps the pet attached to valid

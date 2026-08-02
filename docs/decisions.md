@@ -2472,26 +2472,30 @@ top of a response bubble without ever covering its text or jumping through it.
 - Drag/drop changes placement without changing the roaming preference. The held
   and falling states suspend autonomous movement until the placement and landing
   animation settle, then an enabled pet resumes from the valid landing surface.
-- A response visit is a deterministic composer-to-bubble excursion. The planner
-  proves a clear outer gutter and a raised top rail for the complete pet
-  footprint, walks across the bubble, and returns through the same edge before
-  dropping to the composer. It skips unsafe geometry and interactive response
-  rows rather than crossing or covering message text.
+- A response visit is a deterministic bounded terrain journey. Nearby responses
+  use the direct composer/gutter/bubble excursion. Farther visible responses
+  require a complete chain of settled message-top rails with no hop over 210 dp;
+  sparse chats without that chain defer the visit. Only the destination gets the
+  full cross and greeting, and the return journey remains collision checked.
+  Unsafe geometry and interactive response rows are skipped rather than crossed.
 - Settled Chat uses one text-safe habitat order: the measured side pocket beside
   the newest settled bubble, then its raised top edge, then the outer composer
   corner. A changed habitat is reached from the live coordinate, never snapped.
 - Settings terrain may be published dynamically by reusable components, but it
   remains explicit opt-in measured geometry with owner scroll/modal state. The
   app never turns every card, heading, control, or semantics node into terrain.
+  The same maximum transfer length applies, so full-width cards without a
+  pet-sized clear approach do not become implied levels and the status rail
+  remains the correct habitat until a screen publishes safer geometry.
 - Temporary suspension preserves screen coordinates. Scrolling stops movement
   but does not reclassify the route, re-dock, teleport, or dim the pet. Settings
   and About hide it while a dialog owns the surface. Routes without an approved
   rail use the persisted logical-edge home.
 - Motion states correspond to physical movement: directional walking for
   horizontal travel, jump to the apex, fall through descent and manual-drop
-  settling, and held during drag. Anticipation, turn pauses, cycle-quantized
-  travel, shadow height, and landing squash are presentation polish around those
-  honest states.
+  settling, and held during drag. Airborne duration grows with route length;
+  anticipation, turn pauses, cycle-quantized walking, shadow height, and landing
+  squash are presentation polish around those honest states.
 - Calm, Balanced, and Playful alter cadence only. App animation settings,
   foreground/activity state, scrolling, dialogs, Android animator scale, and
   TalkBack touch exploration always take precedence.

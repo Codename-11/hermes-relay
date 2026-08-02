@@ -79,6 +79,7 @@ class MessageBubblePetVisitTargetTest {
 
         assertTrue(isPetPerchCandidate(user))
         assertTrue(newestPetPerchUiKey(listOf(assistant, user)) == user.uiKey)
+        assertTrue(petPerchUiKeys(listOf(assistant, user)) == setOf(assistant.uiKey, user.uiKey))
     }
 
     @Test

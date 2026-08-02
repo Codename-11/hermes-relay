@@ -826,6 +826,10 @@ internal fun newestPetVisitTargetUiKey(messages: List<ChatMessage>): String? =
 internal fun newestPetPerchUiKey(messages: List<ChatMessage>): String? =
     messages.lastOrNull()?.takeIf(::isPetPerchCandidate)?.uiKey
 
+/** All settled visible-message candidates that may become journey stepping stones. */
+internal fun petPerchUiKeys(messages: List<ChatMessage>): Set<String> =
+    messages.asSequence().filter(::isPetPerchCandidate).map { it.uiKey }.toSet()
+
 /** The completion edge is usable only after the newest assistant row itself settles. */
 internal fun newestPetAssistantIsSettled(messages: List<ChatMessage>): Boolean =
     messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.let { message ->

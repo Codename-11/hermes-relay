@@ -401,6 +401,48 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `cross level transfer respects maximum hop length`() {
+        val current = PetRoamingRail(
+            "status:0",
+            "status",
+            PetSafeBounds(40f, 700f, 360f, 700f),
+        )
+        val upper = PetRoamingRail(
+            "settings-level:0",
+            "settings-level",
+            PetSafeBounds(40f, 300f, 360f, 300f),
+        )
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f)
+
+        assertNull(
+            choosePetRailTransfer(
+                currentRail = current,
+                current = PetPoint(200f, 700f),
+                rails = listOf(upper),
+                bounds = outer,
+                uiObstacles = emptyList(),
+                footprint = footprint,
+                maximumRouteLength = 180f,
+            ),
+        )
+        assertEquals(
+            upper,
+            requireNotNull(
+                choosePetRailTransfer(
+                    currentRail = current,
+                    current = PetPoint(200f, 700f),
+                    rails = listOf(upper),
+                    bounds = outer,
+                    uiObstacles = emptyList(),
+                    footprint = footprint,
+                    maximumRouteLength = 420f,
+                ),
+            ).rail,
+        )
+    }
+
+    @Test
     fun `overlay route detours around registered control instead of crossing it`() {
         val safe = PetSafeBounds(20f, 20f, 180f, 180f)
         val rawControl = PetObstacle(80f, 60f, 120f, 140f)
@@ -543,6 +585,84 @@ class PetRoamingGeometryTest {
         assertTrue(isPetSupportedByPerch(PetPoint(100f, 132f), perch, footprint))
         assertFalse(isPetSupportedByPerch(PetPoint(100f, 129f), perch, footprint))
         assertFalse(isPetSupportedByPerch(PetPoint(15f, 132f), perch, footprint))
+    }
+
+    @Test
+    fun `rail journey uses stepping stones and declines a sparse screen height jump`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f, clearance = 3f)
+        val composer = PetRoamingRail(
+            key = "composer",
+            perchKey = "composer",
+            bounds = PetSafeBounds(40f, 700f, 360f, 700f),
+        )
+        val lower = PetRoamingRail(
+            key = "lower",
+            perchKey = "lower",
+            bounds = PetSafeBounds(60f, 540f, 340f, 540f),
+        )
+        val middle = PetRoamingRail(
+            key = "middle",
+            perchKey = "middle",
+            bounds = PetSafeBounds(60f, 380f, 340f, 380f),
+        )
+        val target = PetRoamingRail(
+            key = "target",
+            perchKey = "target",
+            bounds = PetSafeBounds(60f, 220f, 340f, 220f),
+        )
+
+        assertNull(
+            planPetRailJourney(
+                startRail = composer,
+                start = PetPoint(200f, 700f),
+                targetRail = target,
+                rails = emptyList(),
+                bounds = outer,
+                uiObstacles = emptyList(),
+                footprint = footprint,
+                maximumStepLength = 180f,
+            ),
+        )
+
+        val journey = requireNotNull(
+            planPetRailJourney(
+                startRail = composer,
+                start = PetPoint(200f, 700f),
+                targetRail = target,
+                rails = listOf(lower, middle),
+                bounds = outer,
+                uiObstacles = emptyList(),
+                footprint = footprint,
+                maximumStepLength = 180f,
+            ),
+        )
+        assertEquals(listOf(lower, middle, target), journey.map { it.rail })
+        assertTrue(journey.all { it.route.length <= 180f })
+    }
+
+    @Test
+    fun `rail journey returns through the same bounded levels`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val target = PetRoamingRail("target", "target", PetSafeBounds(60f, 220f, 340f, 220f))
+        val middle = PetRoamingRail("middle", "middle", PetSafeBounds(60f, 380f, 340f, 380f))
+        val lower = PetRoamingRail("lower", "lower", PetSafeBounds(60f, 540f, 340f, 540f))
+        val composer = PetRoamingRail("composer", "composer", PetSafeBounds(40f, 700f, 360f, 700f))
+
+        val journey = requireNotNull(
+            planPetRailJourney(
+                startRail = target,
+                start = PetPoint(200f, 220f),
+                targetRail = composer,
+                rails = listOf(middle, lower),
+                bounds = outer,
+                uiObstacles = emptyList(),
+                footprint = footprint,
+                maximumStepLength = 180f,
+            ),
+        )
+        assertEquals(listOf(middle, lower, composer), journey.map { it.rail })
     }
 
     @Test

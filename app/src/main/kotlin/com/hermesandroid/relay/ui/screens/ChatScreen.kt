@@ -184,6 +184,7 @@ import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
 import com.hermesandroid.relay.ui.components.CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
+import com.hermesandroid.relay.ui.components.CHAT_PET_STEP_MESSAGE_MARKER
 import com.hermesandroid.relay.ui.components.CHAT_PET_USER_MESSAGE_PERCH_PREFIX
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
@@ -193,6 +194,7 @@ import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.newestPetPerchUiKey
 import com.hermesandroid.relay.ui.components.newestPetVisitTargetUiKey
+import com.hermesandroid.relay.ui.components.petPerchUiKeys
 import com.hermesandroid.relay.ui.components.SyntheticProcessNotificationNotice
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import androidx.compose.ui.layout.ContentScale
@@ -2462,6 +2464,9 @@ fun ChatScreen(
                     val petPerchUiKey = remember(messages) {
                         newestPetPerchUiKey(messages)
                     }
+                    val petJourneyPerchUiKeys = remember(messages) {
+                        petPerchUiKeys(messages)
+                    }
                     val visibleMessageKeys by remember(listState) {
                         derivedStateOf {
                             listState.layoutInfo.visibleItemsInfo
@@ -2562,7 +2567,7 @@ fun ChatScreen(
                                         null
                                     },
                                     petPerchKey = if (
-                                        message.uiKey == petPerchUiKey &&
+                                        message.uiKey in petJourneyPerchUiKeys &&
                                         message.uiKey in visibleMessageKeys
                                     ) {
                                         val prefix = if (message.role == MessageRole.USER) {
@@ -2570,7 +2575,12 @@ fun ChatScreen(
                                         } else {
                                             CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
                                         }
-                                        "$prefix${message.uiKey}"
+                                        val marker = if (message.uiKey == petPerchUiKey) {
+                                            ""
+                                        } else {
+                                            CHAT_PET_STEP_MESSAGE_MARKER
+                                        }
+                                        "$prefix$marker${message.uiKey}"
                                     } else {
                                         null
                                     },

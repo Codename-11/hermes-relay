@@ -301,6 +301,14 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `airborne timing grows with distance and stays bounded`() {
+        assertEquals(340, petAirborneDurationMs(24f))
+        assertTrue(petAirborneDurationMs(160f) > petAirborneDurationMs(60f))
+        assertEquals(900, petAirborneDurationMs(10_000f))
+        assertEquals(340, petAirborneDurationMs(Float.NaN))
+    }
+
+    @Test
     fun `airborne shadow shrinks and softens`() {
         assertEquals(1f, petShadowScale(0f), 0f)
         assertEquals(0.58f, petShadowScale(1f), 0.0001f)
