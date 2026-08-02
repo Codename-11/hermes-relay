@@ -1137,6 +1137,8 @@
     <string name="appearance_installed_pets">Mascotes instalados</string>
     <string name="appearance_playback_speed">Velocidade de reprodução — %1$s×</string>
     <string name="appearance_playback_speed_desc">Ajusta a velocidade de animação do mascote selecionado. Em 1.0×, cada clipe é reproduzido na velocidade em que foi criado.</string>
+    <string name="appearance_pet_size">Tamanho do mascote — %1$d%%</string>
+    <string name="appearance_pet_size_desc">Ajusta em conjunto a imagem, a área de toque e o espaço de navegação segura do mascote. Mascotes maiores podem ignorar plataformas estreitas.</string>
     <string name="appearance_stabilize">Estabilizar quadros</string>
     <string name="appearance_stabilize_desc">Centraliza automaticamente cada quadro para que o mascote não deslize nem salte entre eles (corrige folhas de AI instáveis).</string>
     <string name="appearance_preview">Prévia</string>

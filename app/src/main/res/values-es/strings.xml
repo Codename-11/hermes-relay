@@ -1084,6 +1084,8 @@
     <string name="appearance_installed_pets">Mascotas instaladas</string>
     <string name="appearance_playback_speed">Velocidad de reproducción: %1$s×</string>
     <string name="appearance_playback_speed_desc">Escala la velocidad de animación de la mascota seleccionada. 1.0× reproduce cada clip a su ritmo de creación.</string>
+    <string name="appearance_pet_size">Tamaño de la mascota — %1$d%%</string>
+    <string name="appearance_pet_size_desc">Escala a la vez la imagen, el área táctil y la huella de navegación segura de la mascota. Las mascotas más grandes pueden omitir plataformas estrechas.</string>
     <string name="appearance_stabilize">Estabilizar marcos</string>
     <string name="appearance_stabilize_desc">Centra automáticamente cada fotograma para que la mascota no se desplace o salte entre los fotogramas (corrige las hojas de IA tambaleantes).</string>
     <string name="appearance_preview">Avance</string>

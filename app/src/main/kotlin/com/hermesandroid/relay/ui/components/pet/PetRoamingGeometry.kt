@@ -273,6 +273,19 @@ data class PetBubbleExcursion(
     val entryMode: PetBubbleEntryMode = PetBubbleEntryMode.ClearGutter,
 )
 
+enum class PetSettledChatMode {
+    SidePocketPace,
+    SidePocketIdle,
+    BubbleTop,
+    ComposerCorner,
+}
+
+/** The preferred text-safe habitat after Chat settles at the bottom. */
+data class PetSettledChatHabitat(
+    val mode: PetSettledChatMode,
+    val rail: PetRoamingRail,
+)
+
 enum class PetBubbleEntryMode { ClearGutter, EdgeHop }
 
 /** Pure Navigation-style route matching used by registry snapshots. */
@@ -413,6 +426,10 @@ fun planPetBubbleExcursion(
         footprint.horizontalRadius,
         footprint.verticalRadius,
     )
+    if (
+        entryMode == PetBubbleEntryMode.EdgeHop &&
+        pathIntersectsObstacle(composerApproach, entry, listOf(expandedBubble))
+    ) return null
     // The gutter is strictly exterior. The raised top rail may touch the
     // expanded boundary only when clearance is zero, but never enters it.
     if (entryMode == PetBubbleEntryMode.ClearGutter && expandedBubble.contains(gutter)) return null
@@ -454,6 +471,120 @@ fun petPerchSegments(
         "Minimum perch width must be finite and non-negative."
     }
     val rail = petPerchRail(perch, footprint, outer, verticalClearance) ?: return emptyList()
+    return trimHorizontalRail(rail, obstacles, footprint, minimumWidth)
+}
+
+/**
+ * Prefer blank space beside the latest bubble; fall back to its raised top edge,
+ * then to the outer composer corner. Every candidate uses center-coordinate
+ * bounds for the complete scaled pet footprint.
+ */
+fun planSettledChatHabitat(
+    bubble: PetMeasuredPerch,
+    composerRails: List<PetRoamingRail>,
+    obstacles: Iterable<PetMeasuredObstacle>,
+    footprint: PetFootprint,
+    outer: PetSafeBounds,
+    useLeftPocket: Boolean,
+    verticalClearance: Float = 0f,
+): PetSettledChatHabitat? {
+    require(verticalClearance >= 0f && verticalClearance.isFinite()) {
+        "Habitat clearance must be finite and non-negative."
+    }
+    val obstacleList = obstacles.toList()
+    val pocketY = (bubble.bounds.bottom - footprint.height / 2f)
+        .coerceIn(outer.top, outer.bottom)
+    val pocketLeft = if (useLeftPocket) {
+        outer.left
+    } else {
+        bubble.bounds.right + footprint.horizontalRadius + verticalClearance
+    }
+    val pocketRight = if (useLeftPocket) {
+        bubble.bounds.left - footprint.horizontalRadius - verticalClearance
+    } else {
+        outer.right
+    }
+    if (pocketRight >= pocketLeft) {
+        val pocketRail = PetSafeBounds(pocketLeft, pocketY, pocketRight, pocketY)
+        val pocketSegments = trimHorizontalRail(
+            rail = pocketRail,
+            obstacles = obstacleList,
+            footprint = footprint,
+            minimumWidth = 0f,
+        )
+        val pocket = pocketSegments.maxWithOrNull(
+            compareBy<PetSafeBounds> { it.width }
+                .thenBy { if (useLeftPocket) -it.left else it.right },
+        )
+        if (pocket != null) {
+            val mode = if (pocket.width >= footprint.width * 0.75f) {
+                PetSettledChatMode.SidePocketPace
+            } else {
+                PetSettledChatMode.SidePocketIdle
+            }
+            return PetSettledChatHabitat(
+                mode = mode,
+                rail = PetRoamingRail(
+                    key = "chat-settled:${bubble.key}:side",
+                    perchKey = "chat-settled:${bubble.key}",
+                    bounds = pocket,
+                ),
+            )
+        }
+    }
+
+    val hasSafeTopEntry = composerRails.any { composerRail ->
+        planPetBubbleExcursion(
+            bubble = bubble,
+            composerRail = composerRail,
+            footprint = footprint,
+            outer = outer,
+            uiObstacles = obstacleList.map { it.bounds },
+            useLeftGutter = useLeftPocket,
+            verticalClearance = verticalClearance,
+            minimumWalkWidth = 0f,
+        ) != null
+    }
+    val bubbleTop = petPerchSegments(
+        perch = bubble,
+        obstacles = obstacleList,
+        footprint = footprint,
+        outer = outer,
+        minimumWidth = 0f,
+        verticalClearance = verticalClearance,
+    ).maxByOrNull { it.width }.takeIf { hasSafeTopEntry }
+    if (bubbleTop != null) {
+        return PetSettledChatHabitat(
+            mode = PetSettledChatMode.BubbleTop,
+            rail = PetRoamingRail(
+                key = "chat-settled:${bubble.key}:top",
+                perchKey = "chat-settled:${bubble.key}",
+                bounds = bubbleTop,
+            ),
+        )
+    }
+
+    val composer = composerRails.minByOrNull { rail ->
+        if (useLeftPocket) rail.bounds.left else -rail.bounds.right
+    } ?: return null
+    val cornerX = if (useLeftPocket) composer.bounds.left else composer.bounds.right
+    val corner = PetSafeBounds(cornerX, composer.bounds.top, cornerX, composer.bounds.top)
+    return PetSettledChatHabitat(
+        mode = PetSettledChatMode.ComposerCorner,
+        rail = PetRoamingRail(
+            key = "chat-settled:${bubble.key}:composer",
+            perchKey = "chat-settled:${bubble.key}",
+            bounds = corner,
+        ),
+    )
+}
+
+private fun trimHorizontalRail(
+    rail: PetSafeBounds,
+    obstacles: Iterable<PetMeasuredObstacle>,
+    footprint: PetFootprint,
+    minimumWidth: Float,
+): List<PetSafeBounds> {
     var intervals = listOf(rail.left to rail.right)
     obstacles.asSequence()
         .map { it.bounds.expanded(footprint.horizontalRadius, footprint.verticalRadius) }
@@ -465,14 +596,10 @@ fun petPerchSegments(
                     listOf(left to right)
                 } else {
                     buildList {
-                        // PetObstacle containment is inclusive. Keep the rail
-                        // endpoints just outside the expanded obstacle so a
-                        // transfer never starts from a point the router must
-                        // silently project elsewhere.
                         val before = (obstacle.left - PET_ROUTE_EPSILON).coerceIn(left, right)
                         val after = (obstacle.right + PET_ROUTE_EPSILON).coerceIn(left, right)
-                        if (before - left >= minimumWidth) add(left to before)
-                        if (right - after >= minimumWidth) add(after to right)
+                        if (obstacle.left > left && before - left >= minimumWidth) add(left to before)
+                        if (obstacle.right < right && right - after >= minimumWidth) add(after to right)
                     }
                 }
             }

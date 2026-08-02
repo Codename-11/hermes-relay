@@ -2531,7 +2531,7 @@ fun RelayApp() {
         // One companion host survives navigation. Screens register real-layout
         // walk strips; without one the pet remains docked at its persisted edge.
         // The host's empty full-screen area has no pointer input, so only the
-        // 48/56dp pet target intercepts touches.
+        // The scaled pet target intercepts touches.
         val petSurfaceOwner = petSurfaceOwnerForRoute(currentRoute)
         val petActivity = petCompanionCoordinator.activityFor(petSurfaceOwner)
         val showFloatingPet = activeFloatingPet != null &&
@@ -2547,6 +2547,7 @@ fun RelayApp() {
                 placement = petPlacement,
                 roamingEnabled = petRoamingEnabled,
                 behaviorPreferences = petBehaviorPreferences,
+                sizeScale = petBehaviorPreferences.sizeScale,
                 // Surface scrolling suspends autonomous movement without
                 // visually muting the companion. Dimming is reserved for the
                 // keyboard-compressed layout, where subdued chrome keeps the

@@ -807,9 +807,9 @@ internal fun isPetVisitTargetCandidate(message: ChatMessage): Boolean =
         message.agentName != "Phone action" &&
         !message.id.startsWith("voice-intent-")
 
-/** A settled text response can provide a top-edge ledge without becoming a visit target. */
+/** The newest settled user or assistant bubble can provide text-safe habitat geometry. */
 internal fun isPetPerchCandidate(message: ChatMessage): Boolean =
-    message.role == MessageRole.ASSISTANT &&
+    (message.role == MessageRole.ASSISTANT || message.role == MessageRole.USER) &&
         !message.isStreaming &&
         !message.isThinkingStreaming &&
         message.content.isNotBlank() &&
@@ -824,9 +824,7 @@ internal fun newestPetVisitTargetUiKey(messages: List<ChatMessage>): String? =
     }?.takeIf(::isPetVisitTargetCandidate)?.uiKey
 
 internal fun newestPetPerchUiKey(messages: List<ChatMessage>): String? =
-    messages.lastOrNull { message ->
-        message.role == MessageRole.ASSISTANT
-    }?.takeIf(::isPetPerchCandidate)?.uiKey
+    messages.lastOrNull()?.takeIf(::isPetPerchCandidate)?.uiKey
 
 /** The completion edge is usable only after the newest assistant row itself settles. */
 internal fun newestPetAssistantIsSettled(messages: List<ChatMessage>): Boolean =

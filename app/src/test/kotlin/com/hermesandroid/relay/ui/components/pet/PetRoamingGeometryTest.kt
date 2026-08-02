@@ -267,7 +267,7 @@ class PetRoamingGeometryTest {
     }
 
     @Test
-    fun `bubble excursion uses an edge hop when a full gutter does not fit`() {
+    fun `bubble excursion rejects an edge hop that would cross bubble content`() {
         val bubble = PetMeasuredPerch(
             key = "chat-message-perch:assistant-1",
             bounds = PetObstacle(40f, 120f, 240f, 190f),
@@ -278,7 +278,7 @@ class PetRoamingGeometryTest {
             bounds = PetSafeBounds(20f, 250f, 200f, 250f),
         )
 
-        val edgeHop = requireNotNull(
+        assertNull(
             planPetBubbleExcursion(
                 bubble = bubble,
                 composerRail = narrowComposer,
@@ -290,11 +290,8 @@ class PetRoamingGeometryTest {
                 minimumWalkWidth = 40f,
             ),
         )
-        assertEquals(PetBubbleEntryMode.EdgeHop, edgeHop.entryMode)
-        assertEquals(PetPoint(200f, 250f), edgeHop.composerApproach)
-        assertEquals(edgeHop.entry, edgeHop.gutter)
 
-        val phoneSizedHop = requireNotNull(
+        assertNull(
             planPetBubbleExcursion(
                 bubble = PetMeasuredPerch(
                     key = "chat-message-perch:phone-width",
@@ -313,9 +310,6 @@ class PetRoamingGeometryTest {
                 minimumWalkWidth = 28f,
             ),
         )
-        assertEquals(PetBubbleEntryMode.EdgeHop, phoneSizedHop.entryMode)
-        assertEquals(371f, phoneSizedHop.composerApproach.x, 0f)
-        assertTrue(phoneSizedHop.entry.y + 28f < 140f)
 
         assertNull(
             planPetBubbleExcursion(
@@ -549,5 +543,151 @@ class PetRoamingGeometryTest {
         assertFalse(isPetSupportedByPerch(PetPoint(100f, 129f), perch, footprint))
         assertFalse(isPetSupportedByPerch(PetPoint(15f, 132f), perch, footprint))
     }
+
+    @Test
+    fun `settled chat paces in a wide text-free side pocket`() {
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val habitat = planSettledChatHabitat(
+            bubble = PetMeasuredPerch("message", PetObstacle(70f, 100f, 240f, 220f)),
+            composerRails = listOf(composerRail()),
+            obstacles = emptyList(),
+            footprint = footprint,
+            outer = PetSafeBounds(28f, 28f, 372f, 772f),
+            useLeftPocket = false,
+            verticalClearance = 6f,
+        )
+
+        requireNotNull(habitat)
+        assertEquals(PetSettledChatMode.SidePocketPace, habitat.mode)
+        assertTrue(habitat.rail.bounds.left >= 274f)
+        val center = habitat.rail.bounds.clamp(PetPoint(300f, 192f))
+        val petBounds = PetObstacle(
+            center.x - footprint.width / 2f,
+            center.y - footprint.height / 2f,
+            center.x + footprint.width / 2f,
+            center.y + footprint.height / 2f,
+        )
+        assertFalse(petBounds.intersects(PetObstacle(70f, 100f, 240f, 220f)))
+    }
+
+    @Test
+    fun `settled chat idles in a narrow side pocket then falls back to composer when top entry is unsafe`() {
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val outer = PetSafeBounds(28f, 28f, 372f, 772f)
+        val narrow = planSettledChatHabitat(
+            bubble = PetMeasuredPerch("narrow", PetObstacle(70f, 100f, 330f, 220f)),
+            composerRails = listOf(composerRail()),
+            obstacles = emptyList(),
+            footprint = footprint,
+            outer = outer,
+            useLeftPocket = false,
+            verticalClearance = 6f,
+        )
+        val fullWidth = planSettledChatHabitat(
+            bubble = PetMeasuredPerch("full", PetObstacle(70f, 100f, 360f, 220f)),
+            composerRails = listOf(composerRail()),
+            obstacles = emptyList(),
+            footprint = footprint,
+            outer = outer,
+            useLeftPocket = false,
+            verticalClearance = 6f,
+        )
+
+        requireNotNull(narrow)
+        requireNotNull(fullWidth)
+        assertEquals(PetSettledChatMode.SidePocketIdle, narrow.mode)
+        assertTrue(narrow.rail.bounds.width < footprint.width * 0.75f)
+        assertEquals(PetSettledChatMode.ComposerCorner, fullWidth.mode)
+        assertEquals(360f, fullWidth.rail.bounds.left, 0f)
+        assertEquals(fullWidth.rail.bounds.left, fullWidth.rail.bounds.right, 0f)
+    }
+
+    @Test
+    fun `settled chat excludes a transient control from the side pocket`() {
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val fab = PetMeasuredObstacle(
+            key = "occupied:chat-scroll-to-bottom",
+            bounds = PetObstacle(286f, 155f, 370f, 239f),
+        )
+
+        val habitat = planSettledChatHabitat(
+            bubble = PetMeasuredPerch("message", PetObstacle(70f, 100f, 240f, 220f)),
+            composerRails = listOf(composerRail()),
+            obstacles = listOf(fab),
+            footprint = footprint,
+            outer = PetSafeBounds(28f, 28f, 372f, 772f),
+            useLeftPocket = false,
+            verticalClearance = 6f,
+        )
+
+        requireNotNull(habitat)
+        habitat.rail.bounds.let { rail ->
+            val center = rail.clamp(PetPoint(rail.right, rail.top))
+            val petBounds = PetObstacle(
+                center.x - footprint.horizontalRadius,
+                center.y - footprint.verticalRadius,
+                center.x + footprint.horizontalRadius,
+                center.y + footprint.verticalRadius,
+            )
+            assertFalse(petBounds.intersects(fab.bounds))
+        }
+    }
+
+    @Test
+    fun `blocked side and top fall back to the outer composer corner`() {
+        val habitat = planSettledChatHabitat(
+            bubble = PetMeasuredPerch("blocked", PetObstacle(70f, 100f, 360f, 220f)),
+            composerRails = listOf(composerRail()),
+            obstacles = listOf(
+                PetMeasuredObstacle("top-control", PetObstacle(40f, 55f, 365f, 78f)),
+            ),
+            footprint = PetFootprint(width = 56f, height = 56f),
+            outer = PetSafeBounds(28f, 28f, 372f, 772f),
+            useLeftPocket = false,
+            verticalClearance = 6f,
+        )
+
+        requireNotNull(habitat)
+        assertEquals(PetSettledChatMode.ComposerCorner, habitat.mode)
+        assertEquals(360f, habitat.rail.bounds.left, 0f)
+        assertEquals(habitat.rail.bounds.left, habitat.rail.bounds.right, 0f)
+    }
+
+    @Test
+    fun `settled side pocket mirrors between left and right bubble alignment`() {
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val outer = PetSafeBounds(28f, 28f, 372f, 772f)
+        val right = planSettledChatHabitat(
+            bubble = PetMeasuredPerch("assistant", PetObstacle(70f, 100f, 240f, 220f)),
+            composerRails = listOf(composerRail()),
+            obstacles = emptyList(),
+            footprint = footprint,
+            outer = outer,
+            useLeftPocket = false,
+            verticalClearance = 6f,
+        )
+        val left = planSettledChatHabitat(
+            bubble = PetMeasuredPerch("user", PetObstacle(160f, 100f, 330f, 220f)),
+            composerRails = listOf(composerRail()),
+            obstacles = emptyList(),
+            footprint = footprint,
+            outer = outer,
+            useLeftPocket = true,
+            verticalClearance = 6f,
+        )
+
+        requireNotNull(right)
+        requireNotNull(left)
+        assertEquals(PetSettledChatMode.SidePocketPace, right.mode)
+        assertEquals(PetSettledChatMode.SidePocketPace, left.mode)
+        assertTrue(right.rail.bounds.left > 240f)
+        assertTrue(left.rail.bounds.right < 160f)
+    }
+
+    private fun composerRail() = PetRoamingRail(
+        key = "composer:0",
+        perchKey = "chat-composer-perch",
+        bounds = PetSafeBounds(40f, 700f, 360f, 700f),
+    )
 
 }

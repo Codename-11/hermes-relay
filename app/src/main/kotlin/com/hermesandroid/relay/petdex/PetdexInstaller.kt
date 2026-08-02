@@ -148,16 +148,20 @@ internal data class PetdexMetadata(
 internal data class PetdexAtlasLayout(
     val columns: Int,
     val rows: Map<String, Int>,
+    val frameCounts: Map<String, Int> = emptyMap(),
 ) {
     fun toPetSpec(pet: PetdexPet, metadata: PetdexMetadata, sheetName: String): PetSpec {
         fun clip(rowName: String): PetClipSpec? = rows[rowName]?.let { row ->
+            val frameCount = frameCounts[rowName] ?: LEGACY_FRAMES_PER_STATE
+            val loopDurationMs = PETDEX_CURRENT_LOOP_DURATIONS_MS[rowName]
+                ?: LEGACY_LOOP_DURATION_MS
             PetClipSpec(
                 sheet = sheetName,
                 frameWidth = FRAME_WIDTH,
                 frameHeight = FRAME_HEIGHT,
-                frameCount = minOf(FRAMES_PER_STATE, columns),
+                frameCount = minOf(frameCount, columns),
                 startFrame = row * columns,
-                fps = PETDEX_FPS,
+                fps = frameCount * 1000f / loopDurationMs,
             )
         }
         requireNotNull(clip("idle"))
@@ -184,8 +188,8 @@ internal data class PetdexAtlasLayout(
     companion object {
         const val FRAME_WIDTH = 192
         const val FRAME_HEIGHT = 208
-        const val FRAMES_PER_STATE = 6
-        const val PETDEX_FPS = FRAMES_PER_STATE * 1000f / 1100f
+        private const val LEGACY_FRAMES_PER_STATE = 6
+        private const val LEGACY_LOOP_DURATION_MS = 1100f
 
         private val CURRENT_ROWS = mapOf(
             "idle" to 0,
@@ -210,12 +214,38 @@ internal data class PetdexAtlasLayout(
         fun fromDimensions(width: Int, height: Int): PetdexAtlasLayout? = when {
             width == 8 * FRAME_WIDTH &&
                 (height == 9 * FRAME_HEIGHT || height == 11 * FRAME_HEIGHT) ->
-                PetdexAtlasLayout(8, CURRENT_ROWS)
+                PetdexAtlasLayout(8, CURRENT_ROWS, PETDEX_CURRENT_FRAME_COUNTS)
             width == 9 * FRAME_WIDTH && height == 8 * FRAME_HEIGHT -> PetdexAtlasLayout(9, LEGACY_ROWS)
             else -> null
         }
     }
 }
+
+/** Canonical used cells in the current Codex/Petdex 8-column atlas. */
+internal val PETDEX_CURRENT_FRAME_COUNTS: Map<String, Int> = mapOf(
+    "idle" to 6,
+    "running-right" to 8,
+    "running-left" to 8,
+    "waving" to 4,
+    "jumping" to 5,
+    "failed" to 8,
+    "waiting" to 6,
+    "running" to 6,
+    "review" to 6,
+)
+
+/** Total authored duration of each current row; Android approximates variable frame timing with average fps. */
+internal val PETDEX_CURRENT_LOOP_DURATIONS_MS: Map<String, Float> = mapOf(
+    "idle" to 1100f,
+    "running-right" to 1060f,
+    "running-left" to 1060f,
+    "waving" to 700f,
+    "jumping" to 840f,
+    "failed" to 1220f,
+    "waiting" to 1010f,
+    "running" to 820f,
+    "review" to 1030f,
+)
 
 private fun ByteArray.hasPrefix(prefix: ByteArray): Boolean =
     size >= prefix.size && prefix.indices.all { this[it] == prefix[it] }

@@ -40,6 +40,23 @@ class PetdexInstallerTest {
         assertEquals(6 * 8, currentSpec.states.getValue("waiting").startFrame)
         assertEquals(7 * 8, currentSpec.states.getValue("running").startFrame)
         assertEquals(8 * 8, currentSpec.states.getValue("review").startFrame)
+        assertEquals(
+            mapOf(
+                "idle" to 6,
+                "running-right" to 8,
+                "running-left" to 8,
+                "waving" to 4,
+                "jumping" to 5,
+                "failed" to 8,
+                "waiting" to 6,
+                "running" to 6,
+                "review" to 6,
+            ),
+            currentSpec.states.mapValues { it.value.frameCount },
+        )
+        assertEquals(4f * 1000f / 700f, currentSpec.states.getValue("waving").fps, 0.001f)
+        assertEquals(5f * 1000f / 840f, currentSpec.states.getValue("jumping").fps, 0.001f)
+        assertEquals(8f * 1000f / 1060f, currentSpec.states.getValue("running-right").fps, 0.001f)
 
         val currentV2Spec = currentV2!!.toPetSpec(PET, META, "spritesheet.webp")
         assertEquals(currentSpec.states, currentV2Spec.states)

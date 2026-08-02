@@ -33,6 +33,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.DEFAULT_PET_TEMPERAMENT
+import com.hermesandroid.relay.data.DEFAULT_PET_SIZE_SCALE
 import com.hermesandroid.relay.data.PetBehaviorPreferences
 import com.hermesandroid.relay.data.PetBehaviorPreferencesRepository
 import com.hermesandroid.relay.data.PetTemperament
@@ -1330,6 +1331,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val petTemperament: StateFlow<PetTemperament> = petBehaviorPreferences
         .map { preferences -> preferences.temperament }
         .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_TEMPERAMENT)
+
+    val petSizeScale: StateFlow<Float> = petBehaviorPreferences
+        .map { preferences -> preferences.sizeScale }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_SIZE_SCALE)
 
     /** Durable logical placement; pixels are resolved from the current safe viewport. */
     val petPlacement: StateFlow<PetPlacement> = application.relayDataStore.data
@@ -6496,6 +6501,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setPetTemperament(temperament: PetTemperament) {
         viewModelScope.launch {
             petBehaviorPreferencesRepository.setTemperament(temperament)
+        }
+    }
+
+    fun setPetSizeScale(sizeScale: Float) {
+        viewModelScope.launch {
+            petBehaviorPreferencesRepository.setSizeScale(sizeScale)
         }
     }
 

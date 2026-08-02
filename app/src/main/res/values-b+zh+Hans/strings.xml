@@ -1191,6 +1191,8 @@
     <string name="appearance_installed_pets">已安装的宠物</string>
     <string name="appearance_playback_speed">播放速度——%1$s×</string>
     <string name="appearance_playback_speed_desc">缩放所选宠物的动画速度。1.0× 以原始速率播放每个片段。</string>
+    <string name="appearance_pet_size">宠物大小 — %1$d%%</string>
+    <string name="appearance_pet_size_desc">同时缩放宠物图像、触控区域和安全寻路占用范围。较大的宠物可能会跳过狭窄的落脚处。</string>
     <string name="appearance_stabilize">稳定帧</string>
     <string name="appearance_stabilize_desc">自动居中每一帧，让宠物不会在帧间漂移或跳动（修复 AI 表格抖动）。</string>
     <string name="appearance_preview">预览</string>

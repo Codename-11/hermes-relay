@@ -70,12 +70,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AppLanguage
+import com.hermesandroid.relay.data.MAX_PET_SIZE_SCALE
+import com.hermesandroid.relay.data.MIN_PET_SIZE_SCALE
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.ui.components.SphereSkin
 import com.hermesandroid.relay.ui.components.SphereSkinSource
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.reactivityLabels
+import com.hermesandroid.relay.ui.components.floatingPetDimensions
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.AvatarSource
@@ -90,6 +93,7 @@ import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * Dedicated Appearance settings screen. Hosts theme picker (auto/light/dark),
@@ -784,6 +788,7 @@ fun AppearanceSettingsScreen(
                         HorizontalDivider()
 
                         val petSpeed by connectionViewModel.petSpeed.collectAsState()
+                        val petSizeScale by connectionViewModel.petSizeScale.collectAsState()
                         val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
                         val petTemperament by connectionViewModel.petTemperament.collectAsState()
                         Text(
@@ -799,6 +804,26 @@ fun AppearanceSettingsScreen(
                         )
                         Text(
                             text = stringResource(R.string.appearance_playback_speed_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        Text(
+                            text = stringResource(
+                                R.string.appearance_pet_size,
+                                (petSizeScale * 100f).roundToInt(),
+                            ),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Slider(
+                            value = petSizeScale,
+                            onValueChange = connectionViewModel::setPetSizeScale,
+                            valueRange = MIN_PET_SIZE_SCALE..MAX_PET_SIZE_SCALE,
+                            steps = 3,
+                        )
+                        Text(
+                            text = stringResource(R.string.appearance_pet_size_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -922,7 +947,14 @@ fun AppearanceSettingsScreen(
                                 .background(MaterialTheme.colorScheme.surface),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Box(modifier = Modifier.size(140.dp)) {
+                            Box(
+                                modifier = Modifier.size(
+                                    floatingPetDimensions(
+                                        compact = false,
+                                        sizeScale = petSizeScale,
+                                    ).visualSizeDp.dp,
+                                ),
+                            ) {
                                 key(greetKey) {
                                     activePet.Render(
                                         state = AvatarRenderState(

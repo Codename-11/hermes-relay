@@ -1296,6 +1296,8 @@
     <string name="appearance_installed_pets">Installed pets</string>
     <string name="appearance_playback_speed">Playback speed — %1$s×</string>
     <string name="appearance_playback_speed_desc">Scales the selected pet\'s animation speed. 1.0× plays each clip at its authored rate.</string>
+    <string name="appearance_pet_size">Pet size — %1$d%%</string>
+    <string name="appearance_pet_size_desc">Scales the pet art, touch target, and safe routing footprint together. Larger pets may skip narrow perches.</string>
     <string name="appearance_stabilize">Stabilize frames</string>
     <string name="appearance_stabilize_desc">Auto-centers each frame so the pet doesn\'t drift or jump between frames (fixes wobbly AI sheets).</string>
     <string name="appearance_preview">Preview</string>

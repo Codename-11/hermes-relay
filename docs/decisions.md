@@ -2456,6 +2456,9 @@ top of a response bubble without ever covering its text or jumping through it.
 
 - One root overlay owns position and arbitration. It consumes no transcript or
   control-bar layout space; only the pet-sized target handles pointer input.
+- Appearance persists one 75–125% scale, default 100%, that changes art, touch
+  target, collision footprint, perch eligibility, and route clearance together;
+  visual and planner geometry may never scale independently.
 - Screen owners opt in by publishing live-measured perches, obstacles, scrolling,
   and modal visibility. The supported terrain is Chat's composer and newest
   visible settled assistant bubble, Terminal's extra-keys toolbar, and the
@@ -2469,6 +2472,12 @@ top of a response bubble without ever covering its text or jumping through it.
   footprint, walks across the bubble, and returns through the same edge before
   dropping to the composer. It skips unsafe geometry and interactive response
   rows rather than crossing or covering message text.
+- Settled Chat uses one text-safe habitat order: the measured side pocket beside
+  the newest settled bubble, then its raised top edge, then the outer composer
+  corner. A changed habitat is reached from the live coordinate, never snapped.
+- Settings terrain may be published dynamically by reusable components, but it
+  remains explicit opt-in measured geometry with owner scroll/modal state. The
+  app never turns every card, heading, control, or semantics node into terrain.
 - Temporary suspension preserves screen coordinates. Scrolling stops movement
   but does not reclassify the route, re-dock, teleport, or dim the pet. Settings
   and About hide it while a dialog owns the surface. Routes without an approved

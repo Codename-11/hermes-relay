@@ -2,12 +2,15 @@ package com.hermesandroid.relay.ui.components.avatar
 
 import android.content.Context
 import android.util.Log
+import com.hermesandroid.relay.petdex.PETDEX_CURRENT_FRAME_COUNTS
+import com.hermesandroid.relay.petdex.PETDEX_CURRENT_LOOP_DURATIONS_MS
 import com.hermesandroid.relay.ui.components.SphereReactivity
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.UserContentDir
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
+import kotlin.math.abs
 
 /** The pet schema versions this build understands. */
 const val PET_SPEC_SCHEMA_VERSION = 1
@@ -129,27 +132,28 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
     }
     require(id.isNotBlank()) { "missing id" }
     val resolvedLabel = label.ifBlank { id }
+    val runtimeSpec = normalizedPetdexAdapterManifest()
 
-    val idleResolved = resolveStateClip(SphereState.Idle, dir)
+    val idleResolved = runtimeSpec.resolveStateClip(SphereState.Idle, dir)
     requireNotNull(idleResolved) {
         "no usable 'idle' clip — need a frames list or a sprite sheet whose files exist in the pack"
     }
 
     val resolvedActivities = SphereState.entries.associateWith { state ->
-        resolveStateClip(state, dir) ?: idleResolved
+        runtimeSpec.resolveStateClip(state, dir) ?: idleResolved
     }
     val clips = resolvedActivities.mapValues { it.value.clip }
     val activitySources = resolvedActivities.mapValues { it.value.key }
 
     // The upstream in-place `run`/`running` row means agent work. It must not be
     // confused with the dedicated left/right rows used for screen locomotion.
-    val workingResolved = resolveAliasClip(listOf("working", "run", "running"), dir)
+    val workingResolved = runtimeSpec.resolveAliasClip(listOf("working", "run", "running"), dir)
     // Only the canonical/legacy in-place run row may substitute for directional
     // travel. A tool-specific `working` pose is never locomotion.
-    val legacyTravelResolved = resolveAliasClip(listOf("run", "running"), dir)
+    val legacyTravelResolved = runtimeSpec.resolveAliasClip(listOf("run", "running"), dir)
 
     val resolvedLocomotion = LOCOMOTION_CLIP_CHAIN.mapNotNull { (motion, keys) ->
-        resolveAliasClip(keys, dir)?.let { motion to it }
+        runtimeSpec.resolveAliasClip(keys, dir)?.let { motion to it }
     }.toMap()
     val locomotionClips = resolvedLocomotion.mapValues { it.value.clip }
     val locomotionSources = resolvedLocomotion.mapValues { it.value.key }
@@ -157,9 +161,9 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
     // Hermes maps a clean completion/greeting to wave; jump is the stronger
     // success/celebration fallback. Explicit Android names retain priority.
     val oneShots = buildMap {
-        resolveAliasClip(listOf("greet", "wake", "wave", "waving"), dir)
+        runtimeSpec.resolveAliasClip(listOf("greet", "wake", "wave", "waving"), dir)
             ?.let { put(PetOneShot.Greet, it.clip) }
-        resolveAliasClip(
+        runtimeSpec.resolveAliasClip(
             listOf("done", "wave", "waving", "success", "celebrate", "jump", "jumping"),
             dir,
         )?.let { put(PetOneShot.Done, it.clip) }
@@ -206,6 +210,39 @@ private fun PetSpec.resolveStateClip(state: SphereState, dir: File): ResolvedPet
         if (clip != null) return ResolvedPetClip(clip, key)
     }
     return defaults?.toClip(dir)?.let { ResolvedPetClip(it, "default") }
+}
+
+/**
+ * Repair manifests written by the first Android Petdex adapter, which declared
+ * six cells for every current row. Installed packs live outside the APK and
+ * survive upgrades, so correcting only new installs would leave wave/done on
+ * transparent cells and truncate the eight-frame travel/error rows.
+ */
+private fun PetSpec.normalizedPetdexAdapterManifest(): PetSpec {
+    if (source != "petdex") return this
+    val orderedKeys = PETDEX_CURRENT_FRAME_COUNTS.keys.toList()
+    val staleAdapterFps = 6f * 1000f / 1100f
+    val clips = orderedKeys.mapIndexed { row, key ->
+        val clip = states[key] ?: return this
+        if (
+            clip.sheet.isBlank() || clip.frameWidth != 192 || clip.frameHeight != 208 ||
+            clip.frameCount != 6 || clip.startFrame != row * 8 ||
+            abs(clip.fps - staleAdapterFps) > 0.01f
+        ) return this
+        clip
+    }
+    if (clips.map { it.sheet }.distinct().size != 1) return this
+
+    return copy(
+        states = states.mapValues { (key, clip) ->
+            val canonicalCount = PETDEX_CURRENT_FRAME_COUNTS[key] ?: return@mapValues clip
+            val durationMs = PETDEX_CURRENT_LOOP_DURATIONS_MS.getValue(key)
+            clip.copy(
+                frameCount = canonicalCount,
+                fps = canonicalCount * 1000f / durationMs,
+            )
+        },
+    )
 }
 
 private fun PetClipSpec.toClip(dir: File): PetClip? {

@@ -20,6 +20,26 @@ class PetBehaviorPreferencesTest {
         val repository = PetBehaviorPreferencesRepository(InMemoryDataStore())
 
         assertEquals(PetTemperament.Balanced, repository.flow.first().temperament)
+        assertEquals(1f, repository.flow.first().sizeScale)
+    }
+
+    @Test
+    fun `pet size round trips and clamps unsafe stored values`() = runTest {
+        val repository = PetBehaviorPreferencesRepository(InMemoryDataStore())
+
+        repository.setSizeScale(1.125f)
+        assertEquals(1.125f, repository.sizeScale.first())
+        repository.setSizeScale(9f)
+        assertEquals(MAX_PET_SIZE_SCALE, repository.sizeScale.first())
+
+        val nanStore = InMemoryDataStore(
+            mutablePreferencesOf(PetBehaviorPreferencesRepository.KEY_SIZE_SCALE to Float.NaN),
+        )
+        assertEquals(DEFAULT_PET_SIZE_SCALE, PetBehaviorPreferencesRepository(nanStore).sizeScale.first())
+        val lowStore = InMemoryDataStore(
+            mutablePreferencesOf(PetBehaviorPreferencesRepository.KEY_SIZE_SCALE to -3f),
+        )
+        assertEquals(MIN_PET_SIZE_SCALE, PetBehaviorPreferencesRepository(lowStore).sizeScale.first())
     }
 
     @Test

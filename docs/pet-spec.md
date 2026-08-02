@@ -50,10 +50,20 @@ The companion has a durable home and an optional autonomous roaming mode:
   explicitly register curated perches and obstacles using their live measured
   bounds; the app does not scan arbitrary UI elements or treat the accessibility
   tree as walkable geometry. The supported perches are Chat's composer, the
-  newest visible settled assistant bubble, Terminal's extra-keys toolbar, and
+  newest visible settled user/assistant bubble, Terminal's extra-keys toolbar, and
   the persistent bottom status strip on Settings and About. They use existing
   control or content edges, so the overlay inserts no spacer and reduces no text
   or control layout area. Other routes keep the pet docked at its saved edge.
+  Additional Settings terrain can publish through the same live registry, but
+  every card/header remains an explicit opt-in with current scroll/modal state;
+  arbitrary Compose or accessibility elements never become terrain.
+- At the settled Chat bottom, the home hierarchy is a full-footprint side pocket
+  beside the latest bubble, its raised top edge, then the outer composer corner.
+  A wide pocket permits pacing; a narrow valid pocket becomes an idle point.
+  Layout and scroll updates replan from the live coordinate without teleporting.
+- Appearance scales the pet from 75–125% (100% default). The same value drives
+  art, the minimum-accessible touch target, collision footprint, perch fit, and
+  route clearance. A larger pet skips a narrow ledge instead of covering UI.
 - Visible jump-to-latest controls are registered as temporary obstacles: Chat's
   scroll-to-bottom button and Terminal's jump-to-latest pill trim the ledge into
   pet-sized safe segments, or block it when no usable segment remains. When the
@@ -80,7 +90,8 @@ The companion has a durable home and an optional autonomous roaming mode:
   startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
   exploration stops travel. Scrolling freezes the current screen position at
   full opacity; it does not re-dock or teleport the pet. The IME/short-screen
-  compact layout uses 40 dp art and the IME pause is visually subdued. Settings
+  compact layout uses 40 dp base art before the saved size scale, and the IME
+  pause is visually subdued. Settings
   and About publish their scroll state and hide the companion while their dialogs
   are open.
 
@@ -154,9 +165,18 @@ does not run install scripts or execute pack content.
 ### Petdex atlas mapping
 
 Android supports both current 8-column × 9-row and legacy 9-column × 8-row
-Petdex atlases. Cells are 192 × 208 pixels; each generated Relay clip plays the
-first six cells of its mapped row at roughly 5.45 fps. `startFrame` selects that
-row without copying the atlas into separate images.
+Petdex atlases. Cells are 192 × 208 pixels. Current rows use their canonical
+counts—idle 6, running-right 8, running-left 8, waving 4, jumping 5, failed 8,
+waiting 6, running 6, and review 6. Android derives an average fps from each
+row's canonical total duration (700–1220 ms); its constant-fps clip model cannot
+express Desktop's longer final-frame hold exactly. `startFrame` selects the row
+without copying the atlas.
+
+Packs written by the original Android adapter may still declare six frames for
+every current row. The loader recognizes generated `source: "petdex"` clips by
+their canonical geometry and offsets and normalizes them at read time, so an
+existing install loses blank wave/jump cells and regains full directional/error
+cycles without a reinstall. Custom pack frame counts are never rewritten.
 
 The adapter preserves Petdex's source row names instead of flattening them:
 
@@ -460,7 +480,8 @@ intensity-driven playback speed add live motion on top.
   **sprite sheet** over a long frame sequence — a sheet decodes as one bitmap, so
   its cells can be larger (256–512 px) without the per-frame cost of a sequence.
   **Size art for the companion perch**: a 128 px cell or still is sufficient
-  for the current 40–48 dp rendered pet and avoids unnecessary decode cost.
+  for the 40/48 dp base rendered pet, even at the 125% setting, and avoids
+  unnecessary decode cost.
   Only the **selected** pet's **current** clip is decoded, off the main thread.
 - File names must stay **inside the pack directory** — paths that escape it
   (`../…`) are rejected.
@@ -526,7 +547,8 @@ When the user disables animations, Android animator scale is 0, or TalkBack touc
 exploration is active, autonomous roaming stops and the pet is rendered
 **paused**. Transcript, Settings, and About scrolling pause travel at the current
 screen coordinate without re-docking, teleporting, or dimming the companion.
-With the keyboard open or on a short screen it compacts from 48 dp to 40 dp; the
+With the keyboard open or on a short screen its base art compacts from 48 dp to
+40 dp before the persisted 75–125% scale is applied; the
 keyboard pause is visually subdued so input remains readable. Dialogs on
 supported Settings/About routes suspend the companion entirely. Temperament
 never overrides these gates. Author the first `idle` frame to be a good, legible

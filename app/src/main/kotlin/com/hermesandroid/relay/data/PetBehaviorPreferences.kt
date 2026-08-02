@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -54,9 +55,17 @@ enum class PetTemperament(val pacing: PetBehaviorPacing) {
 }
 
 val DEFAULT_PET_TEMPERAMENT: PetTemperament = PetTemperament.Balanced
+const val DEFAULT_PET_SIZE_SCALE: Float = 1f
+const val MIN_PET_SIZE_SCALE: Float = 0.75f
+const val MAX_PET_SIZE_SCALE: Float = 1.25f
+
+internal fun sanitizedPetSizeScale(value: Float?): Float =
+    value?.takeIf(Float::isFinite)?.coerceIn(MIN_PET_SIZE_SCALE, MAX_PET_SIZE_SCALE)
+        ?: DEFAULT_PET_SIZE_SCALE
 
 data class PetBehaviorPreferences(
     val temperament: PetTemperament = DEFAULT_PET_TEMPERAMENT,
+    val sizeScale: Float = DEFAULT_PET_SIZE_SCALE,
 ) {
     /**
      * Runtime seam for the behavior director. A disabled motion gate returns
@@ -74,12 +83,14 @@ class PetBehaviorPreferencesRepository(
 
     companion object {
         internal val KEY_TEMPERAMENT = stringPreferencesKey("pet_temperament")
+        internal val KEY_SIZE_SCALE = floatPreferencesKey("pet_size_scale")
     }
 
     val flow: Flow<PetBehaviorPreferences> = dataStore.data
         .map { preferences ->
             PetBehaviorPreferences(
                 temperament = decodeTemperament(preferences[KEY_TEMPERAMENT]),
+                sizeScale = sanitizedPetSizeScale(preferences[KEY_SIZE_SCALE]),
             )
         }
         .distinctUntilChanged()
@@ -88,9 +99,19 @@ class PetBehaviorPreferencesRepository(
         .map { preferences -> preferences.temperament }
         .distinctUntilChanged()
 
+    val sizeScale: Flow<Float> = flow
+        .map { preferences -> preferences.sizeScale }
+        .distinctUntilChanged()
+
     suspend fun setTemperament(temperament: PetTemperament) {
         dataStore.edit { preferences ->
             preferences[KEY_TEMPERAMENT] = temperament.name
+        }
+    }
+
+    suspend fun setSizeScale(sizeScale: Float) {
+        dataStore.edit { preferences ->
+            preferences[KEY_SIZE_SCALE] = sanitizedPetSizeScale(sizeScale)
         }
     }
 

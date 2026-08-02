@@ -1207,6 +1207,8 @@
     <string name="appearance_installed_pets">設置されたペット</string>
     <string name="appearance_playback_speed">再生速度 — %1$s×</string>
     <string name="appearance_playback_speed_desc">選択したペットのアニメーション速度を調整します。 1.0x は、作成されたレートで各クリップを再生します。</string>
+    <string name="appearance_pet_size">ペットのサイズ — %1$d%%</string>
+    <string name="appearance_pet_size_desc">ペットの表示、タッチ領域、安全な移動範囲をまとめて拡大・縮小します。大きいペットは狭い足場をスキップする場合があります。</string>
     <string name="appearance_stabilize">フレームを安定させる</string>
     <string name="appearance_stabilize_desc">ペットがフレーム間を漂ったりジャンプしたりしないように、各フレームを自動的に中央に配置します (AI シートのぐらつきを修正)。</string>
     <string name="appearance_preview">プレビュー</string>

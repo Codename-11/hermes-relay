@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.MAX_PET_SIZE_SCALE
+import com.hermesandroid.relay.data.MIN_PET_SIZE_SCALE
 import com.hermesandroid.relay.data.PetBehaviorPreferences
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
@@ -56,17 +58,21 @@ import com.hermesandroid.relay.ui.components.pet.PetLayoutDirection
 import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetFootprint
 import com.hermesandroid.relay.ui.components.pet.PetMeasuredPerch
+import com.hermesandroid.relay.ui.components.pet.PetMeasuredObstacle
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.ui.components.pet.PetPoint
 import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
 import com.hermesandroid.relay.ui.components.pet.PetRoute
 import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
+import com.hermesandroid.relay.ui.components.pet.PetSettledChatHabitat
+import com.hermesandroid.relay.ui.components.pet.PetSettledChatMode
 import com.hermesandroid.relay.ui.components.pet.PetVisitReadiness
 import com.hermesandroid.relay.ui.components.pet.PetVisitRequest
 import com.hermesandroid.relay.ui.components.pet.choosePetRailTransfer
 import com.hermesandroid.relay.ui.components.pet.expandObstaclesForPet
 import com.hermesandroid.relay.ui.components.pet.findOverlayRoute
 import com.hermesandroid.relay.ui.components.pet.planPetBubbleExcursion
+import com.hermesandroid.relay.ui.components.pet.planSettledChatHabitat
 import com.hermesandroid.relay.ui.components.pet.petPerchSegments
 import com.hermesandroid.relay.ui.components.pet.projectIntoSafeBounds
 import kotlinx.coroutines.coroutineScope
@@ -78,6 +84,8 @@ import kotlin.math.roundToInt
 internal const val FLOATING_PET_COMPACT_HEIGHT_DP = 700
 internal const val CHAT_PET_WALK_REGION = "chat-composer-perch"
 internal const val CHAT_PET_MESSAGE_PERCH_PREFIX = "chat-message-perch:"
+internal const val CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX = "${CHAT_PET_MESSAGE_PERCH_PREFIX}assistant:"
+internal const val CHAT_PET_USER_MESSAGE_PERCH_PREFIX = "${CHAT_PET_MESSAGE_PERCH_PREFIX}user:"
 private const val PET_ROAM_REPEAT_DELAY_MS = 4_800L
 private const val PET_AMBIENT_HOP_HEIGHT_DP = 24
 private const val PET_TURN_PAUSE_MS = 220L
@@ -105,6 +113,23 @@ internal fun shouldCompactFloatingPet(imeVisible: Boolean, screenHeightDp: Int):
 
 internal fun floatingPetVisualSizeDp(compact: Boolean): Int = if (compact) 40 else 48
 
+internal data class FloatingPetDimensions(
+    val visualSizeDp: Float,
+    val targetSizeDp: Float,
+)
+
+/** One scale drives the art, pointer target, collision footprint, and routing. */
+internal fun floatingPetDimensions(compact: Boolean, sizeScale: Float): FloatingPetDimensions {
+    val safeScale = sizeScale.takeIf(Float::isFinite)
+        ?.coerceIn(MIN_PET_SIZE_SCALE, MAX_PET_SIZE_SCALE) ?: 1f
+    val baseVisual = floatingPetVisualSizeDp(compact).toFloat()
+    val baseTarget = if (compact) 48f else 56f
+    return FloatingPetDimensions(
+        visualSizeDp = baseVisual * safeScale,
+        targetSizeDp = maxOf(48f, baseTarget * safeScale),
+    )
+}
+
 internal fun shouldPauseFloatingPet(
     alreadyPaused: Boolean,
     animationEnabled: Boolean,
@@ -131,6 +156,9 @@ internal fun shouldAttemptAmbientBubbleVisit(
     cyclesUntilVisit: Int,
     hasVisibleBubble: Boolean,
 ): Boolean = hasVisibleBubble && cyclesUntilVisit <= 0
+
+internal fun shouldPaceSettledHabitat(mode: PetSettledChatMode): Boolean =
+    mode == PetSettledChatMode.SidePocketPace || mode == PetSettledChatMode.BubbleTop
 
 internal fun petVerticalLocomotion(fromY: Float, toY: Float): PetLocomotion =
     if (toY > fromY) PetLocomotion.Fall else PetLocomotion.Jump
@@ -224,6 +252,7 @@ fun FloatingPetCompanion(
     roamingEnabled: Boolean,
     roamingAllowed: Boolean,
     behaviorPreferences: PetBehaviorPreferences,
+    sizeScale: Float = behaviorPreferences.sizeScale,
     surfaceScrolling: Boolean,
     isScrolling: Boolean,
     compact: Boolean,
@@ -264,8 +293,9 @@ fun FloatingPetCompanion(
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val accessibleMotion = rememberAccessibleMotionState()
-    val targetSize = if (compact) 48.dp else 56.dp
-    val visualSize = floatingPetVisualSizeDp(compact).dp
+    val dimensions = floatingPetDimensions(compact, sizeScale)
+    val targetSize = dimensions.targetSizeDp.dp
+    val visualSize = dimensions.visualSizeDp.dp
     val targetSizePx = with(density) { targetSize.toPx() }
     val heldLiftPx = with(density) { 6.dp.toPx() }
     val safeMarginPx = with(density) { 12.dp.toPx() }
@@ -320,6 +350,51 @@ fun FloatingPetCompanion(
             }
         }
     }
+    val composerRails = remember(roamingRails) {
+        roamingRails.filter { it.perchKey == CHAT_PET_WALK_REGION }
+    }
+    val settledMessagePerch = remember(safeAreaSnapshot.perches) {
+        safeAreaSnapshot.perches.firstOrNull {
+            it.key.startsWith(CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX) ||
+                it.key.startsWith(CHAT_PET_USER_MESSAGE_PERCH_PREFIX)
+        }
+    }
+    val settledHabitat = remember(
+        settledMessagePerch,
+        composerRails,
+        safeAreaSnapshot.obstacles,
+        safeAreaSnapshot.perches,
+        footprint,
+        safeBounds,
+        petLayoutDirection,
+        perchClearancePx,
+    ) {
+        settledMessagePerch?.let { bubble ->
+            val startAligned = bubble.key.startsWith(CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX)
+            val useLeftPocket = if (startAligned) {
+                petLayoutDirection == PetLayoutDirection.Rtl
+            } else {
+                petLayoutDirection == PetLayoutDirection.Ltr
+            }
+            val occupiedSurfaceObstacles = safeAreaSnapshot.obstacles +
+                safeAreaSnapshot.perches
+                    .filter { perch ->
+                        perch.key != bubble.key && perch.key != CHAT_PET_WALK_REGION
+                    }
+                    .map { perch ->
+                        PetMeasuredObstacle("occupied:${perch.key}", perch.bounds, perch.routeScope)
+                    }
+            planSettledChatHabitat(
+                bubble = bubble,
+                composerRails = composerRails,
+                obstacles = occupiedSurfaceObstacles,
+                footprint = footprint,
+                outer = safeBounds,
+                useLeftPocket = useLeftPocket,
+                verticalClearance = perchClearancePx,
+            )
+        }
+    }
     val registeredObstacles = remember(safeAreaSnapshot, footprint) {
         expandObstaclesForPet(
             obstacles = safeAreaSnapshot.obstacles.map { it.bounds } +
@@ -331,11 +406,12 @@ fun FloatingPetCompanion(
         val requested = placement.sanitized().resolve(safeBounds, petLayoutDirection)
         projectIntoSafeBounds(requested, safeBounds, registeredObstacles) ?: requested
     }
-    val homeRail = remember(roamingRails, manualHomePoint) {
+    val homeRail = remember(roamingRails, manualHomePoint, settledHabitat) {
         val distanceToHome: (PetRoamingRail) -> Float = { rail ->
             rail.bounds.clamp(manualHomePoint).distanceSquaredTo(manualHomePoint)
         }
-        roamingRails.filter { it.perchKey == CHAT_PET_WALK_REGION }.minByOrNull(distanceToHome)
+        settledHabitat?.rail
+            ?: roamingRails.filter { it.perchKey == CHAT_PET_WALK_REGION }.minByOrNull(distanceToHome)
             ?: roamingRails.minByOrNull(distanceToHome)
     }
     val roamingHomePoint = remember(placement.edge, homeRail, petLayoutDirection) {
@@ -508,7 +584,13 @@ fun FloatingPetCompanion(
                     footprint = footprint,
                     outer = safeBounds,
                     uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
-                    useLeftGutter = petLayoutDirection == PetLayoutDirection.Rtl,
+                    useLeftGutter = if (
+                        bubblePerch.key.startsWith(CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX)
+                    ) {
+                        petLayoutDirection == PetLayoutDirection.Rtl
+                    } else {
+                        petLayoutDirection == PetLayoutDirection.Ltr
+                    },
                     verticalClearance = perchClearancePx,
                     minimumWalkWidth = targetSizePx / 2f,
                 )?.let { excursion -> composerRail to excursion }
@@ -552,6 +634,56 @@ fun FloatingPetCompanion(
             PetBubbleEntryMode.EdgeHop -> animateBallisticTransferTo(excursion.composerApproach)
         }
         return composerRail
+    }
+
+    suspend fun enterBubbleTop(
+        bubblePerch: PetMeasuredPerch,
+        habitat: PetSettledChatHabitat,
+    ): Boolean {
+        val planned = composerRails.asSequence()
+            .mapNotNull { composerRail ->
+                planPetBubbleExcursion(
+                    bubble = bubblePerch,
+                    composerRail = composerRail,
+                    footprint = footprint,
+                    outer = safeBounds,
+                    uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
+                    useLeftGutter = if (
+                        bubblePerch.key.startsWith(CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX)
+                    ) {
+                        petLayoutDirection == PetLayoutDirection.Rtl
+                    } else {
+                        petLayoutDirection == PetLayoutDirection.Ltr
+                    },
+                    verticalClearance = perchClearancePx,
+                    minimumWalkWidth = 0f,
+                )?.let { excursion -> composerRail to excursion }
+            }
+            .minByOrNull { (_, excursion) ->
+                excursion.composerApproach.distanceSquaredTo(PetPoint(x.value, y.value))
+            }
+            ?: return false
+        val (_, excursion) = planned
+        val routeToApproach = findOverlayRoute(
+            start = PetPoint(x.value, y.value),
+            requestedDestination = excursion.composerApproach,
+            bounds = safeBounds,
+            uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds } + bubblePerch.bounds,
+            footprint = footprint,
+        ) ?: return false
+        if (routeToApproach.start.distanceSquaredTo(PetPoint(x.value, y.value)) > 1f) return false
+        animatePetRoute(routeToApproach)
+        when (excursion.entryMode) {
+            PetBubbleEntryMode.ClearGutter -> {
+                animateBallisticVerticalTo(excursion.gutter.y)
+                animateHorizontalTo(excursion.entry.x)
+            }
+            PetBubbleEntryMode.EdgeHop -> animateBallisticTransferTo(excursion.entry)
+        }
+        animateHorizontalTo(
+            x.value.coerceIn(habitat.rail.bounds.left, habitat.rail.bounds.right),
+        )
+        return true
     }
 
     LaunchedEffect(pet.id, homePoint) {
@@ -647,7 +779,6 @@ fun FloatingPetCompanion(
         visitTarget,
         canRoam,
         positioned,
-        homePoint,
         safeAreaSnapshot.obstacles,
         footprint,
         safeBounds,
@@ -678,7 +809,7 @@ fun FloatingPetCompanion(
             y.stop()
             val bubblePerchKey = request.targetKey.replace(
                 oldValue = "chat-message:",
-                newValue = CHAT_PET_MESSAGE_PERCH_PREFIX,
+                newValue = CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX,
             )
             val bubblePerch = safeAreaSnapshot.perches.firstOrNull { it.key == bubblePerchKey }
                 ?: run {
@@ -693,15 +824,24 @@ fun FloatingPetCompanion(
         }
     }
 
-    LaunchedEffect(pet.id, canPatrol, roamingRails, homePoint, positioned, behaviorPacing) {
+    LaunchedEffect(
+        pet.id,
+        canPatrol,
+        roamingRails,
+        settledHabitat,
+        settledMessagePerch,
+        homePoint,
+        positioned,
+        behaviorPacing,
+    ) {
         if (!canPatrol || !positioned) return@LaunchedEffect
         val pacing = behaviorPacing ?: return@LaunchedEffect
         val bubblePerches = safeAreaSnapshot.perches.filter {
-            it.key.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX)
+            it.key.startsWith(CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX)
         }
-        val patrolRails = roamingRails.filterNot {
+        val patrolRails = (roamingRails.filterNot {
             it.perchKey.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX)
-        }
+        } + listOfNotNull(settledHabitat?.rail)).distinctBy { it.key }
         if (patrolRails.isEmpty()) return@LaunchedEffect
 
         fun railSupporting(point: PetPoint): PetRoamingRail? = patrolRails.firstOrNull { rail ->
@@ -719,7 +859,15 @@ fun FloatingPetCompanion(
                 start = PetPoint(x.value, y.value),
                 requestedDestination = PetPoint(destinationX, rail.bounds.top),
                 bounds = safeBounds,
-                uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
+                uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds } +
+                    if (
+                        rail.key == settledHabitat?.rail?.key &&
+                        settledHabitat.mode != PetSettledChatMode.BubbleTop
+                    ) {
+                        listOfNotNull(settledMessagePerch?.bounds)
+                    } else {
+                        emptyList()
+                    },
                 footprint = footprint,
             ) ?: return false
             // A valid autonomous route must begin at the live pet position.
@@ -730,16 +878,31 @@ fun FloatingPetCompanion(
             return true
         }
 
+        suspend fun moveToSettledHabitat(): Boolean {
+            val habitat = settledHabitat ?: return false
+            val bubble = settledMessagePerch
+            return if (habitat.mode == PetSettledChatMode.BubbleTop && bubble != null) {
+                enterBubbleTop(bubble, habitat)
+            } else {
+                jumpToRail(habitat.rail)
+            }
+        }
+
         // A route change or user drop replans from the live point. The nearest
         // measured ledge wins; the transfer uses the Petdex jump row.
         try {
-            var rail = railSupporting(PetPoint(x.value, y.value))
+            val supportedRail = railSupporting(PetPoint(x.value, y.value))
+            var rail = settledHabitat?.rail
+                ?: supportedRail
                 ?: patrolRails.minByOrNull {
                     it.bounds.clamp(PetPoint(x.value, y.value)).distanceSquaredTo(PetPoint(x.value, y.value))
                 }
                 ?: return@LaunchedEffect
-            if (railSupporting(PetPoint(x.value, y.value)) == null && !jumpToRail(rail)) {
-                return@LaunchedEffect
+            if (supportedRail?.key != rail.key) {
+                val moved = if (settledHabitat?.rail?.key == rail.key) {
+                    moveToSettledHabitat()
+                } else jumpToRail(rail)
+                if (!moved) return@LaunchedEffect
             }
 
             var hasMoved = false
@@ -749,18 +912,25 @@ fun FloatingPetCompanion(
             while (true) {
                 val delayMs = floatingPetRoamDelayMs(hasMoved, pacing.roamIntervalMs)
                 if (delayMs > 0L) delay(delayMs)
-                val destinationX = if (abs(x.value - rail.bounds.left) <= abs(x.value - rail.bounds.right)) {
+                val paceCurrentRail = settledHabitat?.takeIf { it.rail.key == rail.key }
+                    ?.let { shouldPaceSettledHabitat(it.mode) }
+                    ?: true
+                val destinationX = if (!paceCurrentRail) {
+                    x.value
+                } else if (abs(x.value - rail.bounds.left) <= abs(x.value - rail.bounds.right)) {
                     rail.bounds.right
                 } else {
                     rail.bounds.left
                 }
-                val horizontalDistance = abs(destinationX - x.value)
-                if (horizontalDistance > 1f) {
-                    animateHorizontalTo(destinationX)
-                } else {
-                    locomotion = PetLocomotion.Wave
-                    delay(PET_WAVE_DURATION_MS)
-                    locomotion = PetLocomotion.None
+                if (paceCurrentRail) {
+                    val horizontalDistance = abs(destinationX - x.value)
+                    if (horizontalDistance > 1f) {
+                        animateHorizontalTo(destinationX)
+                    } else {
+                        locomotion = PetLocomotion.Wave
+                        delay(PET_WAVE_DURATION_MS)
+                        locomotion = PetLocomotion.None
+                    }
                 }
                 hasMoved = true
                 delay(2_400L)
@@ -780,7 +950,11 @@ fun FloatingPetCompanion(
                     }
                     val returnRail = bubble?.let { performBubbleExcursion(it) }
                     if (returnRail != null) {
-                        rail = returnRail
+                        rail = if (settledHabitat != null && moveToSettledHabitat()) {
+                            settledHabitat.rail
+                        } else {
+                            returnRail
+                        }
                         cyclesUntilBubbleVisit = PET_PATROL_CYCLES_BETWEEN_BUBBLE_VISITS
                         continue
                     }
@@ -790,7 +964,7 @@ fun FloatingPetCompanion(
                 // Different ledges retain Desktop's overlap rule. Android may
                 // also hop between sibling segments when its registered-control
                 // router proves an above-perch route around the obstacle.
-                val transfer = choosePetRailTransfer(
+                val transfer = if (settledHabitat != null) null else choosePetRailTransfer(
                     currentRail = rail,
                     current = PetPoint(x.value, y.value),
                     // Chat response bubbles are visited only by the explicit

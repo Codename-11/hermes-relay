@@ -520,6 +520,60 @@ class PetLoaderTest {
     }
 
     @Test
+    fun `stale current Petdex manifests use canonical nonblank row counts`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "petdex-stale",
+            """{ "id": "petdex-stale", "source": "petdex", "states": {
+                 "idle": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 0, "fps": 5.4545455 },
+                 "running-right": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 8, "fps": 5.4545455 },
+                 "running-left": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 16, "fps": 5.4545455 },
+                 "waving": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 24, "fps": 5.4545455 },
+                 "jumping": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 32, "fps": 5.4545455 },
+                 "failed": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 40, "fps": 5.4545455 },
+                 "waiting": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 48, "fps": 5.4545455 },
+                 "running": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 56, "fps": 5.4545455 },
+                 "review": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 64, "fps": 5.4545455 }
+            } }""",
+            imageFiles = listOf("spritesheet.webp"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        assertEquals(4, avatar.oneShots.getValue(PetOneShot.Greet).frameCount)
+        assertEquals(4, avatar.oneShots.getValue(PetOneShot.Done).frameCount)
+        assertEquals(5, avatar.locomotionClips.getValue(PetLocomotion.Jump).frameCount)
+        assertEquals(8, avatar.locomotionClips.getValue(PetLocomotion.WalkLeft).frameCount)
+        assertEquals(8, avatar.locomotionClips.getValue(PetLocomotion.WalkRight).frameCount)
+        assertEquals(8, avatar.activityClips.getValue(SphereState.Error).frameCount)
+        assertEquals(4f * 1000f / 700f, avatar.oneShots.getValue(PetOneShot.Greet).fps, 0.001f)
+        assertEquals(
+            8f * 1000f / 1060f,
+            avatar.locomotionClips.getValue(PetLocomotion.WalkRight).fps,
+            0.001f,
+        )
+    }
+
+    @Test
+    fun `custom packs retain their authored frame counts`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "custom-six-frame-wave",
+            """{ "id": "custom-six-frame-wave", "source": "petdex", "states": {
+                 "idle": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 0 },
+                 "waving": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 24 }
+            } }""",
+            imageFiles = listOf("spritesheet.webp"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        assertEquals(6, avatar.oneShots.getValue(PetOneShot.Greet).frameCount)
+    }
+
+    @Test
     fun `single-frame one-shot reactions hold long enough to read`() {
         assertEquals(1800L, petOneShotReleaseDelayMs(frameCount = 1))
         assertEquals(4000L, petOneShotReleaseDelayMs(frameCount = 2))

@@ -73,6 +73,23 @@ class MessageBubblePetVisitTargetTest {
     }
 
     @Test
+    fun `latest settled user bubble can provide an opposite side pocket`() {
+        val assistant = message(id = "assistant").copy(uiKey = "assistant-key")
+        val user = message(id = "user", role = MessageRole.USER).copy(uiKey = "user-key")
+
+        assertTrue(isPetPerchCandidate(user))
+        assertTrue(newestPetPerchUiKey(listOf(assistant, user)) == user.uiKey)
+    }
+
+    @Test
+    fun `ineligible transcript tail does not expose an older perch`() {
+        val assistant = message(id = "assistant").copy(uiKey = "assistant-key")
+        val system = message(id = "system", role = MessageRole.SYSTEM).copy(uiKey = "system-key")
+
+        assertTrue(newestPetPerchUiKey(listOf(assistant, system)) == null)
+    }
+
+    @Test
     fun `later interactive response does not fall back to an older response`() {
         val older = message(id = "older").copy(uiKey = "stable-older")
         val newerInteractive = message(id = "newer").copy(

@@ -1194,6 +1194,8 @@
     <string name="appearance_installed_pets">Installierte Begleiter</string>
     <string name="appearance_playback_speed">Wiedergabegeschwindigkeit — %1$s×</string>
     <string name="appearance_playback_speed_desc">Skaliert die Animationsgeschwindigkeit des ausgewählten Begleiters. Bei 1.0× läuft jeder Clip in der vorgesehenen Geschwindigkeit.</string>
+    <string name="appearance_pet_size">Größe des Begleiters — %1$d%%</string>
+    <string name="appearance_pet_size_desc">Skaliert Darstellung, Berührungsziel und sicheren Bewegungsbereich des Begleiters gemeinsam. Größere Begleiter können schmale Laufflächen auslassen.</string>
     <string name="appearance_stabilize">Frames stabilisieren</string>
     <string name="appearance_stabilize_desc">Zentriert jeden Frame automatisch, damit der Begleiter nicht zwischen Frames driftet oder springt (korrigiert wackelige KI-Sheets).</string>
     <string name="appearance_preview">Vorschau</string>

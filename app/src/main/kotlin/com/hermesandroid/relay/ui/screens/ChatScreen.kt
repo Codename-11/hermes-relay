@@ -183,7 +183,8 @@ import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
-import com.hermesandroid.relay.ui.components.CHAT_PET_MESSAGE_PERCH_PREFIX
+import com.hermesandroid.relay.ui.components.CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
+import com.hermesandroid.relay.ui.components.CHAT_PET_USER_MESSAGE_PERCH_PREFIX
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
@@ -2562,7 +2563,12 @@ fun ChatScreen(
                                         message.uiKey == petPerchUiKey &&
                                         message.uiKey in visibleMessageKeys
                                     ) {
-                                        "$CHAT_PET_MESSAGE_PERCH_PREFIX${message.uiKey}"
+                                        val prefix = if (message.role == MessageRole.USER) {
+                                            CHAT_PET_USER_MESSAGE_PERCH_PREFIX
+                                        } else {
+                                            CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
+                                        }
+                                        "$prefix${message.uiKey}"
                                     } else {
                                         null
                                     },

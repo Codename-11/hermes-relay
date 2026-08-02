@@ -43,6 +43,14 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `only wide side pockets and bubble tops permit settled pacing`() {
+        assertTrue(shouldPaceSettledHabitat(com.hermesandroid.relay.ui.components.pet.PetSettledChatMode.SidePocketPace))
+        assertTrue(shouldPaceSettledHabitat(com.hermesandroid.relay.ui.components.pet.PetSettledChatMode.BubbleTop))
+        assertFalse(shouldPaceSettledHabitat(com.hermesandroid.relay.ui.components.pet.PetSettledChatMode.SidePocketIdle))
+        assertFalse(shouldPaceSettledHabitat(com.hermesandroid.relay.ui.components.pet.PetSettledChatMode.ComposerCorner))
+    }
+
+    @Test
     fun `temporary movement pauses do not dock the overlay`() {
         assertFalse(shouldDockFloatingPet(roamingEnabled = true, roamingAllowed = true))
         assertTrue(shouldDockFloatingPet(roamingEnabled = false, roamingAllowed = true))
@@ -175,6 +183,16 @@ class FloatingPetCompanionTest {
         assertFalse(shouldCompactFloatingPet(imeVisible = false, screenHeightDp = 844))
         assertEquals(40, floatingPetVisualSizeDp(compact = true))
         assertEquals(48, floatingPetVisualSizeDp(compact = false))
+    }
+
+    @Test
+    fun `pet scale updates art hit target and collision footprint together`() {
+        assertEquals(FloatingPetDimensions(48f, 56f), floatingPetDimensions(false, 1f))
+        assertEquals(FloatingPetDimensions(36f, 48f), floatingPetDimensions(false, 0.75f))
+        assertEquals(FloatingPetDimensions(60f, 70f), floatingPetDimensions(false, 1.25f))
+        assertEquals(FloatingPetDimensions(30f, 48f), floatingPetDimensions(true, 0.75f))
+        assertEquals(FloatingPetDimensions(50f, 60f), floatingPetDimensions(true, 1.25f))
+        assertEquals(FloatingPetDimensions(48f, 56f), floatingPetDimensions(false, Float.NaN))
     }
 
     @Test
