@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -47,6 +48,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -102,8 +104,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -166,6 +170,7 @@ import com.hermesandroid.relay.ui.components.BackgroundTaskCard
 import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
 import com.hermesandroid.relay.ui.components.RelayServerImageResolver
 import com.hermesandroid.relay.ui.components.ChatInputBar
+import com.hermesandroid.relay.ui.components.ConversationVoiceDock
 import com.hermesandroid.relay.ui.components.CleanChatMode
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
@@ -177,18 +182,29 @@ import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
+import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
+import com.hermesandroid.relay.ui.components.CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
+import com.hermesandroid.relay.ui.components.CHAT_PET_STEP_MESSAGE_MARKER
+import com.hermesandroid.relay.ui.components.CHAT_PET_USER_MESSAGE_PERCH_PREFIX
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.newestPetPerchUiKey
+import com.hermesandroid.relay.ui.components.newestPetVisitTargetUiKey
+import com.hermesandroid.relay.ui.components.petPerchUiKeys
 import com.hermesandroid.relay.ui.components.SyntheticProcessNotificationNotice
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.SphereState
@@ -221,6 +237,8 @@ import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
+import com.hermesandroid.relay.viewmodel.VoiceState
+import com.hermesandroid.relay.assistant.AssistantAppSessionState
 import com.hermesandroid.relay.voice.VoiceOverlayHost
 import com.hermesandroid.relay.voice.VoiceOverlaySession
 import com.hermesandroid.relay.voice.openHermesFromOverlay
@@ -231,6 +249,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
+private const val CHAT_SCROLL_TO_BOTTOM_PET_PERCH = "chat-scroll-to-bottom-perch"
+private const val CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE = "chat-scroll-to-bottom-obstacle"
+private val CHAT_PET_ROUTES = setOf("chat")
 
 internal fun resolveChatHeaderSubtitle(
     isStreaming: Boolean,
@@ -476,6 +497,7 @@ fun ChatScreen(
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    onNavigateToAppearanceSettings: () -> Unit = {},
     // Voice mode gear button → full Voice Settings screen. Default no-op so
     // existing test/preview call sites keep compiling.
     onNavigateToVoiceSettings: () -> Unit = {},
@@ -483,13 +505,29 @@ fun ChatScreen(
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
     val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
+    var voicePresentationOverride by remember { mutableStateOf<VoicePresentationMode?>(null) }
+    val effectiveVoicePresentationMode = voicePresentationOverride ?: voicePresentationMode
+    val conversationVoiceResponseActionsEnabled =
+        voiceUiState.voiceMode &&
+            effectiveVoicePresentationMode == VoicePresentationMode.Conversation &&
+            voiceUiState.state == VoiceState.Idle
+    val conversationVoiceDockVisible =
+        voiceUiState.voiceMode &&
+            effectiveVoicePresentationMode == VoicePresentationMode.Conversation
+    val setVoicePresentationMode: (VoicePresentationMode) -> Unit = { mode ->
+        voicePresentationOverride = mode
+        onVoicePresentationModeChange(mode)
+    }
     val chatAlpha by animateFloatAsState(
         targetValue = if (
-            voiceUiState.voiceMode && voicePresentationMode == VoicePresentationMode.Focus
+            voiceUiState.voiceMode && effectiveVoicePresentationMode == VoicePresentationMode.Focus
         ) 0.4f else 1f,
         animationSpec = tween(300),
         label = "chatAlpha",
     )
+    LaunchedEffect(voiceUiState.voiceMode) {
+        if (!voiceUiState.voiceMode) voicePresentationOverride = null
+    }
 
     // Route classified chat errors (media cache, streaming failures, …) to
     // the app-wide snackbar. Same pattern every VM-bound screen uses.
@@ -512,6 +550,7 @@ fun ChatScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val voiceOverlayHost = remember { VoiceOverlayHost.install(context) }
+    val assistantSessionActive by AssistantAppSessionState.active.collectAsState()
     var pendingVoiceEnter by remember { mutableStateOf(false) }
     var micPermissionDenied by remember { mutableStateOf(false) }
     var pendingVoiceOverlayPermission by remember { mutableStateOf(false) }
@@ -522,12 +561,15 @@ fun ChatScreen(
             micPermissionDenied = false
             if (pendingVoiceEnter && !isDemoMode) {
                 pendingVoiceEnter = false
+                setVoicePresentationMode(VoicePresentationMode.Conversation)
+                com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
                 voiceViewModel.enterVoiceMode()
             } else {
                 pendingVoiceEnter = false
             }
         } else {
             pendingVoiceEnter = false
+            voicePresentationOverride = null
             micPermissionDenied = true
         }
     }
@@ -538,6 +580,8 @@ fun ChatScreen(
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (granted) {
             micPermissionDenied = false
+            setVoicePresentationMode(VoicePresentationMode.Conversation)
+            com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
             voiceViewModel.enterVoiceMode()
         } else {
             pendingVoiceEnter = true
@@ -797,9 +841,27 @@ fun ChatScreen(
         }
     }
     val listState = rememberLazyListState()
+    // Publish only surface-local visibility signals. Live turn state is owned at
+    // the app root so navigation cannot reset an in-flight companion to Idle.
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    LaunchedEffect(listState, petCompanionCoordinator) {
+        snapshotFlow { listState.isScrollInProgress to ambientMode }
+            .distinctUntilChanged()
+            .collect { (scrolling, hidden) ->
+                petCompanionCoordinator.publishSurface(
+                    owner = "chat",
+                    scrolling = scrolling,
+                    hidden = hidden,
+                )
+            }
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface("chat") }
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val copiedToClipboardMsg = stringResource(R.string.chat_copied_to_clipboard)
+    val copySessionIdLabel = stringResource(R.string.chat_copy_session_id)
     val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
     val focusManager = LocalFocusManager.current
     val finishSuccessfulSend: () -> Unit = {
@@ -871,7 +933,9 @@ fun ChatScreen(
     }
 
     val showVoiceSystemOverlay: () -> Unit = {
-        if (!voiceOverlayHost.hasOverlayPermission()) {
+        if (assistantSessionActive) {
+            voiceOverlayHost.hide()
+        } else if (!voiceOverlayHost.hasOverlayPermission()) {
             pendingVoiceOverlayPermission = true
             runCatching {
                 val intent = Intent(
@@ -927,6 +991,13 @@ fun ChatScreen(
 
     LaunchedEffect(voiceUiState.voiceMode) {
         if (!voiceUiState.voiceMode) {
+            voiceOverlayHost.hide()
+            pendingVoiceOverlayPermission = false
+        }
+    }
+
+    LaunchedEffect(assistantSessionActive) {
+        if (assistantSessionActive) {
             voiceOverlayHost.hide()
             pendingVoiceOverlayPermission = false
         }
@@ -1152,6 +1223,29 @@ fun ChatScreen(
                 }
             }
         }
+    }
+    var voiceDockAnchorGuardReady by remember { mutableStateOf(false) }
+    LaunchedEffect(conversationVoiceDockVisible) {
+        if (!voiceDockAnchorGuardReady) {
+            voiceDockAnchorGuardReady = true
+            return@LaunchedEffect
+        }
+        if (messages.isEmpty()) return@LaunchedEffect
+
+        // The dock expands inside the composer for 240 ms. Keep the transcript's
+        // leading visible row fixed while that changes the LazyColumn viewport;
+        // otherwise a conversation parked at the bottom is clamped forward on
+        // every animation frame and appears to scroll when voice mode opens.
+        val anchorIndex = listState.firstVisibleItemIndex
+        val anchorOffset = listState.firstVisibleItemScrollOffset
+        var firstFrameNanos = 0L
+        var frameNanos: Long
+        do {
+            if (isUserDragging) return@LaunchedEffect
+            listState.requestScrollToItem(anchorIndex, anchorOffset)
+            frameNanos = withFrameNanos { it }
+            if (firstFrameNanos == 0L) firstFrameNanos = frameNanos
+        } while (frameNanos - firstFrameNanos < 300_000_000L)
     }
     // Reaching the bottom by any means (user, follow-pin, content shrank)
     // always re-arms auto-follow.
@@ -1652,6 +1746,18 @@ fun ChatScreen(
                 onRenameSession = { sessionId, title ->
                     chatViewModel.renameSession(sessionId, title)
                 },
+                onCopySessionId = { sessionId ->
+                    scope.launch {
+                        clipboard.setClipEntry(
+                            ClipEntry(ClipData.newPlainText(copySessionIdLabel, sessionId))
+                        )
+                        Toast.makeText(
+                            context,
+                            copiedToClipboardMsg,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
                 threadsCapabilityActive = threadsCapabilityActive,
                 onNewThread = { name ->
                     chatViewModel.startNewThread(name)
@@ -1971,8 +2077,9 @@ fun ChatScreen(
                     // once there's a conversation), so it folds into a ⋮
                     // overflow instead of competing for width with Terminal +
                     // Settings — which is what was squeezing the title subtitle.
-                    // The overflow only appears when there's something to share.
-                    if (messages.isNotEmpty()) {
+                    // Session identity is useful before the first message; sharing only appears
+                    // once the conversation has content.
+                    if (messages.isNotEmpty() || !currentSessionId.isNullOrBlank()) {
                         var showOverflowMenu by remember { mutableStateOf(false) }
                         Box {
                             RelayChromeIconButton(
@@ -1985,19 +2092,46 @@ fun ChatScreen(
                                 expanded = showOverflowMenu,
                                 onDismissRequest = { showOverflowMenu = false },
                             ) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.chat_share_conversation)) },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Filled.Share,
-                                            contentDescription = null,
-                                        )
-                                    },
-                                    onClick = {
-                                        showOverflowMenu = false
-                                        shareConversation(context, messages)
-                                    },
-                                )
+                                currentSessionId?.takeIf { it.isNotBlank() }?.let { sessionId ->
+                                    DropdownMenuItem(
+                                        text = { Text(copySessionIdLabel) },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            scope.launch {
+                                                clipboard.setClipEntry(
+                                                    ClipEntry(
+                                                        ClipData.newPlainText(
+                                                            copySessionIdLabel,
+                                                            sessionId,
+                                                        )
+                                                    )
+                                                )
+                                                snackbarHostState.showSnackbar(
+                                                    message = copiedToClipboardMsg,
+                                                    duration = SnackbarDuration.Short,
+                                                )
+                                            }
+                                        },
+                                    )
+                                }
+                                if (messages.isNotEmpty()) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.chat_share_conversation)) },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Filled.Share,
+                                                contentDescription = null,
+                                            )
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            shareConversation(context, messages)
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -2148,7 +2282,7 @@ fun ChatScreen(
                             Spacer(modifier = Modifier.weight(0.15f))
 
                             // ASCII sphere (constrained to square aspect)
-                            if (animationEnabled) {
+                            if (LocalBackgroundVisualizationEnabled.current) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -2160,6 +2294,7 @@ fun ChatScreen(
                                             state = if (error != null) SphereState.Error else SphereState.Idle,
                                             intensity = streamingIntensity,
                                             toolCallBurst = toolCallBurst,
+                                            paused = !animationEnabled,
                                         ),
                                         modifier = Modifier.fillMaxSize(),
                                     )
@@ -2308,12 +2443,17 @@ fun ChatScreen(
                         }
                 ) {
                     // Ambient avatar behind messages
-                    if (animationEnabled && animationBehindChat && !ambientMode) {
+                    if (
+                        LocalBackgroundVisualizationEnabled.current &&
+                        animationBehindChat &&
+                        !ambientMode
+                    ) {
                         LocalAgentAvatar.current.Render(
                             state = AvatarRenderState(
                                 state = sphereState,
                                 intensity = streamingIntensity,
                                 toolCallBurst = toolCallBurst,
+                                paused = !animationEnabled,
                             ),
                             modifier = Modifier
                                 .fillMaxSize()
@@ -2350,6 +2490,21 @@ fun ChatScreen(
                         LocalRelayServerImageResolver provides relayServerImageResolver,
                         LocalThinkingIndicator provides thinkingIndicatorConfig,
                     ) {
+                    val petVisitTargetUiKey = remember(messages) {
+                        newestPetVisitTargetUiKey(messages)
+                    }
+                    val petPerchUiKey = remember(messages) {
+                        newestPetPerchUiKey(messages)
+                    }
+                    val petJourneyPerchUiKeys = remember(messages) {
+                        petPerchUiKeys(messages)
+                    }
+                    val visibleMessageKeys by remember(listState) {
+                        derivedStateOf {
+                            listState.layoutInfo.visibleItemsInfo
+                                .mapTo(mutableSetOf<Any>()) { it.key }
+                        }
+                    }
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -2435,6 +2590,32 @@ fun ChatScreen(
                                 MessageBubble(
                                     message = message,
                                     modifier = bubbleModifier,
+                                    petVisitTargetKey = if (
+                                        message.uiKey == petVisitTargetUiKey &&
+                                        message.uiKey in visibleMessageKeys
+                                    ) {
+                                        "chat-message:${message.uiKey}"
+                                    } else {
+                                        null
+                                    },
+                                    petPerchKey = if (
+                                        message.uiKey in petJourneyPerchUiKeys &&
+                                        message.uiKey in visibleMessageKeys
+                                    ) {
+                                        val prefix = if (message.role == MessageRole.USER) {
+                                            CHAT_PET_USER_MESSAGE_PERCH_PREFIX
+                                        } else {
+                                            CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
+                                        }
+                                        val marker = if (message.uiKey == petPerchUiKey) {
+                                            ""
+                                        } else {
+                                            CHAT_PET_STEP_MESSAGE_MARKER
+                                        }
+                                        "$prefix$marker${message.uiKey}"
+                                    } else {
+                                        null
+                                    },
                                     maxBubbleWidth = maxBubbleWidth,
                                     showThinking = showThinking,
                                     isFirstInGroup = isFirstInGroup,
@@ -2477,6 +2658,14 @@ fun ChatScreen(
                                         } else {
                                             "$inputText\n$quoted\n\n"
                                         }
+                                    },
+                                    onSpeakMessage = if (
+                                        conversationVoiceResponseActionsEnabled &&
+                                        !isStreaming
+                                    ) {
+                                        { text -> voiceViewModel.speakResponse(text) }
+                                    } else {
+                                        null
                                     },
                                     onCopyMessage = { text ->
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -2586,9 +2775,31 @@ fun ChatScreen(
                             .padding(16.dp)
                             .zIndex(8f)
                     ) {
+                        Box(
+                            modifier = Modifier
+                                // The visible FAB is narrower than the pet's
+                                // footprint. Measure a transparent landing
+                                // ledge around it so the pet can stand above
+                                // the control without covering its touch area.
+                                .width(72.dp)
+                                .height(48.dp)
+                                .petPerchSurface(
+                                    key = CHAT_SCROLL_TO_BOTTOM_PET_PERCH,
+                                    routes = CHAT_PET_ROUTES,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
                         SmallFloatingActionButton(
                             modifier = Modifier
                                 .size(48.dp)
+                                // The surrounding box is a landing ledge, but
+                                // the real control remains forbidden space so
+                                // composer and bubble routes cannot pass the
+                                // pet's complete scaled footprint over it.
+                                .petObstacleSurface(
+                                    key = CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE,
+                                    routes = CHAT_PET_ROUTES,
+                                )
                                 .semantics {
                                     contentDescription = if (unreadMessageCount > 0) {
                                         "Scroll to bottom, $unreadMessageCount unread " +
@@ -2628,6 +2839,7 @@ fun ChatScreen(
                                     contentDescription = null,
                                 )
                             }
+                        }
                         }
                     }
 
@@ -3052,6 +3264,7 @@ fun ChatScreen(
             } else {
                 null
             }
+
             ChatInputBar(
                 value = inputText,
                 onValueChange = { inputText = it },
@@ -3139,7 +3352,7 @@ fun ChatScreen(
                 charLimit = charLimit,
                 caption = turnStatus ?: inputCaption,
                 voiceReady = voiceReady,
-                showVoiceHint = !voiceHintSeen,
+                showVoiceHint = !voiceHintSeen && !conversationVoiceDockVisible,
                 onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },
                 isDarkTheme = isDarkTheme,
                 modelControl = modelControl,
@@ -3154,6 +3367,37 @@ fun ChatScreen(
                 onEffortOptionSelected = { option ->
                     option.value?.let { chatViewModel.selectReasoningEffort(it) }
                 },
+                topContent = {
+                    ConversationVoiceDock(
+                        uiState = voiceUiState,
+                        engineMode = voiceStats.voiceEngineMode,
+                        provider = activeVoiceProvider,
+                        model = activeVoiceModel,
+                        voice = activeVoiceName,
+                        profileName = AgentDisplay.profileDisplayName(effectiveProfile),
+                        outputEnabled = activeVoiceEnabled,
+                        onMicTap = { voiceViewModel.startListening() },
+                        onMicRelease = { voiceViewModel.stopListening() },
+                        onInterrupt = { voiceViewModel.interruptSpeaking() },
+                        onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
+                        onModeChange = { voiceViewModel.setInteractionMode(it) },
+                        onFocusRequest = {
+                            setVoicePresentationMode(VoicePresentationMode.Focus)
+                        },
+                        onOverlayRequest = showVoiceSystemOverlay,
+                        onOpenSettings = onNavigateToVoiceSettings,
+                        onExit = { voiceViewModel.exitVoiceMode() },
+                    )
+                },
+                topContentVisible = conversationVoiceDockVisible,
+                suppressVoiceTrailing = conversationVoiceDockVisible,
+                // Measure the existing composer as a Desktop-style ledge. The
+                // floating host stands on its top edge; no transcript space is
+                // reserved and the composer controls remain unobstructed.
+                modifier = Modifier.petPerchSurface(
+                    key = CHAT_PET_WALK_REGION,
+                    routes = CHAT_PET_ROUTES,
+                ),
                 enabled = chatReady,
                 onModelPickerClick = { showModelSheet = true },
             )
@@ -3307,11 +3551,10 @@ fun ChatScreen(
                 voiceOutputModel = activeVoiceModel,
                 voiceOutputVoice = activeVoiceName,
                 voiceProfileName = AgentDisplay.profileDisplayName(effectiveProfile),
-                voiceConfigScope = activeVoiceScope,
                 voiceOutputEnabled = activeVoiceEnabled,
                 voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
-                presentationMode = voicePresentationMode,
-                onPresentationModeChange = onVoicePresentationModeChange,
+                presentationMode = effectiveVoicePresentationMode,
+                onPresentationModeChange = setVoicePresentationMode,
                 onOverlayRequest = showVoiceSystemOverlay,
                 // Gear button in the overlay's expanded controls. The overlay
                 // exits voice mode before invoking this, so navigation lands
@@ -3477,12 +3720,13 @@ private fun ChatColdStartLoadingState(
         modifier = modifier,
         contentAlignment = Alignment.Center,
     ) {
-        if (animationEnabled) {
+        if (LocalBackgroundVisualizationEnabled.current) {
             LocalAgentAvatar.current.Render(
                 state = AvatarRenderState(
                     state = SphereState.Thinking,
                     intensity = streamingIntensity.coerceAtLeast(0.18f),
                     toolCallBurst = toolCallBurst,
+                    paused = !animationEnabled,
                 ),
                 modifier = Modifier
                     .fillMaxSize()

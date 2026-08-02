@@ -5,7 +5,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -130,6 +132,12 @@ data class ChatInputPickerControl(
  *    (DataStore flag owned by the caller, consumed via [onVoiceHintShown]).
  *  - [purpleGlow] on the trailing button (dark theme only) when it is an
  *    enabled SEND — the bar's one flourish, exactly as before.
+ *  - [topContent] lets an active mode share the composer's outer surface.
+ *    Conversation voice uses it for the dock and sets [suppressVoiceTrailing]
+ *    so the dock remains the only idle/stop voice action; typed send/steer/
+ *    queue actions still render normally.
+ *  - [topContentVisible] expands or collapses that shared content from the
+ *    composer edge instead of abruptly replacing the input layout.
  *
  * [onSend] fires for SEND, STEER, and QUEUE — the caller already encoded
  * the meaning in the state it passed; [onVoice]/[onStop] for theirs.
@@ -160,6 +168,9 @@ fun ChatInputBar(
     onModelPickerClick: (() -> Unit)? = null,
     effortControl: ChatInputPickerControl? = null,
     onEffortOptionSelected: (ChatInputPickerOption) -> Unit = {},
+    topContent: (@Composable () -> Unit)? = null,
+    topContentVisible: Boolean = topContent != null,
+    suppressVoiceTrailing: Boolean = false,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
@@ -246,35 +257,57 @@ fun ChatInputBar(
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            ) {
-                BasicTextField(
-                    value = value,
-                    onValueChange = { if (it.length <= charLimit) onValueChange(it) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 34.dp)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    maxLines = 5,
-                    enabled = enabled,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        color = MaterialTheme.colorScheme.onSurface,
-                    ),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    decorationBox = { inner ->
-                        Box(Modifier.fillMaxWidth()) {
-                            if (value.isEmpty()) {
-                                Text(
-                                    text = placeholder,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = RelayRefresh.Dim,
-                                )
-                            }
-                            inner()
+            Column {
+                if (topContent != null) {
+                    AnimatedVisibility(
+                        visible = topContentVisible,
+                        enter = expandVertically(
+                            animationSpec = tween(240),
+                            expandFrom = Alignment.Bottom,
+                        ) + fadeIn(tween(180)),
+                        exit = shrinkVertically(
+                            animationSpec = tween(180),
+                            shrinkTowards = Alignment.Bottom,
+                        ) + fadeOut(tween(120)),
+                    ) {
+                        Column {
+                            topContent()
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f),
+                            )
                         }
-                    },
-                )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                ) {
+                    BasicTextField(
+                        value = value,
+                        onValueChange = { if (it.length <= charLimit) onValueChange(it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 34.dp)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        maxLines = 5,
+                        enabled = enabled,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { inner ->
+                            Box(Modifier.fillMaxWidth()) {
+                                if (value.isEmpty()) {
+                                    Text(
+                                        text = placeholder,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = RelayRefresh.Dim,
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                    )
 
                 Row(
                     modifier = Modifier
@@ -401,42 +434,50 @@ fun ChatInputBar(
                                     )
                                 }
 
-                                ChatInputTrailing.VOICE -> Box {
-                                    IconButton(onClick = onVoice) {
-                                        Icon(
-                                            imageVector = Icons.Filled.GraphicEq,
-                                            contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
-                                                else stringResource(R.string.chat_input_voice_setup_needed),
-                                            tint = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                    // "Needs setup" badge — full-alpha button + Amber
-                                    // dot instead of a half-dimmed broken-looking mic.
-                                    if (!voiceReady) {
-                                        Box(
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .padding(top = 8.dp, end = 8.dp)
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(RelayRefresh.Amber),
-                                        )
+                                ChatInputTrailing.VOICE -> {
+                                    if (!suppressVoiceTrailing) {
+                                        Box {
+                                            IconButton(onClick = onVoice) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.GraphicEq,
+                                                    contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
+                                                        else stringResource(R.string.chat_input_voice_setup_needed),
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                            // "Needs setup" badge — full-alpha button + Amber
+                                            // dot instead of a half-dimmed broken-looking mic.
+                                            if (!voiceReady) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.TopEnd)
+                                                        .padding(top = 8.dp, end = 8.dp)
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(RelayRefresh.Amber),
+                                                )
+                                            }
+                                        }
                                     }
                                 }
 
-                                ChatInputTrailing.STOP -> IconButton(onClick = onStop) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .border(1.dp, MaterialTheme.colorScheme.error, CircleShape),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Stop,
-                                            contentDescription = stringResource(R.string.chat_input_stop_streaming),
-                                            tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(18.dp),
-                                        )
+                                ChatInputTrailing.STOP -> {
+                                    if (!suppressVoiceTrailing) {
+                                        IconButton(onClick = onStop) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .border(1.dp, MaterialTheme.colorScheme.error, CircleShape),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Stop,
+                                                    contentDescription = stringResource(R.string.chat_input_stop_streaming),
+                                                    tint = MaterialTheme.colorScheme.error,
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                            }
+                                        }
                                     }
                                 }
 
@@ -479,6 +520,7 @@ fun ChatInputBar(
             }
         }
     }
+}
 }
 
 @Composable

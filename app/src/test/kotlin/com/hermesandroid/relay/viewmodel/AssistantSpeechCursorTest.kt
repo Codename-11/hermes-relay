@@ -9,6 +9,13 @@ import org.junit.Test
 
 class AssistantSpeechCursorTest {
     @Test
+    fun `relay output falls back when a successful response contains no audio`() {
+        assertTrue(shouldFallbackRelayVoiceOutput(requestSucceeded = true, audioStarted = false))
+        assertTrue(shouldFallbackRelayVoiceOutput(requestSucceeded = false, audioStarted = false))
+        assertFalse(shouldFallbackRelayVoiceOutput(requestSucceeded = true, audioStarted = true))
+    }
+
+    @Test
     fun `speaks every assistant bubble created during one tool run`() {
         val history = listOf(message("old", MessageRole.ASSISTANT, "Previous answer."))
         val cursor = AssistantSpeechCursor(history)

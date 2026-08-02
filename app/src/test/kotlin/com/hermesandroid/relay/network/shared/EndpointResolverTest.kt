@@ -396,6 +396,33 @@ class EndpointResolverTest {
     }
 
     @Test
+    fun dashboardHealthDoesNotVouchForRelayHealthOnTheSameRoute() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/status" -> MockResponse().setResponseCode(200)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        secondReachableServer.dispatcher = healthDispatcher(statusCode = 503)
+        val candidate = EndpointCandidate(
+            role = "lan",
+            dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+            relay = RelayEndpoint(
+                "ws://${secondReachableServer.hostName}:${secondReachableServer.port}",
+            ),
+        )
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+
+        val standardWinner = resolver.resolve(listOf(candidate), EndpointSurface.Standard)
+        val relayWinner = resolver.resolve(listOf(candidate), EndpointSurface.Relay)
+
+        assertEquals("the healthy Dashboard keeps the standard route usable", candidate, standardWinner)
+        assertNull("a failed Relay /health must not be masked by Dashboard health", relayWinner)
+        assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+        assertEquals("/health", secondReachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+    }
+
+    @Test
     fun apiHealthProbe_usesGetWhenServerRejectsHead() = runTest {
         reachableServer.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when {

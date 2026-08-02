@@ -217,6 +217,63 @@ fun ModelPickerSheet(
     }
 }
 
+/**
+ * Compact sibling of [ModelPickerSheet] for short, ungrouped control lists.
+ * Passport selectors use this so profile, personality, and reasoning choices
+ * share the model picker's modal hierarchy, row rhythm, and selected-state
+ * treatment instead of expanding dense radio lists inside the detail card.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun OptionPickerSheet(
+    title: String,
+    subtitle: String? = null,
+    options: List<ChatInputPickerOption>,
+    onSelect: (ChatInputPickerOption) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            ) {
+                Text(text = title, style = MaterialTheme.typography.titleMedium)
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider()
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp),
+            ) {
+                items(
+                    items = options,
+                    key = { option -> "${option.group}:${option.value}:${option.label}" },
+                ) { option ->
+                    ModelPickerRow(option = option, onClick = { onSelect(option) })
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ModelPickerRow(
     option: ChatInputPickerOption,

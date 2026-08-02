@@ -33,6 +33,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -157,6 +158,57 @@ class VoiceViewModelBargeInTest {
             bargeInListenerFactory = { _, _ -> bargeInListener },
         )
         return vm
+    }
+
+    // -------------------------------------------------------------------
+    // Full-turn ownership — Thinking -> Speaking uses one listener
+    // -------------------------------------------------------------------
+
+    @Test
+    fun `one listener spans Thinking into Speaking without rearm`() = runTest {
+        val vm = buildViewModel()
+
+        vm.beginBargeInTurnForTest()
+        runCurrent()
+        assertEquals(VoiceState.Thinking, vm.uiState.value.state)
+        verify(exactly = 1) { bargeInListener.start(any()) }
+
+        vm.markBargeInPlaybackStartedForTest()
+        runCurrent()
+        assertEquals(VoiceState.Speaking, vm.uiState.value.state)
+        verify(exactly = 1) { bargeInListener.start(any()) }
+        verify(exactly = 1) { bargeInListener.markPlaybackStarted(any(), any()) }
+    }
+
+    @Test
+    fun `bargeInDetected during Thinking interrupts generation and captures replacement`() = runTest {
+        val vm = buildViewModel()
+        vm.beginBargeInTurnForTest()
+        runCurrent()
+
+        bargeInFlow.emit(Unit)
+        runCurrent()
+
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+        assertNull(vm.takeSpokenInterruptionNoteForTest())
+        verify(atLeast = 1) { chatViewModel.cancelStream() }
+        verify(atLeast = 1) { recorder.startRecording() }
+        assertNull(vm.takeSpokenInterruptionNoteForTest())
+    }
+
+    @Test
+    fun `bargeInDetected after audible playback arms the next-turn note`() = runTest {
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(
+            chunks = listOf("Hello."),
+            currentIdx = 0,
+            outputAudioActive = true,
+        )
+
+        vm.onBargeInDetected()
+        runCurrent()
+
+        assertEquals(SPEECH_INTERRUPTED_NOTE, vm.takeSpokenInterruptionNoteForTest())
     }
 
     // -------------------------------------------------------------------

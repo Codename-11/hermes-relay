@@ -15,6 +15,14 @@ import com.hermesandroid.relay.network.relay.VoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
+import com.hermesandroid.relay.wake.WakeWordForegroundService
+import com.hermesandroid.relay.wake.WakeWordModelInstaller
+import com.hermesandroid.relay.wake.WakeWordPreferences
+import com.hermesandroid.relay.wake.WakeWordPreferencesRepository
+import com.hermesandroid.relay.wake.WakeWordRuntimeState
+import com.hermesandroid.relay.wake.WakeWordTestState
+import com.hermesandroid.relay.assistant.AssistantWakeRuntimeState
+import com.hermesandroid.relay.assistant.HermesVoiceInteractionService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -24,6 +32,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -62,6 +71,11 @@ data class VoiceConfigUiState(
     val realtimeOptionsStatus: String? = null,
 )
 
+data class WakeWordInstallUiState(
+    val installing: Boolean = false,
+    val error: String? = null,
+)
+
 /**
  * View-model backing the Voice Settings screen.
  *
@@ -73,6 +87,23 @@ data class VoiceConfigUiState(
 class VoiceSettingsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val bargeInRepo = BargeInPreferencesRepository(application)
+    private val wakeWordRepo = WakeWordPreferencesRepository(application)
+
+    init {
+        viewModelScope.launch {
+            val preferences = wakeWordRepo.flow.first()
+            if (preferences.enabled &&
+                WakeWordForegroundService.runtimeState.value ==
+                WakeWordRuntimeState.Stopped &&
+                WakeWordModelInstaller(application).installedFiles() != null
+            ) {
+                // Entering the visible Voice settings screen is a permitted
+                // foreground restart after package replacement/process death.
+                // This is deliberately not a boot or background auto-start.
+                WakeWordForegroundService.start(application)
+            }
+        }
+    }
 
     /** Current barge-in preferences — mirrors [BargeInPreferencesRepository.flow]. */
     val bargeInPrefs: StateFlow<BargeInPreferences> = bargeInRepo.flow.stateIn(
@@ -80,6 +111,23 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = BargeInPreferences(),
     )
+
+    val wakeWordPrefs: StateFlow<WakeWordPreferences> = wakeWordRepo.flow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = WakeWordPreferences(),
+    )
+
+    val wakeWordRuntimeState: StateFlow<WakeWordRuntimeState> =
+        WakeWordForegroundService.runtimeState
+    val wakeWordTestState: StateFlow<WakeWordTestState> =
+        WakeWordForegroundService.testState
+    val assistantWakeRuntimeState: StateFlow<AssistantWakeRuntimeState> =
+        HermesVoiceInteractionService.runtimeState
+
+    private val _wakeWordInstallState = MutableStateFlow(WakeWordInstallUiState())
+    val wakeWordInstallState: StateFlow<WakeWordInstallUiState> =
+        _wakeWordInstallState.asStateFlow()
 
     /**
      * One-shot probe of [AcousticEchoCanceler.isAvailable] captured at VM
@@ -121,6 +169,116 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
 
     fun setResumeAfterInterruption(enabled: Boolean) {
         viewModelScope.launch { bargeInRepo.setResumeAfterInterruption(enabled) }
+    }
+
+    fun setBargeInThresholdMultiplier(value: Float) {
+        viewModelScope.launch { bargeInRepo.setThresholdMultiplier(value) }
+    }
+
+    fun setBargeInPlaybackGraceMs(value: Long) {
+        viewModelScope.launch { bargeInRepo.setPlaybackGraceMs(value) }
+    }
+
+    fun setBargeInDebugDiagnostics(enabled: Boolean) {
+        viewModelScope.launch { bargeInRepo.setDebugDiagnostics(enabled) }
+    }
+
+    fun setWakeWordEnabled(enabled: Boolean) {
+        if (!enabled) {
+            viewModelScope.launch { wakeWordRepo.setEnabled(false) }
+            WakeWordForegroundService.stop(getApplication())
+            _wakeWordInstallState.value = WakeWordInstallUiState()
+            return
+        }
+        if (_wakeWordInstallState.value.installing) return
+        _wakeWordInstallState.value = WakeWordInstallUiState(installing = true)
+        viewModelScope.launch {
+            val result = WakeWordModelInstaller(getApplication()).ensureInstalled()
+            result.fold(
+                onSuccess = {
+                    runCatching {
+                        wakeWordRepo.setEnabled(true)
+                        WakeWordForegroundService.start(getApplication())
+                    }.onSuccess {
+                        _wakeWordInstallState.value = WakeWordInstallUiState()
+                    }.onFailure { error ->
+                        wakeWordRepo.setEnabled(false)
+                        _wakeWordInstallState.value = WakeWordInstallUiState(
+                            error = error.message ?: "Could not start wake-word listening",
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    wakeWordRepo.setEnabled(false)
+                    _wakeWordInstallState.value = WakeWordInstallUiState(
+                        error = error.message ?: "Could not install the wake-word model",
+                    )
+                },
+            )
+        }
+    }
+
+    fun setAssistantWakeEnabled(enabled: Boolean) {
+        if (!enabled) {
+            viewModelScope.launch { wakeWordRepo.setAssistantEnabled(false) }
+            _wakeWordInstallState.value = WakeWordInstallUiState()
+            return
+        }
+        if (_wakeWordInstallState.value.installing) return
+        _wakeWordInstallState.value = WakeWordInstallUiState(installing = true)
+        viewModelScope.launch {
+            val result = WakeWordModelInstaller(getApplication()).ensureInstalled()
+            result.fold(
+                onSuccess = {
+                    runCatching {
+                        WakeWordForegroundService.stop(getApplication())
+                        wakeWordRepo.setAssistantEnabled(true)
+                    }.onSuccess {
+                        _wakeWordInstallState.value = WakeWordInstallUiState()
+                    }.onFailure { error ->
+                        wakeWordRepo.setAssistantEnabled(false)
+                        _wakeWordInstallState.value = WakeWordInstallUiState(
+                            error = error.message ?: "Could not enable assistant wake listening",
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    wakeWordRepo.setAssistantEnabled(false)
+                    _wakeWordInstallState.value = WakeWordInstallUiState(
+                        error = error.message ?: "Could not install the wake-word model",
+                    )
+                },
+            )
+        }
+    }
+
+    fun setWakeWordSensitivity(value: Float) {
+        viewModelScope.launch {
+            wakeWordRepo.setSensitivity(value)
+            WakeWordForegroundService.reloadSettings()
+        }
+    }
+
+    fun setWakeWordConfirmationFrames(value: Int) {
+        viewModelScope.launch {
+            wakeWordRepo.setConfirmationFrames(value)
+            WakeWordForegroundService.reloadSettings()
+        }
+    }
+
+    fun setWakeWordStartNewSession(enabled: Boolean) {
+        viewModelScope.launch {
+            wakeWordRepo.setStartNewSession(enabled)
+            WakeWordForegroundService.reloadSettings()
+        }
+    }
+
+    fun testWakeWord() {
+        WakeWordForegroundService.startTest()
+    }
+
+    fun clearWakeWordError() {
+        _wakeWordInstallState.update { it.copy(error = null) }
     }
 
     /**

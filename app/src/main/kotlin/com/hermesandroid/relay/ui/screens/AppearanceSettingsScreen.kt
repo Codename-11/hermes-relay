@@ -51,6 +51,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,6 +60,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,18 +72,23 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AppLanguage
+import com.hermesandroid.relay.data.MAX_PET_SIZE_SCALE
+import com.hermesandroid.relay.data.MIN_PET_SIZE_SCALE
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.ui.components.SphereSkin
 import com.hermesandroid.relay.ui.components.SphereSkinSource
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.reactivityLabels
+import com.hermesandroid.relay.ui.components.floatingPetDimensions
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.AvatarSource
-import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
-import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
-import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
+import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppTheme
 import com.hermesandroid.relay.ui.theme.AppThemes
@@ -90,7 +97,24 @@ import com.hermesandroid.relay.ui.theme.ThemeMode
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+
+private const val APPEARANCE_PET_SURFACE_ROUTE = "settings/appearance"
+private val APPEARANCE_PET_SURFACE_ROUTES = setOf(APPEARANCE_PET_SURFACE_ROUTE)
+
+/** Each card remains a top-edge ledge while its controls stay forbidden terrain. */
+private fun Modifier.appearancePetSurface(key: String): Modifier {
+    val surfaceKey = "appearance-card:$key"
+    return petPerchSurface(
+        key = surfaceKey,
+        routes = APPEARANCE_PET_SURFACE_ROUTES,
+    ).petObstacleSurface(
+        key = "$surfaceKey:controls",
+        routes = APPEARANCE_PET_SURFACE_ROUTES,
+    )
+}
 
 /**
  * Dedicated Appearance settings screen. Hosts theme picker (auto/light/dark),
@@ -102,6 +126,7 @@ import kotlinx.coroutines.launch
 fun AppearanceSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    onBrowsePetdex: () -> Unit = {},
 ) {
     val theme by connectionViewModel.theme.collectAsState()
     val appThemeId by connectionViewModel.appTheme.collectAsState()
@@ -110,6 +135,22 @@ fun AppearanceSettingsScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingDelete by remember { mutableStateOf<AgentAvatar?>(null) }
+    val appearanceScrollState = rememberScrollState()
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    LaunchedEffect(appearanceScrollState, petCompanionCoordinator) {
+        snapshotFlow { appearanceScrollState.isScrollInProgress to (pendingDelete != null) }
+            .distinctUntilChanged()
+            .collect { (scrolling, hidden) ->
+                petCompanionCoordinator.publishSurface(
+                    owner = APPEARANCE_PET_SURFACE_ROUTE,
+                    scrolling = scrolling,
+                    hidden = hidden,
+                )
+            }
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface(APPEARANCE_PET_SURFACE_ROUTE) }
+    }
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { connectionViewModel.importPet(it) } }
@@ -161,7 +202,7 @@ fun AppearanceSettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(appearanceScrollState)
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -174,6 +215,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("theme")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -219,6 +261,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("language")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -290,6 +333,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("display")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -409,6 +453,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("font")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -450,6 +495,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("animation")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -573,17 +619,102 @@ fun AppearanceSettingsScreen(
                 }
             }
 
-            // Agent avatar section — choose the avatar first (the built-in sphere
-            // plus any imported "pets"; add/remove pets in-app below). When the
-            // sphere avatar is selected its skin chips nest below: avatar → skin.
             Text(
-                text = stringResource(R.string.appearance_agent_avatar),
+                text = stringResource(R.string.appearance_background_visualization),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Card(
+                modifier = Modifier
+                    .appearancePetSurface("background")
+                    .fillMaxWidth()
+                    .gradientBorder(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkTheme = isDarkTheme,
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                val backgroundVisualizationEnabled by
+                    connectionViewModel.backgroundVisualizationEnabled.collectAsState()
+                val availableSkins = LocalAvailableSphereSkins.current
+                val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
+                val effectiveSkinId = SphereRegistry.resolve(
+                    selectedId = sphereSkinId,
+                    themeDefaultSkinId = selectedTheme.defaultSphereSkinId,
+                    available = availableSkins,
+                ).id
+                val brand = LocalBrand.current
+
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.appearance_background_visualization_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = !backgroundVisualizationEnabled,
+                            onClick = { connectionViewModel.setBackgroundVisualizationEnabled(false) },
+                            label = { Text(stringResource(R.string.appearance_background_off)) },
+                        )
+                        FilterChip(
+                            selected = backgroundVisualizationEnabled,
+                            onClick = { connectionViewModel.setBackgroundVisualizationEnabled(true) },
+                            label = { Text(stringResource(R.string.appearance_background_sphere)) },
+                        )
+                    }
+
+                    if (backgroundVisualizationEnabled) {
+                        HorizontalDivider()
+                        Text(
+                            text = stringResource(R.string.appearance_sphere_skin),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            availableSkins.forEach { skin ->
+                                SphereSkinChip(
+                                    skin = skin,
+                                    brand = brand,
+                                    selected = skin.id == effectiveSkinId,
+                                    onClick = { connectionViewModel.setSphereSkin(skin.id) },
+                                )
+                            }
+                        }
+                        Text(
+                            text = stringResource(R.string.appearance_sphere_custom_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            // Floating pets are companions, not agent identity or background art.
+            Text(
+                text = stringResource(R.string.appearance_floating_pet),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("floating-pet")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -594,22 +725,15 @@ fun AppearanceSettingsScreen(
                 )
             ) {
                 val brand = LocalBrand.current
-                val availableAvatars = LocalAvailableAvatars.current
-                val activeAvatar = LocalAgentAvatar.current
-                val availableSkins = LocalAvailableSphereSkins.current
-                val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
-                val effectiveSkinId = SphereRegistry.resolve(
-                    selectedId = sphereSkinId,
-                    themeDefaultSkinId = selectedTheme.defaultSphereSkinId,
-                    available = availableSkins,
-                ).id
+                val availablePets = LocalAvailablePets.current
+                val activePet = LocalFloatingPet.current
 
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.appearance_agent_avatar_desc),
+                        text = stringResource(R.string.appearance_floating_pet_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -619,27 +743,29 @@ fun AppearanceSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        availableAvatars.forEach { avatar ->
+                        FilterChip(
+                            selected = activePet == null,
+                            onClick = { connectionViewModel.setFloatingPet(null) },
+                            label = { Text(stringResource(R.string.appearance_floating_pet_none)) },
+                        )
+                        availablePets.forEach { pet ->
                             AgentAvatarChip(
-                                avatar = avatar,
+                                avatar = pet,
                                 brand = brand,
-                                selected = avatar.id == activeAvatar.id,
-                                // Persist + switch. RelayApp re-resolves
-                                // LocalAgentAvatar from this pref, so every
-                                // surface (and these chips) updates.
-                                onClick = { connectionViewModel.setAgentAvatar(avatar.id) },
+                                selected = pet.id == activePet?.id,
+                                onClick = { connectionViewModel.setFloatingPet(pet.id) },
                             )
                         }
                     }
 
                     // Add / manage user pets in-app — the reliable alternative to
                     // adb push (scoped storage blocks or stalls it on many devices).
-                    val userAvatars = availableAvatars.filter { it.source == AvatarSource.USER }
+                    val userAvatars = availablePets.filter { it.source == AvatarSource.USER }
 
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         OutlinedButton(
                             onClick = {
@@ -660,6 +786,9 @@ fun AppearanceSettingsScreen(
                         }
                         TextButton(onClick = { connectionViewModel.refreshAgentAvatars() }) {
                             Text(stringResource(R.string.appearance_rescan))
+                        }
+                        TextButton(onClick = onBrowsePetdex) {
+                            Text(stringResource(R.string.appearance_browse_petdex))
                         }
                     }
 
@@ -700,10 +829,13 @@ fun AppearanceSettingsScreen(
 
                     // Pet playback-speed tuning (selected pet only) — scales the
                     // authored fps live, no re-authoring or re-importing needed.
-                    if (activeAvatar.source == AvatarSource.USER) {
+                    if (activePet?.source == AvatarSource.USER) {
                         HorizontalDivider()
 
                         val petSpeed by connectionViewModel.petSpeed.collectAsState()
+                        val petSizeScale by connectionViewModel.petSizeScale.collectAsState()
+                        val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
+                        val petTemperament by connectionViewModel.petTemperament.collectAsState()
                         Text(
                             text = stringResource(R.string.appearance_playback_speed, "%.1f".format(java.util.Locale.US, petSpeed)),
                             style = MaterialTheme.typography.labelLarge,
@@ -717,6 +849,26 @@ fun AppearanceSettingsScreen(
                         )
                         Text(
                             text = stringResource(R.string.appearance_playback_speed_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        Text(
+                            text = stringResource(
+                                R.string.appearance_pet_size,
+                                (petSizeScale * 100f).roundToInt(),
+                            ),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Slider(
+                            value = petSizeScale,
+                            onValueChange = connectionViewModel::setPetSizeScale,
+                            valueRange = MIN_PET_SIZE_SCALE..MAX_PET_SIZE_SCALE,
+                            steps = 5,
+                        )
+                        Text(
+                            text = stringResource(R.string.appearance_pet_size_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -742,6 +894,68 @@ fun AppearanceSettingsScreen(
                                 checked = petStabilize,
                                 onCheckedChange = { connectionViewModel.setPetStabilize(it) },
                             )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.appearance_pet_roaming),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = stringResource(R.string.appearance_pet_roaming_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = petRoamingEnabled,
+                                onCheckedChange = { connectionViewModel.setPetRoamingEnabled(it) },
+                            )
+                        }
+
+                        Text(
+                            text = stringResource(R.string.appearance_pet_temperament),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = stringResource(R.string.appearance_pet_temperament_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .alpha(if (petRoamingEnabled) 1f else 0.6f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            petTemperamentOptions.forEach { option ->
+                                FilterChip(
+                                    selected = option.temperament == petTemperament,
+                                    onClick = {
+                                        connectionViewModel.setPetTemperament(option.temperament)
+                                    },
+                                    enabled = petRoamingEnabled,
+                                    label = { Text(stringResource(option.labelRes)) },
+                                )
+                            }
+                        }
+                        Text(
+                            text = stringResource(
+                                petTemperamentOption(petTemperament).descriptionRes,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.alpha(if (petRoamingEnabled) 1f else 0.6f),
+                        )
+                        TextButton(onClick = connectionViewModel::resetPetPlacement) {
+                            Text(stringResource(R.string.floating_pet_action_reset))
                         }
 
                         // Live state preview — drive the pet through each state to
@@ -778,9 +992,16 @@ fun AppearanceSettingsScreen(
                                 .background(MaterialTheme.colorScheme.surface),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Box(modifier = Modifier.size(140.dp)) {
+                            Box(
+                                modifier = Modifier.size(
+                                    floatingPetDimensions(
+                                        compact = false,
+                                        sizeScale = petSizeScale,
+                                    ).visualSizeDp.dp,
+                                ),
+                            ) {
                                 key(greetKey) {
-                                    activeAvatar.Render(
+                                    activePet.Render(
                                         state = AvatarRenderState(
                                             state = previewSphereState,
                                             toolCallBurst = previewBurst,
@@ -833,40 +1054,6 @@ fun AppearanceSettingsScreen(
                         )
                     }
 
-                    // Second level of the model: skin chips, shown only when the
-                    // sphere avatar is active (a pet carries no skins).
-                    if (activeAvatar.id == SphereAvatar.id) {
-                        HorizontalDivider()
-
-                        Text(
-                            text = stringResource(R.string.appearance_sphere_skin),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            availableSkins.forEach { skin ->
-                                SphereSkinChip(
-                                    skin = skin,
-                                    brand = brand,
-                                    selected = skin.id == effectiveSkinId,
-                                    onClick = { connectionViewModel.setSphereSkin(skin.id) },
-                                )
-                            }
-                        }
-
-                        HorizontalDivider()
-
-                        Text(
-                            text = stringResource(R.string.appearance_sphere_custom_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
         }

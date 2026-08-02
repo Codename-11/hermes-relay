@@ -34,10 +34,10 @@
 
 Hermes-Relay puts your [Hermes agent](https://github.com/NousResearch/hermes-agent) on the devices you actually carry. The brain stays on your own machine — Hermes-Relay is how you reach it.
 
-- **📱 Android app** — streaming chat, hands-free voice, and the full Hermes dashboard (models, keys, skills, profiles), rebuilt native. On sideload builds, the agent can read your screen and act on it.
+- **📱 Android app** — streaming chat, hands-free voice, native plugin pages, and the full Hermes dashboard (models, keys, skills, profiles), rebuilt native. Add a floating Petdex companion or optionally make Hermes your Android assistant; sideload builds can also let the agent read and act on your screen.
 - **⌨️ Hermes-Relay CLI** *(alpha)* — a single binary that gives the agent **hands on any machine you pair**: files, terminal, search, screenshots — consent-gated.
 
-A vanilla [hermes-agent](https://github.com/NousResearch/hermes-agent) install is enough — chat, management, and voice need **no plugin**. Add the optional relay only when you want terminal, phone control, or the CLI's tools. **Pair once from either surface; both work.**
+A vanilla [hermes-agent](https://github.com/NousResearch/hermes-agent) install is enough — chat, management, voice, Petdex, and ordinary installed-plugin pages need **no Relay plugin**. Add the optional Relay only when you want terminal, phone control, agent-created page drafts, or the CLI's tools. **Pair once from either surface; both work.**
 
 <p align="center">
   <img src="docs/diagrams/architecture-homepage.png" alt="How Hermes-Relay connects — Vanilla Hermes (Chat, Manage, Voice) runs with no plugin; the optional Relay plugin adds Terminal, Bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build." width="900">
@@ -99,7 +99,7 @@ the whole Vanilla Hermes setup.
 
 ### 4 · Optional: install Relay for power tools
 
-Install the Relay plugin on the server only when you want Terminal, Bridge phone control, relay sessions, media routes, or the realtime voice engine:
+Install the Relay plugin on the server only when you want Terminal, Bridge phone control, relay sessions, media routes, the realtime voice engine, or approval-gated agent-created plugin-page drafts:
 
 ```bash
 hermes plugins install Codename-11/hermes-relay/plugin --enable
@@ -115,8 +115,11 @@ shell shims, and the full clone/update workflow:
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-The plugin-manager install owns the plugin code, dashboard tab, CLI commands,
-and agent tools. `hermes relay compat status/install/remove` manages only the
+Installed Hermes plugins can expose bounded, host-rendered pages to Android
+through the authenticated Dashboard without running plugin code on the phone.
+Relay 1.5.0 additionally supports approval-gated agent-created page drafts. The
+plugin-manager install owns the plugin code, dashboard tab, CLI commands, and
+agent tools. `hermes relay compat status/install/remove` manages only the
 optional legacy API compatibility hook when an older Hermes build needs it. Scan
 the QR from the phone's Connections screen — or use
 `hermes pair --register-code ABCD12` with the manual code from Android

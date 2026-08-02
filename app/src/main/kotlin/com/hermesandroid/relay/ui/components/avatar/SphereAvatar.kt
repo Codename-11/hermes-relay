@@ -6,17 +6,16 @@ import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.SphereReactivity
 
 /**
- * Default agent avatar — the ASCII [MorphingSphere].
+ * Default ambient visualization — the ASCII [MorphingSphere].
  *
  * Its [Render] is the existing sphere call verbatim: it forwards the reactive
  * bundle and lets [MorphingSphere] pull colors/params from
  * [com.hermesandroid.relay.ui.components.LocalSphereSkin] internally (the
  * `skin` parameter defaults to `LocalSphereSkin.current`). So the entire skin
- * system is untouched and simply nested one level below the avatar choice —
- * pick the sphere avatar, then pick its skin.
+ * system remains independently selectable in Appearance.
  *
  * A singleton because it holds no per-instance state; it sits in
- * [LocalAgentAvatar] and [LocalAvailableAvatars].
+ * [LocalAgentAvatar]. Floating pets use their own companion seam.
  */
 object SphereAvatar : AgentAvatar {
     override val id: String = "sphere"

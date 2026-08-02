@@ -1,6 +1,41 @@
 {
  "versions": [
   {
+   "version": "1.6.0",
+   "title": "Pets, plugins, and voice",
+   "date": "2026-08-02",
+   "sections": [
+    {
+     "header": "A companion with personality",
+     "bullets": [
+      "Browse and install Petdex companions, or import your own pet without replacing the agent avatar or background Sphere.",
+      "Drag a pet anywhere or let it roam across measured chat bubbles, settings cards, controls, and other safe UI ledges."
+     ]
+    },
+    {
+     "header": "Native plugin pages",
+     "bullets": [
+      "Installed Hermes plugins can contribute host-rendered native pages without loading executable plugin code on the phone.",
+      "Scoped writes stay off until granted, while Relay 1.5.0 adds approval-gated agent-created page previews."
+     ]
+    },
+    {
+     "header": "Hermes as your assistant",
+     "bullets": [
+      "Optionally select Hermes as Android’s Digital Assistant and use a local “Hey Hermes” listener for background or locked-screen sessions.",
+      "Compact assistant and floating Voice controls expand for detail and continue the same turn when full Voice opens."
+     ]
+    },
+    {
+     "header": "More reliable everywhere",
+     "bullets": [
+      "Voice output recovery, long recordings, route failover, streamed chat identity, and pet terrain recovery are more resilient.",
+      "Android now includes a complete AI-assisted Russian catalog refreshed for the 1.6 feature set."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.5.3",
    "title": "Voice stays open",
    "date": "2026-07-31",

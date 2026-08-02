@@ -6,20 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Added
-
-- **Android can be used in Russian.** The main and sideload builds include a complete Russian catalog, an in-app language option, localized chat and voice surfaces, and Russian plural handling.
-
 ### Fixed
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
-## [1.5.0] - 2026-08-02
+## [Android 1.6.0] - 2026-08-02
 
 ### Added
 
-- **Realtime Agent sessions can speak only settled answers.** Clients may enable an optional per-session `final_answer_only` policy that suppresses routine acknowledgements, progress narration, and intermediate commentary while preserving spoken approvals, confirmation questions, blocking failures, and the final Hermes answer.
-- **Agents can draft native Android plugin pages through Relay.** New tools store bounded declarative JSON pages under the authenticated Relay plugin namespace, while Android retains control of enablement, publication, write grants, and persistent removal. Generated pages cannot include executable code, arbitrary network calls, Android intents, or backend action requests.
+- **Hermes can be selected as Android’s default Digital Assistant.** The opt-in system role supports background and locked-screen invocation, while the separate experimental “Hey Hermes” listener keeps pre-activation audio on the phone and exposes an ongoing Stop control.
+- **Installed Hermes plugins can contribute native Android pages.** Android renders a bounded declarative schema instead of plugin code, keeps write access off until the user grants it, and supports approval-gated agent-created previews through Relay 1.5.0.
+- **Pets can stay with you across the Android app without replacing the agent.** Petdex and imported companions live in an app-level overlay, can be held and dragged, and optionally roam across live-measured chat and settings surfaces without reserving message space. (#267)
+- **Petdex browsing and one-tap installation are built into Appearance.** Search results use lightweight previews, full atlases download only after Install, creator attribution remains visible, and installed pets stay available offline. (#267)
+- **Android can be used in Russian.** Both product flavors include an AI-assisted Russian catalog, language picker support, localized plurals, and refreshed translations for the 1.6 feature set.
+
+### Changed
+
+- **Assistant and floating Voice surfaces use compact, expandable controls.** Opening full Voice continues the same turn and microphone owner instead of restarting the session.
+- **Voice interruption covers generation and playback.** Barge-in follows upstream RMS calibration and timing, exact stop phrases can end an active voice chat, and interrupted spoken context remains private to the next Standard turn.
+- **Profile identity, the Sphere, and pets are separate appearance choices.** Agent avatars identify messages, background visualization controls ambient art, and Floating pet controls the companion independently. (#267)
+- **The Agent Passport exposes more profile state and safer controls.** Profile configuration, skills, routing, reasoning, and scoped API access remain visibly distinct from the active session identity.
+
+### Fixed
+
+- **Voice output recovers when a streaming renderer produces no audio.** Android falls back to basic synthesis after a bounded first-audio timeout, and long Standard Voice uploads no longer retain duplicate encoded audio buffers.
+- **Relay route failover avoids competing reconnect loops.** Route changes settle through one generation-aware reconnect owner instead of rapidly switching between LAN and remote candidates.
+- **Live chat rows keep stable UI identity while upstream state reconciles.** Streamed messages and process rows no longer collide or restart merely because a server identity arrives later.
+- **Floating pets recover from invalid or scrolling terrain.** Roaming uses measured bubble edges, avoids the jump-to-latest control and text overlap, resumes after drag or scrolling, and preserves locomotion, held, drop, and fallback animation states.
+- **Hermes appears and activates in OEM Android assistant pickers.** Required Assist, Voice, recognition-service, and single-microphone lifecycle metadata now agree.
+- **Experimental wake detection handles completed sherpa results and empty speech cleanly.** Tests use the real local microphone/model path, and no-speech activation returns to ready state instead of surfacing a fatal server error.
 
 ## [Android 1.5.3] - 2026-07-31
 
@@ -27,6 +42,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Voice transcripts retain stable rows after chat-history reconciliation.** Focus mode uses the same stable Compose identity as the main conversation, preventing duplicate-key crashes when live rows adopt persisted server IDs.
 
+## [1.5.0] - 2026-08-02
+
+### Added
+
+- **Realtime Agent sessions can speak only settled answers.** Clients may enable an optional per-session `final_answer_only` policy that suppresses routine acknowledgements, progress narration, and intermediate commentary while preserving spoken approvals, confirmation questions, blocking failures, and the final Hermes answer.
+- **Agents can draft native Android plugin pages through Relay.** New tools store bounded declarative JSON pages under the authenticated Relay plugin namespace, while Android retains control of enablement, publication, write grants, and persistent removal. Generated pages cannot include executable code, arbitrary network calls, Android intents, or backend action requests.
 ## [Android 1.5.2] - 2026-07-28
 
 ### Fixed

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pet_preview_idle">Idle</string>
+    <string name="pet_preview_walk_left">Walk left</string>
+    <string name="pet_preview_walk_right">Walk right</string>
+    <string name="pet_preview_jump">Jump</string>
+    <string name="pet_preview_fall">Fall</string>
+    <string name="pet_preview_held">Held</string>
+    <string name="pet_preview_wave">Wave</string>
+    <string name="pet_preview_working">Working</string>
+    <string name="pet_preview_review">Review</string>
+    <string name="pet_preview_waiting">Waiting</string>
+    <string name="pet_preview_error">Error</string>
+    <string name="pet_preview_uses_clip">Uses %1$s</string>
+    <string name="pet_preview_mirrors_clip">Mirrors %1$s</string>
+    <string name="pet_preview_falls_back">Falls back to %1$s</string>
+    <string name="pet_preview_mirrors_fallback">Mirrors fallback %1$s</string>
+</resources>

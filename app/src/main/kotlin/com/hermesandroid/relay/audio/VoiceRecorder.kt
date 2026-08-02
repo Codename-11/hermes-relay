@@ -8,6 +8,9 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
+import com.hermesandroid.relay.wake.MicrophoneLease
+import com.hermesandroid.relay.wake.MicrophoneOwner
+import com.hermesandroid.relay.wake.MicrophoneOwnershipCoordinator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -57,6 +60,7 @@ class VoiceRecorder(
     private val bufferLock = Any()
     private val stopRequested = AtomicBoolean(false)
     private var audioRecord: AudioRecord? = null
+    private var microphoneLease: MicrophoneLease? = null
     private var echoCanceler: AcousticEchoCanceler? = null
     private var noiseSuppressor: NoiseSuppressor? = null
     private var currentOutputFile: File? = null
@@ -79,12 +83,21 @@ class VoiceRecorder(
                 releaseRecorder()
             }
         }
+        val lease = MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.VoiceCapture)
+            ?: throw IllegalStateException("Microphone is in use by another voice feature")
+        microphoneLease = lease
 
-        val minBuffer = AudioRecord.getMinBufferSize(
+        val minBuffer = try {
+            AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-        ).coerceAtLeast(SAMPLE_RATE / 10 * BYTES_PER_SAMPLE)
+            ).coerceAtLeast(SAMPLE_RATE / 10 * BYTES_PER_SAMPLE)
+        } catch (t: Throwable) {
+            MicrophoneOwnershipCoordinator.release(lease)
+            microphoneLease = null
+            throw t
+        }
 
         val outFile = File(context.cacheDir, "voice_rec_${System.currentTimeMillis()}.wav")
         currentOutputFile = outFile
@@ -95,21 +108,29 @@ class VoiceRecorder(
         stopRequested.set(false)
         _amplitude.value = 0f
 
-        val recorder = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.MIC)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(minBuffer * 2)
-            .build()
+        val recorder = try {
+            AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(SAMPLE_RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(minBuffer * 2)
+                .build()
+        } catch (t: Throwable) {
+            MicrophoneOwnershipCoordinator.release(lease)
+            microphoneLease = null
+            throw t
+        }
 
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
             recorder.release()
             currentOutputFile = null
+            MicrophoneOwnershipCoordinator.release(lease)
+            microphoneLease = null
             throw IllegalStateException("AudioRecord failed to initialize")
         }
 
@@ -118,6 +139,8 @@ class VoiceRecorder(
         } catch (e: Exception) {
             recorder.release()
             currentOutputFile = null
+            MicrophoneOwnershipCoordinator.release(lease)
+            microphoneLease = null
             throw e
         }
 
@@ -281,6 +304,8 @@ class VoiceRecorder(
             try { record.release() } catch (_: Exception) { }
         }
         audioRecord = null
+        microphoneLease?.let(MicrophoneOwnershipCoordinator::release)
+        microphoneLease = null
         readThread = null
         readDone = null
     }

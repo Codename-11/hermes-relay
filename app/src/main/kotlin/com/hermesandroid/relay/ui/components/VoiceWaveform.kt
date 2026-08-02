@@ -216,8 +216,11 @@ fun VoiceWaveform(
 
         if (compactBars) {
             val barCount = 10
-            val gap = 3.dp.toPx()
-            val barWidth = 2.5.dp.toPx()
+            // Keep the compact waveform inside its assigned composer lane.
+            // The previous 52 dp drawing width overflowed the 32 dp canvas and
+            // visually collided with the adjacent state label.
+            val gap = 2.dp.toPx()
+            val barWidth = 2.dp.toPx()
             val totalWidth = barWidth * barCount + gap * (barCount - 1)
             val startX = ((width - totalWidth) / 2f).coerceAtLeast(0f)
             repeat(barCount) { index ->

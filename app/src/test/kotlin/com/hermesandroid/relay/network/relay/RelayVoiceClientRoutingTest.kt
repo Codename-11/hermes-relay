@@ -195,6 +195,40 @@ class RelayVoiceClientRoutingTest {
     }
 
     @Test
+    fun voiceOutputFailsFastWhenOpenedSocketProducesNoAudio() = runTest {
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/voice/output/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "voice-output-stalled-test",
+                  "websocket_path": "/voice/output/session-test",
+                  "provider": "stub",
+                  "model": "local-tone",
+                  "voice": "sine",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            voiceOutputFirstAudioTimeoutMs = 25L,
+            webSocketFactory = { request, listener ->
+                ScriptedWebSocket(request, listener) { }
+                    .also { listener.onOpen(it, mockk(relaxed = true)) }
+            },
+        )
+
+        val result = client.runVoiceOutput("This renderer will stall") {}
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("produced no audio"))
+    }
+
+    @Test
     fun voiceOutputResumeOpensWebsocketWithCurrentRelayUrl() = runTest {
         var activeRelayUrl = relayUrl(lanServer)
         val routeProbeRequests = AtomicInteger(0)

@@ -52,10 +52,16 @@ Google Play build:
 | Internet | Connect to your Hermes servers | Yes |
 | Network State | Detect connectivity for reconnect behavior | Yes |
 | Camera | QR code scanning for server pairing | No |
-| Microphone | Voice mode speech-to-text | No |
+| Microphone | Voice mode speech-to-text and opt-in local “Hey Hermes” detection | No |
 | Notification Access | Optional notification companion metadata forwarding to your paired relay | No |
 
 Notification Access is granted and revoked from Android system settings. When enabled, Hermes-Relay forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay. It does not forward notifications to a Hermes-Relay cloud service. If you separately enable Notification triggers, matching happens locally on the phone; the MVP action writes a local activity-log entry and posts a local “Ask Hermes?” prompt. It does not send a new AI request or reply in another app automatically.
+
+If you select Hermes as Android's default Digital Assistant and separately
+enable background “Hey Hermes,” local sherpa-onnx keyword spotting uses the
+microphone while the mode is enabled. Pre-activation wake audio is not sent to
+Hermes, Relay, or a hosted service. The Digital Assistant listener and the
+notification-based experimental listener cannot be active together.
 
 Sideload Device Control builds may request additional permissions for overlay, foreground service, wake lock, screenshots, contacts, location, SMS, and calls. Those permissions are not present in the Google Play build.
 

@@ -131,6 +131,7 @@ class DataManagerTest {
                         refreshToken = "refresh-token",
                         deviceId = "device-id",
                         apiKey = "api-key",
+                        profileApiKeys = mapOf("research" to "profile-api-key"),
                         pairedSessionMetaJson = """{"transport_hint":"wss"}""",
                     ),
                     dashboardCookies = listOf(
@@ -158,6 +159,10 @@ class DataManagerTest {
         assertEquals("id-a", restored.activeConnectionId)
         assertEquals("relay-session-token", restored.connectionSecrets[0].auth.sessionToken)
         assertEquals("api-key", restored.connectionSecrets[0].auth.apiKey)
+        assertEquals(
+            "profile-api-key",
+            restored.connectionSecrets[0].auth.profileApiKeys["research"],
+        )
         assertEquals("cookie-value", restored.connectionSecrets[0].dashboardCookies[0].value)
     }
 

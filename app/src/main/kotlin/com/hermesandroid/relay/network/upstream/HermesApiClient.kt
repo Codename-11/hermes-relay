@@ -1000,9 +1000,7 @@ class HermesApiClient(
                 // Personalities: config.agent.personalities { name: "system prompt", ... }
                 val agent = config["agent"] as? JsonObject
                 val personalitiesObj = agent?.get("personalities") as? JsonObject
-                val prompts = personalitiesObj?.entries?.associate { (key, value) ->
-                    key to ((value as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "")
-                } ?: emptyMap()
+                val prompts = parsePersonalityPrompts(personalitiesObj)
 
                 // Default display identity. Upstream Hermes currently uses
                 // config.display.personality for the active persona and often

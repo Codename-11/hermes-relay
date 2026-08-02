@@ -36,7 +36,11 @@ FEATURES
 
 ◆ Manage Your Agent — the Hermes dashboard on your phone: switch models from your provider catalog, manage provider keys (masked), edit profiles, and browse, install, and update skills.
 
-◆ Voice Mode — talk hands-free using your server's speech providers, no plugin needed. Relay-paired setups add per-profile voices and an experimental realtime engine.
+◆ Voice Mode — talk hands-free using your server's speech providers, no plugin needed. Optionally choose Hermes as Android's Digital Assistant or enable local "Hey Hermes" detection; Relay-paired setups add per-profile voices and an experimental realtime engine.
+
+◆ Floating Pets — browse and install Petdex companions or import your own. Keep the pet separate from your agent identity, drag it anywhere, or let it roam across UI-aware ledges.
+
+◆ Native Plugin Pages — installed Hermes plugins can add safe, host-rendered Android pages without loading executable plugin code on your phone. Write actions require an explicit per-plugin grant.
 
 ◆ Works Away From Home — add a Tailscale or public URL and the app switches routes automatically; when a server is unreachable it tells you what to fix instead of just going red.
 
@@ -50,7 +54,7 @@ FEATURES
 
 ◆ Stats for Nerds — local-only counters for response timing, token usage, cost, and stream health.
 
-◆ Material You — Material 3 dynamic color, light/dark/system themes, and haptics.
+◆ Material You — Material 3 dynamic color, light/dark/system themes, haptics, and complete Android catalogs for English, German, Spanish, Brazilian Portuguese, Japanese, Russian, and Simplified Chinese.
 
 SECURITY &amp; PRIVACY
 
@@ -85,10 +89,12 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.5.3 - Voice stays open
+v1.6.0 - Pets, plugins, and voice
 
-* Prevent Voice Focus from closing during chat-history reconciliation.
-* Keep live transcript rows stable when persisted identities arrive.
+* Floating Petdex companions that can roam across the UI.
+* Safe native pages from installed Hermes plugins.
+* Optional Android Digital Assistant with local "Hey Hermes."
+* Russian plus voice, route, chat, and pet stability improvements.
 ```
 
 ## Category
@@ -170,7 +176,7 @@ No data collection or sharing to declare: no telemetry, ads, or third-party anal
 
 ### Sensitive / runtime permissions in the Play build
 
-- `RECORD_AUDIO` — Voice mode, requested at use.
+- `RECORD_AUDIO` — Voice mode and opt-in local wake detection, requested at use.
 - `POST_NOTIFICATIONS` — chat input, turn-complete, and keep-alive notifications, requested on API 33+.
 - `CAMERA` — QR pairing / attachments, requested at use.
 - Notification listener (companion) — user-enabled in system settings.

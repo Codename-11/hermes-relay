@@ -18,6 +18,8 @@ import com.hermesandroid.relay.ui.components.avatar.PetImporter
 import com.hermesandroid.relay.ui.components.avatar.PetImportResult
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
+import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.AgentDisplay
@@ -30,6 +32,11 @@ import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.DEFAULT_PET_TEMPERAMENT
+import com.hermesandroid.relay.data.DEFAULT_PET_SIZE_SCALE
+import com.hermesandroid.relay.data.PetBehaviorPreferences
+import com.hermesandroid.relay.data.PetBehaviorPreferencesRepository
+import com.hermesandroid.relay.data.PetTemperament
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
@@ -315,6 +322,12 @@ internal fun preserveStandardConnectionWhileApplyingRelay(
     ),
 )
 
+internal fun profileApiCredential(
+    usesMultiplexProfileKey: Boolean,
+    profileKey: String?,
+    connectionKey: String,
+): String = if (usesMultiplexProfileKey) profileKey.orEmpty() else connectionKey
+
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
     private val ctx: Context get() = getApplication()
@@ -375,9 +388,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
         // active theme's preferred skin; any other id pins a specific skin.
         private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
-        // Selected agent avatar id. "sphere" (SphereAvatar.id) is the default
-        // built-in; any other id selects a loaded user "pet" by id.
+        // Legacy combined sphere/pet choice. Read for one release so existing
+        // users keep their selected pet when the concepts split.
         private val KEY_AGENT_AVATAR = stringPreferencesKey("agent_avatar")
+        // Optional floating companion id. The explicit sentinel distinguishes
+        // "no pet" from a preference that has not yet been migrated.
+        private val KEY_FLOATING_PET = stringPreferencesKey("floating_pet")
+        // Reserved storage sentinel. Pet ids may legitimately be ordinary words
+        // such as "none", so keep the no-selection marker outside that space.
+        private const val NO_FLOATING_PET = "__none__"
+        private val KEY_PET_ROAMING_ENABLED = booleanPreferencesKey("pet_roaming_enabled")
+        private val KEY_PET_PLACEMENT_EDGE = stringPreferencesKey("pet_placement_edge")
+        private val KEY_PET_PLACEMENT_FRACTION = floatPreferencesKey("pet_placement_fraction")
+        private val DEFAULT_PET_PLACEMENT = PetPlacement(PetLogicalEdge.End, 0.82f)
         private val KEY_PET_SPEED = floatPreferencesKey("pet_speed")
         private val KEY_PET_STABILIZE = booleanPreferencesKey("pet_stabilize")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
@@ -408,6 +431,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Animation
         private val KEY_ANIMATION_ENABLED = booleanPreferencesKey("animation_enabled")
         private val KEY_ANIMATION_BEHIND_CHAT = booleanPreferencesKey("animation_behind_chat")
+        private val KEY_BACKGROUND_VISUALIZATION_ENABLED =
+            booleanPreferencesKey("background_visualization_enabled")
         private val KEY_IMAGE_GENERATION_STYLE = stringPreferencesKey("image_generation_style")
         private val KEY_CHAT_RECENT_PROMPTS = booleanPreferencesKey("chat_recent_prompts")
 
@@ -423,6 +448,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // One-shot "Live voice conversation" hint on the input bar's voice slot
         private val KEY_VOICE_HINT_SEEN = booleanPreferencesKey("voice_mode_hint_seen")
     }
+
+    private val petBehaviorPreferencesRepository =
+        PetBehaviorPreferencesRepository(application)
 
     // --- Core networking components ---
 
@@ -1276,14 +1304,59 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 
-    // Selected agent avatar id ("sphere" = the built-in orb; any other id is a
-    // loaded user pet). Resolved against [SphereAvatar] + PetLoader.loadPets() at
-    // the Compose root; an unknown id (pet removed) falls back to the sphere.
-    val agentAvatar: StateFlow<String> = application.relayDataStore.data
+    // Optional floating companion. For one release, an absent new key reads the
+    // legacy combined selection: sphere -> no companion; a pet id -> companion.
+    val floatingPet: StateFlow<String?> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_AGENT_AVATAR] ?: "sphere"
+            val selected = preferences[KEY_FLOATING_PET]
+                ?: preferences[KEY_AGENT_AVATAR]
+                ?: NO_FLOATING_PET
+            selected.takeUnless { it == NO_FLOATING_PET || it == SphereAvatar.id }
         }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "sphere")
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Whether the selected companion may autonomously move between safe perches. */
+    val petRoamingEnabled: StateFlow<Boolean> = application.relayDataStore.data
+        .map { preferences -> preferences[KEY_PET_ROAMING_ENABLED] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** Stable preference seam for the floating-pet behavior director. */
+    val petBehaviorPreferences: StateFlow<PetBehaviorPreferences> =
+        petBehaviorPreferencesRepository.flow.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            PetBehaviorPreferences(),
+        )
+
+    val petTemperament: StateFlow<PetTemperament> = petBehaviorPreferences
+        .map { preferences -> preferences.temperament }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_TEMPERAMENT)
+
+    val petSizeScale: StateFlow<Float> = petBehaviorPreferences
+        .map { preferences -> preferences.sizeScale }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_SIZE_SCALE)
+
+    /** Durable logical placement; pixels are resolved from the current safe viewport. */
+    val petPlacement: StateFlow<PetPlacement> = application.relayDataStore.data
+        .map { preferences ->
+            PetPlacement(
+                edge = preferences[KEY_PET_PLACEMENT_EDGE]
+                    ?.let { stored -> PetLogicalEdge.entries.firstOrNull { it.name == stored } }
+                    ?: DEFAULT_PET_PLACEMENT.edge,
+                verticalFraction = preferences[KEY_PET_PLACEMENT_FRACTION]
+                    ?: DEFAULT_PET_PLACEMENT.verticalFraction,
+            ).sanitized()
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_PLACEMENT)
+
+    /**
+     * One-release source compatibility for callers still using the old combined
+     * selector. New code should use [floatingPet].
+     */
+    @Deprecated("Use floatingPet")
+    val agentAvatar: StateFlow<String> = floatingPet
+        .map { it ?: SphereAvatar.id }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SphereAvatar.id)
 
     // Bumped to force the Compose root to re-scan the pets/ directory — after an
     // in-app import or delete, or when the Appearance screen opens (so a pack
@@ -1711,6 +1784,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     init {
+        // Materialize the split preference once. Keeping the legacy read above
+        // for one release also covers interrupted upgrades and older backups.
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                if (preferences[KEY_FLOATING_PET] == null) {
+                    preferences[KEY_FLOATING_PET] = preferences[KEY_AGENT_AVATAR]
+                        ?.takeUnless { it == SphereAvatar.id }
+                        ?: NO_FLOATING_PET
+                }
+                // Before presence and motion were split, animation_enabled also
+                // controlled whether the Sphere was shown. Preserve that choice
+                // on upgrade; users can then re-enable a static Sphere separately.
+                if (preferences[KEY_BACKGROUND_VISUALIZATION_ENABLED] == null) {
+                    preferences[KEY_BACKGROUND_VISUALIZATION_ENABLED] =
+                        preferences[KEY_ANIMATION_ENABLED] ?: true
+                }
+            }
+        }
+
         // Drive the keep-alive from either the user's always-on preference or
         // work the user already started. Active-turn leases are session scoped,
         // so sibling turns release independently. Both flavors — the
@@ -1782,6 +1874,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         .map { it[KEY_ANIMATION_BEHIND_CHAT] ?: true }
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    /** Controls Sphere/background visibility independently of motion. */
+    val backgroundVisualizationEnabled: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_BACKGROUND_VISUALIZATION_ENABLED] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     val imageGenerationStyle: StateFlow<String> = application.relayDataStore.data
         .map { it[KEY_IMAGE_GENERATION_STYLE] ?: "rotate" }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "rotate")
@@ -1814,6 +1911,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_ANIMATION_BEHIND_CHAT] = enabled
+            }
+        }
+    }
+
+    fun setBackgroundVisualizationEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_BACKGROUND_VISUALIZATION_ENABLED] = enabled
             }
         }
     }
@@ -5398,6 +5503,47 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     suspend fun getApiKey(): String? = authManager.getApiKey()
 
+    suspend fun getProfileApiKey(profileName: String): String? =
+        authManager.getProfileApiKey(profileName)
+
+    fun selectedProfileUsesMultiplexApiKey(): Boolean {
+        val selectedProfile = profileController.selectedProfile.value
+        val activeConnectionId = connectionStore.activeConnectionId.value
+        val topology = connectionStore.connections.value
+            .firstOrNull { it.id == activeConnectionId }
+            ?.dashboardLastStatus
+        val liveTopology = topologyConnectionId == activeConnectionId
+        return ProfileApiUrlResolver.usesMultiplexProfileKey(
+            profileApiUrl = selectedProfile?.apiServerUrl,
+            selectedProfileName = selectedProfile?.name,
+            gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode,
+            servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty(),
+        )
+    }
+
+    fun updateProfileApiKey(
+        profileName: String,
+        key: String,
+        onComplete: (Boolean) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                authManager.setProfileApiKey(profileName, key)
+                rebuildChatApiClient()
+            }.onSuccess {
+                onComplete(true)
+            }.onFailure {
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Api,
+                    severity = DiagnosticSeverity.Error,
+                    title = ctx.getString(R.string.conn_info_profile_api_key_save_failed),
+                    detail = it.message,
+                )
+                onComplete(false)
+            }
+        }
+    }
+
     /**
      * The bearer key for client construction, WITHOUT paying the Keystore
      * decrypt when this connection is known key-less (the common local
@@ -5520,15 +5666,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             .firstOrNull { it.id == activeConnectionId }
             ?.dashboardLastStatus
         val liveTopology = topologyConnectionId == activeConnectionId
+        val gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode
+        val servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty()
+        val usesMultiplexProfileKey = ProfileApiUrlResolver.usesMultiplexProfileKey(
+            profileApiUrl = selectedProfile?.apiServerUrl,
+            selectedProfileName = selectedProfile?.name,
+            gatewayMode = gatewayMode,
+            servedProfiles = servedProfiles,
+        )
         val profileApiUrl = ProfileApiUrlResolver.resolveChatBase(
             profileApiUrl = selectedProfile?.apiServerUrl,
             baseApiUrl = baseApiUrl,
             selectedProfileName = selectedProfile?.name,
-            gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode,
-            servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty(),
+            gatewayMode = gatewayMode,
+            servedProfiles = servedProfiles,
         )
         val baseClient = _apiClient.value
-        val key = apiKeyForClientBuild()
+        val profileKey = if (usesMultiplexProfileKey) {
+            selectedProfile?.name?.let { authManager.getProfileApiKey(it) }.orEmpty()
+        } else {
+            null
+        }
+        val connectionKey = if (usesMultiplexProfileKey) "" else apiKeyForClientBuild()
+        val key = profileApiCredential(
+            usesMultiplexProfileKey = usesMultiplexProfileKey,
+            profileKey = profileKey,
+            connectionKey = connectionKey,
+        )
 
         if (profileApiUrl == null || profileApiUrl == baseApiUrl) {
             val oldProfileClient = profileChatApiClient
@@ -6316,13 +6480,51 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun setAgentAvatar(avatarId: String) {
+    fun setFloatingPet(avatarId: String?) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_AGENT_AVATAR] = avatarId
+                preferences[KEY_FLOATING_PET] = avatarId
+                    ?.takeUnless { it == SphereAvatar.id }
+                    ?: NO_FLOATING_PET
             }
         }
     }
+
+    fun setPetRoamingEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_PET_ROAMING_ENABLED] = enabled
+            }
+        }
+    }
+
+    fun setPetTemperament(temperament: PetTemperament) {
+        viewModelScope.launch {
+            petBehaviorPreferencesRepository.setTemperament(temperament)
+        }
+    }
+
+    fun setPetSizeScale(sizeScale: Float) {
+        viewModelScope.launch {
+            petBehaviorPreferencesRepository.setSizeScale(sizeScale)
+        }
+    }
+
+    fun setPetPlacement(placement: PetPlacement) {
+        val safe = placement.sanitized()
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_PET_PLACEMENT_EDGE] = safe.edge.name
+                preferences[KEY_PET_PLACEMENT_FRACTION] = safe.verticalFraction
+            }
+        }
+    }
+
+    fun resetPetPlacement() = setPetPlacement(DEFAULT_PET_PLACEMENT)
+
+    /** One-release compatibility shim for the former combined picker. */
+    @Deprecated("Use setFloatingPet")
+    fun setAgentAvatar(avatarId: String) = setFloatingPet(avatarId)
 
     /** Set the global pet playback-speed multiplier (clamped 0.5×–1.5×). */
     fun setPetSpeed(speed: Float) {
@@ -6358,14 +6560,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /** Delete a user pet by id; if it was the selected avatar, fall back to the sphere. */
+    /** Delete a user pet by id; clear it if it was the selected companion. */
     fun deleteUserAvatar(avatarId: String, label: String) {
         viewModelScope.launch {
             val deleted = withContext(Dispatchers.IO) {
                 PetLoader.deletePet(getApplication<Application>(), avatarId)
             }
             if (deleted) {
-                if (agentAvatar.value == avatarId) setAgentAvatar(SphereAvatar.id)
+                if (floatingPet.value == avatarId) setFloatingPet(null)
                 refreshAgentAvatars()
                 _avatarEvents.tryEmit("Removed “$label”")
             } else {

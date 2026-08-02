@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -40,6 +42,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -63,10 +66,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.ProfileConfigResponse
 import com.hermesandroid.relay.data.ProfileMemoryEntry
 import com.hermesandroid.relay.data.ProfileSkillEntry
 import com.hermesandroid.relay.ui.LocalSnackbarHost
@@ -289,33 +297,174 @@ private data class InspectorTab(val label: String, val section: InspectorSection
 
 @Composable
 private fun ConfigPane(
-    state: LoadState<com.hermesandroid.relay.data.ProfileConfigResponse>,
+    state: LoadState<ProfileConfigResponse>,
     onRetry: () -> Unit,
 ) {
     PaneShell(state = state, onRetry = onRetry) { response ->
+        var showRawConfig by remember(response.profile, response.config) {
+            mutableStateOf(false)
+        }
+        val rawConfigStateDescription = stringResource(
+            if (showRawConfig) {
+                R.string.profile_inspector_expanded_state
+            } else {
+                R.string.profile_inspector_collapsed_state
+            },
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            PathCaption(label = stringResource(R.string.profile_inspector_config_file), path = response.path)
-            if (response.readonly) {
+            ConfigSummaryCard(response)
+
+            OutlinedButton(
+                onClick = { showRawConfig = !showRawConfig },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics {
+                        stateDescription = rawConfigStateDescription
+                    },
+            ) {
+                Icon(
+                    imageVector = if (showRawConfig) {
+                        Icons.Filled.ExpandLess
+                    } else {
+                        Icons.Filled.ExpandMore
+                    },
+                    contentDescription = null,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = stringResource(R.string.profile_inspector_read_only),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = stringResource(
+                        if (showRawConfig) {
+                            R.string.profile_inspector_hide_raw_config
+                        } else {
+                            R.string.profile_inspector_show_raw_config
+                        },
+                    ),
                 )
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            if (response.config.isEmpty()) {
-                EmptyStateRow(stringResource(R.string.profile_inspector_empty_config))
-            } else {
-                JsonObjectTree(obj = response.config, depth = 0)
+
+            if (showRawConfig) {
+                PathCaption(
+                    label = stringResource(R.string.profile_inspector_config_file),
+                    path = response.path,
+                )
+                if (response.config.isEmpty()) {
+                    EmptyStateRow(stringResource(R.string.profile_inspector_empty_config))
+                } else {
+                    JsonObjectTree(obj = response.config, depth = 0)
+                }
             }
         }
     }
+}
+
+@Composable
+private fun ConfigSummaryCard(response: ProfileConfigResponse) {
+    val topLevelCount = response.config.size
+    val totalFieldCount = countJsonFields(response.config)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = stringResource(R.string.profile_inspector_config_summary),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = stringResource(R.string.profile_inspector_config_summary_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+            ConfigSummaryRow(
+                label = stringResource(R.string.profile_inspector_profile),
+                value = response.profile,
+            )
+            ConfigSummaryRow(
+                label = stringResource(R.string.profile_inspector_access),
+                value = stringResource(
+                    if (response.readonly) {
+                        R.string.profile_inspector_read_only_value
+                    } else {
+                        R.string.profile_inspector_inspector_view_value
+                    },
+                ),
+            )
+            ConfigSummaryRow(
+                label = stringResource(R.string.profile_inspector_fields),
+                value = stringResource(
+                    R.string.profile_inspector_config_field_summary,
+                    topLevelCount,
+                    totalFieldCount,
+                ),
+            )
+            if (response.config.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = stringResource(R.string.profile_inspector_configured_sections),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = response.config.keys.joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            } else {
+                Text(
+                    text = stringResource(R.string.profile_inspector_empty_config_summary),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfigSummaryRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1.6f),
+        )
+    }
+}
+
+private fun countJsonFields(element: JsonElement): Int = when (element) {
+    is JsonObject -> element.size + element.values.sumOf(::countJsonFields)
+    is JsonArray -> element.sumOf(::countJsonFields)
+    else -> 0
 }
 
 /**
@@ -1205,12 +1354,22 @@ private fun SkillsPane(
                 )
             }
         } else {
-            // Group by category, preserving insertion order (server-side
-            // ordering is the source of truth). A LinkedHashMap keeps the
-            // traversal order stable.
+            var query by remember(response.profile) { mutableStateOf("") }
+            var filter by remember(response.profile) { mutableStateOf(SkillFilter.All) }
+            val collapsedCategories = remember(response.profile) {
+                mutableStateMapOf<String, Boolean>()
+            }
+            val enabledCount = remember(response.skills) {
+                response.skills.count { it.enabled }
+            }
+            val visibleSkills = remember(response.skills, query, filter) {
+                filterSkills(response.skills, query, filter)
+            }
+            // Group after filtering so the original server/category
+            // insertion order remains the source of truth.
             val uncategorizedLabel = stringResource(R.string.profile_inspector_uncategorized)
-            val grouped = remember(response.skills, uncategorizedLabel) {
-                response.skills.groupBy { it.category.ifBlank { uncategorizedLabel } }
+            val grouped = remember(visibleSkills, uncategorizedLabel) {
+                visibleSkills.groupBy { it.category.ifBlank { uncategorizedLabel } }
                     .toList() // preserves group order in the JSON payload
             }
             LazyColumn(
@@ -1219,15 +1378,56 @@ private fun SkillsPane(
                     horizontal = 16.dp,
                     vertical = 12.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                item(key = "__skills_controls__") {
+                    SkillsControls(
+                        query = query,
+                        onQueryChange = { query = it },
+                        filter = filter,
+                        onFilterChange = { filter = it },
+                        enabledCount = enabledCount,
+                        totalCount = response.total,
+                        visibleCount = visibleSkills.size,
+                    )
+                }
+                if (visibleSkills.isEmpty()) {
+                    item(key = "__skills_empty_filter__") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            ),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.profile_inspector_no_matching_skills),
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Text(
+                                    text = stringResource(R.string.profile_inspector_no_matching_skills_hint),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
                 items(
                     items = grouped,
                     key = { pair -> pair.first },
                 ) { pair ->
+                    val isExpanded = collapsedCategories[pair.first] != true
                     SkillCategorySection(
                         category = pair.first,
                         skills = pair.second,
+                        expanded = isExpanded,
+                        onToggleExpanded = {
+                            collapsedCategories[pair.first] = isExpanded
+                        },
                         toggleSupported = toggleSupported,
                         onToggleSkill = onToggleSkill,
                     )
@@ -1251,39 +1451,183 @@ private fun SkillsPane(
     }
 }
 
+private enum class SkillFilter {
+    All,
+    Enabled,
+    Disabled,
+}
+
+private fun filterSkills(
+    skills: List<ProfileSkillEntry>,
+    query: String,
+    filter: SkillFilter,
+): List<ProfileSkillEntry> = skills.filter { skill ->
+    val matchesQuery = query.isBlank() ||
+        skill.name.contains(query, ignoreCase = true) ||
+        skill.description.contains(query, ignoreCase = true) ||
+        skill.category.contains(query, ignoreCase = true)
+    val matchesFilter = when (filter) {
+        SkillFilter.All -> true
+        SkillFilter.Enabled -> skill.enabled
+        SkillFilter.Disabled -> !skill.enabled
+    }
+    matchesQuery && matchesFilter
+}
+
+@Composable
+private fun SkillsControls(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    filter: SkillFilter,
+    onFilterChange: (SkillFilter) -> Unit,
+    enabledCount: Int,
+    totalCount: Int,
+    visibleCount: Int,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = stringResource(
+                R.string.profile_inspector_skills_count_summary,
+                enabledCount,
+                totalCount,
+            ),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            text = stringResource(
+                R.string.profile_inspector_skills_visible_count,
+                visibleCount,
+                totalCount,
+            ),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text(stringResource(R.string.profile_inspector_search_skills)) },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = null,
+                )
+            },
+            trailingIcon = if (query.isNotEmpty()) {
+                {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = stringResource(
+                                R.string.profile_inspector_clear_skill_search,
+                            ),
+                        )
+                    }
+                }
+            } else {
+                null
+            },
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SkillFilter.entries.forEach { candidate ->
+                val label = when (candidate) {
+                    SkillFilter.All -> stringResource(R.string.profile_inspector_filter_all)
+                    SkillFilter.Enabled -> stringResource(R.string.profile_inspector_filter_enabled)
+                    SkillFilter.Disabled -> stringResource(R.string.profile_inspector_filter_disabled)
+                }
+                FilterChip(
+                    selected = filter == candidate,
+                    onClick = { onFilterChange(candidate) },
+                    label = { Text(label) },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SkillCategorySection(
     category: String,
     skills: List<ProfileSkillEntry>,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
     toggleSupported: Boolean?,
     onToggleSkill: (String, Boolean) -> Unit,
 ) {
+    val categoryStateDescription = stringResource(
+        if (expanded) {
+            R.string.profile_inspector_expanded_state
+        } else {
+            R.string.profile_inspector_collapsed_state
+        },
+    )
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            text = category,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    role = Role.Button,
+                    onClick = onToggleExpanded,
+                )
+                .semantics {
+                    stateDescription = categoryStateDescription
+                }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                skills.forEachIndexed { index, skill ->
-                    SkillRow(
-                        skill = skill,
-                        toggleSupported = toggleSupported,
-                        onToggleSkill = onToggleSkill,
-                    )
-                    if (index != skills.lastIndex) {
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
+            Text(
+                text = category,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = skills.size.toString(),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Icon(
+                imageVector = if (expanded) {
+                    Icons.Filled.ExpandLess
+                } else {
+                    Icons.Filled.ExpandMore
+                },
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (expanded) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    skills.forEachIndexed { index, skill ->
+                        SkillRow(
+                            skill = skill,
+                            toggleSupported = toggleSupported,
+                            onToggleSkill = onToggleSkill,
                         )
+                        if (index != skills.lastIndex) {
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
+                            )
+                        }
                     }
                 }
             }
@@ -1312,14 +1656,14 @@ private fun SkillRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = skill.name,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 if (!localEnabled) {
@@ -1339,9 +1683,20 @@ private fun SkillRow(
                 )
             }
         }
+        val toggleDescription = stringResource(
+            if (localEnabled) {
+                R.string.profile_inspector_disable_skill
+            } else {
+                R.string.profile_inspector_enable_skill
+            },
+            skill.name,
+        )
         androidx.compose.material3.Switch(
             checked = localEnabled,
             enabled = switchEnabled,
+            modifier = Modifier.semantics {
+                contentDescription = toggleDescription
+            },
             onCheckedChange = { new ->
                 // Optimistic flip; VM revert on 501 will come back via
                 // the snackbar error event. We don't have a direct

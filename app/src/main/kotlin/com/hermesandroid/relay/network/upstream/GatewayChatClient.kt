@@ -31,6 +31,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -501,6 +502,10 @@ class GatewayChatClient(
      *   into the session's USER messages (counted from the first user
      *   message). The server drops that message and everything after it
      *   before running [text] as a fresh turn.
+     * @param queuedFollowUp true only when Android is draining a prompt the
+     *   user explicitly queued behind an active turn. Newer gateways use the
+     *   additive `queued:true` marker to preserve run-after semantics while
+     *   the previous turn is still settling; older gateways ignore it.
      * @param onPreflightFailure invoked INSTEAD of starting the turn when the
      *   gateway could not be reached / authenticated / the prompt could not
      *   be submitted — i.e. nothing started server-side, so the caller can
@@ -514,6 +519,7 @@ class GatewayChatClient(
         callbacks: GatewayTurnCallbacks,
         attachments: List<GatewayAttachment> = emptyList(),
         truncateBeforeUserOrdinal: Int? = null,
+        queuedFollowUp: Boolean = false,
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
         val turn = GatewayTurn(dispatchOn(callbacks))
@@ -550,6 +556,7 @@ class GatewayChatClient(
                         put("session_id", liveSessionId ?: error("no live session"))
                         put("text", text)
                         truncateBeforeUserOrdinal?.let { put("truncate_before_user_ordinal", it) }
+                        if (queuedFollowUp) put("queued", true)
                     },
                     // Long-running RPC, not a generic 15s ack — see the
                     // constant's doc. The idle watchdog (armed above, reset by
@@ -573,8 +580,22 @@ class GatewayChatClient(
                     }
                     if (activeTurn === turn) activeTurn = null
                     turn.disarmWatchdog()
+                    val submitError = submitted.exceptionOrNull()
+                    if ((submitError as? GatewayRpcException)?.code == ACTIVE_SESSION_CAP_REJECTION) {
+                        // Authoritative policy rejection: the gateway received
+                        // the prompt and deliberately refused to create the
+                        // first turn. Falling back to SSE would bypass the cap
+                        // and duplicate the optimistic user turn on another
+                        // transport. Surface the holder-aware upstream message
+                        // through the normal failed-turn callback instead.
+                        turn.tracer.done("submit-rejected")
+                        turn.callbacks.onError(
+                            submitError.message ?: "Hermes rejected the new session",
+                        )
+                        return@launch
+                    }
                     throw GatewayPreflightException(
-                        submitted.exceptionOrNull()?.message ?: "prompt.submit failed",
+                        submitError?.message ?: "prompt.submit failed",
                     )
                 }
                 turn.tracer.mark("submit")
@@ -881,6 +902,16 @@ class GatewayChatClient(
                     user = value.stringField("user").orEmpty(),
                     assistant = value.stringField("assistant").orEmpty(),
                     streaming = value.booleanField("streaming") == true,
+                    corrections = (value["corrections"] as? JsonArray)
+                        ?.mapNotNull { correction ->
+                            (correction as? JsonPrimitive)
+                                ?.contentOrNull
+                                ?.trim()
+                                ?.takeIf { it.isNotBlank() }
+                                ?.take(MAX_RECOVERED_CORRECTION_CHARS)
+                        }
+                        ?.take(MAX_RECOVERED_CORRECTIONS)
+                        .orEmpty(),
                     status = value.stringField("status"),
                     error = value.stringField("error"),
                     recoverable = value.booleanField("recoverable") == true,
@@ -1160,6 +1191,59 @@ class GatewayChatClient(
     }
 
     /**
+     * Fetch the upstream gateway's cropped preview for a Petdex pet.
+     *
+     * A missing thumbnail is represented by a successful `null`, matching the
+     * gateway's fail-open `{ "ok": false }` response. RPC errors, including
+     * method-not-found on older upstream gateways, remain failures so callers
+     * can distinguish an unavailable capability from a missing image.
+     */
+    suspend fun petThumbnail(
+        slug: String,
+        spritesheetUrl: String? = null,
+        profile: String? = currentSessionProfile(),
+    ): Result<String?> {
+        val normalizedSlug = slug.trim()
+        if (!PETDEX_SLUG.matches(normalizedSlug)) {
+            return Result.failure(IllegalArgumentException("invalid Petdex slug"))
+        }
+
+        val normalizedUrl = spritesheetUrl?.trim()?.takeIf { it.isNotEmpty() }
+        if (normalizedUrl != null && !isTrustedPetdexAssetUrl(normalizedUrl)) {
+            return Result.failure(IllegalArgumentException("invalid Petdex spritesheet URL"))
+        }
+
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+
+        return rpc(
+            "pet.thumb",
+            buildJsonObject {
+                put("slug", normalizedSlug)
+                normalizedUrl?.let { put("url", it) }
+                profile?.trim()?.takeIf { it.isNotEmpty() }?.let { put("profile", it) }
+            },
+        ).mapCatching { response ->
+            val ok = (response["ok"] as? JsonPrimitive)?.booleanOrNull
+                ?: throw GatewayRpcException("pet.thumb returned an invalid response")
+            val responseSlug = (response["slug"] as? JsonPrimitive)?.contentOrNull
+            if (responseSlug != normalizedSlug) {
+                throw GatewayRpcException("pet.thumb returned a mismatched slug")
+            }
+            if (!ok) return@mapCatching null
+
+            val dataUri = (response["dataUri"] as? JsonPrimitive)?.contentOrNull
+            if (dataUri == null || !isValidPetThumbnailDataUri(dataUri)) {
+                throw GatewayRpcException("pet.thumb returned an invalid thumbnail")
+            }
+            dataUri
+        }
+    }
+
+    /**
      * Fetch the current chat session's running and recently-finished background
      * processes. Callers never provide a session id: this wrapper resolves and
      * sends the exact LIVE gateway id, not the stored history id exposed to UI.
@@ -1268,6 +1352,22 @@ class GatewayChatClient(
                 (result.stringField("value") ?: "none").ifBlank { "none" }
                     .also { _serverPersonality.value = it }
             }
+    }
+
+    /**
+     * List personalities through upstream's slash completer. Unlike the
+     * dashboard config schema, this resolves the CLI config that contains both
+     * built-in and profile-defined personalities, matching `/personality` in
+     * the desktop and TUI.
+     */
+    suspend fun personalityOptions(): Result<List<String>> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            return Result.failure(GatewayRpcException("not connected"))
+        }
+        return rpc(
+            "complete.slash",
+            buildJsonObject { put("text", "/personality ") },
+        ).map(::parseGatewayPersonalityOptions)
     }
 
     /**
@@ -2895,6 +2995,22 @@ class GatewayChatClient(
     )
 }
 
+internal fun parseGatewayPersonalityOptions(result: JsonObject): List<String> =
+    (result["items"] as? JsonArray)
+        .orEmpty()
+        .mapNotNull { item ->
+            (item as? JsonObject)
+                ?.stringField("text")
+                ?.trim()
+                ?.removePrefix("/personality")
+                ?.trim()
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        it.lowercase() !in setOf("none", "default", "neutral")
+                }
+        }
+        .distinctBy { it.lowercase() }
+
 /** Outcome of an active-turn correction — Rejected and Failed both mean "queue locally instead". */
 enum class SteerResult {
     /** Server accepted the active-turn correction. */
@@ -2931,6 +3047,31 @@ internal class GatewayConnectAttemptException(message: String) : Exception(messa
 internal class GatewayRpcException(message: String, val code: Int? = null) : Exception(message)
 
 private const val JSONRPC_METHOD_NOT_FOUND = -32601
+private const val ACTIVE_SESSION_CAP_REJECTION = 4090
+private const val MAX_RECOVERED_CORRECTIONS = 32
+private const val MAX_RECOVERED_CORRECTION_CHARS = 32_768
+private const val PET_THUMB_DATA_PREFIX = "data:image/png;base64,"
+private const val MAX_PET_THUMB_BASE64_CHARS = 512 * 1024
+private val PETDEX_SLUG = Regex("[a-z0-9][a-z0-9-]{0,127}")
+private val STANDARD_BASE64 = Regex("[A-Za-z0-9+/]*={0,2}")
+
+private fun isTrustedPetdexAssetUrl(raw: String): Boolean {
+    val url = raw.toHttpUrlOrNull() ?: return false
+    return url.scheme == "https" &&
+        url.host == "assets.petdex.dev" &&
+        url.port == 443 &&
+        url.username.isEmpty() &&
+        url.password.isEmpty()
+}
+
+private fun isValidPetThumbnailDataUri(raw: String): Boolean {
+    if (!raw.startsWith(PET_THUMB_DATA_PREFIX)) return false
+    val payload = raw.substring(PET_THUMB_DATA_PREFIX.length)
+    return payload.isNotEmpty() &&
+        payload.length <= MAX_PET_THUMB_BASE64_CHARS &&
+        payload.length % 4 == 0 &&
+        STANDARD_BASE64.matches(payload)
+}
 
 data class GatewayCompressResult(
     val status: String,
