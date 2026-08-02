@@ -600,9 +600,10 @@ below). An incidental message rail is never selected as the recovery landing;
 the latest text-safe Chat habitat remains eligible. The pet does not scroll
 off-screen with content, and no unregistered Settings card becomes terrain
 automatically. If changing layout leaves the pet already intersecting a bubble,
-autonomous movement waits for a later valid terrain snapshot rather than drawing
-or traversing a projected diagonal through content. Recovery uses its separately
-labeled exact route only when one exists.
+autonomous movement does not project through content. A separately labeled
+recovery may take only the shortest bounded straight egress to a clear edge of
+the obstacle the pet is already inside; it stops there and never makes that path
+eligible for roaming.
 
 ## On-device visual review checklist
 

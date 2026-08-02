@@ -73,6 +73,7 @@ import com.hermesandroid.relay.ui.components.pet.PetVisitRequest
 import com.hermesandroid.relay.ui.components.pet.choosePetRailTransfer
 import com.hermesandroid.relay.ui.components.pet.expandObstaclesForPet
 import com.hermesandroid.relay.ui.components.pet.findExactOverlayRoute
+import com.hermesandroid.relay.ui.components.pet.findLocalPetEscapeRoute
 import com.hermesandroid.relay.ui.components.pet.findOverlayRoute
 import com.hermesandroid.relay.ui.components.pet.length
 import com.hermesandroid.relay.ui.components.pet.petBubbleEntryRoute
@@ -884,13 +885,24 @@ fun FloatingPetCompanion(
     }
 
     suspend fun animateScrollLanding(destination: PetPoint): Boolean {
+        val start = PetPoint(x.value, y.value)
         val route = findExactOverlayRoute(
-            start = PetPoint(x.value, y.value),
+            start = start,
             requestedDestination = destination,
             bounds = safeBounds,
             uiObstacles = autonomousRouteObstacles,
             footprint = footprint,
-        ) ?: return false
+        ) ?: run {
+            val escape = findLocalPetEscapeRoute(
+                start = start,
+                bounds = safeBounds,
+                uiObstacles = autonomousRouteObstacles,
+                footprint = footprint,
+                maximumLength = maximumDirectHopPx,
+            ) ?: return false
+            animatePetRoute(escape, PetDebugRouteKind.Recovery)
+            return false
+        }
         return animateExactPetRoute(route, PetDebugRouteKind.Recovery)
     }
 
@@ -1174,7 +1186,10 @@ fun FloatingPetCompanion(
                     !accessibleMotion.touchExploration &&
                     (scrollSupportLost || current.distanceSquaredTo(destination) > 4f)
                 ) {
-                    if (!animateScrollLanding(destination)) return@LaunchedEffect
+                    if (!animateScrollLanding(destination)) {
+                        activeRailKey = null
+                        return@LaunchedEffect
+                    }
                 } else {
                     x.snapTo(destination.x)
                     y.snapTo(destination.y)
@@ -1405,6 +1420,20 @@ fun FloatingPetCompanion(
         // measured ledge wins; the transfer uses the Petdex jump row.
         try {
             val supportedRail = railSupporting(PetPoint(x.value, y.value))
+            if (supportedRail == null) {
+                val escape = findLocalPetEscapeRoute(
+                    start = PetPoint(x.value, y.value),
+                    bounds = safeBounds,
+                    uiObstacles = autonomousRouteObstacles,
+                    footprint = footprint,
+                    maximumLength = maximumDirectHopPx,
+                )
+                if (escape != null) {
+                    activeRailKey = null
+                    animatePetRoute(escape, PetDebugRouteKind.Recovery)
+                    return@LaunchedEffect
+                }
+            }
             var rail = settledHabitat?.rail
                 ?: supportedRail
                 ?: patrolRails.minByOrNull {

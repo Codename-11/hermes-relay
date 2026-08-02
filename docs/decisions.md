@@ -2478,7 +2478,9 @@ top of a response bubble without ever covering its text or jumping through it.
   animation settle, then an enabled pet resumes from the valid landing surface.
 - Autonomous, recovery, and direct drag/drop routes are distinct motion/debug
   kinds. Recovery and direct manipulation cannot be reused as autonomous route
-  eligibility.
+  eligibility. When a layout update has already placed the pet inside a measured
+  obstacle, recovery is limited to the shortest bounded straight egress to a
+  clear edge and stops there.
 - A response visit is a deterministic bounded terrain journey. Nearby responses
   use the direct composer/gutter/bubble excursion. Farther visible responses
   require a complete chain of settled message-top rails with no hop over 210 dp;

@@ -1052,6 +1052,34 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `local escape uses nearest clear edge without authorizing a long route`() {
+        val start = PetPoint(110f, 170f)
+        val bubble = PetObstacle(100f, 120f, 200f, 220f)
+        val escape = requireNotNull(
+            findLocalPetEscapeRoute(
+                start = start,
+                bounds = PetSafeBounds(20f, 20f, 280f, 280f),
+                uiObstacles = listOf(bubble),
+                footprint = PetFootprint(width = 20f, height = 20f),
+                maximumLength = 40f,
+            ),
+        )
+
+        assertEquals(start, escape.start)
+        assertTrue(escape.destination.x < 90f)
+        assertEquals(start.y, escape.destination.y, 0f)
+        assertNull(
+            findLocalPetEscapeRoute(
+                start = start,
+                bounds = PetSafeBounds(20f, 20f, 280f, 280f),
+                uiObstacles = listOf(bubble),
+                footprint = PetFootprint(width = 20f, height = 20f),
+                maximumLength = 10f,
+            ),
+        )
+    }
+
+    @Test
     fun `settled chat paces in a wide text-free side pocket`() {
         val footprint = PetFootprint(width = 56f, height = 56f)
         val habitat = planSettledChatHabitat(

@@ -1178,6 +1178,50 @@ fun findExactOverlayRoute(
 }
 
 /**
+ * Shortest bounded egress for a pet that layout has already placed inside an
+ * expanded obstacle. The segment may cross only obstacles containing [start];
+ * it never becomes autonomous route eligibility.
+ */
+fun findLocalPetEscapeRoute(
+    start: PetPoint,
+    bounds: PetSafeBounds,
+    uiObstacles: Iterable<PetObstacle>,
+    footprint: PetFootprint,
+    maximumLength: Float,
+): PetRoute? {
+    require(maximumLength > 0f && maximumLength.isFinite()) {
+        "Maximum escape length must be finite and positive."
+    }
+    val expanded = expandObstaclesForPet(uiObstacles, footprint)
+    val containing = expanded.filter { it.contains(start) }
+    if (bounds.contains(start) && containing.isEmpty()) return null
+    val epsilon = PET_ROUTE_EPSILON
+    val candidates = buildList {
+        val clamped = bounds.clamp(start)
+        if (clamped != start) add(clamped)
+        containing.forEach { obstacle ->
+            add(PetPoint(obstacle.left - epsilon, start.y))
+            add(PetPoint(obstacle.right + epsilon, start.y))
+            add(PetPoint(start.x, obstacle.top - epsilon))
+            add(PetPoint(start.x, obstacle.bottom + epsilon))
+        }
+    }.asSequence()
+        .map(bounds::clamp)
+        .filter { it.distanceSquaredTo(start) > PET_ROUTE_EPSILON * PET_ROUTE_EPSILON }
+        .filter { candidate -> expanded.none { it.contains(candidate) } }
+        .filter { candidate ->
+            expanded.asSequence()
+                .filterNot { it in containing }
+                .none { it.intersectsSegment(start, candidate) }
+        }
+        .filter { candidate -> sqrt(candidate.distanceSquaredTo(start)) <= maximumLength + epsilon }
+        .distinct()
+        .sortedWith(compareBy<PetPoint> { it.distanceSquaredTo(start) }.thenBy { it.x }.thenBy { it.y })
+        .toList()
+    return candidates.firstOrNull()?.let { destination -> PetRoute(listOf(start, destination)) }
+}
+
+/**
  * Find a reachable place for the pet to visit beside a measured message
  * bubble without turning that bubble into walkable terrain. Above-corner
  * anchors are preferred, followed by side anchors; within each tier the
