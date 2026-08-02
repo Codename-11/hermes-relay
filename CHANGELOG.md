@@ -6,30 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [Android 1.6.0] - 2026-08-02
+
 ### Added
 
-- **Hermes can be selected as Android’s default Digital Assistant.** The opt-in system role adds a genuine `VoiceInteractionService`/system-session path for background and locked-screen “Hey Hermes” activation, while keeping local wake audio private and Standard voice upstream-only.
-- **Android can opt into an experimental local “Hey Hermes” wake word.** A user-started microphone foreground service performs sherpa-onnx detection on the phone, keeps pre-activation audio local, shows an ongoing Stop notification, and safely hands microphone ownership to the existing voice flow.
-- **Pets can stay with you across the Android app without replacing the agent.** A selected Petdex or custom companion now lives in one app-level overlay host, keeps its position across navigation and relaunches, and can be moved with a long hold and drag. It snaps to the nearest logical edge, adapts that saved position across screen sizes and RTL layouts, and offers equivalent TalkBack move/reset actions. Optional roaming is off by default and uses curated, live-measured ledges instead of scanning arbitrary interface elements; Chat's composer and Terminal's extra-keys bar are the first supported surfaces. Visible jump-to-latest controls trim or block the affected ledge, horizontal travel uses directional walking, and moves between supported routes or ledges use the pet's jump animation. Agent activity, scrolling, voice/full-screen presentation, backgrounding, reduced motion, or touch exploration still stops it safely. (#267)
-- **Petdex browsing and one-tap pet installation.** Appearance presents a responsive thumbnail gallery with loading states, creator attribution, source links, and an animated selected-pet preview. Search results use upstream-cropped idle thumbnails while full atlases download to the phone only after Install. The app prefers the compact v2 catalog with v1 fallback, converts supported current or legacy layouts into a validated local pet, and keeps installed companions available offline. Petdex assets retain their own creator-provided licensing terms. (#267)
-- **Android can be used in Russian.** The main and sideload builds include a complete Russian catalog, an in-app language option, localized chat and voice surfaces, and Russian plural handling.
+- **Hermes can be selected as Android’s default Digital Assistant.** The opt-in system role supports background and locked-screen invocation, while the separate experimental “Hey Hermes” listener keeps pre-activation audio on the phone and exposes an ongoing Stop control.
+- **Installed Hermes plugins can contribute native Android pages.** Android renders a bounded declarative schema instead of plugin code, keeps write access off until the user grants it, and supports approval-gated agent-created previews through Relay 1.5.0.
+- **Pets can stay with you across the Android app without replacing the agent.** Petdex and imported companions live in an app-level overlay, can be held and dragged, and optionally roam across live-measured chat and settings surfaces without reserving message space. (#267)
+- **Petdex browsing and one-tap installation are built into Appearance.** Search results use lightweight previews, full atlases download only after Install, creator attribution remains visible, and installed pets stay available offline. (#267)
+- **Android can be used in Russian.** Both product flavors include an AI-assisted Russian catalog, language picker support, localized plurals, and refreshed translations for the 1.6 feature set.
 
 ### Changed
 
-- **Android assistant invocations use a compact, expandable surface.** Transcript and response detail can expand in place, while Open full voice continues the same turn and microphone ownership in the existing Voice screen.
-- **The optional floating Voice overlay uses the same progressive layout.** It starts as a wide compact bar, expands for turn details and controls, and can still minimize to the existing bubble.
-- **Voice interruption covers the complete active response.** One calibrated VAD listener spans generation and playback on Standard and Realtime paths, rejects stale callbacks and speaker bleed, and keeps promoted background tasks alive when speech alone is stopped.
-- **Voice interruption matches upstream turn semantics.** Barge-in now defaults on with upstream RMS calibration, threshold, grace, and majority-window behavior; configurable exact stop phrases end the active voice chat; and an interrupted spoken reply privately informs the next Standard model turn without altering chat history.
-- **Experimental wake-word tuning starts at a more practical strictness.** New installations default to `0.3`, and Voice settings show the exact value while it is adjusted; existing saved choices remain unchanged.
-- **Profile identity, the Sphere, and pets are now separate appearance choices.** Profile images and letter fallbacks continue to identify assistant message groups; Background visualization independently controls Off or Sphere and its skins; Floating pet independently controls None or an imported companion. Existing pet selections migrate to the companion setting, while the old Sphere selection becomes no companion. (#267)
+- **Assistant and floating Voice surfaces use compact, expandable controls.** Opening full Voice continues the same turn and microphone owner instead of restarting the session.
+- **Voice interruption covers generation and playback.** Barge-in follows upstream RMS calibration and timing, exact stop phrases can end an active voice chat, and interrupted spoken context remains private to the next Standard turn.
+- **Profile identity, the Sphere, and pets are separate appearance choices.** Agent avatars identify messages, background visualization controls ambient art, and Floating pet controls the companion independently. (#267)
+- **The Agent Passport exposes more profile state and safer controls.** Profile configuration, skills, routing, reasoning, and scoped API access remain visibly distinct from the active session identity.
 
 ### Fixed
 
-- **Hermes appears and activates in OEM Android assistant pickers.** The app now advertises the standard Assist and Voice activity categories plus required recognition-service metadata alongside its voice-interaction service, while routing invocation through the existing single-microphone assistant lifecycle.
-- **Experimental Android wake detection follows sherpa’s completed-result contract.** Decoder confirmation now maps to sherpa’s trailing-blank setting, completed keyword streams reset immediately, Voice settings can run a real local microphone/model test, and an empty post-wake transcript returns to ready state instead of presenting a fatal server error.
-- **Voice transcripts retain stable rows after chat-history reconciliation.** Focus mode uses the same stable Compose identity as the main conversation, preventing duplicate-key crashes when live rows adopt persisted server IDs.
-- **Long Standard Voice recordings no longer exhaust Android memory before upload.** Transcription requests stream Base64 audio into the Dashboard request instead of retaining multiple full-size encoded copies in the app heap.
-- **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+- **Voice output recovers when a streaming renderer produces no audio.** Android falls back to basic synthesis after a bounded first-audio timeout, and long Standard Voice uploads no longer retain duplicate encoded audio buffers.
+- **Relay route failover avoids competing reconnect loops.** Route changes settle through one generation-aware reconnect owner instead of rapidly switching between LAN and remote candidates.
+- **Live chat rows keep stable UI identity while upstream state reconciles.** Streamed messages and process rows no longer collide or restart merely because a server identity arrives later.
+- **Floating pets recover from invalid or scrolling terrain.** Roaming uses measured bubble edges, avoids the jump-to-latest control and text overlap, resumes after drag or scrolling, and preserves locomotion, held, drop, and fallback animation states.
+- **Hermes appears and activates in OEM Android assistant pickers.** Required Assist, Voice, recognition-service, and single-microphone lifecycle metadata now agree.
+- **Experimental wake detection handles completed sherpa results and empty speech cleanly.** Tests use the real local microphone/model path, and no-speech activation returns to ready state instead of surfacing a fatal server error.
 
 ## [Android 1.5.3] - 2026-07-31
 

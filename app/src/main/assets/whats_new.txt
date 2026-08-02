@@ -1,4 +1,6 @@
-v1.5.3 - Voice stays open
+v1.6.0 - Pets, plugins, and voice
 
-* Prevent Voice Focus from closing while live messages reconcile with chat history.
-* Keep transcript rows stable when they receive persisted server identities.
+* Add floating Petdex companions that can roam across the interface.
+* Add safe native pages contributed by installed Hermes plugins.
+* Use Hermes as the optional Android Digital Assistant with local “Hey Hermes.”
+* Add Russian and improve voice, routing, chat, and pet stability.

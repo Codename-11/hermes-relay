@@ -18,9 +18,9 @@
 
 ## 功能简介
 
-- **Android 应用**：流式聊天、会话历史、文件附件、Hermes 管理、语音模式、多连接和配置文件。
+- **Android 应用**：流式聊天、会话历史、文件附件、Hermes 管理、语音模式、原生插件页面、Petdex 悬浮宠物、多连接和配置文件；也可将 Hermes 设为 Android 助手。
 - **无需插件的标准路径**：聊天、管理和标准语音可直接连接未修改的上游 Hermes Agent。
-- **可选 Relay 插件**：增加终端、手机控制、媒体传输、通知助手、Relay 语音和电脑工具。
+- **可选 Relay 插件**：增加终端、手机控制、媒体传输、通知助手、Relay 语音、电脑工具，以及需确认的代理创建插件页面草稿。
 - **安全连接**：二维码配对、Android Keystore、证书固定、按通道授权和可配置会话有效期。
 - **远程使用**：可配置 Tailscale 或 HTTPS 地址，在家庭局域网和远程路由之间自动切换。
 - **两种 Android 发行渠道**：Google Play 版本适合日常使用；sideload 版本包含完整手机控制能力。
@@ -67,7 +67,7 @@ hermes gateway
 
 ### 4. 可选：安装 Relay
 
-仅在需要终端、手机控制、媒体路由、Relay 会话、实时语音或电脑工具时安装：
+仅在需要终端、手机控制、媒体路由、Relay 会话、实时语音、电脑工具或代理创建插件页面草稿时安装：
 
 ```bash
 hermes plugins install Codename-11/hermes-relay/plugin --enable
@@ -75,6 +75,8 @@ hermes relay doctor
 hermes relay start --no-ssl
 hermes pair
 ```
+
+已安装的 Hermes 插件可通过已认证的 Dashboard 向 Android 提供由应用安全渲染的原生页面，无需在手机上运行插件代码。Relay 1.5.0 另支持需用户确认的代理创建页面草稿。
 
 完整说明请阅读[中文快速开始](https://hermes-relay.dev/docs/zh-CN/guide/quick-start)；远程访问、协议和高级配置暂时链接到英文参考文档。
 

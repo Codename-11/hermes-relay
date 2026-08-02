@@ -1,1 +1,1 @@
-Voice Focus now keeps transcript rows stable while live messages reconcile with persisted chat history, preventing the duplicate-key crash that could close the app.
+Add floating Petdex companions that can roam across the interface, safe native pages from installed Hermes plugins, and an optional Android Digital Assistant with local “Hey Hermes.” This release also adds Russian and improves voice recovery, route failover, live chat stability, and pet movement.
