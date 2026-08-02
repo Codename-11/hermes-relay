@@ -1,6 +1,6 @@
 # Clean mode, Sphere background, and floating pets — design record
 
-**Status:** Implemented; concept model revised 2026-07-31 for #267
+**Status:** Implemented; interaction model revised 2026-08-01 for #267
 **Owner surface:** Android app shell, Chat, Terminal, and Appearance settings
 
 ## Decision
@@ -26,31 +26,40 @@ Desktop and Codex while adapting it to a phone-sized viewport.
 - One app-root host renders the selected companion across normal in-app
   navigation. The full-screen positioning layer is click-through; only the
   48/56 dp pet target accepts pointer input.
-- Long hold starts a haptic drag. Movement is clamped to the protected viewport;
-  release snaps to the nearest logical start/end edge and persists that edge plus
-  a normalized vertical fraction. Pixel coordinates are not stored, so the home
-  position remains meaningful after rotation, resizing, and RTL changes.
+- Tap waves and opens the pet menu. Long hold starts a haptic drag and lifts the
+  pet into its held state. Movement is clamped to the protected viewport and
+  routed around registered controls; release disables roaming and visibly falls
+  to the nearest logical start/end edge, then persists that edge plus a normalized
+  vertical fraction. Pixel coordinates are not stored, so the home position
+  remains meaningful after rotation, resizing, and RTL changes.
 - Autonomous roaming is separately opt-in and defaults off. Screen owners
   register a curated set of live-measured perches and obstacles; the host does
   not scan arbitrary composables or accessibility nodes. Chat's composer and
-  Terminal's extra-keys toolbar are the initial perches, using their existing top
-  edges with no reserved spacer. Chat's scroll-to-bottom button and Terminal's
-  jump-to-latest pill register only while visible and trim or block the rail
-  segments they occupy.
-- Transitions between supported route perches, ledge hops, and off-perch drops
-  use `jumping` to settle onto a valid route-scoped perch. Horizontal movement on
-  a rail uses directional walking clips. Drag temporarily yields to the user;
-  vertical accessibility moves pause roaming before applying free-form
-  placement. Screens with no registered perch show the pet docked.
+  newest visible settled assistant bubble, Terminal's extra-keys toolbar, and
+  the persistent bottom status strip on Settings/About are supported perches,
+  using existing edges with no reserved spacer. Chat's scroll-to-bottom button
+  and Terminal's jump-to-latest pill register only while visible and trim or
+  block the rail segments they occupy.
+- A response visit is an explicit composer → clear outer gutter → raised bubble
+  top → opposite bubble edge → return → composer excursion. The pet walks across
+  the bubble, but its complete footprint remains above the content and vertical
+  entry/drop remains beside the text. Unsafe, narrow, or interactive responses
+  are skipped. Response bubbles are not ambient patrol rails.
+- Horizontal motion uses directional clips with travel duration rounded to full
+  walk cycles and a short turn pause. Vertical motion uses squash anticipation,
+  `jumping` to the apex, `falling` on descent, a height-responsive shadow, and a
+  landing squash. Idle variety cycles through hops, waves, and rests.
 - Roaming runs only while Hermes is idle and the app is foregrounded. Thinking,
   streaming, tool work, errors, transcript scrolling, dragging, the pet menu,
-  voice, clean/ambient mode, startup, and loss of a safe rail return it home or
-  hide/suspend it as appropriate.
+  voice, clean/ambient mode, startup, and loss of a safe rail pause or dock it as
+  appropriate. The director's fixed priority is direct interaction, agent
+  activity, response visit, roaming, then idle.
 - App animation-off, Android animator scale 0, and TalkBack touch exploration
   disable autonomous travel and freeze the sprite on a stable frame. Scrolling
-  also pauses and dims it to 60 percent opacity.
+  freezes the current screen position without re-docking, teleporting, or
+  scroll-only dimming. Settings/About dialogs suspend the companion.
 - The normal art size is 48 dp and compacts to 40 dp with the IME or a screen
-  shorter than 700 dp.
+  shorter than 700 dp; the IME pause is visually subdued.
 - The pet remains a semantic button with its label and agent state. Its menu can
   enable/pause roaming, reset position, open Appearance, or hide the companion.
   TalkBack custom actions additionally move to logical start/end, move up/down in
@@ -64,8 +73,8 @@ surfaces:
 - **Background visualization:** Off or Sphere. Sphere skins remain available
   when Sphere is enabled.
 - **Floating pet:** None or an imported pet, followed by add/manage, live preview,
-  playback speed, activity reaction, stabilization, opt-in roaming, and reset
-  position controls.
+  playback speed, activity reaction, stabilization, opt-in roaming,
+  Calm/Balanced/Playful temperament, and reset-position controls.
 
 Deleting the selected pet resets only the companion selection to None. It does
 not change the Sphere or active profile identity.
@@ -89,13 +98,18 @@ identity data is unchanged.
 - Petdex is an initial Android MVP installation source: browse the public v2
   catalog with v1 fallback, show creator/source attribution, and download only
   after an explicit Install action. Supported atlases are converted into local
-  Relay packs and render offline thereafter.
+  Relay packs, selected immediately, and render offline thereafter. Users do not
+  edit manifests or remap animations to use Petdex pets.
 - Petdex URLs and redirects are constrained to the exact HTTPS catalog/asset
   hosts; bounded metadata and PNG/WebP spritesheets are layout-checked before an
   atomic install. Catalog availability does not assert a uniform asset license.
 - Petdex's canonical `running-left` and `running-right` rows are preserved as
   physical locomotion. The in-place `running` row remains agent work; movement
   clips never override thinking, streaming, tool, error, or reaction clips.
+- The selected installed pet exposes renderer-backed previews for idle,
+  directional travel, jump/fall, held, wave, work, review, waiting, and error.
+  Each preview names the exact source row and distinguishes direct, mirrored,
+  fallback, and mirrored-fallback behavior.
 - Sphere skins remain a separate data system documented in
   [`../sphere-spec.md`](../sphere-spec.md).
 - `MorphingSphereCore` and its web parity harness remain the source of truth for

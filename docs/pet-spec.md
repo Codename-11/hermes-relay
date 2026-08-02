@@ -37,37 +37,70 @@ replace the profile identity or Sphere.
 The companion has a durable home and an optional autonomous roaming mode:
 
 - Long hold the pet, drag it, and release. It stays inside a protected viewport,
-  snaps to the nearest logical start/end edge, and stores the edge plus a
-  normalized vertical position—not raw pixels. The placement therefore adapts
-  to rotation, resizing, and RTL layouts. **Reset position** restores the default
-  end-edge home near the lower-right Chat area in left-to-right layouts (and
-  mirrors correctly in right-to-left layouts).
+  avoids registered controls, disables roaming, and visibly falls to the nearest
+  logical start/end edge. The app stores that edge plus a normalized vertical
+  position—not raw pixels. The placement therefore adapts to rotation, resizing,
+  and RTL layouts. **Reset position** restores the default end-edge home near the
+  lower-right Chat area in left-to-right layouts (and mirrors correctly in
+  right-to-left layouts).
+- Tap the pet for a wave and its menu. The tap reaction is lower priority than
+  active Hermes work and never interrupts a drag or drop. The menu can enable or
+  pause roaming, reset position, open Appearance, or hide the companion.
 - **Walk around the interface** is opt-in and off by default. Screen owners
   explicitly register curated perches and obstacles using their live measured
   bounds; the app does not scan arbitrary UI elements or treat the accessibility
-  tree as walkable geometry. The initial perches are Chat's composer and
-  Terminal's extra-keys toolbar. They use the controls' existing top edges, so
-  roaming inserts no spacer and reduces no content area.
+  tree as walkable geometry. The supported perches are Chat's composer, the
+  newest visible settled assistant bubble, Terminal's extra-keys toolbar, and
+  the persistent bottom status strip on Settings and About. They use existing
+  control or content edges, so the overlay inserts no spacer and reduces no text
+  or control layout area. Other routes keep the pet docked at its saved edge.
 - Visible jump-to-latest controls are registered as temporary obstacles: Chat's
   scroll-to-bottom button and Terminal's jump-to-latest pill trim the ledge into
   pet-sized safe segments, or block it when no usable segment remains. When the
   controls disappear, their measured obstacle is removed.
-- Transitions between supported route perches, hops between ledges, and a manual
-  drop away from a ledge use `jumping` to settle onto the nearest valid
-  route-scoped perch. Horizontal travel on one ledge uses the left/right walking
-  aliases. TalkBack vertical moves intentionally pause roaming before applying
-  free-form placement. On a route with no registered perch, the pet stays docked.
+- After a plain assistant response settles, the pet may make one deterministic
+  visit: walk along the composer to a clear screen-side gutter, jump vertically
+  beside the message, step onto a rail raised above the bubble, walk across its
+  top, pause and wave, walk back, then drop beside the message to the composer.
+  The full sprite footprint remains above the bubble and its jump/drop path does
+  not cross text. Cards, attachments, tool rows, phone/voice actions, narrow
+  bubbles, and bubbles without a safe gutter are skipped.
+- Horizontal travel uses directional walking aliases and a duration rounded to
+  complete walk cycles, preventing sliding feet. Turns pause briefly. Vertical
+  travel uses a squash anticipation, `jumping` through the apex, `falling` on
+  descent, an altitude-responsive shadow, and a small landing squash. Ambient
+  idle actions cycle through a hop, wave, and rest rather than repeating one
+  animation continuously. TalkBack vertical moves intentionally pause roaming
+  before applying free-form placement.
 - Only the pet-sized target consumes touch input; the root positioning layer is
   click-through. Registered UI bounds keep autonomous movement and drag
   placement clear of curated controls while content may pass behind the overlay.
 - Roaming requires an idle agent, the foreground app, enabled animation, and an
   available safe rail. Agent activity, scrolling, dragging, an open pet menu,
   startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
-  exploration stops travel. Activity state takes priority over locomotion.
+  exploration stops travel. Scrolling freezes the current screen position at
+  full opacity; it does not re-dock or teleport the pet. The IME/short-screen
+  compact layout uses 40 dp art and the IME pause is visually subdued. Settings
+  and About publish their scroll state and hide the companion while their dialogs
+  are open.
 
-The pet menu can enable/pause roaming, reset position, open Appearance, or hide
-the companion. TalkBack users also get actions to move to start/end, move
-up/down, and reset without performing a drag gesture.
+The behavior director has one deterministic priority order: direct interaction,
+Hermes activity, a pending response visit, autonomous roaming, then idle. This
+keeps user intent and truthful agent-state animation ahead of decorative motion.
+TalkBack users also get actions to move to start/end, move up/down, reset, open
+Appearance, and hide without performing a drag gesture.
+
+### Temperament and pacing
+
+Appearance offers three phone-local pacing presets. They change only how often
+an otherwise-idle pet may act; they do not bypass any safety, activity, scrolling,
+dialog, reduced-motion, or accessibility gate.
+
+| Temperament | Response visit | Roam interval | Idle reaction |
+|-------------|----------------|---------------|---------------|
+| **Calm** | after 2.5 s | every 12 s | every 28 s |
+| **Balanced** (default) | after 1.5 s | every 8 s | every 18 s |
+| **Playful** | after 0.75 s | every 5 s | every 10 s |
 
 ## Petdex catalog and custom packs
 
@@ -78,7 +111,10 @@ Appearance offers two installation paths:
   Catalog metadata is cached in memory for five minutes. The gallery requests
   the same cropped, cached idle-frame thumbnails as Hermes Desktop while a
   virtualized grid keeps the full catalog reachable; the full atlas is
-  downloaded to the phone only after an explicit Install action.
+  downloaded to the phone only after an explicit Install action. Installation
+  converts and selects the pet immediately; enabling roaming and optionally
+  choosing a temperament are the only behavior settings. Petdex users do not
+  edit a manifest, rename rows, or create extra animations.
 - **Add a pet** imports a custom Relay-format `.zip` or single image from device
   storage. This path remains independent of Petdex and accepts the manifest
   format documented below.
@@ -127,23 +163,51 @@ The adapter preserves Petdex's source row names instead of flattening them:
 | Meaning | Current Petdex row | Relay use |
 |---------|--------------------|-----------|
 | Rest | `idle` | Idle and ultimate fallback |
-| Review | `review` | Thinking fallback |
+| Review | `review` | Thinking/review fallback |
 | In-place work | `running` | Working/tool and streaming fallback |
 | Horizontal travel | `running-left`, `running-right` | Physical locomotion only while the agent is idle |
-| Waiting | `waiting` | Listening compatibility |
-| Greeting/completion | `waving` | Speaking compatibility and greet/done reaction fallback |
+| Waiting | `waiting` | Listening/waiting compatibility and preview |
+| Greeting/completion | `waving` | Speaking, greet/done, tap, and ambient-wave fallback |
 | Failure | `failed` | Error fallback |
-| Celebration | `jumping` | Success/celebrate fallback |
+| Celebration | `jumping` | Success/celebrate, physical jump, and fall fallback |
 
 Legacy `wave`, `run`, and `jump` row names remain accepted. Legacy atlases do
 not contain directional rows, so they remain valid activity-reactive pets but
-stay visually idle while the host changes position. Custom Relay packs may add
+use the legacy run row (mirrored for rightward travel) when available. Custom
+Relay packs may add
 `walking-left`/`walking-right`, `walk-left`/`walk-right`,
 `running-left`/`running-right`, or `run-left`/`run-right` clips.
 
 Locomotion and activity are intentionally separate. Directional clips can be
 selected only when the agent state is Idle; thinking, streaming, tool work,
 errors, and one-shot reactions always win.
+
+### Capability preview and honest fallbacks
+
+The selected installed Petdex pet has an interactive preview for **Idle, Walk
+left, Walk right, Jump, Fall, Held, Wave, Working, Review, Waiting,** and
+**Error**. Each choice is rendered through the same resolver as the overlay and
+names the exact manifest/Petdex row used. The label also says whether that row
+is direct, mirrored, a fallback, or a mirrored fallback, so a missing optional
+animation is visible before the pet roams.
+
+The important fallback rules are:
+
+- left/right travel accepts the matching `walking-*`, `walk-*`, `running-*`, or
+  `run-*` row; if only the opposite direction exists it is mirrored. A legacy
+  `run`/`running` row is treated as left-facing travel and mirrored to the right.
+  The preview labels an opposite native directional row **Mirrored**, but labels
+  the legacy in-place row **Mirrored fallback** because it is not native travel
+  art. If no travel row exists, idle art moves as a plain **Fallback**.
+- `falling`/`fall` falls back to `jumping`/`jump`, then idle. Jump, held, and wave
+  each fall back to idle when their optional row is absent.
+- Working uses `working`, `run`, or `running`; Review uses `thinking` or `review`;
+  Waiting uses `listening` or `waiting`; Error uses `error` or `failed`. The
+  renderer's existing activity chain ultimately falls back to idle.
+
+This preview describes pack/renderer capability. A host can still suppress an
+otherwise available action when its current route, agent state, accessibility
+policy, or measured geometry does not permit it.
 
 ## Where pets live
 
@@ -460,10 +524,45 @@ live in the user guide under **Custom Avatars → Generate a pet with AI**
 
 When the user disables animations, Android animator scale is 0, or TalkBack touch
 exploration is active, autonomous roaming stops and the pet is rendered
-**paused**. During transcript scrolling it also pauses and dims; with the
-keyboard open or on a short screen it compacts from 48 dp to 40 dp. Author the
-first `idle` frame to be a good, legible still. The companion exposes its name
-and current state, plus non-drag move/reset/configure/hide accessibility actions.
+**paused**. Transcript, Settings, and About scrolling pause travel at the current
+screen coordinate without re-docking, teleporting, or dimming the companion.
+With the keyboard open or on a short screen it compacts from 48 dp to 40 dp; the
+keyboard pause is visually subdued so input remains readable. Dialogs on
+supported Settings/About routes suspend the companion entirely. Temperament
+never overrides these gates. Author the first `idle` frame to be a good, legible
+still. The companion exposes its name and current state, plus non-drag
+move/reset/configure/hide accessibility actions.
+
+## On-device visual review checklist
+
+Use a Petdex pet with current directional rows where possible, then repeat the
+fallback checks with a pack missing one or more optional rows:
+
+- [ ] With roaming enabled, the pet walks the composer end-to-end above the
+  control without covering input text, buttons, or the scroll-to-bottom control.
+- [ ] After a plain assistant response, it approaches through the outer gutter,
+  jumps beside the bubble, walks across the raised top rail, waves, returns to
+  the same edge, and drops to the composer without covering message text.
+- [ ] A narrow bubble or blocked gutter is skipped; cards, attachments, tool
+  rows, and phone/voice action bubbles are never visited.
+- [ ] Scrolling Chat, Settings, and About freezes the pet at its current screen
+  coordinate with no teleport, edge snap, or scroll-only dimming; motion replans
+  after scrolling stops. Settings/About dialogs suspend it.
+- [ ] Left/right travel faces correctly. The Petdex preview reports and visibly
+  demonstrates direct, mirrored, fallback, and mirrored-fallback selection for
+  Walk left/right, Jump, Fall, Held, Wave, Working, Review, Waiting, and Error.
+- [ ] A tap waves and opens the menu. Long hold lifts into held art; drag avoids
+  registered controls; release visibly falls and settles at the persisted edge,
+  with a landing squash, and disables roaming.
+- [ ] Jump anticipation, apex transition to falling, altitude-responsive shadow,
+  landing squash, turn pauses, and foot-speed synchronization read naturally.
+- [ ] Calm, Balanced, and Playful produce visibly different response/patrol/idle
+  pacing without interrupting direct interaction or active Hermes work.
+- [ ] Terminal walks the extra-keys toolbar; Settings/About walk the bottom
+  status rail; routes without a registered rail stay docked.
+- [ ] App animation-off, Android animator scale 0, and TalkBack touch exploration
+  stop autonomous motion. TalkBack can move, reset, configure, and hide the pet
+  without dragging.
 
 ## Minimal example
 

@@ -2437,3 +2437,60 @@ voice capture, barge-in, and diagnostics already share one process-wide owner.
 - Android 14+ while-in-use rules require starting this service from the visible,
   user-initiated overlay action; an arbitrary background caller cannot create
   equivalent microphone privilege.
+
+---
+
+## ADR 44 — Floating pets use one measured-rail behavior director
+
+**Status:** Accepted (2026-08-01).
+
+**Context.** An app-level pet is visually pleasant only when its movement reads
+as intentional and never competes with the interface. Treating the entire
+Compose or accessibility tree as walkable geometry would make text and controls
+accidental terrain, while independently launched animation effects can interrupt
+dragging, misrepresent active agent work, or snap to stale coordinates when a
+scroll changes measured bounds. Chat adds a special case: the pet should walk on
+top of a response bubble without ever covering its text or jumping through it.
+
+**Decision.**
+
+- One root overlay owns position and arbitration. It consumes no transcript or
+  control-bar layout space; only the pet-sized target handles pointer input.
+- Screen owners opt in by publishing live-measured perches, obstacles, scrolling,
+  and modal visibility. The supported terrain is Chat's composer and newest
+  visible settled assistant bubble, Terminal's extra-keys toolbar, and the
+  persistent status strip on Settings/About. No accessibility-tree scan or
+  arbitrary-Composable discovery is permitted.
+- Direct interaction has priority over agent activity, followed by a pending
+  response visit, autonomous roaming, and idle reactions. Activity clips remain
+  truthful because locomotion is eligible only while Hermes is idle.
+- A response visit is a deterministic composer-to-bubble excursion. The planner
+  proves a clear outer gutter and a raised top rail for the complete pet
+  footprint, walks across the bubble, and returns through the same edge before
+  dropping to the composer. It skips unsafe geometry and interactive response
+  rows rather than crossing or covering message text.
+- Temporary suspension preserves screen coordinates. Scrolling stops movement
+  but does not reclassify the route, re-dock, teleport, or dim the pet. Settings
+  and About hide it while a dialog owns the surface. Routes without an approved
+  rail use the persisted logical-edge home.
+- Motion states correspond to physical movement: directional walking for
+  horizontal travel, jump to the apex, fall through descent and manual-drop
+  settling, and held during drag. Anticipation, turn pauses, cycle-quantized
+  travel, shadow height, and landing squash are presentation polish around those
+  honest states.
+- Calm, Balanced, and Playful alter cadence only. App animation settings,
+  foreground/activity state, scrolling, dialogs, Android animator scale, and
+  TalkBack touch exploration always take precedence.
+- Installed Petdex pets use the same renderer and planner without manifest edits
+  or asset conversion by the user. The catalog preview resolves through the live
+  renderer and names the exact direct, mirrored, fallback, or mirrored-fallback
+  row for each supported action.
+
+**Consequences.**
+
+- Adding another roam surface requires an explicit measured-rail registration
+  and ownership of its scroll/modal state; it is not automatically inferred.
+- Bubble visits remain fun but deterministic and text-safe. When geometry is not
+  provably safe, no visit is preferable to a partially obscured message.
+- Position, activity truth, accessibility behavior, and Petdex fallback semantics
+  share one source of runtime truth instead of drifting across route-local effects.
