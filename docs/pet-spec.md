@@ -36,9 +36,11 @@ replace the profile identity or Sphere.
 
 The companion has a durable home and an optional autonomous roaming mode:
 
-- Long hold the pet, drag it, and release. It stays inside a protected viewport,
-  avoids registered controls, and visibly falls to the nearest valid manual or
-  roaming surface. Dragging never changes the roaming preference, so an enabled
+- Long hold the pet, drag it, and release. Direct manipulation follows the
+  finger anywhere inside the visible overlay without terrain or obstacle
+  projection; release visibly falls to the nearest valid measured surface
+  below, or the nearest safe surface when none is below. Dragging never changes
+  the roaming preference, so an enabled
   pet resumes exploring after it lands. The app stores a logical edge plus a
   normalized vertical position—not raw pixels. The placement therefore adapts to
   rotation, resizing, and RTL layouts. **Reset position** restores the default
@@ -52,9 +54,11 @@ The companion has a durable home and an optional autonomous roaming mode:
   bounds; the app does not scan arbitrary UI elements or treat the accessibility
   tree as walkable geometry. The supported perches are Chat's composer and
   eligible visible settled user/assistant bubbles, Terminal's extra-keys toolbar,
-  and the persistent bottom status strip on Settings and About. They use existing
-  control or content edges, so the overlay inserts no spacer and reduces no text
-  or control layout area. Other routes keep the pet docked at its saved edge.
+  root Settings summary/category card tops, Appearance section-card tops, and
+  the persistent bottom status strip on Settings, Appearance, and About. They
+  use existing control or content edges, so the overlay inserts no spacer and
+  reduces no text or control layout area. Other routes keep the pet docked at
+  its saved edge.
   Additional Settings terrain can publish through the same live registry, but
   every card/header remains an explicit opt-in with current scroll/modal state;
   arbitrary Compose or accessibility elements never become terrain.
@@ -63,6 +67,17 @@ The companion has a durable home and an optional autonomous roaming mode:
   or outer-edge rail, or a narrow touchdown point, with exact collision-validated
   endpoints. If no bounded route validates, the pet waits locally instead of
   projecting onto a candidate or inventing a viewport-edge ledge.
+- An eligible visible bubble may expose temporary side-edge hop footholds so
+  several ordinary bubbles can bridge a cumulative gap larger than 210 dp.
+  An exterior gutter is preferred;
+  a viewport-filling bubble may instead expose one sprite-wide inset edge lane.
+  That lane permits only immediate jump/fall traversal, while registered
+  controls keep full touch-target clearance and the rest of the bubble stays
+  blocked. Footholds require a preflighted return to persistent terrain and
+  never become walking, idle, settled, scroll-support, home, or drag destinations.
+- Obstacle-adjacent transfers retain the 210 dp step budget. A collision-free
+  blank-space gap between measured message levels may use one distance-scaled
+  ballistic transfer up to 360 dp, avoiding an invented midair landing point.
 - At the settled Chat bottom, the home hierarchy is a full-footprint side pocket
   beside the latest bubble, its raised top edge, then the outer composer corner.
   A wide pocket permits pacing; a narrow valid pocket becomes an idle point.
@@ -93,7 +108,10 @@ The companion has a durable home and an optional autonomous roaming mode:
   safe. A bubble too narrow for a walkable rail may still contribute one
   centered touchdown when at least 35% of the pet width is visibly supported;
   the pet briefly lands and immediately continues instead of walking or idling
-  over its text.
+  over its text. Before a hop, the pet may walk along its current rail to the
+  collision graph's validated launch point. The route search backtracks around
+  a legal-but-dead-end foothold, while still requiring the complete return path
+  before the first jump.
 - Horizontal travel uses directional walking aliases and a duration rounded to
   complete walk cycles, preventing sliding feet. Turns pause briefly. Vertical
   travel scales its duration with route length, uses a squash anticipation,
@@ -103,23 +121,25 @@ The companion has a durable home and an optional autonomous roaming mode:
   animation continuously. TalkBack vertical moves intentionally pause roaming
   before applying free-form placement.
 - Only the pet-sized target consumes touch input; the root positioning layer is
-  click-through. Registered UI bounds keep autonomous movement and drag
-  placement clear of curated controls while content may pass behind the overlay.
+  click-through. Registered UI bounds constrain autonomous movement and drop
+  landing selection, while direct dragging itself remains finger-driven.
 - Roaming requires an idle agent, the foreground app, enabled animation, and an
   available safe rail. Agent activity, scrolling, dragging, an open pet menu,
   startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
   exploration stops autonomous travel. During scrolling, the pet follows its
   current measured or synthetic habitat rail while it remains valid; it does
   not re-dock or teleport. The IME/short-screen compact layout uses 50 dp base
-  art before the saved size scale. Settings
-  and About publish their scroll state and hide the companion while their dialogs
-  are open.
+  art before the saved size scale. Settings, Appearance, and About publish
+  their scroll state and hide the companion while their dialogs are open.
 - Debug builds provide **Developer Options → Show pet terrain overlay**. The
   default-off, pointer-transparent layer paints measured perches, usable rails,
   narrow-bubble touchdown points, collision bounds, the active rail, footprint,
-  dashed collision-checked candidate routes, the solid route active only during
-  traversal, and the current behavior gate without changing planning. Candidate
-  routes are blue, autonomous active routes are orange, recovery paths are pink,
+  dashed collision-checked candidate routes, the selected out-and-back route in
+  yellow with numbered stops, the solid route active only during traversal, and
+  the current behavior gate without changing planning. The selected route is
+  refreshed by each planner pass and cleared when the measured terrain changes;
+  its stop order shows the outbound choices followed by the exact reverse return.
+  Candidate routes are blue, autonomous active routes are orange, recovery paths are pink,
   direct drag/drop paths are teal, and touchdown-only points are violet so
   eligibility cannot be mistaken for selection. Recovery and direct manipulation
   never make their path eligible for ambient travel. Locking Developer Options
@@ -576,22 +596,22 @@ live in the user guide under **Custom Avatars → Generate a pet with AI**
 
 When the user disables animations, Android animator scale is 0, or TalkBack touch
 exploration is active, autonomous roaming stops and the pet is rendered
-**paused**. Transcript, Settings, and About scrolling pause autonomous travel
+**paused**. Transcript, Settings, Appearance, and About scrolling pause autonomous travel
 without re-docking, teleporting, or dimming the companion.
 With the keyboard open or on a short screen its base art compacts from 60 dp to
 50 dp before the persisted 60–120% scale is applied. Keyboard visibility does
 not dim or pause the pet: playback, roaming on valid compact terrain, taps, and
 dragging remain available while typing. Dialogs on
-supported Settings/About routes suspend the companion entirely. Temperament
-never overrides these gates. Author the first `idle` frame to be a good, legible
-still. The companion exposes its name and current state, plus non-drag
-move/reset/configure/hide accessibility actions.
+supported Settings/Appearance/About routes suspend the companion entirely.
+Temperament never overrides these gates. Author the first `idle` frame to be a
+good, legible still. The companion exposes its name and current state, plus
+non-drag move/reset/configure/hide accessibility actions.
 
 During a scroll, a pet lifts slightly and remains attached to its registered
-ledge or text-safe settled Chat habitat while that terrain stays visible. This
-makes Settings scrolling visibly affect the pet even when its only safe terrain
-is the fixed status-strip rail, and prevents a moving chat bubble from sliding
-under a pet settled beside it.
+ledge or text-safe settled Chat habitat while that terrain stays visible. Root
+Settings and Appearance publish live card-top ledges, so their vertical motion
+changes the supported level before the planner resumes; this also prevents a
+moving chat bubble from sliding under a pet settled beside it.
 If a scrolling content ledge leaves the safe
 viewport, the overlay keeps the pet at its last safe screen coordinate and uses
 the falling state; after the gesture and fling settle, it lands on the nearest
@@ -623,22 +643,24 @@ fallback checks with a pack missing one or more optional rows:
 - [ ] Bubble interiors remain protected. Autonomous movement uses only the
   painted exact edge/touchdown routes and waits in place when every candidate is
   blocked; recovery and drag/drop paths are labeled separately.
-- [ ] Scrolling Chat, Settings, and About keeps the pet attached to valid
+- [ ] Scrolling Chat, Settings, Appearance, and About keeps the pet attached to valid
   measured or synthetic habitat, with no teleport, edge snap, or scroll-only
-  dimming; motion replans after scrolling stops. Settings/About dialogs suspend
-  it.
+  dimming; motion replans after scrolling stops. Settings/Appearance/About
+  dialogs suspend it.
 - [ ] Left/right travel faces correctly. The Petdex preview reports and visibly
   demonstrates direct, mirrored, fallback, and mirrored-fallback selection for
   Walk left/right, Jump, Fall, Held, Wave, Working, Review, Waiting, and Error.
-- [ ] A tap waves and opens the menu. Long hold lifts into held art; drag avoids
-  registered controls; release visibly falls and settles on a valid persisted or
+- [ ] A tap waves and opens the menu. Long hold lifts into held art; drag follows
+  the finger across the visible overlay; release visibly falls and settles on a valid persisted or
   roaming surface with a landing squash, without changing the roaming preference.
 - [ ] Jump anticipation, apex transition to falling, altitude-responsive shadow,
   landing squash, turn pauses, and foot-speed synchronization read naturally.
 - [ ] Calm, Balanced, and Playful produce visibly different response/patrol/idle
   pacing without interrupting direct interaction or active Hermes work.
-- [ ] Terminal walks the extra-keys toolbar; Settings/About walk the bottom
-  status rail; routes without a registered rail stay docked.
+- [ ] Terminal walks the extra-keys toolbar; root Settings and Appearance tour
+  several measured card tops and retrace the numbered route to their origin;
+  Settings/Appearance/About retain the bottom status rail as persistent terrain.
+  Routes without a registered rail stay docked.
 - [ ] App animation-off, Android animator scale 0, and TalkBack touch exploration
   stop autonomous motion. TalkBack can move, reset, configure, and hide the pet
   without dragging.

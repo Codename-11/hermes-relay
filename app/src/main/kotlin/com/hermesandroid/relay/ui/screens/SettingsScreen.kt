@@ -104,6 +104,7 @@ import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
@@ -113,6 +114,9 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 import kotlinx.coroutines.flow.distinctUntilChanged
+
+private const val SETTINGS_PET_SURFACE_ROUTE = "settings"
+private val SETTINGS_PET_SURFACE_ROUTES = setOf(SETTINGS_PET_SURFACE_ROUTE)
 
 /**
  * Root Settings destination. After the 2026-04-11 split, Settings is a
@@ -308,14 +312,14 @@ fun SettingsScreen(
             .distinctUntilChanged()
             .collect { (scrolling, hidden) ->
                 petCompanionCoordinator.publishSurface(
-                    owner = "settings",
+                    owner = SETTINGS_PET_SURFACE_ROUTE,
                     scrolling = scrolling,
                     hidden = hidden,
                 )
             }
     }
     DisposableEffect(petCompanionCoordinator) {
-        onDispose { petCompanionCoordinator.clearSurface("settings") }
+        onDispose { petCompanionCoordinator.clearSurface(SETTINGS_PET_SURFACE_ROUTE) }
     }
 
     // Profile lock state — this card/dialog is the ONE surface that always
@@ -374,6 +378,10 @@ fun SettingsScreen(
                 statusPills = listOfNotNull(chatPill),
                 onClick = { showAgentSheet = true },
                 isDarkTheme = isDarkTheme,
+                modifier = Modifier.petPerchSurface(
+                    key = "settings-card:active-agent",
+                    routes = SETTINGS_PET_SURFACE_ROUTES,
+                ),
             )
 
             // ── Inspect Agent ──────────────────────────────────────────
@@ -389,6 +397,10 @@ fun SettingsScreen(
                 activeProfile = inspectorTarget,
                 onClick = { profileName -> onNavigateToProfileInspector(profileName) },
                 isDarkTheme = isDarkTheme,
+                modifier = Modifier.petPerchSurface(
+                    key = "settings-card:profile-inspector",
+                    routes = SETTINGS_PET_SURFACE_ROUTES,
+                ),
             )
 
             // ── Profile lock ───────────────────────────────────────────
@@ -412,6 +424,10 @@ fun SettingsScreen(
                 lockedDisplayName = lockedDisplayName,
                 onClick = { showProfileLockDialog = true },
                 isDarkTheme = isDarkTheme,
+                modifier = Modifier.petPerchSurface(
+                    key = "settings-card:profile-lock",
+                    routes = SETTINGS_PET_SURFACE_ROUTES,
+                ),
             )
 
             // ── Quick Controls ─────────────────────────────────────────
@@ -423,6 +439,10 @@ fun SettingsScreen(
             QuickControlsCard(
                 connectionViewModel = connectionViewModel,
                 isDarkTheme = isDarkTheme,
+                modifier = Modifier.petPerchSurface(
+                    key = "settings-card:quick-controls",
+                    routes = SETTINGS_PET_SURFACE_ROUTES,
+                ),
             )
 
             // (The "Active Connection quick-look card" that used to live
@@ -682,10 +702,11 @@ private fun ActiveAgentCard(
     onClick: () -> Unit,
     isDarkTheme: Boolean,
     statusPills: List<SettingsStatusPillModel>,
+    modifier: Modifier = Modifier,
 ) {
     val subtitle = "$connectionLabel \u00B7 $model \u00B7 $personalityLabel"
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
                 shape = RoundedCornerShape(12.dp),
@@ -783,9 +804,10 @@ private fun ProfileLockCard(
     lockedDisplayName: String?,
     onClick: () -> Unit,
     isDarkTheme: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
                 shape = RoundedCornerShape(12.dp),
@@ -847,6 +869,7 @@ private fun ProfileLockCard(
 private fun QuickControlsCard(
     connectionViewModel: ConnectionViewModel,
     isDarkTheme: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val gatewayKeepAlive by connectionViewModel.gatewayKeepAlive.collectAsState()
     val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
@@ -865,7 +888,7 @@ private fun QuickControlsCard(
         }
     }
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
                 shape = RoundedCornerShape(12.dp),
@@ -1265,9 +1288,14 @@ private fun SettingsCategoryRow(
     onClick: () -> Unit,
     isDarkTheme: Boolean,
     badge: SettingsStatusPillModel? = null,
+    petPerchKey: String = title,
 ) {
     Card(
         modifier = Modifier
+            .petPerchSurface(
+                key = "settings-category:$petPerchKey",
+                routes = SETTINGS_PET_SURFACE_ROUTES,
+            )
             .fillMaxWidth()
             .gradientBorder(
                 shape = RoundedCornerShape(12.dp),

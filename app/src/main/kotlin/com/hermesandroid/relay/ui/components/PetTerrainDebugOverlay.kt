@@ -10,10 +10,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hermesandroid.relay.ui.components.pet.PetFootprint
 import com.hermesandroid.relay.ui.components.pet.PetMeasuredPerch
@@ -35,6 +38,78 @@ internal data class PetDebugActiveRoute(
 )
 
 /**
+ * The exact outbound route segments selected by the behavior planner. The
+ * return trip reuses these segments in reverse, so the overlay draws the
+ * geometry once and exposes the complete out-and-back order in [loopLabel].
+ */
+internal data class PetDebugPlannedRoute(
+    val outboundRoutes: List<PetRoute>,
+    val stops: List<PetPoint>,
+    val targetLabel: String,
+) {
+    init {
+        require(outboundRoutes.isNotEmpty()) { "A debug plan needs at least one route." }
+        require(stops.size >= 2) { "A debug plan needs an origin and destination." }
+    }
+
+    val loopStopIndices: List<Int>
+        get() = stops.indices.toList() + (stops.lastIndex - 1 downTo 0).toList()
+
+    val loopLabel: String
+        get() = loopStopIndices.joinToString("→")
+}
+
+/** Builds numbered planner stops from contiguous, non-stationary route legs. */
+internal fun petDebugPlannedRoute(
+    targetLabel: String,
+    routes: List<PetRoute>,
+): PetDebugPlannedRoute? {
+    val outboundRoutes = routes.filter { route ->
+        route.points.size > 1 && route.start != route.destination
+    }
+    if (outboundRoutes.isEmpty()) return null
+
+    val stops = buildList {
+        add(outboundRoutes.first().start)
+        outboundRoutes.forEach { route ->
+            if (last() != route.start) add(route.start)
+            if (last() != route.destination) add(route.destination)
+        }
+    }
+    if (stops.size < 2) return null
+    return PetDebugPlannedRoute(outboundRoutes, stops, targetLabel)
+}
+
+internal data class PetDebugStopBadge(
+    val point: PetPoint,
+    val stopIndices: List<Int>,
+) {
+    val label: String
+        get() = stopIndices.joinToString("/")
+}
+
+/** Coalesces labels whose marker circles would overlap while preserving every stop number. */
+internal fun petDebugStopBadges(
+    stops: List<PetPoint>,
+    clusterDistance: Float,
+): List<PetDebugStopBadge> {
+    val maximumDistanceSquared = clusterDistance * clusterDistance
+    val badges = mutableListOf<PetDebugStopBadge>()
+    stops.forEachIndexed { index, point ->
+        val badgeIndex = badges.indexOfFirst { badge ->
+            badge.point.distanceSquaredTo(point) <= maximumDistanceSquared
+        }
+        if (badgeIndex < 0) {
+            badges += PetDebugStopBadge(point, listOf(index))
+        } else {
+            val badge = badges[badgeIndex]
+            badges[badgeIndex] = badge.copy(stopIndices = badge.stopIndices + index)
+        }
+    }
+    return badges
+}
+
+/**
  * Immutable input for the developer-only pet terrain overlay. All coordinates
  * use the root overlay coordinate space already consumed by the pet router.
  * The caller owns feature gating and updates this model from live pet state.
@@ -50,6 +125,7 @@ internal data class PetTerrainDebugModel(
     val footprint: PetFootprint,
     val petCenter: PetPoint,
     val possibleRoutes: List<PetRoute> = emptyList(),
+    val plannedRoute: PetDebugPlannedRoute? = null,
     val activeRoute: PetDebugActiveRoute? = null,
     val locomotionLabel: String,
     val gateLabel: String,
@@ -64,7 +140,9 @@ internal data class PetTerrainDebugModel(
 internal fun petTerrainLegendLines(model: PetTerrainDebugModel): List<String> = listOf(
     "route ${model.routeLabel ?: "none"}",
     "routes possible ${model.possibleRoutes.size}  active ${model.activeRoute?.kind?.label ?: "none"}",
-    "blue dashed=possible  orange=auto  pink=recovery  teal=drag",
+    "plan ${model.plannedRoute?.loopLabel ?: "none"}" +
+        (model.plannedRoute?.targetLabel?.let { "  target $it" } ?: ""),
+    "blue dashed=possible  yellow=plan  orange=auto  pink=recovery  teal=drag",
     "rail ${model.activeRailKey ?: "none"}  move ${model.locomotionLabel}",
     "gate ${model.gateLabel}",
     "perches ${model.perches.size}  rails ${model.rails.size}  hops ${model.touchdownRails.size}  " +
@@ -154,6 +232,7 @@ internal fun PetTerrainDebugOverlay(
     modifier: Modifier = Modifier,
 ) {
     val textMeasurer = rememberTextMeasurer(cacheSize = 16)
+    val localDensity = LocalDensity.current
     val legendLines = remember(model) { petTerrainLegendLines(model) }
     val legendStyle = TextStyle(
         color = Color.White,
@@ -183,6 +262,22 @@ internal fun PetTerrainDebugOverlay(
     }
     val touchdownLabelLayouts = remember(touchdownLabels, textMeasurer) {
         touchdownLabels.map { label -> textMeasurer.measure(label.text, terrainLabelStyle) }
+    }
+    val plannedStopStyle = TextStyle(
+        color = TerrainPlannedRouteText,
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.Bold,
+        fontSize = 8.sp,
+    )
+    val plannedStopBadges = remember(model.plannedRoute?.stops, localDensity) {
+        petDebugStopBadges(
+            stops = model.plannedRoute?.stops.orEmpty(),
+            clusterDistance = with(localDensity) { 14.dp.toPx() },
+        )
+    }
+    val plannedStopLabels = plannedStopBadges.map(PetDebugStopBadge::label)
+    val plannedStopLayouts = remember(plannedStopLabels, textMeasurer) {
+        plannedStopLabels.map { label -> textMeasurer.measure(label, plannedStopStyle) }
     }
 
     Canvas(modifier = modifier) {
@@ -218,6 +313,17 @@ internal fun PetTerrainDebugOverlay(
                     end = Offset(end.x, end.y),
                     strokeWidth = candidateRouteStroke,
                     pathEffect = candidateRouteDash,
+                )
+            }
+        }
+
+        model.plannedRoute?.outboundRoutes.orEmpty().forEach { route ->
+            route.points.zipWithNext().forEach { (start, end) ->
+                drawLine(
+                    color = TerrainPlannedRouteYellow,
+                    start = Offset(start.x, start.y),
+                    end = Offset(end.x, end.y),
+                    strokeWidth = railStroke,
                 )
             }
         }
@@ -335,6 +441,28 @@ internal fun PetTerrainDebugOverlay(
             )
         }
 
+        plannedStopBadges.zip(plannedStopLayouts).forEach { (badge, layout) ->
+            val center = Offset(badge.point.x, badge.point.y)
+            drawCircle(
+                color = TerrainPlannedRouteText,
+                radius = 8f * density,
+                center = center,
+            )
+            drawCircle(
+                color = TerrainPlannedRouteYellow,
+                radius = 6.5f * density,
+                center = center,
+            )
+            drawText(
+                textLayoutResult = layout,
+                color = TerrainPlannedRouteText,
+                topLeft = Offset(
+                    center.x - layout.size.width / 2f,
+                    center.y - layout.size.height / 2f,
+                ),
+            )
+        }
+
         val footprintLeft = model.petCenter.x - model.footprint.horizontalRadius
         val footprintTop = model.petCenter.y - model.footprint.verticalRadius
         drawRect(
@@ -413,6 +541,8 @@ private val TerrainObstacleRed = Color(0x40EF4444)
 private val TerrainObstacleRedOutline = Color(0xCCEF4444)
 private val TerrainTouchdownViolet = Color(0xFFA855F7)
 private val TerrainCandidateRouteBlue = Color(0xCC60A5FA)
+private val TerrainPlannedRouteYellow = Color(0xFFFFD54F)
+private val TerrainPlannedRouteText = Color(0xFF111827)
 private val TerrainActiveRouteOrange = Color(0xFFFF6D00)
 private val TerrainRecoveryRoutePink = Color(0xFFF472B6)
 private val TerrainDirectRouteTeal = Color(0xFF2DD4BF)

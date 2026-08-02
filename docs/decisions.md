@@ -2463,8 +2463,9 @@ top of a response bubble without ever covering its text or jumping through it.
   never scale independently.
 - Screen owners opt in by publishing live-measured perches, obstacles, scrolling,
   and modal visibility. The supported terrain is Chat's composer and eligible
-  visible settled message bubbles, Terminal's extra-keys toolbar, and the
-  persistent status strip on Settings/About. No accessibility-tree scan or
+  visible settled message bubbles, Terminal's extra-keys toolbar, root Settings
+  summary/category cards, Appearance section cards, and the persistent status
+  strip on Settings/Appearance/About. No accessibility-tree scan or
   arbitrary-Composable discovery is permitted.
 - Registration does not make a surface rectangle walkable. Bubble interiors
   remain protected obstacles; only an explicitly derived edge rail or touchdown
@@ -2490,20 +2491,23 @@ top of a response bubble without ever covering its text or jumping through it.
   journey. A measured bubble too narrow for walking may contribute a centered,
   zero-width touchdown when at least 35% of the pet width is supported; it is a
   transient route step, never an idle or patrol surface. Unsafe geometry and interactive response rows are skipped rather than
-  crossed, and a sparse gap ends exploration instead of inventing a ledge.
+  crossed, and a sparse gap ends exploration instead of inventing a ledge. The
+  active planner uses the same rail-overlap launch point as the debug graph,
+  walking there before takeoff and backtracking past dead-end candidate edges.
 - Settled Chat uses one text-safe habitat order: the measured side pocket beside
   the newest settled bubble, then its raised top edge, then the outer composer
   corner. A changed habitat is reached from the live coordinate, never snapped.
 - Settings terrain may be published dynamically by reusable components, but it
   remains explicit opt-in measured geometry with owner scroll/modal state. The
   app never turns every card, heading, control, or semantics node into terrain.
-  The same maximum transfer length applies, so full-width cards without a
-  pet-sized clear approach do not become implied levels and the status rail
-  remains the correct habitat until a screen publishes safer geometry.
+  Root Settings and Appearance explicitly publish selected card tops. Their
+  bounded planner may tour several connected levels in either direction and
+  must retrace the exact selected legs; the same maximum transfer length still
+  rejects any card without a pet-sized clear approach.
 - Temporary suspension preserves screen coordinates. Scrolling stops movement
-  but does not reclassify the route, re-dock, teleport, or dim the pet. Settings
-  and About hide it while a dialog owns the surface. Routes without an approved
-  rail use the persisted logical-edge home.
+  but does not reclassify the route, re-dock, teleport, or dim the pet. Settings,
+  Appearance, and About hide it while a dialog owns the surface. Routes without
+  an approved rail use the persisted logical-edge home.
 - Motion states correspond to physical movement: directional walking for
   horizontal travel, jump to the apex, fall through descent and manual-drop
   settling, and held during drag. Airborne duration grows with route length;
@@ -2515,7 +2519,8 @@ top of a response bubble without ever covering its text or jumping through it.
   always take precedence.
 - Debug builds may paint the measured terrain, narrow-bubble touchdown points,
   active rail, expanded collision regions, footprint, behavior gate, dashed
-  collision-checked candidate routes, and the solid currently active route through a default-off
+  collision-checked candidate routes, the selected out-and-back route with numbered
+  stops, and the solid currently active route through a default-off
   Developer Options overlay. The Canvas is pointer-transparent, never changes
   planning, and is cleared when Developer Options are locked.
 - Installed Petdex pets use the same renderer and planner without manifest edits

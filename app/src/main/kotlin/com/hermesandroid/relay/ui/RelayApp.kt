@@ -281,6 +281,7 @@ internal const val APP_STATUS_PET_WALK_REGION = "app-status-footer"
  */
 internal val APP_STATUS_PET_ROUTES: Set<String> = setOf(
     Screen.Settings.route,
+    Screen.AppearanceSettings.route,
     Screen.About.route,
 )
 

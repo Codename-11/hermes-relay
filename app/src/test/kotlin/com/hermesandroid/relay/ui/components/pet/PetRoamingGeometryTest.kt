@@ -355,6 +355,224 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `tall bubble derives deterministic preferred edge footholds within the step cap`() {
+        val bubble = PetMeasuredPerch(
+            key = "assistant-tall",
+            bounds = PetObstacle(100f, 100f, 300f, 700f),
+        )
+        val outer = PetSafeBounds(20f, 20f, 380f, 780f)
+        val visualFootprint = PetFootprint(width = 40f, height = 40f)
+
+        val plan = requireNotNull(
+            planPetBubbleEdgeFootholds(
+                bubble = bubble,
+                bounds = outer,
+                uiObstacles = emptyList(),
+                traversalFootprint = visualFootprint,
+                maximumStepLength = 210f,
+                preferredSide = PetBubbleEdgeSide.Left,
+            ),
+        )
+
+        assertEquals(PetBubbleEdgeSide.Left, plan.side)
+        assertEquals(5, plan.footholds.size)
+        assertEquals(720f, plan.footholds.first().y, 0f)
+        assertEquals(80f, plan.footholds.last().y, 0f)
+        assertTrue(plan.footholds.all { it.x < 80f })
+        assertTrue(plan.legs.all { it.length <= 210f })
+        assertEquals(
+            plan,
+            planPetBubbleEdgeFootholds(
+                bubble = bubble,
+                bounds = outer,
+                uiObstacles = emptyList(),
+                traversalFootprint = visualFootprint,
+                maximumStepLength = 210f,
+                preferredSide = PetBubbleEdgeSide.Left,
+            ),
+        )
+    }
+
+    @Test
+    fun `bubble edge footholds fall back by side and reject fully blocked ladders`() {
+        val bubble = PetMeasuredPerch(
+            key = "assistant-tall",
+            bounds = PetObstacle(100f, 100f, 300f, 700f),
+        )
+        val outer = PetSafeBounds(20f, 20f, 380f, 780f)
+        val visualFootprint = PetFootprint(width = 40f, height = 40f)
+        val leftBlocker = PetObstacle(45f, 260f, 85f, 540f)
+        val rightBlocker = PetObstacle(315f, 260f, 355f, 540f)
+
+        val fallback = requireNotNull(
+            planPetBubbleEdgeFootholds(
+                bubble = bubble,
+                bounds = outer,
+                uiObstacles = listOf(leftBlocker),
+                traversalFootprint = visualFootprint,
+                maximumStepLength = 210f,
+                preferredSide = PetBubbleEdgeSide.Left,
+            ),
+        )
+        assertEquals(PetBubbleEdgeSide.Right, fallback.side)
+        assertTrue(fallback.footholds.all { it.x > 320f })
+
+        assertNull(
+            planPetBubbleEdgeFootholds(
+                bubble = bubble,
+                bounds = outer,
+                uiObstacles = listOf(leftBlocker, rightBlocker),
+                traversalFootprint = visualFootprint,
+                maximumStepLength = 210f,
+                preferredSide = PetBubbleEdgeSide.Left,
+            ),
+        )
+    }
+
+    @Test
+    fun `bubble edge routing uses caller supplied visual footprint instead of touch target`() {
+        val bubble = PetMeasuredPerch(
+            key = "assistant-nearly-full-width",
+            bounds = PetObstacle(70f, 100f, 330f, 700f),
+        )
+        val outer = PetSafeBounds(20f, 20f, 380f, 780f)
+
+        assertTrue(
+            planPetBubbleEdgeFootholds(
+                bubble = bubble,
+                bounds = outer,
+                uiObstacles = emptyList(),
+                traversalFootprint = PetFootprint(width = 40f, height = 40f),
+                maximumStepLength = 210f,
+                preferredSide = PetBubbleEdgeSide.Left,
+            ) != null,
+        )
+        assertNull(
+            planPetBubbleEdgeFootholds(
+                bubble = bubble,
+                bounds = outer,
+                uiObstacles = emptyList(),
+                traversalFootprint = PetFootprint(width = 100f, height = 100f),
+                maximumStepLength = 210f,
+                preferredSide = PetBubbleEdgeSide.Left,
+            ),
+        )
+    }
+
+    @Test
+    fun `viewport filling bubble uses a traversal-only inset edge lane`() {
+        val bubble = PetMeasuredPerch(
+            key = "assistant-full-width",
+            bounds = PetObstacle(20f, 100f, 380f, 700f),
+        )
+        val outer = PetSafeBounds(55f, 20f, 345f, 780f)
+        val visualFootprint = PetFootprint(width = 60f, height = 60f, clearance = 6f)
+        val contentObstacle = petTopSupportedObstacle(
+            petBubbleEdgeTraversalObstacle(
+                perch = bubble,
+                traversalFootprint = visualFootprint,
+                useLeftEdge = true,
+            ),
+        )
+
+        val plan = requireNotNull(
+            planPetBubbleEdgeFootholds(
+                bubble = bubble,
+                bounds = outer,
+                uiObstacles = listOf(contentObstacle),
+                traversalFootprint = visualFootprint,
+                maximumStepLength = 210f,
+                preferredSide = PetBubbleEdgeSide.Left,
+                allowInsetEdge = true,
+            ),
+        )
+
+        assertEquals(PetBubbleEdgeSide.Left, plan.side)
+        assertTrue(plan.overlapsBubbleEdge)
+        assertTrue(plan.footholds.all { point -> point.x in outer.left..outer.right })
+        assertTrue(plan.legs.all { it.length <= 210f })
+        val expandedContent = contentObstacle.expanded(
+            visualFootprint.horizontalRadius,
+            visualFootprint.verticalRadius,
+        )
+        assertTrue(plan.footholds.all { !expandedContent.contains(it) })
+    }
+
+    @Test
+    fun `message content obstacle can expose fallback lanes on both edges`() {
+        val bubble = PetMeasuredPerch(
+            key = "wide",
+            bounds = PetObstacle(100f, 200f, 500f, 700f),
+        )
+        val footprint = PetFootprint(width = 60f, height = 60f, clearance = 6f)
+
+        val obstacle = petBubbleEdgeTraversalObstacle(
+            perch = bubble,
+            traversalFootprint = footprint,
+            useLeftEdge = true,
+            openBothEdges = true,
+        )
+
+        assertEquals(172f, obstacle.left, 0f)
+        assertEquals(428f, obstacle.right, 0f)
+        val expanded = obstacle.expanded(
+            footprint.horizontalRadius,
+            footprint.verticalRadius,
+        )
+        assertFalse(expanded.contains(PetPoint(136f - 0.001f, 400f)))
+        assertFalse(expanded.contains(PetPoint(464f + 0.001f, 400f)))
+        assertTrue(expanded.contains(PetPoint(300f, 400f)))
+    }
+
+    @Test
+    fun `clear message gap can bridge with extended ballistic budget`() {
+        val startRail = PetRoamingRail(
+            key = "upper",
+            perchKey = "upper",
+            bounds = PetSafeBounds(120f, 291f, 700f, 291f),
+        )
+        val intermediate = PetRoamingRail(
+            key = "middle",
+            perchKey = "middle",
+            bounds = PetSafeBounds(240f, 697f, 940f, 697f),
+        )
+        val targetRail = PetRoamingRail(
+            key = "lower",
+            perchKey = "lower",
+            bounds = PetSafeBounds(240f, 1_630f, 920f, 1_630f),
+        )
+        val bounds = PetSafeBounds(120f, 290f, 956f, 1_975f)
+        val footprint = PetFootprint(width = 72f, height = 72f, clearance = 6f)
+
+        assertNull(
+            planPetRailJourney(
+                startRail = startRail,
+                start = PetPoint(300f, 291f),
+                targetRail = targetRail,
+                rails = listOf(intermediate),
+                bounds = bounds,
+                uiObstacles = emptyList(),
+                footprint = footprint,
+                maximumStepLength = 630f,
+            ),
+        )
+        val journey = requireNotNull(
+            planPetRailJourney(
+                startRail = startRail,
+                start = PetPoint(300f, 291f),
+                targetRail = targetRail,
+                rails = listOf(intermediate),
+                bounds = bounds,
+                uiObstacles = emptyList(),
+                footprint = footprint,
+                maximumStepLength = 1_080f,
+            ),
+        )
+        assertEquals(listOf("middle", "lower"), journey.map { it.rail.key })
+        assertTrue(journey.all { it.route.length <= 1_080f })
+    }
+
+    @Test
     fun `bubble excursion rejects an edge hop that would cross bubble content`() {
         val bubble = PetMeasuredPerch(
             key = "chat-message-perch:assistant-1",
@@ -765,6 +983,91 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `rail journey walks to the launch point shown by the possible route graph`() {
+        val footprint = PetFootprint(width = 80f, height = 80f)
+        val outer = PetSafeBounds(40f, 40f, 360f, 760f)
+        val composer = PetRoamingRail(
+            key = "composer",
+            perchKey = "composer",
+            bounds = PetSafeBounds(40f, 700f, 360f, 700f),
+        )
+        val message = PetRoamingRail(
+            key = "message",
+            perchKey = "message",
+            bounds = PetSafeBounds(40f, 520f, 120f, 520f),
+        )
+
+        val possible = planPetDebugRouteGraph(
+            rails = listOf(composer, message),
+            bounds = outer,
+            uiObstacles = emptyList(),
+            footprint = footprint,
+            maximumRouteLength = 210f,
+        )
+        val journey = requireNotNull(
+            planPetRailJourney(
+                startRail = composer,
+                start = PetPoint(360f, 700f),
+                targetRail = message,
+                rails = emptyList(),
+                bounds = outer,
+                uiObstacles = emptyList(),
+                footprint = footprint,
+                maximumStepLength = 210f,
+            ),
+        )
+
+        assertEquals(1, possible.size)
+        assertEquals(PetPoint(80f, 520f), possible.single().start)
+        assertEquals(PetPoint(80f, 700f), possible.single().destination)
+        assertEquals(PetPoint(360f, 700f), requireNotNull(journey.single().approach).start)
+        assertEquals(PetPoint(80f, 700f), journey.single().approach?.destination)
+        assertEquals(possible.single().points.asReversed(), journey.single().route.points)
+    }
+
+    @Test
+    fun `rail journey backtracks when the nearest upward foothold is a dead end`() {
+        val footprint = PetFootprint(width = 20f, height = 20f)
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val composer = PetRoamingRail(
+            key = "composer",
+            perchKey = "composer",
+            bounds = PetSafeBounds(40f, 700f, 360f, 700f),
+        )
+        val deadEnd = PetRoamingRail(
+            key = "dead-end",
+            perchKey = "dead-end",
+            bounds = PetSafeBounds(40f, 600f, 40f, 600f),
+        )
+        val viable = PetRoamingRail(
+            key = "viable",
+            perchKey = "viable",
+            bounds = PetSafeBounds(340f, 500f, 340f, 500f),
+        )
+        val target = PetRoamingRail(
+            key = "target",
+            perchKey = "target",
+            bounds = PetSafeBounds(340f, 300f, 340f, 300f),
+        )
+
+        val journey = requireNotNull(
+            planPetRailJourney(
+                startRail = composer,
+                start = PetPoint(200f, 700f),
+                targetRail = target,
+                rails = listOf(deadEnd, viable),
+                bounds = outer,
+                uiObstacles = emptyList(),
+                footprint = footprint,
+                maximumStepLength = 210f,
+            ),
+        )
+
+        assertEquals(listOf(viable, target), journey.map(PetRailJourneyStep::rail))
+        assertTrue(journey.all { it.route.length <= 210f })
+    }
+
+    @Test
     fun `debug route graph distinguishes possible bounded transfers from selection`() {
         val footprint = PetFootprint(width = 80f, height = 80f)
         val outer = PetSafeBounds(40f, 40f, 360f, 760f)
@@ -892,6 +1195,59 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `settings surface tour follows several measured levels from the status rail`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val footer = PetRoamingRail("footer", "footer", PetSafeBounds(60f, 700f, 340f, 700f))
+        val lowerCard = PetRoamingRail("card-3", "card-3", PetSafeBounds(60f, 560f, 340f, 560f))
+        val middleCard = PetRoamingRail("card-2", "card-2", PetSafeBounds(60f, 420f, 340f, 420f))
+        val upperCard = PetRoamingRail("card-1", "card-1", PetSafeBounds(60f, 280f, 340f, 280f))
+
+        val plan = planPetRailExploration(
+            originRail = footer,
+            start = PetPoint(200f, 700f),
+            candidateRails = listOf(upperCard, lowerCard, middleCard),
+            bounds = outer,
+            uiObstacles = emptyList(),
+            footprint = footprint,
+            maximumStepLength = 180f,
+            maxExtraStops = 3,
+            mode = PetRailExplorationMode.AnyDirection,
+        )
+
+        assertEquals(listOf(footer, lowerCard, middleCard, upperCard), plan.orderedRails)
+        assertEquals(listOf(lowerCard, middleCard, upperCard), plan.continuation.map { it.rail })
+        assertEquals(
+            listOf(PetPoint(200f, 420f), PetPoint(200f, 560f), PetPoint(200f, 700f)),
+            plan.continuation.asReversed().map { it.route.start },
+        )
+    }
+
+    @Test
+    fun `settings surface tour can descend after scroll lands on an upper card`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val upperCard = PetRoamingRail("card-1", "card-1", PetSafeBounds(60f, 280f, 340f, 280f))
+        val middleCard = PetRoamingRail("card-2", "card-2", PetSafeBounds(60f, 420f, 340f, 420f))
+        val lowerCard = PetRoamingRail("card-3", "card-3", PetSafeBounds(60f, 560f, 340f, 560f))
+
+        val plan = planPetRailExploration(
+            originRail = upperCard,
+            start = PetPoint(200f, 280f),
+            candidateRails = listOf(lowerCard, middleCard),
+            bounds = outer,
+            uiObstacles = emptyList(),
+            footprint = footprint,
+            maximumStepLength = 180f,
+            maxExtraStops = 2,
+            mode = PetRailExplorationMode.AnyDirection,
+        )
+
+        assertEquals(listOf(upperCard, middleCard, lowerCard), plan.orderedRails)
+        assertEquals(listOf(middleCard, lowerCard), plan.continuation.map { it.rail })
+    }
+
+    @Test
     fun `bubble exploration stops when older terrain is unreachable`() {
         val outer = PetSafeBounds(20f, 20f, 380f, 760f)
         val footprint = PetFootprint(width = 56f, height = 56f)
@@ -1014,8 +1370,13 @@ class PetRoamingGeometryTest {
 
         assertTrue(inclusivePlan.continuation.isEmpty())
         assertEquals(listOf(newestRail, olderRail), supportedPlan.orderedRails)
-        assertEquals(start, supportedPlan.continuation.single().route.start)
-        assertEquals(olderRail.bounds.top, supportedPlan.continuation.single().route.destination.y)
+        val supportedStep = supportedPlan.continuation.single()
+        assertEquals(start, supportedStep.approach?.start ?: start)
+        assertEquals(
+            supportedStep.route.start,
+            supportedStep.approach?.destination ?: start,
+        )
+        assertEquals(olderRail.bounds.top, supportedStep.route.destination.y)
         assertTrue(
             petTopSupportedObstacle(olderPerch).contains(
                 PetPoint(200f, olderPerch.bounds.top + 1f),

@@ -58,7 +58,8 @@ class PetTerrainDebugOverlayTest {
             listOf(
                 "route chat",
                 "routes possible 0  active none",
-                "blue dashed=possible  orange=auto  pink=recovery  teal=drag",
+                "plan none",
+                "blue dashed=possible  yellow=plan  orange=auto  pink=recovery  teal=drag",
                 "rail composer:0  move WalkRight",
                 "gate patrolling",
                 "perches 1  rails 1  hops 0  obstacles 1",
@@ -75,11 +76,59 @@ class PetTerrainDebugOverlayTest {
         assertEquals(emptyList<PetPoint>(), model.activePoints)
         assertEquals("route none", petTerrainLegendLines(model).first())
         assertEquals("routes possible 0  active none", petTerrainLegendLines(model)[1])
+        assertEquals("plan none", petTerrainLegendLines(model)[2])
         assertEquals(
-            "blue dashed=possible  orange=auto  pink=recovery  teal=drag",
-            petTerrainLegendLines(model)[2],
+            "blue dashed=possible  yellow=plan  orange=auto  pink=recovery  teal=drag",
+            petTerrainLegendLines(model)[3],
         )
-        assertEquals("rail missing  move None", petTerrainLegendLines(model)[3])
+        assertEquals("rail missing  move None", petTerrainLegendLines(model)[4])
+    }
+
+    @Test
+    fun `possible route remains distinct until the behavior director activates it`() {
+        val route = PetRoute(listOf(PetPoint(80f, 500f), PetPoint(80f, 300f)))
+        val model = model(possibleRoutes = listOf(route), activeRoute = null)
+
+        assertEquals("routes possible 1  active none", petTerrainLegendLines(model)[1])
+        assertEquals(emptyList<PetPoint>(), model.activePoints)
+    }
+
+    @Test
+    fun `selected routes expose numbered out and back stops`() {
+        val origin = PetPoint(60f, 500f)
+        val composer = PetPoint(90f, 500f)
+        val bubble = PetPoint(90f, 320f)
+        val planned = requireNotNull(
+            petDebugPlannedRoute(
+                targetLabel = "A:latest",
+                routes = listOf(
+                    PetRoute(listOf(origin)),
+                    PetRoute(listOf(origin, composer)),
+                    PetRoute(listOf(composer, bubble)),
+                ),
+            ),
+        )
+        val model = model(plannedRoute = planned)
+
+        assertEquals(listOf(origin, composer, bubble), planned.stops)
+        assertEquals(listOf(0, 1, 2, 1, 0), planned.loopStopIndices)
+        assertEquals("0→1→2→1→0", planned.loopLabel)
+        assertEquals("plan 0→1→2→1→0  target A:latest", petTerrainLegendLines(model)[2])
+    }
+
+    @Test
+    fun `nearby stop markers retain every number in one badge`() {
+        val badges = petDebugStopBadges(
+            stops = listOf(
+                PetPoint(20f, 500f),
+                PetPoint(100f, 400f),
+                PetPoint(106f, 405f),
+            ),
+            clusterDistance = 10f,
+        )
+
+        assertEquals(listOf("0", "1/2"), badges.map(PetDebugStopBadge::label))
+        assertEquals(PetPoint(100f, 400f), badges[1].point)
     }
 
     @Test
@@ -120,6 +169,7 @@ class PetTerrainDebugOverlayTest {
         activeRailKey: String? = null,
         expandedObstacles: List<PetObstacle> = emptyList(),
         possibleRoutes: List<PetRoute> = emptyList(),
+        plannedRoute: PetDebugPlannedRoute? = null,
         activeRoute: PetDebugActiveRoute? = null,
         locomotionLabel: String = "None",
         gateLabel: String = "paused",
@@ -134,6 +184,7 @@ class PetTerrainDebugOverlayTest {
         footprint = PetFootprint(width = 56f, height = 56f, clearance = 4f),
         petCenter = PetPoint(140f, 180f),
         possibleRoutes = possibleRoutes,
+        plannedRoute = plannedRoute,
         activeRoute = activeRoute,
         locomotionLabel = locomotionLabel,
         gateLabel = gateLabel,

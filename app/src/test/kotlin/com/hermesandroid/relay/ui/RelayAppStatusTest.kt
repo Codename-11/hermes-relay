@@ -22,15 +22,22 @@ class RelayAppStatusTest {
         assertEquals("chat", petSurfaceOwnerForRoute(Screen.Chat.route))
         assertEquals("terminal", petSurfaceOwnerForRoute(Screen.Terminal.route))
         assertEquals(Screen.Settings.route, petSurfaceOwnerForRoute(Screen.Settings.route))
+        assertEquals(
+            Screen.AppearanceSettings.route,
+            petSurfaceOwnerForRoute(Screen.AppearanceSettings.route),
+        )
         assertEquals(Screen.About.route, petSurfaceOwnerForRoute(Screen.About.route))
-        assertNull(petSurfaceOwnerForRoute(Screen.AppearanceSettings.route))
         assertNull(petSurfaceOwnerForRoute(Screen.Manage.route))
     }
 
     @Test
     fun `status chrome route allowlist stays intentionally small`() {
         assertEquals(
-            setOf(Screen.Settings.route, Screen.About.route),
+            setOf(
+                Screen.Settings.route,
+                Screen.AppearanceSettings.route,
+                Screen.About.route,
+            ),
             APP_STATUS_PET_ROUTES,
         )
     }

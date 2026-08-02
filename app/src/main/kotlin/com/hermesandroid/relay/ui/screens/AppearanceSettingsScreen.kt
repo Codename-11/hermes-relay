@@ -51,6 +51,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,6 +60,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,6 +86,8 @@ import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.AvatarSource
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
 import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppTheme
 import com.hermesandroid.relay.ui.theme.AppThemes
@@ -92,8 +96,17 @@ import com.hermesandroid.relay.ui.theme.ThemeMode
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+
+private const val APPEARANCE_PET_SURFACE_ROUTE = "settings/appearance"
+private val APPEARANCE_PET_SURFACE_ROUTES = setOf(APPEARANCE_PET_SURFACE_ROUTE)
+
+private fun Modifier.appearancePetPerch(key: String): Modifier = petPerchSurface(
+    key = "appearance-card:$key",
+    routes = APPEARANCE_PET_SURFACE_ROUTES,
+)
 
 /**
  * Dedicated Appearance settings screen. Hosts theme picker (auto/light/dark),
@@ -114,6 +127,22 @@ fun AppearanceSettingsScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingDelete by remember { mutableStateOf<AgentAvatar?>(null) }
+    val appearanceScrollState = rememberScrollState()
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    LaunchedEffect(appearanceScrollState, petCompanionCoordinator) {
+        snapshotFlow { appearanceScrollState.isScrollInProgress to (pendingDelete != null) }
+            .distinctUntilChanged()
+            .collect { (scrolling, hidden) ->
+                petCompanionCoordinator.publishSurface(
+                    owner = APPEARANCE_PET_SURFACE_ROUTE,
+                    scrolling = scrolling,
+                    hidden = hidden,
+                )
+            }
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface(APPEARANCE_PET_SURFACE_ROUTE) }
+    }
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { connectionViewModel.importPet(it) } }
@@ -165,7 +194,7 @@ fun AppearanceSettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(appearanceScrollState)
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -178,6 +207,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetPerch("theme")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -223,6 +253,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetPerch("language")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -293,6 +324,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetPerch("display")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -412,6 +444,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetPerch("font")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -453,6 +486,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetPerch("animation")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -584,6 +618,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetPerch("background")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -670,6 +705,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetPerch("floating-pet")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
