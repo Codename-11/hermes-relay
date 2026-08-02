@@ -45,10 +45,10 @@ enum class PetLocomotion {
  * @property toolCallBurst tool-call pulse spike, slow decay.
  * @property voiceAmplitude live mic/output amplitude (0..1) in voice mode.
  * @property voiceMode whether a voice session is active (expands/animates the avatar).
- * @property petLocomotion optional pet-only manipulation/travel pose. Pet
- *   rendering resolves animation priority as Held, Jump/Fall, Walk/Run, agent
- *   activity [state], then Idle. Direct manipulation and travel therefore stay
- *   visible even when agent activity changes concurrently.
+ * @property petLocomotion optional pet-only manipulation/travel pose. The
+ *   floating host emits it under the explicit priority: user manipulation,
+ *   agent activity, response visit, roam, then idle. Direct manipulation stays
+ *   visible, while ambient travel never masks agent work.
  * @property paused render a single still frame instead of animating — the
  *   avatar-agnostic reduced-motion signal. The sphere honors it by pinning its
  *   time/color phase; a sprite "pet" (C3) honors it by freezing its clip. This

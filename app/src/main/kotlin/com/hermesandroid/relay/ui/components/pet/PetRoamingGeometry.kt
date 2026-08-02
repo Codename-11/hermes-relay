@@ -259,6 +259,19 @@ data class PetRailTransfer(
     val route: PetRoute,
 )
 
+/**
+ * One collision-checked chat response excursion. The pet approaches and
+ * leaves through [gutter], so vertical movement never crosses message text.
+ * [entry] and [opposite] are the two raised endpoints of the bubble's top
+ * rail; the complete pet footprint remains above the bubble at both points.
+ */
+data class PetBubbleExcursion(
+    val composerApproach: PetPoint,
+    val gutter: PetPoint,
+    val entry: PetPoint,
+    val opposite: PetPoint,
+)
+
 /** Pure Navigation-style route matching used by registry snapshots. */
 fun petRouteMatches(template: String, actual: String): Boolean {
     fun segments(value: String): List<String> = value
@@ -322,6 +335,70 @@ fun petPerchEdgeRail(
         requested.takeIf { it in outer.left..outer.right }
     } ?: return null
     return PetSafeBounds(edgeX, centerY, edgeX, centerY)
+}
+
+/**
+ * Plan a deterministic composer -> bubble -> composer visit through the
+ * bubble's trailing-side gutter. Returning null means the bubble is skipped:
+ * the companion must never squeeze through text or invent an unsafe landing.
+ */
+fun planPetBubbleExcursion(
+    bubble: PetMeasuredPerch,
+    composerRail: PetRoamingRail,
+    footprint: PetFootprint,
+    outer: PetSafeBounds,
+    uiObstacles: Iterable<PetObstacle>,
+    useLeftGutter: Boolean,
+    verticalClearance: Float = 0f,
+    minimumWalkWidth: Float = 1f,
+): PetBubbleExcursion? {
+    require(verticalClearance >= 0f && verticalClearance.isFinite()) {
+        "Perch clearance must be finite and non-negative."
+    }
+    require(minimumWalkWidth >= 0f && minimumWalkWidth.isFinite()) {
+        "Minimum walk width must be finite and non-negative."
+    }
+    val bubbleRail = petPerchRail(
+        perch = bubble,
+        footprint = footprint,
+        outer = outer,
+        verticalClearance = verticalClearance,
+    ) ?: return null
+    if (bubbleRail.width < minimumWalkWidth) return null
+
+    val gutterX = if (useLeftGutter) {
+        bubble.bounds.left - footprint.horizontalRadius - verticalClearance
+    } else {
+        bubble.bounds.right + footprint.horizontalRadius + verticalClearance
+    }
+    if (gutterX !in outer.left..outer.right) return null
+    // A straight vertical transfer is the only approved entry/exit shape. If
+    // the composer cannot support that exact x coordinate, skip the bubble.
+    if (gutterX !in composerRail.bounds.left..composerRail.bounds.right) return null
+
+    val composerApproach = PetPoint(gutterX, composerRail.bounds.top)
+    val gutter = PetPoint(gutterX, bubbleRail.top)
+    val entryX = if (useLeftGutter) bubbleRail.left else bubbleRail.right
+    val oppositeX = if (useLeftGutter) bubbleRail.right else bubbleRail.left
+    val entry = PetPoint(entryX, bubbleRail.top)
+    val opposite = PetPoint(oppositeX, bubbleRail.top)
+
+    val expanded = expandObstaclesForPet(uiObstacles, footprint)
+    val verticalPathBlocked = pathIntersectsObstacle(composerApproach, gutter, expanded)
+    val topPathBlocked = pathIntersectsObstacle(gutter, entry, expanded) ||
+        pathIntersectsObstacle(entry, opposite, expanded)
+    if (verticalPathBlocked || topPathBlocked) return null
+
+    val expandedBubble = bubble.bounds.expanded(
+        footprint.horizontalRadius,
+        footprint.verticalRadius,
+    )
+    // The gutter is strictly exterior. The raised top rail may touch the
+    // expanded boundary only when clearance is zero, but never enters it.
+    if (expandedBubble.contains(gutter)) return null
+    if (bubbleRail.top > expandedBubble.top) return null
+
+    return PetBubbleExcursion(composerApproach, gutter, entry, opposite)
 }
 
 /** Whether the pet's bottom edge is resting on this curated ledge. */
