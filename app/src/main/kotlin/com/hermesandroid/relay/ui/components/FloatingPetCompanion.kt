@@ -23,6 +23,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,9 +76,11 @@ import com.hermesandroid.relay.ui.components.pet.planPetBubbleExcursion
 import com.hermesandroid.relay.ui.components.pet.planSettledChatHabitat
 import com.hermesandroid.relay.ui.components.pet.petPerchSegments
 import com.hermesandroid.relay.ui.components.pet.projectIntoSafeBounds
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -88,6 +91,7 @@ internal const val CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX = "${CHAT_PET_MESSAGE
 internal const val CHAT_PET_USER_MESSAGE_PERCH_PREFIX = "${CHAT_PET_MESSAGE_PERCH_PREFIX}user:"
 private const val PET_ROAM_REPEAT_DELAY_MS = 4_800L
 private const val PET_AMBIENT_HOP_HEIGHT_DP = 24
+private const val PET_SCROLL_REACTION_LIFT_DP = 12
 private const val PET_TURN_PAUSE_MS = 220L
 private const val PET_WAVE_DURATION_MS = 1_200L
 private const val PET_WALK_CYCLE_MS = 480
@@ -327,6 +331,7 @@ fun FloatingPetCompanion(
     val visualSize = dimensions.visualSizeDp.dp
     val targetSizePx = with(density) { targetSize.toPx() }
     val heldLiftPx = with(density) { 6.dp.toPx() }
+    val scrollReactionLiftPx = with(density) { PET_SCROLL_REACTION_LIFT_DP.dp.toPx() }
     val safeMarginPx = with(density) { 12.dp.toPx() }
     val perchClearancePx = with(density) { 6.dp.toPx() }
     val topClearancePx = with(density) { 76.dp.toPx() }
@@ -379,6 +384,8 @@ fun FloatingPetCompanion(
             }
         }
     }
+    val latestRoamingRails by rememberUpdatedState(roamingRails)
+    val latestSurfaceScrolling by rememberUpdatedState(surfaceScrolling)
     val composerRails = remember(roamingRails) {
         roamingRails.filter { it.perchKey == CHAT_PET_WALK_REGION }
     }
@@ -747,10 +754,24 @@ fun FloatingPetCompanion(
         }
         if (attached != null) {
             x.snapTo(x.value.coerceIn(attached.bounds.left, attached.bounds.right))
-            y.snapTo(attached.bounds.top)
+            val scrollY = if (
+                animationEnabled && accessibleMotion.osAnimations &&
+                !accessibleMotion.touchExploration
+            ) {
+                (attached.bounds.top - scrollReactionLiftPx).coerceAtLeast(safeBounds.top)
+            } else {
+                attached.bounds.top
+            }
+            y.snapTo(scrollY)
             activeRailKey = attached.key
             scrollSupportLost = false
-            locomotion = PetLocomotion.None
+            if (scrollY < attached.bounds.top) {
+                locomotion = PetLocomotion.Jump
+                airborneProgress.snapTo(0.35f)
+            } else {
+                locomotion = PetLocomotion.None
+                airborneProgress.snapTo(0f)
+            }
         } else if (scrollRecoveryPending) {
             activeRailKey = null
             scrollSupportLost = true
@@ -764,7 +785,6 @@ fun FloatingPetCompanion(
     LaunchedEffect(
         surfaceScrolling,
         scrollRecoveryPending,
-        roamingRails,
         positioned,
         dragging,
         pendingDrop,
@@ -773,33 +793,59 @@ fun FloatingPetCompanion(
             surfaceScrolling || !scrollRecoveryPending || !positioned || dragging ||
             pendingDrop != null
         ) return@LaunchedEffect
-        val current = PetPoint(x.value, y.value)
-        val attached = scrollingRailKey?.let { key ->
-            roamingRails.firstOrNull { it.key == key }
-        }
-        val landingRail = attached ?: choosePetScrollLandingRail(roamingRails, current)
-        if (landingRail != null) {
-            val destination = PetPoint(
-                x = x.value.coerceIn(landingRail.bounds.left, landingRail.bounds.right),
-                y = landingRail.bounds.top,
-            )
-            if (scrollSupportLost || current.distanceSquaredTo(destination) > 4f) {
-                animateScrollLanding(destination)
+        try {
+            // Read current terrain without keying this effect to every measured
+            // bounds update. Streaming bubbles and AnimatedVisibility may keep
+            // publishing geometry while this landing is in flight.
+            val rails = latestRoamingRails
+            val current = PetPoint(x.value, y.value)
+            val attached = scrollingRailKey?.let { key ->
+                rails.firstOrNull { it.key == key }
+            }
+            val landingRail = attached ?: choosePetScrollLandingRail(rails, current)
+            if (landingRail != null) {
+                val destination = PetPoint(
+                    x = x.value.coerceIn(landingRail.bounds.left, landingRail.bounds.right),
+                    y = landingRail.bounds.top,
+                )
+                if (
+                    animationEnabled && accessibleMotion.osAnimations &&
+                    !accessibleMotion.touchExploration &&
+                    (scrollSupportLost || current.distanceSquaredTo(destination) > 4f)
+                ) {
+                    animateScrollLanding(destination)
+                } else {
+                    x.snapTo(destination.x)
+                    y.snapTo(destination.y)
+                    locomotion = PetLocomotion.None
+                    airborneProgress.snapTo(0f)
+                }
+                activeRailKey = landingRail.key
             } else {
-                x.snapTo(destination.x)
-                y.snapTo(destination.y)
                 locomotion = PetLocomotion.None
                 airborneProgress.snapTo(0f)
+                activeRailKey = null
             }
-            activeRailKey = landingRail.key
-        } else {
-            locomotion = PetLocomotion.None
-            airborneProgress.snapTo(0f)
-            activeRailKey = null
+        } finally {
+            // A recovery request is a temporary gate, never durable state. If
+            // layout, direct interaction, or route changes cancel the landing,
+            // clear it so autonomous roaming cannot remain stranded. Preserve
+            // it only when a new scroll has already started.
+            if (!latestSurfaceScrolling) {
+                withContext(NonCancellable) {
+                    if (
+                        locomotion == PetLocomotion.Jump ||
+                        locomotion == PetLocomotion.Fall
+                    ) {
+                        locomotion = PetLocomotion.None
+                    }
+                    airborneProgress.snapTo(0f)
+                    scrollingRailKey = null
+                    scrollSupportLost = false
+                    scrollRecoveryPending = false
+                }
+            }
         }
-        scrollingRailKey = null
-        scrollSupportLost = false
-        scrollRecoveryPending = false
     }
 
     val shouldDock = shouldDockFloatingPet(roamingEnabled, roamingAllowed)

@@ -548,8 +548,8 @@ live in the user guide under **Custom Avatars → Generate a pet with AI**
 
 When the user disables animations, Android animator scale is 0, or TalkBack touch
 exploration is active, autonomous roaming stops and the pet is rendered
-**paused**. Transcript, Settings, and About scrolling pause travel at the current
-screen coordinate without re-docking, teleporting, or dimming the companion.
+**paused**. Transcript, Settings, and About scrolling pause autonomous travel
+without re-docking, teleporting, or dimming the companion.
 With the keyboard open or on a short screen its base art compacts from 60 dp to
 50 dp before the persisted 60–120% scale is applied. Keyboard visibility does
 not dim or pause the pet: playback, roaming on valid compact terrain, taps, and
@@ -559,8 +559,10 @@ never overrides these gates. Author the first `idle` frame to be a good, legible
 still. The companion exposes its name and current state, plus non-drag
 move/reset/configure/hide accessibility actions.
 
-During a scroll, a pet standing on a registered content ledge remains attached
-to that measured ledge while it stays visible. If the ledge leaves the safe
+During a scroll, a pet lifts slightly and remains attached to its registered
+ledge while that ledge stays visible. This makes Settings scrolling visibly
+affect the pet even when its only safe terrain is the fixed status-strip rail.
+If a scrolling content ledge leaves the safe
 viewport, the overlay keeps the pet at its last safe screen coordinate and uses
 the falling state; after the gesture and fling settle, it lands on the nearest
 visible valid lower rail (or jumps to the nearest remaining rail when none is

@@ -375,7 +375,7 @@ For a smooth, perfectly-stable animated character, hand-drawn pixel art still wi
 
 ## Accessibility & reduced motion
 
-If you disable app animations, Android's animator scale is 0, or TalkBack touch exploration is active, autonomous roaming stops and the pet renders as a still frame. Scrolling Chat, Settings, or About pauses it in place without teleporting or dimming it. The keyboard/short-screen layout changes the base art from 60 dp to 50 dp while the saved size scale remains effective; typing does not dim, pause, or disable interaction with the pet. TalkBack custom actions provide movement, reset, Appearance, and hide controls without long-hold dragging. The Sphere follows its own independent motion setting.
+If you disable app animations, Android's animator scale is 0, or TalkBack touch exploration is active, autonomous roaming stops and the pet renders as a still frame. Scrolling Chat, Settings, or About pauses autonomous travel without teleporting or dimming the pet: it lifts slightly, follows its measured ledge while that ledge remains visible, then falls and lands when scrolling settles. The keyboard/short-screen layout changes the base art from 60 dp to 50 dp while the saved size scale remains effective; typing does not dim, pause, or disable interaction with the pet. TalkBack custom actions provide movement, reset, Appearance, and hide controls without long-hold dragging. The Sphere follows its own independent motion setting.
 
 When authoring a pet, make the first `idle` frame a good, legible still — that's what people who prefer reduced motion will see.
 
