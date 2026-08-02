@@ -132,7 +132,9 @@ The companion has a durable home and an optional autonomous roaming mode:
   art before the saved size scale. Settings, Appearance, and About publish
   their scroll state and hide the companion while their dialogs are open.
 - Debug builds provide **Developer Options → Show pet terrain overlay**. The
-  default-off **Pet path inspector** opens in **Terrain** mode, which shows
+  default-off **Pet path inspector** is anchored below the Android status bar
+  and starts as a slim collapsed live-status bar. Expanding it opens in
+  **Terrain** mode, which shows
   measured perches, usable rails, touchdown points, restrained collision bounds,
   dashed candidate hops, the selected route with directional arrows and numbered
   stops, and the currently active segment. **Plan** hides raw terrain to isolate

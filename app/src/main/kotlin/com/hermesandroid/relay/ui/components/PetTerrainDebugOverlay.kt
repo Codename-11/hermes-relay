@@ -1,5 +1,10 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
@@ -7,15 +12,23 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
@@ -343,6 +356,7 @@ internal fun PetTerrainDebugOverlay(
     modifier: Modifier = Modifier,
 ) {
     var mode by remember { mutableStateOf(PetTerrainDebugViewMode.Terrain) }
+    var inspectorExpanded by remember { mutableStateOf(false) }
     var frozenModel by remember { mutableStateOf<PetTerrainDebugModel?>(null) }
     val displayModel = frozenModel ?: model
 
@@ -355,12 +369,15 @@ internal fun PetTerrainDebugOverlay(
         PetTerrainInspectorPanel(
             model = displayModel,
             mode = mode,
+            expanded = inspectorExpanded,
             frozen = frozenModel != null,
             onModeChanged = { mode = it },
+            onExpandedChanged = { inspectorExpanded = it },
             onFreezeChanged = { frozen -> frozenModel = if (frozen) model else null },
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(start = 8.dp, top = 72.dp, end = 8.dp),
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
         )
     }
 }
@@ -370,8 +387,10 @@ internal fun PetTerrainDebugOverlay(
 private fun PetTerrainInspectorPanel(
     model: PetTerrainDebugModel,
     mode: PetTerrainDebugViewMode,
+    expanded: Boolean,
     frozen: Boolean,
     onModeChanged: (PetTerrainDebugViewMode) -> Unit,
+    onExpandedChanged: (Boolean) -> Unit,
     onFreezeChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -384,8 +403,7 @@ private fun PetTerrainInspectorPanel(
         shadowElevation = 2.dp,
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -396,6 +414,7 @@ private fun PetTerrainInspectorPanel(
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
                 )
                 Surface(
                     color = if (frozen) TerrainFrozenSurface else TerrainLiveSurface,
@@ -414,57 +433,89 @@ private fun PetTerrainInspectorPanel(
                     )
                 }
                 Spacer(Modifier.width(8.dp))
-                OutlinedButton(
-                    onClick = { onFreezeChanged(!frozen) },
-                    modifier = Modifier.height(34.dp),
-                    border = BorderStroke(1.dp, TerrainInspectorControlBorder),
-                    shape = RoundedCornerShape(9.dp),
+                IconButton(
+                    onClick = { onExpandedChanged(!expanded) },
+                    modifier = Modifier.size(40.dp),
                 ) {
-                    Text(
-                        text = if (frozen) "Resume" else "Freeze",
-                        style = MaterialTheme.typography.labelLarge,
+                    Icon(
+                        imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = if (expanded) {
+                            "Collapse pet path inspector"
+                        } else {
+                            "Expand pet path inspector"
+                        },
                     )
                 }
             }
 
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                PetTerrainDebugViewMode.entries.forEachIndexed { index, candidate ->
-                    SegmentedButton(
-                        selected = mode == candidate,
-                        onClick = { onModeChanged(candidate) },
-                        shape = SegmentedButtonDefaults.itemShape(
-                            index = index,
-                            count = PetTerrainDebugViewMode.entries.size,
-                        ),
-                        label = { Text(candidate.label) },
-                    )
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        PetTerrainDebugViewMode.entries.forEachIndexed { index, candidate ->
+                            SegmentedButton(
+                                selected = mode == candidate,
+                                onClick = { onModeChanged(candidate) },
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = PetTerrainDebugViewMode.entries.size,
+                                ),
+                                label = { Text(candidate.label) },
+                            )
+                        }
+                    }
+
+                    if (mode != PetTerrainDebugViewMode.Plan) {
+                        PetTerrainLayerLegend()
+                    }
+
+                    HorizontalDivider(color = TerrainInspectorDivider)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = petTerrainInspectorSummary(model),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TerrainInspectorSecondaryText,
+                            maxLines = 2,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = { onFreezeChanged(!frozen) },
+                            modifier = Modifier.height(34.dp),
+                            border = BorderStroke(1.dp, TerrainInspectorControlBorder),
+                            shape = RoundedCornerShape(9.dp),
+                        ) {
+                            Text(
+                                text = if (frozen) "Resume" else "Freeze",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                        }
+                    }
+                    if (mode == PetTerrainDebugViewMode.Full) {
+                        Text(
+                            text = "${model.possibleRoutes.size} candidate routes · gate ${model.gateLabel}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TerrainInspectorTertiaryText,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                        Text(
+                            text = "rail ${model.activeRailKey ?: "none"} · move ${model.locomotionLabel}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TerrainInspectorTertiaryText,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                        )
+                    }
                 }
-            }
-
-            if (mode != PetTerrainDebugViewMode.Plan) {
-                PetTerrainLayerLegend()
-            }
-
-            HorizontalDivider(color = TerrainInspectorDivider)
-            Text(
-                text = petTerrainInspectorSummary(model),
-                style = MaterialTheme.typography.bodyMedium,
-                color = TerrainInspectorSecondaryText,
-            )
-            if (mode == PetTerrainDebugViewMode.Full) {
-                Text(
-                    text = "${model.possibleRoutes.size} candidate routes · gate ${model.gateLabel}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TerrainInspectorTertiaryText,
-                    fontFamily = FontFamily.Monospace,
-                )
-                Text(
-                    text = "rail ${model.activeRailKey ?: "none"} · move ${model.locomotionLabel}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TerrainInspectorTertiaryText,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                )
             }
         }
     }

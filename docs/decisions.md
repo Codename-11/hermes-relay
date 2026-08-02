@@ -2517,8 +2517,9 @@ top of a response bubble without ever covering its text or jumping through it.
   one, two, or three stops. App animation settings, foreground/activity state,
   scrolling, dialogs, Android animator scale, and TalkBack touch exploration
   always take precedence.
-- Debug builds may expose a default-off Pet path inspector. **Terrain** is the
-  default balanced view; **Plan** isolates selected and active travel, and
+- Debug builds may expose a default-off Pet path inspector anchored below the
+  Android status bar. It starts collapsed to preserve the live viewport and
+  expands on demand. **Terrain** is the default balanced view; **Plan** isolates selected and active travel, and
   **Full** adds protected bounds, footprint, raw labels, gate, and locomotion
   state. The views distinguish measured terrain, narrow-bubble touchdown points,
   collision-checked candidate routes, the selected out-and-back route with
