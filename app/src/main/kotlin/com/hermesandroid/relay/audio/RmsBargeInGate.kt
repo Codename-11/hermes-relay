@@ -121,7 +121,7 @@ internal class RmsBargeInGate(
         val aboveConfirmed = confirmedSpeech && rms >= threshold && !inPlaybackGrace
 
         decisions.addLast(aboveConfirmed)
-        while (decisions.size > decisionWindowFrames) decisions.removeFirst()
+        while (decisions.size > decisionWindowFrames) decisions.removeAt(0)
         val required = (decisionWindowFrames * requiredWindowRatio).roundToInt().coerceAtLeast(1)
         val detected = aboveConfirmed && decisions.count { it } >= required
 
@@ -166,7 +166,7 @@ internal class RmsBargeInGate(
 
     private fun addAmbient(rms: Float) {
         ambient.addLast(rms)
-        while (ambient.size > MAX_AMBIENT_FRAMES) ambient.removeFirst()
+        while (ambient.size > MAX_AMBIENT_FRAMES) ambient.removeAt(0)
     }
 
     private fun robustFloor(values: Collection<Float>): Float {
