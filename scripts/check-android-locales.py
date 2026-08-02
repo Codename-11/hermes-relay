@@ -153,7 +153,12 @@ def qualifier_to_tag(qualifier: str) -> str:
     if value.startswith("b+"):
         return value.removeprefix("b+").replace("+", "-")
     parts = value.split("-")
-    return "-".join(part.removeprefix("r") for part in parts)
+    # Only strip the region "r" prefix (e.g. values-en-rUS -> en-US); a plain
+    # two-letter language code (e.g. values-ru) must be kept as-is.
+    return "-".join(
+        part[1:] if len(part) > 2 and part.startswith("r") else part
+        for part in parts
+    )
 
 
 def validate_locale_config(errors: list[str]) -> None:
