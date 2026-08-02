@@ -36,6 +36,13 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `visible bubble is attempted immediately then after bounded patrol cycles`() {
+        assertTrue(shouldAttemptAmbientBubbleVisit(cyclesUntilVisit = 0, hasVisibleBubble = true))
+        assertFalse(shouldAttemptAmbientBubbleVisit(cyclesUntilVisit = 1, hasVisibleBubble = true))
+        assertFalse(shouldAttemptAmbientBubbleVisit(cyclesUntilVisit = 0, hasVisibleBubble = false))
+    }
+
+    @Test
     fun `temporary movement pauses do not dock the overlay`() {
         assertFalse(shouldDockFloatingPet(roamingEnabled = true, roamingAllowed = true))
         assertTrue(shouldDockFloatingPet(roamingEnabled = false, roamingAllowed = true))

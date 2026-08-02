@@ -101,6 +101,17 @@ class MessageBubblePetVisitTargetTest {
         assertTrue(newestPetVisitTargetUiKey(listOf(older, empty)) == null)
     }
 
+    @Test
+    fun `streaming tail does not expose an older settled response`() {
+        val older = message(id = "older").copy(uiKey = "stable-older")
+        val streaming = message(id = "streaming", isStreaming = true)
+
+        assertTrue(newestPetVisitTargetUiKey(listOf(older, streaming)) == null)
+        assertTrue(newestPetPerchUiKey(listOf(older, streaming)) == null)
+        assertFalse(newestPetAssistantIsSettled(listOf(older, streaming)))
+        assertTrue(newestPetAssistantIsSettled(listOf(older, streaming.copy(isStreaming = false))))
+    }
+
     private fun message(
         id: String = "assistant-1",
         role: MessageRole = MessageRole.ASSISTANT,

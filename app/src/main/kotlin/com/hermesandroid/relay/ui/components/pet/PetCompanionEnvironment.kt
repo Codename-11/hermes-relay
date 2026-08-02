@@ -59,6 +59,7 @@ internal fun reducePetVisitRequestState(
     isStreaming: Boolean,
     assistantUiKey: String?,
     nowElapsedMs: Long,
+    completionSettled: Boolean = true,
     responseVisitDelayMs: Long? = null,
 ): PetVisitRequestState {
     require(nowElapsedMs >= 0L) { "Elapsed time must be non-negative." }
@@ -69,6 +70,7 @@ internal fun reducePetVisitRequestState(
         it.readinessAt(nowElapsedMs) == PetVisitReadiness.Expired
     }
     if (isStreaming) return state.copy(streamArmed = true, pending = livePending)
+    if (!completionSettled) return state.copy(pending = livePending)
     if (!state.streamArmed) return state.copy(pending = livePending)
 
     val settledKey = assistantUiKey?.takeIf(String::isNotBlank)
@@ -109,6 +111,7 @@ class PetCompanionCoordinator {
     fun observeChatStream(
         isStreaming: Boolean,
         assistantUiKey: String?,
+        completionSettled: Boolean,
         nowElapsedMs: Long,
         responseVisitDelayMs: Long,
     ) {
@@ -116,6 +119,7 @@ class PetCompanionCoordinator {
             state = visitRequestState,
             isStreaming = isStreaming,
             assistantUiKey = assistantUiKey,
+            completionSettled = completionSettled,
             nowElapsedMs = nowElapsedMs,
             responseVisitDelayMs = responseVisitDelayMs,
         )

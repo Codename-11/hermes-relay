@@ -820,17 +820,19 @@ internal fun isPetPerchCandidate(message: ChatMessage): Boolean =
 
 internal fun newestPetVisitTargetUiKey(messages: List<ChatMessage>): String? =
     messages.lastOrNull { message ->
-        message.role == MessageRole.ASSISTANT &&
-            !message.isStreaming &&
-            !message.isThinkingStreaming
+        message.role == MessageRole.ASSISTANT
     }?.takeIf(::isPetVisitTargetCandidate)?.uiKey
 
 internal fun newestPetPerchUiKey(messages: List<ChatMessage>): String? =
     messages.lastOrNull { message ->
-        message.role == MessageRole.ASSISTANT &&
-            !message.isStreaming &&
-            !message.isThinkingStreaming
+        message.role == MessageRole.ASSISTANT
     }?.takeIf(::isPetPerchCandidate)?.uiKey
+
+/** The completion edge is usable only after the newest assistant row itself settles. */
+internal fun newestPetAssistantIsSettled(messages: List<ChatMessage>): Boolean =
+    messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.let { message ->
+        !message.isStreaming && !message.isThinkingStreaming
+    } == true
 
 internal fun shouldShowSpeakResponseAction(
     message: ChatMessage,

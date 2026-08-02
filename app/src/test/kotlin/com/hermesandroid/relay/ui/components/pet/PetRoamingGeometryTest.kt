@@ -261,12 +261,13 @@ class PetRoamingGeometryTest {
         assertEquals(PetPoint(226f, 94f), plan.gutter)
         assertEquals(PetPoint(180f, 94f), plan.entry)
         assertEquals(PetPoint(60f, 94f), plan.opposite)
+        assertEquals(PetBubbleEntryMode.ClearGutter, plan.entryMode)
         assertTrue(plan.gutter.x > bubble.bounds.right + footprint.horizontalRadius)
         assertTrue(plan.entry.y + footprint.height / 2f < bubble.bounds.top)
     }
 
     @Test
-    fun `bubble excursion is skipped without a composer supported clear gutter`() {
+    fun `bubble excursion uses an edge hop when a full gutter does not fit`() {
         val bubble = PetMeasuredPerch(
             key = "chat-message-perch:assistant-1",
             bounds = PetObstacle(40f, 120f, 240f, 190f),
@@ -277,7 +278,7 @@ class PetRoamingGeometryTest {
             bounds = PetSafeBounds(20f, 250f, 200f, 250f),
         )
 
-        assertNull(
+        val edgeHop = requireNotNull(
             planPetBubbleExcursion(
                 bubble = bubble,
                 composerRail = narrowComposer,
@@ -289,6 +290,33 @@ class PetRoamingGeometryTest {
                 minimumWalkWidth = 40f,
             ),
         )
+        assertEquals(PetBubbleEntryMode.EdgeHop, edgeHop.entryMode)
+        assertEquals(PetPoint(200f, 250f), edgeHop.composerApproach)
+        assertEquals(edgeHop.entry, edgeHop.gutter)
+
+        val phoneSizedHop = requireNotNull(
+            planPetBubbleExcursion(
+                bubble = PetMeasuredPerch(
+                    key = "chat-message-perch:phone-width",
+                    bounds = PetObstacle(52f, 140f, 352f, 260f),
+                ),
+                composerRail = PetRoamingRail(
+                    key = "chat-composer-perch:0",
+                    perchKey = "chat-composer-perch",
+                    bounds = PetSafeBounds(40f, 700f, 371f, 700f),
+                ),
+                footprint = PetFootprint(width = 56f, height = 56f, clearance = 3f),
+                outer = PetSafeBounds(40f, 40f, 371f, 760f),
+                uiObstacles = emptyList(),
+                useLeftGutter = false,
+                verticalClearance = 6f,
+                minimumWalkWidth = 28f,
+            ),
+        )
+        assertEquals(PetBubbleEntryMode.EdgeHop, phoneSizedHop.entryMode)
+        assertEquals(371f, phoneSizedHop.composerApproach.x, 0f)
+        assertTrue(phoneSizedHop.entry.y + 28f < 140f)
+
         assertNull(
             planPetBubbleExcursion(
                 bubble = PetMeasuredPerch(

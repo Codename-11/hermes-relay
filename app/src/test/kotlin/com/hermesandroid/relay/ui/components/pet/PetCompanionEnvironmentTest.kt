@@ -79,6 +79,33 @@ class PetCompanionEnvironmentTest {
     }
 
     @Test
+    fun `completion race keeps stream armed until assistant row settles`() {
+        val armed = reducePetVisitRequestState(
+            state = PetVisitRequestState(),
+            isStreaming = true,
+            assistantUiKey = null,
+            nowElapsedMs = 1_000L,
+        )
+        val transportSettledFirst = reducePetVisitRequestState(
+            state = armed,
+            isStreaming = false,
+            assistantUiKey = null,
+            completionSettled = false,
+            nowElapsedMs = 1_100L,
+        )
+        val messageSettled = reducePetVisitRequestState(
+            state = transportSettledFirst,
+            isStreaming = false,
+            assistantUiKey = "answer-after-race",
+            completionSettled = true,
+            nowElapsedMs = 1_200L,
+        )
+
+        assertTrue(transportSettledFirst.streamArmed)
+        assertEquals("answer-after-race", requireNotNull(messageSettled.pending).assistantUiKey)
+    }
+
+    @Test
     fun `temperament response delay overrides legacy deterministic cooldown`() {
         val armed = reducePetVisitRequestState(
             state = PetVisitRequestState(),

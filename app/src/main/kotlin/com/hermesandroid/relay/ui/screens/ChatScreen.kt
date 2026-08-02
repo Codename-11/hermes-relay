@@ -200,7 +200,6 @@ import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
-import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
@@ -246,7 +245,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
-private const val CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE = "chat-scroll-to-bottom"
+private const val CHAT_SCROLL_TO_BOTTOM_PET_PERCH = "chat-scroll-to-bottom-perch"
 private val CHAT_PET_ROUTES = setOf("chat")
 
 internal fun resolveChatHeaderSubtitle(
@@ -2726,13 +2725,23 @@ fun ChatScreen(
                             .padding(16.dp)
                             .zIndex(8f)
                     ) {
+                        Box(
+                            modifier = Modifier
+                                // The visible FAB is narrower than the pet's
+                                // footprint. Measure a transparent landing
+                                // ledge around it so the pet can stand above
+                                // the control without covering its touch area.
+                                .width(72.dp)
+                                .height(48.dp)
+                                .petPerchSurface(
+                                    key = CHAT_SCROLL_TO_BOTTOM_PET_PERCH,
+                                    routes = CHAT_PET_ROUTES,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
                         SmallFloatingActionButton(
                             modifier = Modifier
                                 .size(48.dp)
-                                .petObstacleSurface(
-                                    key = CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE,
-                                    routes = CHAT_PET_ROUTES,
-                                )
                                 .semantics {
                                     contentDescription = if (unreadMessageCount > 0) {
                                         "Scroll to bottom, $unreadMessageCount unread " +
@@ -2772,6 +2781,7 @@ fun ChatScreen(
                                     contentDescription = null,
                                 )
                             }
+                        }
                         }
                     }
 
