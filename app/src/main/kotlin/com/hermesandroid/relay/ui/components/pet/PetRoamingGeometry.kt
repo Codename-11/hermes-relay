@@ -4,6 +4,7 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 private const val PET_ROUTE_EPSILON = 0.001f
+private const val PET_MAX_BUBBLE_EXPLORATION_STOPS = 3
 
 /** Logical docking edge so persisted placement remains correct under RTL. */
 enum class PetLogicalEdge { Start, End }
@@ -264,6 +265,22 @@ data class PetRailJourneyStep(
     val rail: PetRoamingRail,
     val route: PetRoute,
 )
+
+/**
+ * A response-led bubble tour. [orderedRails] always starts with the newest
+ * greeted rail; [continuation] contains only the additional older-rail hops.
+ */
+data class PetBubbleExplorationPlan(
+    val orderedRails: List<PetRoamingRail>,
+    val continuation: List<PetRailJourneyStep>,
+) {
+    init {
+        require(orderedRails.isNotEmpty()) { "A bubble exploration needs its newest rail." }
+        require(continuation.size == orderedRails.size - 1) {
+            "Each additional exploration rail needs one transfer."
+        }
+    }
+}
 
 /**
  * One collision-checked chat response excursion. A roomy response uses
@@ -623,6 +640,16 @@ fun expandObstaclesForPet(
     it.expanded(footprint.horizontalRadius, footprint.verticalRadius)
 }
 
+/**
+ * Preserve a measured perch body as a routing obstacle while allowing exact
+ * contact with its validated top rail. Generic obstacles use inclusive bounds;
+ * shifting only the raw top by one routing epsilon keeps the expanded body
+ * below the rail instead of projecting a safe landing point away from it.
+ */
+fun petTopSupportedObstacle(perch: PetMeasuredPerch): PetObstacle = perch.bounds.copy(
+    top = minOf(perch.bounds.top + PET_ROUTE_EPSILON, perch.bounds.bottom),
+)
+
 data class PetRoute(val points: List<PetPoint>) {
     init {
         require(points.isNotEmpty()) { "A pet route needs at least one point." }
@@ -701,6 +728,92 @@ fun planPetRailJourney(
         if (currentRail.key == targetRail.key) return journey
     }
     return null
+}
+
+/**
+ * Select up to [maxExtraStops] older visible bubble rails after greeting
+ * [newestRail]. Each continuation is one direct, collision-checked journey
+ * step no longer than [maximumStepLength]. Unreachable rails are skipped, and
+ * selection stops naturally when no older bounded transfer remains.
+ *
+ * Rails are ordered by live screen geometry: newest first, then the nearest
+ * reachable older level. Multiple safe segments from one bubble count as one
+ * stop, with route length and key providing deterministic tie breakers.
+ */
+fun planPetBubbleExploration(
+    newestRail: PetRoamingRail,
+    start: PetPoint,
+    visibleMessageRails: Iterable<PetRoamingRail>,
+    bounds: PetSafeBounds,
+    uiObstacles: Iterable<PetObstacle>,
+    footprint: PetFootprint,
+    maximumStepLength: Float,
+    maxExtraStops: Int,
+): PetBubbleExplorationPlan {
+    require(maxExtraStops in 0..PET_MAX_BUBBLE_EXPLORATION_STOPS) {
+        "Bubble exploration supports zero to three extra stops."
+    }
+    require(maximumStepLength > 0f && maximumStepLength.isFinite()) {
+        "Maximum exploration step length must be finite and positive."
+    }
+
+    val orderedRails = mutableListOf(newestRail)
+    val continuation = mutableListOf<PetRailJourneyStep>()
+    if (
+        maxExtraStops == 0 ||
+        start.x !in newestRail.bounds.left..newestRail.bounds.right ||
+        abs(start.y - newestRail.bounds.top) > PET_ROUTE_EPSILON
+    ) {
+        return PetBubbleExplorationPlan(orderedRails, continuation)
+    }
+
+    val remaining = visibleMessageRails.asSequence()
+        .filterNot { it.perchKey == newestRail.perchKey }
+        .filter { it.bounds.top < newestRail.bounds.top - PET_ROUTE_EPSILON }
+        .distinctBy { it.key }
+        .toMutableList()
+    var currentRail = newestRail
+    var currentPoint = start
+
+    while (continuation.size < maxExtraStops) {
+        val next = remaining.asSequence()
+            .filter { it.bounds.top < currentPoint.y - PET_ROUTE_EPSILON }
+            .mapNotNull { candidate ->
+                val requestedDestination = PetPoint(
+                    x = currentPoint.x.coerceIn(candidate.bounds.left, candidate.bounds.right),
+                    y = candidate.bounds.top,
+                )
+                val step = planPetRailJourney(
+                    startRail = currentRail,
+                    start = currentPoint,
+                    targetRail = candidate,
+                    rails = emptyList(),
+                    bounds = bounds,
+                    uiObstacles = uiObstacles,
+                    footprint = footprint,
+                    maximumStepLength = maximumStepLength,
+                )?.singleOrNull() ?: return@mapNotNull null
+                step.takeIf {
+                    it.route.destination.distanceSquaredTo(requestedDestination) <=
+                        PET_ROUTE_EPSILON * PET_ROUTE_EPSILON
+                }
+            }
+            .sortedWith(
+                compareByDescending<PetRailJourneyStep> { it.rail.bounds.top }
+                    .thenBy { it.route.length }
+                    .thenBy { it.rail.key },
+            )
+            .firstOrNull()
+            ?: break
+
+        continuation += next
+        orderedRails += next.rail
+        currentRail = next.rail
+        currentPoint = next.route.destination
+        remaining.removeAll { it.perchKey == next.rail.perchKey }
+    }
+
+    return PetBubbleExplorationPlan(orderedRails, continuation)
 }
 
 /**

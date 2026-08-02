@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
+import com.hermesandroid.relay.data.PetTemperament
 import com.hermesandroid.relay.ui.components.avatar.PetLocomotion
 import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetFootprint
@@ -17,6 +18,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FloatingPetCompanionTest {
+    @Test
+    fun `temperament bounds extra response bubble exploration`() {
+        assertEquals(1, petBubbleExplorationStops(PetTemperament.Calm))
+        assertEquals(2, petBubbleExplorationStops(PetTemperament.Balanced))
+        assertEquals(3, petBubbleExplorationStops(PetTemperament.Playful))
+    }
+
+    @Test
+    fun `terrain diagnostics name the authoritative movement gate`() {
+        val base = PetTerrainGateArgs()
+        assertEquals("roaming", base.label())
+        assertEquals("no measured rails", base.copy(hasRails = false).label())
+        assertEquals("scrolling", base.copy(surfaceScrolling = true).label())
+        assertEquals(
+            "response visit",
+            base.copy(responseVisitPending = true, canPatrol = false).label(),
+        )
+        assertEquals("roaming off", base.copy(roamingEnabled = false).label())
+    }
+
     @Test
     fun `roaming starts immediately then uses the normal repeat delay`() {
         assertEquals(0L, floatingPetRoamDelayMs(hasMoved = false))
@@ -458,4 +479,31 @@ class FloatingPetCompanionTest {
             ),
         )
     }
+}
+
+private data class PetTerrainGateArgs(
+    val roamingEnabled: Boolean = true,
+    val roamingAllowed: Boolean = true,
+    val hasRails: Boolean = true,
+    val surfaceScrolling: Boolean = false,
+    val responseVisitPending: Boolean = false,
+    val canPatrol: Boolean = true,
+) {
+    fun label(): String = petTerrainGateLabel(
+        roamingEnabled = roamingEnabled,
+        roamingAllowed = roamingAllowed,
+        hasRails = hasRails,
+        surfaceScrolling = surfaceScrolling,
+        dragging = false,
+        dropping = false,
+        menuExpanded = false,
+        animationEnabled = true,
+        appForeground = true,
+        osAnimations = true,
+        touchExploration = false,
+        paused = false,
+        agentState = SphereState.Idle,
+        responseVisitPending = responseVisitPending,
+        canPatrol = canPatrol,
+    )
 }

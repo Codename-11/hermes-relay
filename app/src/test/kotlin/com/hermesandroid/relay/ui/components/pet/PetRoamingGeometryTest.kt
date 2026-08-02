@@ -666,6 +666,187 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `bubble exploration keeps newest first then visits older rails in screen order`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val newest = PetRoamingRail("newest", "newest", PetSafeBounds(60f, 650f, 340f, 650f))
+        val nearestOlder = PetRoamingRail("older-1", "older-1", PetSafeBounds(60f, 500f, 340f, 500f))
+        val nextOlder = PetRoamingRail("older-2", "older-2", PetSafeBounds(60f, 350f, 340f, 350f))
+        val newerThanTarget = PetRoamingRail("newer", "newer", PetSafeBounds(60f, 710f, 340f, 710f))
+
+        val plan = planPetBubbleExploration(
+            newestRail = newest,
+            start = PetPoint(200f, 650f),
+            visibleMessageRails = listOf(nextOlder, newerThanTarget, nearestOlder),
+            bounds = outer,
+            uiObstacles = emptyList(),
+            footprint = footprint,
+            maximumStepLength = 180f,
+            maxExtraStops = 3,
+        )
+
+        assertEquals(listOf(newest, nearestOlder, nextOlder), plan.orderedRails)
+        assertEquals(listOf(nearestOlder, nextOlder), plan.continuation.map { it.rail })
+        assertTrue(plan.continuation.all { it.route.length <= 180f })
+    }
+
+    @Test
+    fun `bubble exploration caps additional older stops at three`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val newest = PetRoamingRail("newest", "newest", PetSafeBounds(60f, 700f, 340f, 700f))
+        val older = listOf(580f, 460f, 340f, 220f).mapIndexed { index, y ->
+            PetRoamingRail("older-$index", "older-$index", PetSafeBounds(60f, y, 340f, y))
+        }
+
+        val plan = planPetBubbleExploration(
+            newestRail = newest,
+            start = PetPoint(200f, 700f),
+            visibleMessageRails = older,
+            bounds = outer,
+            uiObstacles = emptyList(),
+            footprint = footprint,
+            maximumStepLength = 180f,
+            maxExtraStops = 3,
+        )
+
+        assertEquals(listOf(newest) + older.take(3), plan.orderedRails)
+        assertEquals(3, plan.continuation.size)
+    }
+
+    @Test
+    fun `bubble exploration stops when older terrain is unreachable`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val newest = PetRoamingRail("newest", "newest", PetSafeBounds(60f, 700f, 340f, 700f))
+        val blockedOlder = PetRoamingRail("blocked", "blocked", PetSafeBounds(60f, 500f, 340f, 500f))
+        val fullBarrier = PetObstacle(0f, 570f, 400f, 610f)
+
+        val plan = planPetBubbleExploration(
+            newestRail = newest,
+            start = PetPoint(200f, 700f),
+            visibleMessageRails = listOf(blockedOlder),
+            bounds = outer,
+            uiObstacles = listOf(fullBarrier),
+            footprint = footprint,
+            maximumStepLength = 210f,
+            maxExtraStops = 3,
+        )
+
+        assertEquals(listOf(newest), plan.orderedRails)
+        assertTrue(plan.continuation.isEmpty())
+    }
+
+    @Test
+    fun `bubble exploration skips a blocked segment when an older bounded rail is reachable`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val newest = PetRoamingRail("newest", "newest", PetSafeBounds(60f, 700f, 340f, 700f))
+        val blockedNearest = PetRoamingRail("blocked", "blocked", PetSafeBounds(190f, 620f, 210f, 620f))
+        val reachableOlder = PetRoamingRail("reachable", "reachable", PetSafeBounds(60f, 540f, 100f, 540f))
+        val obstacleAtBlockedLanding = PetObstacle(195f, 615f, 205f, 625f)
+
+        val plan = planPetBubbleExploration(
+            newestRail = newest,
+            start = PetPoint(200f, 700f),
+            visibleMessageRails = listOf(blockedNearest, reachableOlder),
+            bounds = outer,
+            uiObstacles = listOf(obstacleAtBlockedLanding),
+            footprint = footprint,
+            maximumStepLength = 210f,
+            maxExtraStops = 3,
+        )
+
+        assertEquals(listOf(newest, reachableOlder), plan.orderedRails)
+        assertEquals(reachableOlder, plan.continuation.single().rail)
+    }
+
+    @Test
+    fun `bubble exploration with no extra allowance stays on newest`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f)
+        val newest = PetRoamingRail("newest", "newest", PetSafeBounds(60f, 650f, 340f, 650f))
+        val older = PetRoamingRail("older", "older", PetSafeBounds(60f, 500f, 340f, 500f))
+
+        val plan = planPetBubbleExploration(
+            newestRail = newest,
+            start = PetPoint(200f, 650f),
+            visibleMessageRails = listOf(older),
+            bounds = outer,
+            uiObstacles = emptyList(),
+            footprint = footprint,
+            maximumStepLength = 210f,
+            maxExtraStops = 0,
+        )
+
+        assertEquals(listOf(newest), plan.orderedRails)
+        assertTrue(plan.continuation.isEmpty())
+    }
+
+    @Test
+    fun `bubble exploration accepts exact top contact without opening message bodies`() {
+        val outer = PetSafeBounds(20f, 20f, 380f, 760f)
+        val footprint = PetFootprint(width = 56f, height = 56f, clearance = 6f)
+        val newestPerch = PetMeasuredPerch(
+            key = "newest",
+            bounds = PetObstacle(60f, 650f, 340f, 720f),
+        )
+        val olderPerch = PetMeasuredPerch(
+            key = "older",
+            bounds = PetObstacle(60f, 500f, 340f, 570f),
+        )
+        val newestRail = PetRoamingRail(
+            key = "newest:0",
+            perchKey = newestPerch.key,
+            bounds = requireNotNull(
+                petPerchRail(newestPerch, footprint, outer, verticalClearance = 6f),
+            ),
+        )
+        val olderRail = PetRoamingRail(
+            key = "older:0",
+            perchKey = olderPerch.key,
+            bounds = requireNotNull(
+                petPerchRail(olderPerch, footprint, outer, verticalClearance = 6f),
+            ),
+        )
+        val start = PetPoint(newestRail.bounds.right, newestRail.bounds.top)
+
+        val inclusivePlan = planPetBubbleExploration(
+            newestRail = newestRail,
+            start = start,
+            visibleMessageRails = listOf(olderRail),
+            bounds = outer,
+            uiObstacles = listOf(newestPerch.bounds, olderPerch.bounds),
+            footprint = footprint,
+            maximumStepLength = 300f,
+            maxExtraStops = 1,
+        )
+        val supportedPlan = planPetBubbleExploration(
+            newestRail = newestRail,
+            start = start,
+            visibleMessageRails = listOf(olderRail),
+            bounds = outer,
+            uiObstacles = listOf(
+                petTopSupportedObstacle(newestPerch),
+                petTopSupportedObstacle(olderPerch),
+            ),
+            footprint = footprint,
+            maximumStepLength = 300f,
+            maxExtraStops = 1,
+        )
+
+        assertTrue(inclusivePlan.continuation.isEmpty())
+        assertEquals(listOf(newestRail, olderRail), supportedPlan.orderedRails)
+        assertEquals(start, supportedPlan.continuation.single().route.start)
+        assertEquals(olderRail.bounds.top, supportedPlan.continuation.single().route.destination.y)
+        assertTrue(
+            petTopSupportedObstacle(olderPerch).contains(
+                PetPoint(200f, olderPerch.bounds.top + 1f),
+            ),
+        )
+    }
+
+    @Test
     fun `settled chat paces in a wide text-free side pocket`() {
         val footprint = PetFootprint(width = 56f, height = 56f)
         val habitat = planSettledChatHabitat(

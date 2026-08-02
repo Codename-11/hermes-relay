@@ -120,6 +120,7 @@ import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.displayLabel
@@ -687,6 +688,8 @@ fun RelayApp() {
     val petStabilize by connectionViewModel.petStabilize.collectAsState()
     val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
     val petBehaviorPreferences by connectionViewModel.petBehaviorPreferences.collectAsState()
+    val petTerrainOverlayEnabled by FeatureFlags.petTerrainOverlayEnabled(sphereContext)
+        .collectAsState(false)
     val petPlacement by connectionViewModel.petPlacement.collectAsState()
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val petCompanionCoordinator = remember { PetCompanionCoordinator() }
@@ -2547,6 +2550,7 @@ fun RelayApp() {
                 placement = petPlacement,
                 roamingEnabled = petRoamingEnabled,
                 behaviorPreferences = petBehaviorPreferences,
+                debugTerrainOverlay = petTerrainOverlayEnabled,
                 sizeScale = petBehaviorPreferences.sizeScale,
                 // Surface scrolling suspends autonomous movement without
                 // visually muting the companion. The keyboard only selects

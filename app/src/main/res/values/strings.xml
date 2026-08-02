@@ -1349,6 +1349,8 @@
     <string name="dev_settings_image_generation_lab">Image generation lab</string>
     <string name="dev_settings_image_generation_lab_desc">Preview generation loops and the final image reveal</string>
     <string name="dev_settings_open_image_generation_lab_cd">Open image generation lab</string>
+    <string name="dev_settings_pet_terrain_overlay">Pet terrain overlay</string>
+    <string name="dev_settings_pet_terrain_overlay_desc">Show measured pet perches, obstacles, and planned routes for visual tuning</string>
     <string name="dev_settings_lock_dev_options">Lock developer options</string>
     <string name="dev_settings_lock_dev_options_desc">Hide this section and disable experimental features</string>
     <string name="dev_settings_locked_toast">Developer options locked</string>

@@ -3476,6 +3476,8 @@
     <string name="dev_settings_image_generation_lab">画像生成ラボ</string>
     <string name="dev_settings_image_generation_lab_desc">生成ループと最終画像の表示をプレビューします</string>
     <string name="dev_settings_open_image_generation_lab_cd">画像生成ラボを開く</string>
+    <string name="dev_settings_pet_terrain_overlay">ペット地形オーバーレイ</string>
+    <string name="dev_settings_pet_terrain_overlay_desc">ペットの測定済み足場、障害物、計画ルートを表示して見た目を調整します</string>
     <string name="dashboard_native_signin_opening">ブラウザでサインインを完了してから、ここに戻ってください。</string>
     <string name="dashboard_native_signin_cancelled">ブラウザでのサインインをキャンセルしました。</string>
     <string name="dashboard_native_signin_requires_https">安全なブラウザサインインには、HTTPSのダッシュボードアドレスが必要です。</string>

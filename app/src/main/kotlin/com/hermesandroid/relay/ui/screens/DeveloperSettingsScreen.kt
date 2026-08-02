@@ -34,11 +34,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,6 +77,7 @@ fun DeveloperSettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isDarkTheme = LocalBrand.current.isDark
+    val petTerrainOverlayEnabled by FeatureFlags.petTerrainOverlayEnabled(context).collectAsState(false)
 
     // Data management local state — unfolded from the private
     // DataManagementSection helper in the old SettingsScreen.
@@ -377,6 +380,34 @@ fun DeveloperSettingsScreen(
                                     ),
                                 )
                             }
+                        }
+
+                        HorizontalDivider()
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.dev_settings_pet_terrain_overlay),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = stringResource(R.string.dev_settings_pet_terrain_overlay_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = petTerrainOverlayEnabled,
+                                onCheckedChange = { enabled ->
+                                    scope.launch {
+                                        FeatureFlags.setPetTerrainOverlayEnabled(context, enabled)
+                                    }
+                                },
+                            )
                         }
 
                         HorizontalDivider()

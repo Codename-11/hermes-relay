@@ -3410,6 +3410,8 @@
     <string name="dev_settings_image_generation_lab">图像生成实验室</string>
     <string name="dev_settings_image_generation_lab_desc">预览生成循环和最终图像显现效果</string>
     <string name="dev_settings_open_image_generation_lab_cd">打开图像生成实验室</string>
+    <string name="dev_settings_pet_terrain_overlay">宠物地形叠加层</string>
+    <string name="dev_settings_pet_terrain_overlay_desc">显示测量后的宠物落脚处、障碍物和规划路线，便于视觉调试</string>
     <string name="dashboard_native_signin_opening">请在浏览器中完成登录，然后返回此处。</string>
     <string name="dashboard_native_signin_cancelled">已取消浏览器登录。</string>
     <string name="dashboard_native_signin_requires_https">安全浏览器登录需要 HTTPS 控制面板地址。</string>

@@ -136,10 +136,10 @@ normal Hermes Relay screens.
 - Tap the pet to make it wave and open its menu.
 - Turn on **Walk around the interface** to let it roam while Hermes is idle. This
   is off by default. Supported ledges are the measured top edges of Chat's
-  composer and newest visible settled user/assistant bubble, Terminal's extra-keys
-  bar, and the bottom status strip on Settings and About. Hermes Relay uses only
-  these deliberately supported surfaces—it does not scan every button or text
-  field—and the overlay adds no blank strip or lost text space.
+  composer and eligible visible settled user/assistant bubbles, Terminal's
+  extra-keys bar, and the bottom status strip on Settings and About. Hermes Relay
+  uses only these deliberately supported surfaces—it does not scan every button
+  or text field—and the overlay adds no blank strip or lost text space.
 - **Pet size** in Appearance adjusts the companion from 60–120%, with the former
   maximum size now shown as the 100% default. Existing saved choices keep their
   physical size. Art, touch target, and routing footprint change together, so a
@@ -150,11 +150,14 @@ normal Hermes Relay screens.
   cards, labels, fields, and buttons never become terrain automatically.
 - When Chat's scroll-to-bottom button or Terminal's jump-to-latest pill is
   visible, the pet shortens or leaves that part of the ledge clear.
-- After a plain response settles, the pet can walk along the composer to the
-  clear outer side of the message, jump beside it, walk across a raised rail
-  above the bubble, wave, return to the same edge, and drop to the composer. Its
-  full footprint stays above the text. Narrow or blocked bubbles, cards,
-  attachments, tool rows, and phone/voice actions are skipped.
+- After a plain assistant response settles, the pet can walk along the composer
+  to the clear outer side of the message, jump beside it, walk across its raised
+  rail, and wave. It may then hop to older visible user or assistant rails before
+  retracing the same bounded path and dropping to the composer. Its full
+  footprint stays above the text, and no hop exceeds 210 dp. Narrow or blocked
+  bubbles do not become rails. Cards, attachments, tool calls, background tasks,
+  and phone/voice actions cannot be the greeting destination; a settled rich
+  user or assistant bubble may still provide a safe measured top stepping rail.
 - Directional clips match left/right travel; a brief turn pause, jump-to-fall
   apex, responsive shadow, landing squash, and walk-cycle-matched speed make the
   movement read as grounded. Between response visits, idle variety rotates
@@ -172,14 +175,19 @@ Hermes activity, a newly completed response visit, normal roaming, and finally
 idle reactions. Under **Pet temperament**, choose how often an otherwise-idle
 pet acts:
 
-| Temperament | Response visit | Roam interval | Idle reaction |
-|-------------|----------------|---------------|---------------|
-| **Calm** | 2.5 seconds | 12 seconds | 28 seconds |
-| **Balanced** (default) | 1.5 seconds | 8 seconds | 18 seconds |
-| **Playful** | 0.75 seconds | 5 seconds | 10 seconds |
+| Temperament | Response visit | Extra older rails | Roam interval | Idle reaction |
+|-------------|----------------|-------------------|---------------|---------------|
+| **Calm** | 2.5 seconds | up to 1 | 12 seconds | 28 seconds |
+| **Balanced** (default) | 1.5 seconds | up to 2 | 8 seconds | 18 seconds |
+| **Playful** | 0.75 seconds | up to 3 | 5 seconds | 10 seconds |
 
 Temperament never bypasses scrolling, dialogs, active Hermes work, disabled
 animations, reduced motion, or TalkBack touch exploration.
+
+Debug builds also offer **Developer Options → Show pet terrain overlay**. It
+draws measured perches, usable rails, collision regions, the active rail, the
+latest planned route, and the current movement gate without changing pet
+behavior. The overlay is off by default and does not intercept touches.
 
 Agent state and locomotion are separate. `running`/`working` means Hermes is
 performing work in place; `walking-left`/`walking-right` or

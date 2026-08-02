@@ -3162,6 +3162,8 @@
     <string name="dev_settings_image_generation_lab">Laboratorio de generación de imágenes</string>
     <string name="dev_settings_image_generation_lab_desc">Previsualiza los ciclos de generación y la revelación final de la imagen</string>
     <string name="dev_settings_open_image_generation_lab_cd">Abrir el laboratorio de generación de imágenes</string>
+    <string name="dev_settings_pet_terrain_overlay">Superposición de terreno de la mascota</string>
+    <string name="dev_settings_pet_terrain_overlay_desc">Muestra las plataformas medidas, los obstáculos y las rutas planificadas de la mascota para ajustarlos visualmente</string>
     <string name="dashboard_native_signin_opening">Completa el inicio de sesión en el navegador y vuelve aquí.</string>
     <string name="dashboard_native_signin_cancelled">Inicio de sesión en el navegador cancelado.</string>
     <string name="dashboard_native_signin_requires_https">El inicio de sesión seguro en el navegador requiere una dirección HTTPS del panel.</string>

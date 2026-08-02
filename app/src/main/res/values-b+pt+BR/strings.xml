@@ -3317,6 +3317,8 @@
     <string name="dev_settings_image_generation_lab">Laboratório de geração de imagens</string>
     <string name="dev_settings_image_generation_lab_desc">Visualize os ciclos de geração e a revelação final da imagem</string>
     <string name="dev_settings_open_image_generation_lab_cd">Abrir o laboratório de geração de imagens</string>
+    <string name="dev_settings_pet_terrain_overlay">Sobreposição de terreno do mascote</string>
+    <string name="dev_settings_pet_terrain_overlay_desc">Mostra plataformas, obstáculos e rotas planejadas do mascote para ajuste visual</string>
     <string name="dashboard_native_signin_opening">Conclua o login no navegador e volte aqui.</string>
     <string name="dashboard_native_signin_cancelled">Login pelo navegador cancelado.</string>
     <string name="dashboard_native_signin_requires_https">O login seguro pelo navegador exige um endereço HTTPS do painel.</string>

@@ -2462,8 +2462,8 @@ top of a response bubble without ever covering its text or jumping through it.
   are rebased to preserve their rendered size; visual and planner geometry may
   never scale independently.
 - Screen owners opt in by publishing live-measured perches, obstacles, scrolling,
-  and modal visibility. The supported terrain is Chat's composer and newest
-  visible settled assistant bubble, Terminal's extra-keys toolbar, and the
+  and modal visibility. The supported terrain is Chat's composer and eligible
+  visible settled message bubbles, Terminal's extra-keys toolbar, and the
   persistent status strip on Settings/About. No accessibility-tree scan or
   arbitrary-Composable discovery is permitted.
 - Direct interaction has priority over agent activity, followed by a pending
@@ -2475,9 +2475,11 @@ top of a response bubble without ever covering its text or jumping through it.
 - A response visit is a deterministic bounded terrain journey. Nearby responses
   use the direct composer/gutter/bubble excursion. Farther visible responses
   require a complete chain of settled message-top rails with no hop over 210 dp;
-  sparse chats without that chain defer the visit. Only the destination gets the
-  full cross and greeting, and the return journey remains collision checked.
-  Unsafe geometry and interactive response rows are skipped rather than crossed.
+  sparse chats without that chain defer the visit. The newest response gets the
+  full cross and greeting, then the pet may inspect one to three successively
+  older visible rails according to temperament before retracing the same bounded
+  journey. Unsafe geometry and interactive response rows are skipped rather than
+  crossed, and a sparse gap ends exploration instead of inventing a ledge.
 - Settled Chat uses one text-safe habitat order: the measured side pocket beside
   the newest settled bubble, then its raised top edge, then the outer composer
   corner. A changed habitat is reached from the live coordinate, never snapped.
@@ -2496,9 +2498,14 @@ top of a response bubble without ever covering its text or jumping through it.
   settling, and held during drag. Airborne duration grows with route length;
   anticipation, turn pauses, cycle-quantized walking, shadow height, and landing
   squash are presentation polish around those honest states.
-- Calm, Balanced, and Playful alter cadence only. App animation settings,
-  foreground/activity state, scrolling, dialogs, Android animator scale, and
-  TalkBack touch exploration always take precedence.
+- Calm, Balanced, and Playful alter cadence and cap older-bubble exploration at
+  one, two, or three stops. App animation settings, foreground/activity state,
+  scrolling, dialogs, Android animator scale, and TalkBack touch exploration
+  always take precedence.
+- Debug builds may paint the measured terrain, active rail, expanded collision
+  regions, footprint, behavior gate, and latest route through a default-off
+  Developer Options overlay. The Canvas is pointer-transparent, never changes
+  planning, and is cleared when Developer Options are locked.
 - Installed Petdex pets use the same renderer and planner without manifest edits
   or asset conversion by the user. The catalog preview resolves through the live
   renderer and names the exact direct, mirrored, fallback, or mirrored-fallback

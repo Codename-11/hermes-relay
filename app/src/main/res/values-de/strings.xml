@@ -3477,6 +3477,8 @@
     <string name="dev_settings_image_generation_lab">Bildgenerierungs-Labor</string>
     <string name="dev_settings_image_generation_lab_desc">Generierungsschleifen und die abschließende Bildenthüllung als Vorschau anzeigen</string>
     <string name="dev_settings_open_image_generation_lab_cd">Bildgenerierungs-Labor öffnen</string>
+    <string name="dev_settings_pet_terrain_overlay">Overlay für Begleiter-Terrain</string>
+    <string name="dev_settings_pet_terrain_overlay_desc">Zeigt gemessene Laufflächen, Hindernisse und geplante Routen des Begleiters zur visuellen Abstimmung</string>
     <string name="dashboard_native_signin_opening">Schließe die Anmeldung im Browser ab und kehre dann hierher zurück.</string>
     <string name="dashboard_native_signin_cancelled">Browser-Anmeldung abgebrochen.</string>
     <string name="dashboard_native_signin_requires_https">Die sichere Browser-Anmeldung erfordert eine HTTPS-Dashboard-Adresse.</string>

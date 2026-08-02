@@ -50,9 +50,9 @@ The companion has a durable home and an optional autonomous roaming mode:
 - **Walk around the interface** is opt-in and off by default. Screen owners
   explicitly register curated perches and obstacles using their live measured
   bounds; the app does not scan arbitrary UI elements or treat the accessibility
-  tree as walkable geometry. The supported perches are Chat's composer, the
-  newest visible settled user/assistant bubble, Terminal's extra-keys toolbar, and
-  the persistent bottom status strip on Settings and About. They use existing
+  tree as walkable geometry. The supported perches are Chat's composer and
+  eligible visible settled user/assistant bubbles, Terminal's extra-keys toolbar,
+  and the persistent bottom status strip on Settings and About. They use existing
   control or content edges, so the overlay inserts no spacer and reduces no text
   or control layout area. Other routes keep the pet docked at its saved edge.
   Additional Settings terrain can publish through the same live registry, but
@@ -74,14 +74,18 @@ The companion has a durable home and an optional autonomous roaming mode:
 - After a plain assistant response settles, the pet may make one deterministic
   visit. A nearby response uses the direct clear-gutter excursion. A farther
   visible response is reachable only through settled message tops whose
-  collision-checked hops each stay within 210 dp; the pet climbs those levels,
-  crosses and greets only at the destination, then returns through bounded
-  levels to the composer. With no complete chain, a sparse new chat defers the
-  visit instead of making a screen-height leap. Exterior gutter and route
-  travel remains airborne rather than presenting an invisible walkable ledge.
-  The full sprite footprint remains above the bubble and its jump/drop path does
-  not cross text. Cards, attachments, tool rows, phone/voice actions, narrow
-  bubbles, and bubbles without a safe gutter are skipped.
+  collision-checked hops each stay within 210 dp. The pet crosses and greets the
+  newest response, may then inspect one to three successively older visible
+  rails according to temperament, and retraces the same validated levels to the
+  composer. With no complete chain, a sparse new chat defers or ends the tour
+  instead of making a screen-height leap. Exterior gutter and route travel
+  remains airborne rather than presenting an invisible walkable ledge. The full
+  sprite footprint remains above the bubble and its jump/drop path does not
+  cross text. The greeting destination must be a settled plain assistant row:
+  cards, attachments, tool calls, background tasks, and phone/voice actions are
+  excluded. Older stepping geometry may come from a settled non-empty user or
+  assistant bubble, including a rich bubble whose measured top is otherwise
+  safe; narrow bubbles simply do not produce a walkable rail.
 - Horizontal travel uses directional walking aliases and a duration rounded to
   complete walk cycles, preventing sliding feet. Turns pause briefly. Vertical
   travel scales its duration with route length, uses a squash anticipation,
@@ -102,6 +106,10 @@ The companion has a durable home and an optional autonomous roaming mode:
   art before the saved size scale. Settings
   and About publish their scroll state and hide the companion while their dialogs
   are open.
+- Debug builds provide **Developer Options → Show pet terrain overlay**. The
+  default-off, pointer-transparent layer paints measured perches, usable rails,
+  collision bounds, the active rail, footprint, latest route, and current
+  behavior gate without changing planning. Locking Developer Options clears it.
 
 The behavior director has one deterministic priority order: direct interaction,
 Hermes activity, a pending response visit, autonomous roaming, then idle. This
@@ -111,15 +119,16 @@ Appearance, and hide without performing a drag gesture.
 
 ### Temperament and pacing
 
-Appearance offers three phone-local pacing presets. They change only how often
-an otherwise-idle pet may act; they do not bypass any safety, activity, scrolling,
-dialog, reduced-motion, or accessibility gate.
+Appearance offers three phone-local behavior presets. They change how often an
+otherwise-idle pet may act and how many older visible rails a response tour may
+inspect; they do not bypass any safety, activity, scrolling, dialog,
+reduced-motion, or accessibility gate.
 
-| Temperament | Response visit | Roam interval | Idle reaction |
-|-------------|----------------|---------------|---------------|
-| **Calm** | after 2.5 s | every 12 s | every 28 s |
-| **Balanced** (default) | after 1.5 s | every 8 s | every 18 s |
-| **Playful** | after 0.75 s | every 5 s | every 10 s |
+| Temperament | Response visit | Extra older rails | Roam interval | Idle reaction |
+|-------------|----------------|-------------------|---------------|---------------|
+| **Calm** | after 2.5 s | up to 1 | every 12 s | every 28 s |
+| **Balanced** (default) | after 1.5 s | up to 2 | every 8 s | every 18 s |
+| **Playful** | after 0.75 s | up to 3 | every 5 s | every 10 s |
 
 ## Petdex catalog and custom packs
 
