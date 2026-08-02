@@ -85,12 +85,10 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.5.2 - Sign in without detours
+v1.5.3 - Voice stays open
 
-* Reliable self-hosted OIDC and Nous Portal sign-in.
-* Secure system-browser flow for Nous provider challenges.
-* Private-LAN and Tailscale dashboard route support.
-* Replayed chat updates no longer duplicate rows.
+* Prevent Voice Focus from closing during chat-history reconciliation.
+* Keep live transcript rows stable when persisted identities arrive.
 ```
 
 ## Category
