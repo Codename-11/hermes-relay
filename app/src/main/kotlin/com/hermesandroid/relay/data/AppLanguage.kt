@@ -12,6 +12,7 @@ enum class AppLanguage(val languageTag: String) {
     JAPANESE("ja"),
     SIMPLIFIED_CHINESE("zh-Hans"),
     SPANISH("es"),
+    RUSSIAN("ru"),
     ;
 
     fun toLocaleList(): LocaleListCompat = if (languageTag.isEmpty()) {
@@ -35,6 +36,7 @@ enum class AppLanguage(val languageTag: String) {
                 "es" -> SPANISH
                 "ja" -> JAPANESE
                 "pt" -> BRAZILIAN_PORTUGUESE
+                "ru" -> RUSSIAN
                 "zh" -> {
                     val simplified = locale.script.equals("Hans", ignoreCase = true) ||
                         locale.script.isEmpty() ||

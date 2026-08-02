@@ -155,7 +155,7 @@ private fun LoadingCard(
                 val sizeHint = attachment.fileSize?.takeIf { it > 0 }
                     ?.let { " · ${formatBytes(it)}" } ?: ""
                 Text(
-                    text = if (isManualCta) stringResource(R.string.inbound_attach_tap_download) else stringResource(R.string.inbound_attach_downloading, sizeHint),
+                    text = if (isManualCta) stringResource(R.string.attach_tap_download) else stringResource(R.string.inbound_attach_downloading, sizeHint),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

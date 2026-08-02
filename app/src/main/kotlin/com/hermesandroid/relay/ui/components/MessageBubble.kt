@@ -271,7 +271,7 @@ fun MessageBubble(
                     )
                 }
                 Text(
-                    text = message.agentName,
+                    text = localizeAgentName(message.agentName),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -288,7 +288,7 @@ fun MessageBubble(
             ) {
                 message.badges.take(4).forEach { badge ->
                     MessagePathBadge(
-                        text = badge,
+                        text = localizeBadge(badge),
                         // Speaker glyph = the shared "spoken" modality marker.
                         // Both the standard voice-mode chip ("Voice") and the
                         // realtime engine chip ("Realtime Agent") are spoken
@@ -321,17 +321,17 @@ fun MessageBubble(
                     thinkingContent = if (reference.available) {
                         reference.text
                     } else {
-                        "Advisor unavailable."
+                        stringResource(R.string.bubble_advisor_unavailable)
                     },
                     isStreaming = false,
                     headerText = buildString {
-                        append("Advisor ")
+                        append(stringResource(R.string.bubble_advisor_prefix))
                         append(reference.index)
                         reference.count?.let { append("/").append(it) }
                         append(" · ")
                         append(reference.label)
                     },
-                    accessibilityLabel = "Mixture of Agents advisor response",
+                    accessibilityLabel = stringResource(R.string.bubble_moa_advisor),
                     modifier = Modifier
                         .widthIn(max = maxBubbleWidth)
                         .padding(bottom = 4.dp),

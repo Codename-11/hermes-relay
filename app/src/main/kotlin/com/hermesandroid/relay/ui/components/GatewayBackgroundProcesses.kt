@@ -78,9 +78,9 @@ fun GatewayBackgroundProcessStrip(
     val failed = processes.count { !it.isRunning && (it.exitCode ?: 0) != 0 }
     val displayedCount = if (running > 0) running else processes.size
     val status = when {
-        running > 0 -> "$running running"
-        failed > 0 -> "$failed failed"
-        else -> "Complete"
+        running > 0 -> "$running ${stringResource(R.string.bg_processes_running)}"
+        failed > 0 -> "$failed ${stringResource(R.string.task_status_failed)}"
+        else -> stringResource(R.string.task_status_complete)
     }
 
     Surface(
@@ -94,7 +94,7 @@ fun GatewayBackgroundProcessStrip(
                 stateDescription = status
             }
             .clickable(
-                onClickLabel = "Open background processes",
+                onClickLabel = stringResource(R.string.bg_processes_open),
                 onClick = onClick,
             ),
         shape = RoundedCornerShape(14.dp),
@@ -208,7 +208,7 @@ fun GatewayBackgroundProcessSheet(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "No background processes in this chat",
+                        stringResource(R.string.bg_processes_empty),
                         modifier = Modifier.padding(top = 12.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -220,7 +220,7 @@ fun GatewayBackgroundProcessSheet(
                         .heightIn(max = 560.dp),
                 ) {
                     if (running.isNotEmpty()) {
-                        item { ProcessSectionLabel("Running", running.size) }
+                        item { ProcessSectionLabel(stringResource(R.string.bg_processes_running), running.size) }
                         items(running, key = { it.id }) { process ->
                             GatewayProcessRow(
                                 process = process,
@@ -234,7 +234,7 @@ fun GatewayBackgroundProcessSheet(
                         item { HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp)) }
                     }
                     if (recent.isNotEmpty()) {
-                        item { ProcessSectionLabel("Recent", recent.size) }
+                        item { ProcessSectionLabel(stringResource(R.string.bg_processes_recent), recent.size) }
                         items(recent, key = { it.id }) { process ->
                             GatewayProcessRow(
                                 process = process,
@@ -278,7 +278,7 @@ private fun GatewayProcessRow(
         ?.trim()
         .orEmpty()
         .ifBlank {
-            "Background process"
+            stringResource(R.string.bg_processes_title)
         }
 
     Column(
@@ -287,7 +287,7 @@ private fun GatewayProcessRow(
             .animateContentSize()
             .clickable(
                 enabled = output.isNotBlank(),
-                onClickLabel = if (expanded) "Collapse process output" else "Expand process output",
+                onClickLabel = if (expanded) stringResource(R.string.bg_collapse_output) else stringResource(R.string.bg_expand_output),
             ) { expanded = !expanded }
             .padding(horizontal = 20.dp, vertical = 10.dp),
     ) {
@@ -332,7 +332,7 @@ private fun GatewayProcessRow(
             if (output.isNotBlank()) {
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (expanded) "Collapse output" else "Expand output",
+                    contentDescription = if (expanded) stringResource(R.string.tool_progress_cd_collapse) else stringResource(R.string.tool_progress_cd_expand),
                     modifier = Modifier.size(20.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -396,11 +396,14 @@ private fun ProcessStateIcon(process: GatewayProcess, failed: Boolean, stopping:
     }
 }
 
+@Composable
 private fun processMetadata(process: GatewayProcess, failed: Boolean): String {
     val state = when {
-        process.isRunning -> "Running"
-        failed -> "Failed${process.exitCode?.let { " · exit $it" }.orEmpty()}"
-        else -> "Completed${process.exitCode?.let { " · exit $it" }.orEmpty()}"
+        process.isRunning -> stringResource(R.string.bg_processes_running)
+        failed -> stringResource(R.string.task_status_failed) +
+            process.exitCode?.let { " · exit $it" }.orEmpty()
+        else -> stringResource(R.string.task_status_complete) +
+            process.exitCode?.let { " · exit $it" }.orEmpty()
     }
     return "$state · ${formatElapsed(process.uptimeSeconds)}" +
         if (process.detached) " · recovered" else ""

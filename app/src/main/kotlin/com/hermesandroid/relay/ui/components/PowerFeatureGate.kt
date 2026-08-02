@@ -202,8 +202,8 @@ fun PowerFeatureGateCard(
 private fun PowerFeatureGatePreview() {
     HermesRelayTheme {
         PowerFeatureGateCard(
-            title = "Terminal",
-            summary = "Open a server shell through your paired relay session.",
+            title = stringResource(R.string.power_terminal),
+            summary = stringResource(R.string.power_terminal_desc),
             status = PowerFeatureGateStatus.RequiresPairing,
             onPrimaryAction = {},
         )
@@ -215,8 +215,8 @@ private fun PowerFeatureGatePreview() {
 private fun PowerFeatureGateExpiredPreview() {
     HermesRelayTheme {
         PowerFeatureGateCard(
-            title = "Bridge",
-            summary = "Let Hermes send approved bridge commands to this phone.",
+            title = stringResource(R.string.power_bridge),
+            summary = stringResource(R.string.power_bridge_desc),
             status = PowerFeatureGateStatus.PairingExpired,
             onPrimaryAction = {},
         )

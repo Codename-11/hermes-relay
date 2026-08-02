@@ -262,14 +262,15 @@ private fun VoiceFloatingOverlayPill(
         session.voice,
         session.outputEnabled,
     )
-    val profileText = session.profileName?.takeIf { it.isNotBlank() } ?: "default profile"
+    val profileText = session.profileName?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.voice_overlay_default_profile)
     val stateText = when (uiState.state) {
-        VoiceState.Idle -> "Ready"
-        VoiceState.Listening -> "Listening"
-        VoiceState.Transcribing -> "Transcribing"
-        VoiceState.Thinking -> "Thinking"
-        VoiceState.Speaking -> "Speaking"
-        VoiceState.Error -> "Error"
+        VoiceState.Idle -> stringResource(R.string.voice_settings_status_ready)
+        VoiceState.Listening -> stringResource(R.string.voice_overlay_listening)
+        VoiceState.Transcribing -> stringResource(R.string.voice_overlay_transcribing)
+        VoiceState.Thinking -> stringResource(R.string.voice_overlay_thinking)
+        VoiceState.Speaking -> stringResource(R.string.voice_overlay_speaking)
+        VoiceState.Error -> stringResource(R.string.voice_overlay_state_error)
     }
 
     if (minimized) {

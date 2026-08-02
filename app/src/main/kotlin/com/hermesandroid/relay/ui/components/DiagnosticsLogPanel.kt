@@ -99,7 +99,7 @@ fun DiagnosticsLogPanel(
                     FilterChip(
                         selected = severityFilter == sev,
                         onClick = { severityFilter = if (severityFilter == sev) null else sev },
-                        label = { Text(sev.name) },
+                        label = { Text(stringResource(severityLabelRes(sev))) },
                     )
                 }
             }
@@ -223,4 +223,11 @@ private fun DiagnosticLogEntry.detailLine(): String? {
         elapsedMs?.let { "${it}ms" },
     )
     return pieces.joinToString(" - ").takeIf { it.isNotBlank() }
+}
+
+/** String resource for a [DiagnosticSeverity] label (shared with the detail dialog). */
+internal fun severityLabelRes(severity: DiagnosticSeverity): Int = when (severity) {
+    DiagnosticSeverity.Info -> R.string.diag_severity_info
+    DiagnosticSeverity.Warning -> R.string.diag_severity_warning
+    DiagnosticSeverity.Error -> R.string.diag_severity_error
 }

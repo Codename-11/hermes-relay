@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -102,7 +103,7 @@ fun TimelineView(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = "${events.size} events",
+                    text = pluralStringResource(R.plurals.timeline_events_count, events.size, events.size),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -161,11 +162,11 @@ private fun TimelineLegend() {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        LegendEntry("Chat", TimelineEventKind.ChatMessage.color())
-        LegendEntry("Tool", TimelineEventKind.ToolCall.color())
-        LegendEntry("Voice", TimelineEventKind.VoiceTurn.color())
-        LegendEntry("Profile", TimelineEventKind.ProfileSwitch.color())
-        LegendEntry("Conn", TimelineEventKind.ConnectionEvent.color())
+        LegendEntry(stringResource(R.string.timeline_legend_chat), TimelineEventKind.ChatMessage.color())
+        LegendEntry(stringResource(R.string.timeline_legend_tool), TimelineEventKind.ToolCall.color())
+        LegendEntry(stringResource(R.string.timeline_legend_voice), TimelineEventKind.VoiceTurn.color())
+        LegendEntry(stringResource(R.string.timeline_legend_profile), TimelineEventKind.ProfileSwitch.color())
+        LegendEntry(stringResource(R.string.timeline_legend_conn), TimelineEventKind.ConnectionEvent.color())
     }
 }
 
@@ -376,10 +377,10 @@ private fun StatusCheckRow(
 private fun StatusPill(status: CheckStatus) {
     val color = status.statusColor()
     val label = when (status) {
-        CheckStatus.Pass -> "PASS"
-        CheckStatus.Warn -> "WARN"
-        CheckStatus.Fail -> "FAIL"
-        CheckStatus.Unknown -> "UNKNOWN"
+        CheckStatus.Pass -> stringResource(R.string.timeline_pass)
+        CheckStatus.Warn -> stringResource(R.string.timeline_warn)
+        CheckStatus.Fail -> stringResource(R.string.timeline_fail)
+        CheckStatus.Unknown -> stringResource(R.string.timeline_status_unknown)
     }
     Surface(
         shape = RoundedCornerShape(50),
@@ -396,15 +397,16 @@ private fun StatusPill(status: CheckStatus) {
 }
 
 /** One-line "N failing · N warning · N passing" summary for the header. */
+@Composable
 private fun statusSummary(checks: List<StatusCheck>): String {
-    if (checks.isEmpty()) return "no checks"
+    if (checks.isEmpty()) return stringResource(R.string.timeline_no_checks)
     val fail = checks.count { it.status == CheckStatus.Fail }
     val warn = checks.count { it.status == CheckStatus.Warn }
     val pass = checks.count { it.status == CheckStatus.Pass }
     return buildList {
-        if (fail > 0) add("$fail failing")
-        if (warn > 0) add("$warn warning")
-        add("$pass passing")
+        if (fail > 0) add(pluralStringResource(R.plurals.timeline_summary_fail, fail, fail))
+        if (warn > 0) add(pluralStringResource(R.plurals.timeline_summary_warn, warn, warn))
+        add(pluralStringResource(R.plurals.timeline_summary_pass, pass, pass))
     }.joinToString(" · ")
 }
 
@@ -459,7 +461,7 @@ private fun TimelineRow(
                     modifier = Modifier.width(56.dp),
                 )
                 Text(
-                    text = primary.title,
+                    text = localizeTimelineTitle(primary.title),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
@@ -509,7 +511,7 @@ private fun TimelineRow(
                                     .background(sibling.kind.color()),
                             )
                             Text(
-                                text = sibling.title,
+                                text = localizeTimelineTitle(sibling.title),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
