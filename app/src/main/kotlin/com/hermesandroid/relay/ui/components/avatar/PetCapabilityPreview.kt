@@ -106,6 +106,17 @@ private val PET_PREVIEW_DEFINITIONS = listOf(
     ),
 )
 
+private val PET_NATIVE_DIRECTIONAL_TRAVEL_KEYS = setOf(
+    "walking-left",
+    "walk-left",
+    "running-left",
+    "run-left",
+    "walking-right",
+    "walk-right",
+    "running-right",
+    "run-right",
+)
+
 /**
  * Resolve every preview through [PetAvatar.resolveBaseSelection]. Keeping this as
  * a pure projection means the browser cannot drift from overlay clip priority,
@@ -115,8 +126,11 @@ fun PetAvatar.previewMappings(): List<PetPreviewMapping> = PET_PREVIEW_DEFINITIO
     val selection = resolveBaseSelection(definition.renderState)
     val sourceKey = selection.sourceKey ?: "idle"
     val sourceIsDirect = sourceKey in definition.directSourceKeys
+    val sourceIsNativeDirectionalTravel =
+        definition.action in setOf(PetPreviewAction.WalkLeft, PetPreviewAction.WalkRight) &&
+            sourceKey in PET_NATIVE_DIRECTIONAL_TRAVEL_KEYS
     val support = when {
-        selection.mirrorHorizontally && sourceIsDirect -> PetPreviewSupport.Mirrored
+        selection.mirrorHorizontally && sourceIsNativeDirectionalTravel -> PetPreviewSupport.Mirrored
         selection.mirrorHorizontally -> PetPreviewSupport.MirroredFallback
         sourceIsDirect -> PetPreviewSupport.Direct
         else -> PetPreviewSupport.Fallback
