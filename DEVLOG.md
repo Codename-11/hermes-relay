@@ -14,6 +14,17 @@ scope. The localization registry records Android coverage only; Russian public
 documentation and marketing pages continue to use the canonical English
 fallback until those surfaces are translated separately.
 
+## 2026-07-30 — Voice transcript identity alignment
+
+Android voice Focus mode now keys transcript rows with the same stable UI
+identity as the main Chat list. A live row may adopt its persisted server
+message ID during history reconciliation while retaining its original Compose
+identity; using the mutable domain ID in the voice overlay could otherwise
+collide during that transition and close the app.
+
+Focused JVM coverage recreates two visible rows with a shared reconciled server
+ID and verifies distinct stable transcript keys.
+
 ## 2026-07-28 — Android 1.5.2 production release
 
 Android 1.5.2 shipped from the approved `dev` to `main` release tree as
