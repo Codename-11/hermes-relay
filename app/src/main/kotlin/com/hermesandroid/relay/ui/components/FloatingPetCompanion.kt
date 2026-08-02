@@ -55,7 +55,6 @@ import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.PetLocomotion
 import com.hermesandroid.relay.ui.components.pet.LocalPetSafeAreaRegistry
-import com.hermesandroid.relay.ui.components.pet.PetBubbleEntryMode
 import com.hermesandroid.relay.ui.components.pet.PetLayoutDirection
 import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetFootprint
@@ -73,7 +72,12 @@ import com.hermesandroid.relay.ui.components.pet.PetVisitReadiness
 import com.hermesandroid.relay.ui.components.pet.PetVisitRequest
 import com.hermesandroid.relay.ui.components.pet.choosePetRailTransfer
 import com.hermesandroid.relay.ui.components.pet.expandObstaclesForPet
+import com.hermesandroid.relay.ui.components.pet.findExactOverlayRoute
 import com.hermesandroid.relay.ui.components.pet.findOverlayRoute
+import com.hermesandroid.relay.ui.components.pet.length
+import com.hermesandroid.relay.ui.components.pet.petBubbleEntryRoute
+import com.hermesandroid.relay.ui.components.pet.petBubbleExitRoute
+import com.hermesandroid.relay.ui.components.pet.petRouteFitsStepLimit
 import com.hermesandroid.relay.ui.components.pet.planPetBubbleExcursion
 import com.hermesandroid.relay.ui.components.pet.planPetBubbleExploration
 import com.hermesandroid.relay.ui.components.pet.planPetDebugRouteGraph
@@ -402,7 +406,7 @@ fun FloatingPetCompanion(
     var locomotion by remember(pet.id) { mutableStateOf(PetLocomotion.None) }
     var positioned by remember(pet.id) { mutableStateOf(false) }
     var activeRailKey by remember(pet.id) { mutableStateOf<String?>(null) }
-    var activeDebugRoute by remember(pet.id) { mutableStateOf<PetRoute?>(null) }
+    var activeDebugRoute by remember(pet.id) { mutableStateOf<PetDebugActiveRoute?>(null) }
     var scrollingRailKey by remember(pet.id) { mutableStateOf<String?>(null) }
     var scrollSupportLost by remember(pet.id) { mutableStateOf(false) }
     var scrollRecoveryPending by remember(pet.id) { mutableStateOf(false) }
@@ -530,11 +534,20 @@ fun FloatingPetCompanion(
     val messageTraversalRails = remember(messageWalkRails, messageTouchdownRails) {
         messageWalkRails + messageTouchdownRails
     }
+    val visibleMessagePerches = remember(safeAreaSnapshot.perches) {
+        safeAreaSnapshot.perches.filter { perch ->
+            perch.key.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX)
+        }
+    }
+    val autonomousRouteObstacles = remember(safeAreaSnapshot.obstacles, visibleMessagePerches) {
+        safeAreaSnapshot.obstacles.map { it.bounds } +
+            visibleMessagePerches.map(::petTopSupportedObstacle)
+    }
     val debugPossibleRoutes = remember(
         debugTerrainOverlay,
         composerRails,
         messageTraversalRails,
-        safeAreaSnapshot,
+        autonomousRouteObstacles,
         footprint,
         safeBounds,
         maximumDirectHopPx,
@@ -542,14 +555,10 @@ fun FloatingPetCompanion(
         if (!debugTerrainOverlay) {
             emptyList()
         } else {
-            val messagePerches = safeAreaSnapshot.perches.filter { perch ->
-                perch.key.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX)
-            }
             planPetDebugRouteGraph(
                 rails = composerRails + messageTraversalRails,
                 bounds = safeBounds,
-                uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds } +
-                    messagePerches.map(::petTopSupportedObstacle),
+                uiObstacles = autonomousRouteObstacles,
                 footprint = footprint,
                 maximumRouteLength = maximumDirectHopPx,
             )
@@ -697,15 +706,17 @@ fun FloatingPetCompanion(
 
     suspend fun <T> withActiveDebugRoute(
         route: PetRoute,
+        kind: PetDebugRouteKind = PetDebugRouteKind.Autonomous,
         block: suspend () -> T,
     ): T {
         if (!debugTerrainOverlay) return block()
         val previous = activeDebugRoute
-        activeDebugRoute = route
+        val active = PetDebugActiveRoute(route, kind)
+        activeDebugRoute = active
         return try {
             block()
         } finally {
-            if (activeDebugRoute == route) activeDebugRoute = previous
+            if (activeDebugRoute == active) activeDebugRoute = previous
         }
     }
 
@@ -724,11 +735,14 @@ fun FloatingPetCompanion(
         locomotion = PetLocomotion.None
     }
 
-    suspend fun animateBallisticVerticalTo(destinationY: Float) {
+    suspend fun animateBallisticVerticalTo(
+        destinationY: Float,
+        debugKind: PetDebugRouteKind = PetDebugRouteKind.Autonomous,
+    ) {
         val debugRoute = PetRoute(
             listOf(PetPoint(x.value, y.value), PetPoint(x.value, destinationY)),
         )
-        return withActiveDebugRoute(debugRoute) {
+        return withActiveDebugRoute(debugRoute, debugKind) {
         val startY = y.value
         val arcHeight = with(density) { PET_AMBIENT_HOP_HEIGHT_DP.dp.toPx() }
         val apexY = (minOf(startY, destinationY) - arcHeight).coerceAtLeast(safeBounds.top)
@@ -758,100 +772,11 @@ fun FloatingPetCompanion(
 
     }
 
-    suspend fun animateBallisticTransferTo(destination: PetPoint) {
-        val debugRoute = PetRoute(listOf(PetPoint(x.value, y.value), destination))
-        return withActiveDebugRoute(debugRoute) {
-        val startX = x.value
-        val startY = y.value
-        val midpointX = (startX + destination.x) / 2f
-        val arcHeight = with(density) { PET_AMBIENT_HOP_HEIGHT_DP.dp.toPx() }
-        val apexY = (minOf(startY, destination.y) - arcHeight).coerceAtLeast(safeBounds.top)
-        val directDistancePx = sqrt(
-            (destination.x - startX) * (destination.x - startX) +
-                (destination.y - startY) * (destination.y - startY),
-        )
-        val totalDuration = petAirborneDurationMs(
-            (directDistancePx + arcHeight * 2f) / density.density,
-        )
-        val ascentDuration = (totalDuration * 0.45f).roundToInt()
-        val descentDuration = totalDuration - ascentDuration
-
-        landingSquash.animateTo(0.55f, tween(durationMillis = 90))
-        landingSquash.animateTo(0f, tween(durationMillis = 70))
-        locomotion = PetLocomotion.Jump
-        coroutineScope {
-            launch { x.animateTo(midpointX, tween(durationMillis = ascentDuration)) }
-            launch { y.animateTo(apexY, tween(durationMillis = ascentDuration)) }
-            launch { airborneProgress.animateTo(1f, tween(durationMillis = ascentDuration)) }
-        }
-        locomotion = PetLocomotion.Fall
-        coroutineScope {
-            launch { x.animateTo(destination.x, tween(durationMillis = descentDuration)) }
-            launch { y.animateTo(destination.y, tween(durationMillis = descentDuration)) }
-            launch { airborneProgress.animateTo(0f, tween(durationMillis = descentDuration)) }
-        }
-        locomotion = PetLocomotion.None
-        animateLanding()
-        }
-    }
-
-    suspend fun animateClearGutterEntry(
-        gutter: PetPoint,
-        entry: PetPoint,
+    suspend fun animatePetRoute(
+        routePlan: PetRoute,
+        debugKind: PetDebugRouteKind = PetDebugRouteKind.Autonomous,
     ) {
-        val debugRoute = PetRoute(listOf(PetPoint(x.value, y.value), gutter, entry))
-        return withActiveDebugRoute(debugRoute) {
-        val ascentDuration = petAirborneDurationMs(abs(gutter.y - y.value) / density.density)
-        val edgeDuration = petAirborneDurationMs(abs(entry.x - gutter.x) / density.density)
-        landingSquash.animateTo(0.55f, tween(durationMillis = 90))
-        landingSquash.animateTo(0f, tween(durationMillis = 70))
-        locomotion = PetLocomotion.Jump
-        coroutineScope {
-            launch { y.animateTo(gutter.y, tween(durationMillis = ascentDuration)) }
-            launch { airborneProgress.animateTo(0.78f, tween(durationMillis = ascentDuration)) }
-        }
-        coroutineScope {
-            launch { x.animateTo(entry.x, tween(durationMillis = edgeDuration)) }
-            launch { airborneProgress.animateTo(1f, tween(durationMillis = edgeDuration)) }
-        }
-        locomotion = PetLocomotion.Fall
-        airborneProgress.animateTo(0f, tween(durationMillis = 110))
-        locomotion = PetLocomotion.None
-        animateLanding()
-        }
-    }
-
-    suspend fun animateClearGutterExit(
-        gutter: PetPoint,
-        composerApproach: PetPoint,
-    ) {
-        val debugRoute = PetRoute(
-            listOf(PetPoint(x.value, y.value), gutter, composerApproach),
-        )
-        return withActiveDebugRoute(debugRoute) {
-        val edgeDuration = petAirborneDurationMs(abs(gutter.x - x.value) / density.density)
-        val fallDuration = petAirborneDurationMs(
-            abs(composerApproach.y - gutter.y) / density.density,
-        )
-        landingSquash.animateTo(0.55f, tween(durationMillis = 90))
-        landingSquash.animateTo(0f, tween(durationMillis = 70))
-        locomotion = PetLocomotion.Jump
-        coroutineScope {
-            launch { x.animateTo(gutter.x, tween(durationMillis = edgeDuration)) }
-            launch { airborneProgress.animateTo(1f, tween(durationMillis = edgeDuration)) }
-        }
-        locomotion = PetLocomotion.Fall
-        coroutineScope {
-            launch { y.animateTo(composerApproach.y, tween(durationMillis = fallDuration)) }
-            launch { airborneProgress.animateTo(0f, tween(durationMillis = fallDuration)) }
-        }
-        locomotion = PetLocomotion.None
-        animateLanding()
-        }
-    }
-
-    suspend fun animatePetRoute(routePlan: PetRoute) {
-        return withActiveDebugRoute(routePlan) {
+        return withActiveDebugRoute(routePlan, debugKind) {
         val livePoint = PetPoint(x.value, y.value)
         if (routePlan.start.distanceSquaredTo(livePoint) > 1f) return@withActiveDebugRoute
         routePlan.points.drop(1).forEach { waypoint ->
@@ -859,7 +784,21 @@ fun FloatingPetCompanion(
             val movesHorizontally = abs(waypoint.x - x.value) > 1f
             val movesVertically = abs(waypoint.y - segmentStartY) > 1f
             if (movesVertically && !movesHorizontally) {
-                animateBallisticVerticalTo(waypoint.y)
+                val durationMillis = petAirborneDurationMs(
+                    abs(waypoint.y - segmentStartY) / density.density,
+                )
+                val descending = waypoint.y > segmentStartY
+                locomotion = if (descending) PetLocomotion.Fall else PetLocomotion.Jump
+                coroutineScope {
+                    launch { y.animateTo(waypoint.y, tween(durationMillis = durationMillis)) }
+                    launch {
+                        airborneProgress.animateTo(
+                            if (descending) 0f else 1f,
+                            tween(durationMillis = durationMillis),
+                        )
+                    }
+                }
+                if (descending) animateLanding()
             } else if (!movesVertically && movesHorizontally) {
                 animateHorizontalTo(waypoint.x)
             } else if (movesHorizontally) {
@@ -890,8 +829,11 @@ fun FloatingPetCompanion(
         }
     }
 
-    suspend fun animateAirborneRoute(routePlan: PetRoute): Boolean {
-        return withActiveDebugRoute(routePlan) {
+    suspend fun animateAirborneRoute(
+        routePlan: PetRoute,
+        debugKind: PetDebugRouteKind = PetDebugRouteKind.Autonomous,
+    ): Boolean {
+        return withActiveDebugRoute(routePlan, debugKind) {
         val livePoint = PetPoint(x.value, y.value)
         if (routePlan.start.distanceSquaredTo(livePoint) > 1f) {
             return@withActiveDebugRoute false
@@ -930,41 +872,26 @@ fun FloatingPetCompanion(
         }
     }
 
-    suspend fun animatePetRouteOrEscape(
+    suspend fun animateExactPetRoute(
         routePlan: PetRoute,
-        uiObstacles: List<PetObstacle>,
+        debugKind: PetDebugRouteKind = PetDebugRouteKind.Autonomous,
     ): Boolean {
         val livePoint = PetPoint(x.value, y.value)
-        if (routePlan.start.distanceSquaredTo(livePoint) > 1f) {
-            if (!petPositionNeedsEscape(livePoint, safeBounds, uiObstacles, footprint)) {
-                return false
-            }
-            // The router projected an already-invalid position to the nearest
-            // safe edge. Animate that correction as a visible hop rather than
-            // accepting a teleport or leaving roaming permanently stalled.
-            animateBallisticTransferTo(routePlan.start)
-        }
-        animatePetRoute(routePlan)
+        if (routePlan.start.distanceSquaredTo(livePoint) > 1f) return false
+        if (!petRouteFitsStepLimit(routePlan, maximumDirectHopPx)) return false
+        animatePetRoute(routePlan, debugKind)
         return true
     }
 
-    suspend fun animateScrollLanding(destination: PetPoint) {
-        if (destination.y < y.value - 1f) {
-            animateBallisticTransferTo(destination)
-            return
-        }
-        val debugRoute = PetRoute(listOf(PetPoint(x.value, y.value), destination))
-        return withActiveDebugRoute(debugRoute) {
-        locomotion = PetLocomotion.Fall
-        airborneProgress.snapTo(maxOf(airborneProgress.value, 0.45f))
-        coroutineScope {
-            launch { x.animateTo(destination.x, tween(durationMillis = 260)) }
-            launch { y.animateTo(destination.y, tween(durationMillis = 260)) }
-            launch { airborneProgress.animateTo(0f, tween(durationMillis = 260)) }
-        }
-        locomotion = PetLocomotion.None
-        animateLanding()
-        }
+    suspend fun animateScrollLanding(destination: PetPoint): Boolean {
+        val route = findExactOverlayRoute(
+            start = PetPoint(x.value, y.value),
+            requestedDestination = destination,
+            bounds = safeBounds,
+            uiObstacles = autonomousRouteObstacles,
+            footprint = footprint,
+        ) ?: return false
+        return animateExactPetRoute(route, PetDebugRouteKind.Recovery)
     }
 
     suspend fun performBubbleExcursion(bubblePerch: PetMeasuredPerch): PetRoamingRail? {
@@ -976,7 +903,7 @@ fun FloatingPetCompanion(
                     composerRail = composerRail,
                     footprint = footprint,
                     outer = safeBounds,
-                    uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
+                    uiObstacles = autonomousRouteObstacles,
                     useLeftGutter = if (
                         bubblePerch.key.startsWith(CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX)
                     ) {
@@ -993,31 +920,22 @@ fun FloatingPetCompanion(
             }
             ?: return null
         val (composerRail, excursion) = planned
-        val messagePerches = safeAreaSnapshot.perches.filter { perch ->
-            perch.key.startsWith(CHAT_PET_MESSAGE_PERCH_PREFIX)
-        }
         val targetRail = messageWalkRails
             .filter { it.perchKey == bubblePerch.key }
             .maxByOrNull { it.bounds.width }
-        val directVerticalDistance = abs(excursion.gutter.y - excursion.composerApproach.y)
-        val usesTerrainJourney = directVerticalDistance > maximumDirectHopPx
+        val directEntryRoute = petBubbleEntryRoute(excursion)
+        val directExitRoute = petBubbleExitRoute(excursion)
+        val usesTerrainJourney = directEntryRoute.length > maximumDirectHopPx
         if (usesTerrainJourney && targetRail == null) return null
-        val journeyObstacles = safeAreaSnapshot.obstacles.map { it.bounds } +
-            messagePerches.map(::petTopSupportedObstacle)
-        val routeObstacles = if (usesTerrainJourney) {
-            journeyObstacles
-        } else {
-            safeAreaSnapshot.obstacles.map { it.bounds } + bubblePerch.bounds
-        }
-        val routeToComposerApproach = findOverlayRoute(
+        val journeyObstacles = autonomousRouteObstacles
+        val routeToComposerApproach = findExactOverlayRoute(
             start = PetPoint(x.value, y.value),
             requestedDestination = excursion.composerApproach,
             bounds = safeBounds,
-            uiObstacles = routeObstacles,
+            uiObstacles = autonomousRouteObstacles,
             footprint = footprint,
         ) ?: return null
-        if (routeToComposerApproach.destination != excursion.composerApproach) return null
-        if (!animatePetRouteOrEscape(routeToComposerApproach, routeObstacles)) return null
+        if (!animateExactPetRoute(routeToComposerApproach)) return null
 
         if (usesTerrainJourney) {
             val ascent = planPetRailJourney(
@@ -1035,11 +953,7 @@ fun FloatingPetCompanion(
                 activeRailKey = step.rail.key
             }
         } else {
-            when (excursion.entryMode) {
-                PetBubbleEntryMode.ClearGutter ->
-                    animateClearGutterEntry(excursion.gutter, excursion.entry)
-                PetBubbleEntryMode.EdgeHop -> animateBallisticTransferTo(excursion.entry)
-            }
+            if (!animateAirborneRoute(directEntryRoute)) return null
             activeRailKey = targetRail?.key
         }
 
@@ -1121,11 +1035,7 @@ fun FloatingPetCompanion(
             }
         } else {
             animateHorizontalTo(excursion.entry.x)
-            when (excursion.entryMode) {
-                PetBubbleEntryMode.ClearGutter ->
-                    animateClearGutterExit(excursion.gutter, excursion.composerApproach)
-                PetBubbleEntryMode.EdgeHop -> animateBallisticTransferTo(excursion.composerApproach)
-            }
+            if (!animateAirborneRoute(directExitRoute)) return null
         }
         return composerRail
     }
@@ -1141,7 +1051,7 @@ fun FloatingPetCompanion(
                     composerRail = composerRail,
                     footprint = footprint,
                     outer = safeBounds,
-                    uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
+                    uiObstacles = autonomousRouteObstacles,
                     useLeftGutter = if (
                         bubblePerch.key.startsWith(CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX)
                     ) {
@@ -1158,20 +1068,17 @@ fun FloatingPetCompanion(
             }
             ?: return false
         val (_, excursion) = planned
-        val routeObstacles = safeAreaSnapshot.obstacles.map { it.bounds } + bubblePerch.bounds
-        val routeToApproach = findOverlayRoute(
+        val entryRoute = petBubbleEntryRoute(excursion)
+        if (entryRoute.length > maximumDirectHopPx) return false
+        val routeToApproach = findExactOverlayRoute(
             start = PetPoint(x.value, y.value),
             requestedDestination = excursion.composerApproach,
             bounds = safeBounds,
-            uiObstacles = routeObstacles,
+            uiObstacles = autonomousRouteObstacles,
             footprint = footprint,
         ) ?: return false
-        if (!animatePetRouteOrEscape(routeToApproach, routeObstacles)) return false
-        when (excursion.entryMode) {
-            PetBubbleEntryMode.ClearGutter ->
-                animateClearGutterEntry(excursion.gutter, excursion.entry)
-            PetBubbleEntryMode.EdgeHop -> animateBallisticTransferTo(excursion.entry)
-        }
+        if (!animateExactPetRoute(routeToApproach)) return false
+        if (!animateAirborneRoute(entryRoute)) return false
         animateHorizontalTo(
             x.value.coerceIn(habitat.rail.bounds.left, habitat.rail.bounds.right),
         )
@@ -1195,7 +1102,9 @@ fun FloatingPetCompanion(
         }
         val current = PetPoint(x.value, y.value)
         val supporting = activeRailKey?.let { key ->
-            scrollTrackingRails.firstOrNull { it.key == key }
+            scrollTrackingRails.firstOrNull { rail ->
+                rail.key == key && petRailSupportingPoint(listOf(rail), current) != null
+            }
         } ?: petRailSupportingPoint(scrollTrackingRails, current)
         if (scrollingRailKey == null) {
             scrollingRailKey = supporting?.key
@@ -1265,7 +1174,7 @@ fun FloatingPetCompanion(
                     !accessibleMotion.touchExploration &&
                     (scrollSupportLost || current.distanceSquaredTo(destination) > 4f)
                 ) {
-                    animateScrollLanding(destination)
+                    if (!animateScrollLanding(destination)) return@LaunchedEffect
                 } else {
                     x.snapTo(destination.x)
                     y.snapTo(destination.y)
@@ -1350,11 +1259,13 @@ fun FloatingPetCompanion(
             footprint = footprint,
         )
         if (route != null && route.start.distanceSquaredTo(PetPoint(x.value, y.value)) <= 1f) {
-            route.points.drop(1).forEach { waypoint ->
-                coroutineScope {
-                    launch { x.animateTo(waypoint.x, tween(durationMillis = 180)) }
-                    launch { y.animateTo(waypoint.y, tween(durationMillis = 180)) }
-                    launch { airborneProgress.animateTo(0f, tween(durationMillis = 180)) }
+            withActiveDebugRoute(route, PetDebugRouteKind.DirectManipulation) {
+                route.points.drop(1).forEach { waypoint ->
+                    coroutineScope {
+                        launch { x.animateTo(waypoint.x, tween(durationMillis = 180)) }
+                        launch { y.animateTo(waypoint.y, tween(durationMillis = 180)) }
+                        launch { airborneProgress.animateTo(0f, tween(durationMillis = 180)) }
+                    }
                 }
             }
         } else {
@@ -1468,23 +1379,14 @@ fun FloatingPetCompanion(
             plannedRoute: PetRoute? = null,
         ): Boolean {
             val destinationX = requestedX.coerceIn(rail.bounds.left, rail.bounds.right)
-            val routeObstacles = safeAreaSnapshot.obstacles.map { it.bounds } +
-                if (
-                    rail.key == settledHabitat?.rail?.key &&
-                    settledHabitat.mode != PetSettledChatMode.BubbleTop
-                ) {
-                    listOfNotNull(settledMessagePerch?.bounds)
-                } else {
-                    emptyList()
-                }
-            val routePlan = plannedRoute ?: findOverlayRoute(
+            val routePlan = plannedRoute ?: findExactOverlayRoute(
                 start = PetPoint(x.value, y.value),
                 requestedDestination = PetPoint(destinationX, rail.bounds.top),
                 bounds = safeBounds,
-                uiObstacles = routeObstacles,
+                uiObstacles = autonomousRouteObstacles,
                 footprint = footprint,
             ) ?: return false
-            if (!animatePetRouteOrEscape(routePlan, routeObstacles)) return false
+            if (!animateExactPetRoute(routePlan)) return false
             activeRailKey = rail.key
             return true
         }
@@ -1509,7 +1411,7 @@ fun FloatingPetCompanion(
                     it.bounds.clamp(PetPoint(x.value, y.value)).distanceSquaredTo(PetPoint(x.value, y.value))
                 }
                 ?: return@LaunchedEffect
-            activeRailKey = supportedRail?.key ?: activeRailKey
+            activeRailKey = supportedRail?.key
             if (supportedRail?.key != rail.key) {
                 val moved = if (settledHabitat?.rail?.key == rail.key) {
                     moveToSettledHabitat()
@@ -1561,6 +1463,7 @@ fun FloatingPetCompanion(
                         rail?.clamp(PetPoint(x.value, y.value))
                             ?.distanceSquaredTo(PetPoint(x.value, y.value)) ?: Float.MAX_VALUE
                     }
+                    val railKeyBeforeVisit = activeRailKey
                     val returnRail = bubble?.let { performBubbleExcursion(it) }
                     if (returnRail != null) {
                         rail = if (settledHabitat != null && moveToSettledHabitat()) {
@@ -1572,6 +1475,7 @@ fun FloatingPetCompanion(
                         cyclesUntilBubbleVisit = PET_PATROL_CYCLES_BETWEEN_BUBBLE_VISITS
                         continue
                     }
+                    if (activeRailKey != railKeyBeforeVisit) return@LaunchedEffect
                 }
                 cyclesUntilBubbleVisit--
 
@@ -1586,7 +1490,7 @@ fun FloatingPetCompanion(
                     // never jump onto one from an arbitrary point.
                     rails = patrolRails,
                     bounds = safeBounds,
-                    uiObstacles = safeAreaSnapshot.obstacles.map { it.bounds },
+                    uiObstacles = autonomousRouteObstacles,
                     footprint = footprint,
                     maximumRouteLength = maximumDirectHopPx,
                 )

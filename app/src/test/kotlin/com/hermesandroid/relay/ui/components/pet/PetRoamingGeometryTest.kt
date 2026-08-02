@@ -194,6 +194,54 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `offscreen perches do not create detached rails at viewport edges`() {
+        val footprint = PetFootprint(width = 40f, height = 40f)
+        val outer = PetSafeBounds(20f, 20f, 280f, 280f)
+        val offscreen = PetMeasuredPerch(
+            key = "offscreen-message",
+            bounds = PetObstacle(40f, 12f, 240f, 72f),
+        )
+
+        assertNull(petPerchRail(offscreen, footprint, outer))
+        assertNull(
+            petPerchTouchdownRail(
+                perch = offscreen,
+                footprint = footprint,
+                outer = outer,
+                minimumSurfaceWidth = 20f,
+            ),
+        )
+        assertNull(
+            petPerchEdgeRail(
+                perch = offscreen,
+                footprint = footprint,
+                outer = outer,
+                useLeftEdge = true,
+            ),
+        )
+        assertNull(
+            petPerchRail(
+                perch = PetMeasuredPerch(
+                    key = "offscreen-left",
+                    bounds = PetObstacle(-180f, 120f, -40f, 180f),
+                ),
+                footprint = footprint,
+                outer = outer,
+            ),
+        )
+        assertNull(
+            petPerchRail(
+                perch = PetMeasuredPerch(
+                    key = "offscreen-right",
+                    bounds = PetObstacle(340f, 120f, 480f, 180f),
+                ),
+                footprint = footprint,
+                outer = outer,
+            ),
+        )
+    }
+
+    @Test
     fun `message landing uses one outer edge with visual clearance`() {
         val footprint = PetFootprint(width = 40f, height = 40f)
         val landing = requireNotNull(
@@ -265,6 +313,14 @@ class PetRoamingGeometryTest {
         assertEquals(bubble.bounds.right, plan.entry.x + footprint.horizontalRadius, 0f)
         assertTrue(plan.gutter.x > bubble.bounds.right + footprint.horizontalRadius)
         assertTrue(plan.entry.y + footprint.height / 2f < bubble.bounds.top)
+        assertEquals(
+            listOf(plan.composerApproach, plan.gutter, plan.entry),
+            petBubbleEntryRoute(plan).points,
+        )
+        assertEquals(
+            petBubbleEntryRoute(plan).points.asReversed(),
+            petBubbleExitRoute(plan).points,
+        )
     }
 
     @Test
@@ -752,6 +808,17 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `step limit caps total detour length even when endpoints share a height`() {
+        val horizontal = PetRoute(listOf(PetPoint(0f, 100f), PetPoint(400f, 100f)))
+        val verticalDetour = PetRoute(
+            listOf(PetPoint(0f, 100f), PetPoint(0f, 0f), PetPoint(400f, 100f)),
+        )
+
+        assertTrue(petRouteFitsStepLimit(horizontal, maximumStepLength = 210f))
+        assertFalse(petRouteFitsStepLimit(verticalDetour, maximumStepLength = 210f))
+    }
+
+    @Test
     fun `rail journey returns through the same bounded levels`() {
         val outer = PetSafeBounds(20f, 20f, 380f, 760f)
         val footprint = PetFootprint(width = 56f, height = 56f)
@@ -952,6 +1019,34 @@ class PetRoamingGeometryTest {
         assertTrue(
             petTopSupportedObstacle(olderPerch).contains(
                 PetPoint(200f, olderPerch.bounds.top + 1f),
+            ),
+        )
+    }
+
+    @Test
+    fun `exact autonomous route rejects projected live point`() {
+        val safe = PetSafeBounds(20f, 20f, 280f, 280f)
+        val footprint = PetFootprint(width = 20f, height = 20f)
+        val bubble = PetObstacle(100f, 100f, 200f, 200f)
+        val blockedStart = PetPoint(150f, 150f)
+        val destination = PetPoint(250f, 250f)
+
+        val recoveryRoute = findOverlayRoute(
+            start = blockedStart,
+            requestedDestination = destination,
+            bounds = safe,
+            uiObstacles = listOf(bubble),
+            footprint = footprint,
+        )
+        requireNotNull(recoveryRoute)
+        assertTrue(recoveryRoute.start.distanceSquaredTo(blockedStart) > 1f)
+        assertNull(
+            findExactOverlayRoute(
+                start = blockedStart,
+                requestedDestination = destination,
+                bounds = safe,
+                uiObstacles = listOf(bubble),
+                footprint = footprint,
             ),
         )
     }

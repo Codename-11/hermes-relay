@@ -29,7 +29,7 @@ class PetTerrainDebugOverlayTest {
             rails = listOf(firstRail, activeRail),
             activeRailKey = activeRail.key,
             possibleRoutes = listOf(route),
-            activeRoute = route,
+            activeRoute = PetDebugActiveRoute(route, PetDebugRouteKind.Autonomous),
         )
 
         assertEquals(activeRail, model.activeRail)
@@ -58,7 +58,7 @@ class PetTerrainDebugOverlayTest {
             listOf(
                 "route chat",
                 "routes possible 0  active none",
-                "blue dashed=possible  orange=active  violet=hop",
+                "blue dashed=possible  orange=auto  pink=recovery  teal=drag",
                 "rail composer:0  move WalkRight",
                 "gate patrolling",
                 "perches 1  rails 1  hops 0  obstacles 1",
@@ -75,7 +75,10 @@ class PetTerrainDebugOverlayTest {
         assertEquals(emptyList<PetPoint>(), model.activePoints)
         assertEquals("route none", petTerrainLegendLines(model).first())
         assertEquals("routes possible 0  active none", petTerrainLegendLines(model)[1])
-        assertEquals("blue dashed=possible  orange=active  violet=hop", petTerrainLegendLines(model)[2])
+        assertEquals(
+            "blue dashed=possible  orange=auto  pink=recovery  teal=drag",
+            petTerrainLegendLines(model)[2],
+        )
         assertEquals("rail missing  move None", petTerrainLegendLines(model)[3])
     }
 
@@ -117,7 +120,7 @@ class PetTerrainDebugOverlayTest {
         activeRailKey: String? = null,
         expandedObstacles: List<PetObstacle> = emptyList(),
         possibleRoutes: List<PetRoute> = emptyList(),
-        activeRoute: PetRoute? = null,
+        activeRoute: PetDebugActiveRoute? = null,
         locomotionLabel: String = "None",
         gateLabel: String = "paused",
     ) = PetTerrainDebugModel(

@@ -2466,12 +2466,19 @@ top of a response bubble without ever covering its text or jumping through it.
   visible settled message bubbles, Terminal's extra-keys toolbar, and the
   persistent status strip on Settings/About. No accessibility-tree scan or
   arbitrary-Composable discovery is permitted.
+- Registration does not make a surface rectangle walkable. Bubble interiors
+  remain protected obstacles; only an explicitly derived edge rail or touchdown
+  with exact collision-validated endpoints is autonomous terrain. A validation
+  failure waits locally instead of projecting or snapping to invented geometry.
 - Direct interaction has priority over agent activity, followed by a pending
   response visit, autonomous roaming, and idle reactions. Activity clips remain
   truthful because locomotion is eligible only while Hermes is idle.
 - Drag/drop changes placement without changing the roaming preference. The held
   and falling states suspend autonomous movement until the placement and landing
   animation settle, then an enabled pet resumes from the valid landing surface.
+- Autonomous, recovery, and direct drag/drop routes are distinct motion/debug
+  kinds. Recovery and direct manipulation cannot be reused as autonomous route
+  eligibility.
 - A response visit is a deterministic bounded terrain journey. Nearby responses
   use the direct composer/gutter/bubble excursion. Farther visible responses
   require a complete chain of settled message-top rails with no hop over 210 dp;

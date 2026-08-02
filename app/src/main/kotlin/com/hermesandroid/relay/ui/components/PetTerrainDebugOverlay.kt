@@ -23,6 +23,17 @@ import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
 import com.hermesandroid.relay.ui.components.pet.PetRoute
 import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
 
+internal enum class PetDebugRouteKind(val label: String) {
+    Autonomous("autonomous"),
+    Recovery("recovery"),
+    DirectManipulation("drag/drop"),
+}
+
+internal data class PetDebugActiveRoute(
+    val route: PetRoute,
+    val kind: PetDebugRouteKind,
+)
+
 /**
  * Immutable input for the developer-only pet terrain overlay. All coordinates
  * use the root overlay coordinate space already consumed by the pet router.
@@ -39,7 +50,7 @@ internal data class PetTerrainDebugModel(
     val footprint: PetFootprint,
     val petCenter: PetPoint,
     val possibleRoutes: List<PetRoute> = emptyList(),
-    val activeRoute: PetRoute? = null,
+    val activeRoute: PetDebugActiveRoute? = null,
     val locomotionLabel: String,
     val gateLabel: String,
 ) {
@@ -47,13 +58,13 @@ internal data class PetTerrainDebugModel(
         get() = (rails + touchdownRails).firstOrNull { it.key == activeRailKey }
 
     val activePoints: List<PetPoint>
-        get() = activeRoute?.points.orEmpty()
+        get() = activeRoute?.route?.points.orEmpty()
 }
 
 internal fun petTerrainLegendLines(model: PetTerrainDebugModel): List<String> = listOf(
     "route ${model.routeLabel ?: "none"}",
-    "routes possible ${model.possibleRoutes.size}  active ${if (model.activeRoute == null) "none" else "yes"}",
-    "blue dashed=possible  orange=active  violet=hop",
+    "routes possible ${model.possibleRoutes.size}  active ${model.activeRoute?.kind?.label ?: "none"}",
+    "blue dashed=possible  orange=auto  pink=recovery  teal=drag",
     "rail ${model.activeRailKey ?: "none"}  move ${model.locomotionLabel}",
     "gate ${model.gateLabel}",
     "perches ${model.perches.size}  rails ${model.rails.size}  hops ${model.touchdownRails.size}  " +
@@ -212,9 +223,15 @@ internal fun PetTerrainDebugOverlay(
         }
 
         val activePoints = model.activePoints
+        val activeRouteColor = when (model.activeRoute?.kind) {
+            PetDebugRouteKind.Autonomous -> TerrainActiveRouteOrange
+            PetDebugRouteKind.Recovery -> TerrainRecoveryRoutePink
+            PetDebugRouteKind.DirectManipulation -> TerrainDirectRouteTeal
+            null -> TerrainActiveRouteOrange
+        }
         activePoints.zipWithNext().forEach { (start, end) ->
             drawLine(
-                color = TerrainActiveRouteOrange,
+                color = activeRouteColor,
                 start = Offset(start.x, start.y),
                 end = Offset(end.x, end.y),
                 strokeWidth = activeRailStroke,
@@ -222,7 +239,7 @@ internal fun PetTerrainDebugOverlay(
         }
         activePoints.forEach { point ->
             drawCircle(
-                color = TerrainActiveRouteOrange,
+                color = activeRouteColor,
                 radius = 4f * density,
                 center = Offset(point.x, point.y),
             )
@@ -397,6 +414,8 @@ private val TerrainObstacleRedOutline = Color(0xCCEF4444)
 private val TerrainTouchdownViolet = Color(0xFFA855F7)
 private val TerrainCandidateRouteBlue = Color(0xCC60A5FA)
 private val TerrainActiveRouteOrange = Color(0xFFFF6D00)
+private val TerrainRecoveryRoutePink = Color(0xFFF472B6)
+private val TerrainDirectRouteTeal = Color(0xFF2DD4BF)
 private val TerrainFootprintWhite = Color(0xFFF8FAFC)
 private val TerrainLegendBackground = Color(0xD914172A)
 private val TerrainLabelBackground = Color(0xB814172A)

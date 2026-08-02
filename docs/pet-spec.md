@@ -58,6 +58,11 @@ The companion has a durable home and an optional autonomous roaming mode:
   Additional Settings terrain can publish through the same live registry, but
   every card/header remains an explicit opt-in with current scroll/modal state;
   arbitrary Compose or accessibility elements never become terrain.
+- A registered bubble is not wholly walkable terrain. Its interior remains a
+  protected obstacle; autonomous travel may use only an explicitly derived top
+  or outer-edge rail, or a narrow touchdown point, with exact collision-validated
+  endpoints. If no bounded route validates, the pet waits locally instead of
+  projecting onto a candidate or inventing a viewport-edge ledge.
 - At the settled Chat bottom, the home hierarchy is a full-footprint side pocket
   beside the latest bubble, its raised top edge, then the outer composer corner.
   A wide pocket permits pacing; a narrow valid pocket becomes an idle point.
@@ -114,9 +119,11 @@ The companion has a durable home and an optional autonomous roaming mode:
   narrow-bubble touchdown points, collision bounds, the active rail, footprint,
   dashed collision-checked candidate routes, the solid route active only during
   traversal, and the current behavior gate without changing planning. Candidate
-  routes are blue, the active route is
-  orange, and touchdown-only points are violet so eligibility cannot be mistaken
-  for selection. Locking Developer Options clears it.
+  routes are blue, autonomous active routes are orange, recovery paths are pink,
+  direct drag/drop paths are teal, and touchdown-only points are violet so
+  eligibility cannot be mistaken for selection. Recovery and direct manipulation
+  never make their path eligible for ambient travel. Locking Developer Options
+  clears it.
 
 The behavior director has one deterministic priority order: direct interaction,
 Hermes activity, a pending response visit, autonomous roaming, then idle. This
@@ -593,8 +600,9 @@ below). An incidental message rail is never selected as the recovery landing;
 the latest text-safe Chat habitat remains eligible. The pet does not scroll
 off-screen with content, and no unregistered Settings card becomes terrain
 automatically. If changing layout leaves the pet already intersecting a bubble,
-the collision router's projected safe start becomes a visible escape hop; a
-valid live position still cannot be silently projected or teleported.
+autonomous movement waits for a later valid terrain snapshot rather than drawing
+or traversing a projected diagonal through content. Recovery uses its separately
+labeled exact route only when one exists.
 
 ## On-device visual review checklist
 
@@ -611,6 +619,9 @@ fallback checks with a pack missing one or more optional rows:
   sparse new chat with no complete chain, no screen-height visit starts.
 - [ ] A narrow bubble or blocked gutter is skipped; cards, attachments, tool
   rows, and phone/voice action bubbles are never visited.
+- [ ] Bubble interiors remain protected. Autonomous movement uses only the
+  painted exact edge/touchdown routes and waits in place when every candidate is
+  blocked; recovery and drag/drop paths are labeled separately.
 - [ ] Scrolling Chat, Settings, and About keeps the pet attached to valid
   measured or synthetic habitat, with no teleport, edge snap, or scroll-only
   dimming; motion replans after scrolling stops. Settings/About dialogs suspend

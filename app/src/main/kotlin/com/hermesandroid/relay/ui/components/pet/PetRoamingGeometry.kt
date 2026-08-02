@@ -284,7 +284,7 @@ data class PetBubbleExplorationPlan(
 
 /**
  * One collision-checked chat response excursion. A roomy response uses
- * [gutter]; a phone-width response uses a ballistic [PetBubbleEntryMode.EdgeHop]
+ * [gutter]; a phone-width response uses a direct [PetBubbleEntryMode.EdgeHop]
  * between the composer edge and raised [entry]. [entry] and [opposite] keep
  * the complete pet footprint above the bubble while it walks across.
  */
@@ -339,11 +339,11 @@ fun petPerchRail(
     require(verticalClearance >= 0f && verticalClearance.isFinite()) {
         "Perch clearance must be finite and non-negative."
     }
-    val left = (perch.bounds.left + footprint.horizontalRadius).coerceIn(outer.left, outer.right)
-    val right = (perch.bounds.right - footprint.horizontalRadius).coerceIn(outer.left, outer.right)
+    val left = maxOf(perch.bounds.left + footprint.horizontalRadius, outer.left)
+    val right = minOf(perch.bounds.right - footprint.horizontalRadius, outer.right)
     if (right < left) return null
-    val centerY = (perch.bounds.top - footprint.height / 2f - verticalClearance)
-        .coerceIn(outer.top, outer.bottom)
+    val centerY = perch.bounds.top - footprint.height / 2f - verticalClearance
+    if (centerY !in outer.top..outer.bottom) return null
     return PetSafeBounds(left, centerY, right, centerY)
 }
 
@@ -371,8 +371,8 @@ fun petPerchTouchdownRail(
     if (visibleRight - visibleLeft < minimumSurfaceWidth) return null
 
     val centerX = ((visibleLeft + visibleRight) / 2f).coerceIn(outer.left, outer.right)
-    val centerY = (perch.bounds.top - footprint.verticalRadius - verticalClearance)
-        .coerceIn(outer.top, outer.bottom)
+    val centerY = perch.bounds.top - footprint.verticalRadius - verticalClearance
+    if (centerY !in outer.top..outer.bottom) return null
     return PetSafeBounds(centerX, centerY, centerX, centerY)
 }
 
@@ -391,8 +391,8 @@ fun petPerchEdgeRail(
     require(verticalClearance >= 0f && verticalClearance.isFinite()) {
         "Perch clearance must be finite and non-negative."
     }
-    val centerY = (perch.bounds.top - footprint.verticalRadius - verticalClearance)
-        .coerceIn(outer.top, outer.bottom)
+    val centerY = perch.bounds.top - footprint.verticalRadius - verticalClearance
+    if (centerY !in outer.top..outer.bottom) return null
     val sides = if (useLeftEdge) listOf(true, false) else listOf(false, true)
     val edgeX = sides.firstNotNullOfOrNull { leftSide ->
         val requested = if (leftSide) {
@@ -688,6 +688,23 @@ data class PetRoute(val points: List<PetPoint>) {
     val destination: PetPoint get() = points.last()
 }
 
+/** Exact collision-checked polyline used to enter a bubble-top rail. */
+fun petBubbleEntryRoute(excursion: PetBubbleExcursion): PetRoute = PetRoute(
+    when (excursion.entryMode) {
+        PetBubbleEntryMode.ClearGutter -> listOf(
+            excursion.composerApproach,
+            excursion.gutter,
+            excursion.entry,
+        )
+        PetBubbleEntryMode.EdgeHop -> listOf(excursion.composerApproach, excursion.entry)
+    },
+)
+
+/** The same validated bubble edge path in reverse. */
+fun petBubbleExitRoute(excursion: PetBubbleExcursion): PetRoute = PetRoute(
+    petBubbleEntryRoute(excursion).points.asReversed(),
+)
+
 /**
  * Build a monotonic, collision-checked journey between vertical terrain levels.
  * A transfer longer than [maximumStepLength] is never accepted; intermediate
@@ -733,7 +750,7 @@ fun planPetRailJourney(
                 x = currentPoint.x.coerceIn(candidate.bounds.left, candidate.bounds.right),
                 y = candidateY,
             )
-            val route = findOverlayRoute(
+            val route = findExactOverlayRoute(
                 start = currentPoint,
                 requestedDestination = destination,
                 bounds = bounds,
@@ -887,7 +904,7 @@ fun planPetDebugRouteGraph(
                 }
                 val start = PetPoint(firstX, first.bounds.top)
                 val destination = PetPoint(secondX, second.bounds.top)
-                val route = findOverlayRoute(
+                val route = findExactOverlayRoute(
                     start = start,
                     requestedDestination = destination,
                     bounds = bounds,
@@ -919,7 +936,7 @@ fun findAbovePerchRoute(
 ): PetRoute? {
     val perchTop = minOf(start.y, requestedDestination.y)
     if (perchTop < bounds.top) return null
-    return findOverlayRoute(
+    return findExactOverlayRoute(
         start = start,
         requestedDestination = requestedDestination,
         bounds = PetSafeBounds(bounds.left, bounds.top, bounds.right, perchTop),
@@ -963,7 +980,7 @@ fun choosePetRailTransfer(
         val route = if (samePerch) {
             findAbovePerchRoute(current, destination, bounds, uiObstacles, footprint)
         } else {
-            findOverlayRoute(current, destination, bounds, uiObstacles, footprint)
+            findExactOverlayRoute(current, destination, bounds, uiObstacles, footprint)
         } ?: return@mapNotNull null
         if (route.length > maximumRouteLength + PET_ROUTE_EPSILON) return@mapNotNull null
         PetRailTransfer(candidate, destinationX, samePerch, route)
@@ -1135,6 +1152,32 @@ fun findOverlayRoute(
 }
 
 /**
+ * Collision-safe route for autonomous motion. Unlike [findOverlayRoute], this
+ * rejects endpoint projection: a blocked live point or requested ledge means
+ * the pet waits for a later terrain snapshot instead of moving to invented
+ * geometry.
+ */
+fun findExactOverlayRoute(
+    start: PetPoint,
+    requestedDestination: PetPoint,
+    bounds: PetSafeBounds,
+    uiObstacles: Iterable<PetObstacle>,
+    footprint: PetFootprint,
+): PetRoute? {
+    val route = findOverlayRoute(
+        start = start,
+        requestedDestination = requestedDestination,
+        bounds = bounds,
+        uiObstacles = uiObstacles,
+        footprint = footprint,
+    ) ?: return null
+    val toleranceSquared = PET_ROUTE_EPSILON * PET_ROUTE_EPSILON
+    if (route.start.distanceSquaredTo(start) > toleranceSquared) return null
+    if (route.destination.distanceSquaredTo(requestedDestination) > toleranceSquared) return null
+    return route
+}
+
+/**
  * Find a reachable place for the pet to visit beside a measured message
  * bubble without turning that bubble into walkable terrain. Above-corner
  * anchors are preferred, followed by side anchors; within each tier the
@@ -1169,7 +1212,7 @@ fun findBubbleVisitRoute(
         .filter { (_, candidate) -> bounds.contains(candidate) }
         .filter { (_, candidate) -> !expandedTarget.contains(candidate) }
         .mapNotNull { (preference, candidate) ->
-            val route = findOverlayRoute(
+            val route = findExactOverlayRoute(
                 start = current,
                 requestedDestination = candidate,
                 bounds = bounds,
@@ -1199,6 +1242,17 @@ val PetRoute.length: Float
         sqrt(start.distanceSquaredTo(end)).toDouble()
     }.toFloat()
 
+/** Long horizontal walks are allowed; every route with vertical travel is step-capped. */
+fun petRouteFitsStepLimit(route: PetRoute, maximumStepLength: Float): Boolean {
+    require(maximumStepLength > 0f && maximumStepLength.isFinite()) {
+        "Maximum route step length must be finite and positive."
+    }
+    val containsVerticalSegment = route.points.zipWithNext().any { (start, end) ->
+        abs(end.y - start.y) > PET_ROUTE_EPSILON
+    }
+    return !containsVerticalSegment || route.length <= maximumStepLength + PET_ROUTE_EPSILON
+}
+
 /** Deterministically choose among destinations that have a real safe route. */
 fun chooseDeterministicOverlayRoute(
     current: PetPoint,
@@ -1210,7 +1264,7 @@ fun chooseDeterministicOverlayRoute(
 ): PetRoute? {
     val routes = candidates.asSequence()
         .distinct()
-        .mapNotNull { findOverlayRoute(current, it, bounds, uiObstacles, footprint) }
+        .mapNotNull { findExactOverlayRoute(current, it, bounds, uiObstacles, footprint) }
         .filter { it.destination.distanceSquaredTo(it.start) > 0.0001f }
         .sortedWith(compareBy<PetRoute> { it.destination.x }.thenBy { it.destination.y })
         .toList()
