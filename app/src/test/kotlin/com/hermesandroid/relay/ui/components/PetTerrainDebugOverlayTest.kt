@@ -28,11 +28,12 @@ class PetTerrainDebugOverlayTest {
         val model = model(
             rails = listOf(firstRail, activeRail),
             activeRailKey = activeRail.key,
-            latestPlannedRoute = route,
+            possibleRoutes = listOf(route),
+            activeRoute = route,
         )
 
         assertEquals(activeRail, model.activeRail)
-        assertEquals(route.points, model.plannedPoints)
+        assertEquals(route.points, model.activePoints)
     }
 
     @Test
@@ -56,6 +57,8 @@ class PetTerrainDebugOverlayTest {
         assertEquals(
             listOf(
                 "route chat",
+                "routes possible 0  active none",
+                "blue dashed=possible  orange=active  violet=hop",
                 "rail composer:0  move WalkRight",
                 "gate patrolling",
                 "perches 1  rails 1  hops 0  obstacles 1",
@@ -69,9 +72,11 @@ class PetTerrainDebugOverlayTest {
         val model = model(routeLabel = null, activeRailKey = "missing")
 
         assertNull(model.activeRail)
-        assertEquals(emptyList<PetPoint>(), model.plannedPoints)
+        assertEquals(emptyList<PetPoint>(), model.activePoints)
         assertEquals("route none", petTerrainLegendLines(model).first())
-        assertEquals("rail missing  move None", petTerrainLegendLines(model)[1])
+        assertEquals("routes possible 0  active none", petTerrainLegendLines(model)[1])
+        assertEquals("blue dashed=possible  orange=active  violet=hop", petTerrainLegendLines(model)[2])
+        assertEquals("rail missing  move None", petTerrainLegendLines(model)[3])
     }
 
     @Test
@@ -111,7 +116,8 @@ class PetTerrainDebugOverlayTest {
         touchdownRails: List<PetRoamingRail> = emptyList(),
         activeRailKey: String? = null,
         expandedObstacles: List<PetObstacle> = emptyList(),
-        latestPlannedRoute: PetRoute? = null,
+        possibleRoutes: List<PetRoute> = emptyList(),
+        activeRoute: PetRoute? = null,
         locomotionLabel: String = "None",
         gateLabel: String = "paused",
     ) = PetTerrainDebugModel(
@@ -124,7 +130,8 @@ class PetTerrainDebugOverlayTest {
         expandedObstacles = expandedObstacles,
         footprint = PetFootprint(width = 56f, height = 56f, clearance = 4f),
         petCenter = PetPoint(140f, 180f),
-        latestPlannedRoute = latestPlannedRoute,
+        possibleRoutes = possibleRoutes,
+        activeRoute = activeRoute,
         locomotionLabel = locomotionLabel,
         gateLabel = gateLabel,
     )

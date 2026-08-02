@@ -187,9 +187,11 @@ Temperament never bypasses scrolling, dialogs, active Hermes work, disabled
 animations, reduced motion, or TalkBack touch exploration.
 
 Debug builds also offer **Developer Options → Show pet terrain overlay**. It
-draws measured perches, usable rails, narrow-bubble touchdown points, collision regions, the active rail, the
-latest planned route, and the current movement gate without changing pet
-behavior. The overlay is off by default and does not intercept touches.
+draws measured perches, usable rails, narrow-bubble touchdown points, collision
+regions, the active rail, dashed possible routes, the solid route currently
+being traversed, and the current movement gate without changing pet
+behavior. Blue dashed lines are possible transfers, orange is the active route,
+and violet points are touchdown-only. The overlay is off by default and does not intercept touches.
 
 Agent state and locomotion are separate. `running`/`working` means Hermes is
 performing work in place; `walking-left`/`walking-right` or

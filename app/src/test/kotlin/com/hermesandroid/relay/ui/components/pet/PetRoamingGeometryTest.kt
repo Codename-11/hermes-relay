@@ -709,6 +709,49 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `debug route graph distinguishes possible bounded transfers from selection`() {
+        val footprint = PetFootprint(width = 80f, height = 80f)
+        val outer = PetSafeBounds(40f, 40f, 360f, 760f)
+        val assistant = PetRoamingRail(
+            key = "assistant",
+            perchKey = "assistant",
+            bounds = PetSafeBounds(60f, 300f, 260f, 300f),
+        )
+        val userTouchdown = PetRoamingRail(
+            key = "user:touchdown",
+            perchKey = "user",
+            bounds = PetSafeBounds(300f, 500f, 300f, 500f),
+        )
+        val composer = PetRoamingRail(
+            key = "composer",
+            perchKey = "composer",
+            bounds = PetSafeBounds(40f, 700f, 360f, 700f),
+        )
+
+        val graph = planPetDebugRouteGraph(
+            rails = listOf(composer, userTouchdown, assistant),
+            bounds = outer,
+            uiObstacles = emptyList(),
+            footprint = footprint,
+            maximumRouteLength = 250f,
+        )
+
+        assertEquals(2, graph.size)
+        assertEquals(
+            graph,
+            planPetDebugRouteGraph(
+                rails = listOf(userTouchdown, assistant, composer),
+                bounds = outer,
+                uiObstacles = emptyList(),
+                footprint = footprint,
+                maximumRouteLength = 250f,
+            ),
+        )
+        assertTrue(graph.any { route -> route.destination == PetPoint(300f, 500f) })
+        assertTrue(graph.any { route -> route.destination == PetPoint(300f, 700f) })
+    }
+
+    @Test
     fun `rail journey returns through the same bounded levels`() {
         val outer = PetSafeBounds(20f, 20f, 380f, 760f)
         val footprint = PetFootprint(width = 56f, height = 56f)

@@ -112,8 +112,11 @@ The companion has a durable home and an optional autonomous roaming mode:
 - Debug builds provide **Developer Options → Show pet terrain overlay**. The
   default-off, pointer-transparent layer paints measured perches, usable rails,
   narrow-bubble touchdown points, collision bounds, the active rail, footprint,
-  latest route, and current
-  behavior gate without changing planning. Locking Developer Options clears it.
+  dashed collision-checked candidate routes, the solid route active only during
+  traversal, and the current behavior gate without changing planning. Candidate
+  routes are blue, the active route is
+  orange, and touchdown-only points are violet so eligibility cannot be mistaken
+  for selection. Locking Developer Options clears it.
 
 The behavior director has one deterministic priority order: direct interaction,
 Hermes activity, a pending response visit, autonomous roaming, then idle. This

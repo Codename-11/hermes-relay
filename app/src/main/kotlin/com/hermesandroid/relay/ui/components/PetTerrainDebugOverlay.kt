@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
@@ -37,19 +38,22 @@ internal data class PetTerrainDebugModel(
     val expandedObstacles: List<PetObstacle>,
     val footprint: PetFootprint,
     val petCenter: PetPoint,
-    val latestPlannedRoute: PetRoute?,
+    val possibleRoutes: List<PetRoute> = emptyList(),
+    val activeRoute: PetRoute? = null,
     val locomotionLabel: String,
     val gateLabel: String,
 ) {
     val activeRail: PetRoamingRail?
         get() = (rails + touchdownRails).firstOrNull { it.key == activeRailKey }
 
-    val plannedPoints: List<PetPoint>
-        get() = latestPlannedRoute?.points.orEmpty()
+    val activePoints: List<PetPoint>
+        get() = activeRoute?.points.orEmpty()
 }
 
 internal fun petTerrainLegendLines(model: PetTerrainDebugModel): List<String> = listOf(
     "route ${model.routeLabel ?: "none"}",
+    "routes possible ${model.possibleRoutes.size}  active ${if (model.activeRoute == null) "none" else "yes"}",
+    "blue dashed=possible  orange=active  violet=hop",
     "rail ${model.activeRailKey ?: "none"}  move ${model.locomotionLabel}",
     "gate ${model.gateLabel}",
     "perches ${model.perches.size}  rails ${model.rails.size}  hops ${model.touchdownRails.size}  " +
@@ -174,6 +178,10 @@ internal fun PetTerrainDebugOverlay(
         val thinStroke = 1.25f * density
         val railStroke = 2f * density
         val activeRailStroke = 3f * density
+        val candidateRouteStroke = 1.25f * density
+        val candidateRouteDash = PathEffect.dashPathEffect(
+            floatArrayOf(5f * density, 4f * density),
+        )
 
         drawRect(
             color = TerrainSafeBlue,
@@ -191,19 +199,31 @@ internal fun PetTerrainDebugOverlay(
             drawObstacleOutline(obstacle, TerrainObstacleRedOutline, thinStroke)
         }
 
-        val plannedPoints = model.plannedPoints
-        plannedPoints.zipWithNext().forEach { (start, end) ->
+        model.possibleRoutes.forEach { route ->
+            route.points.zipWithNext().forEach { (start, end) ->
+                drawLine(
+                    color = TerrainCandidateRouteBlue,
+                    start = Offset(start.x, start.y),
+                    end = Offset(end.x, end.y),
+                    strokeWidth = candidateRouteStroke,
+                    pathEffect = candidateRouteDash,
+                )
+            }
+        }
+
+        val activePoints = model.activePoints
+        activePoints.zipWithNext().forEach { (start, end) ->
             drawLine(
-                color = TerrainRouteOrange,
+                color = TerrainActiveRouteOrange,
                 start = Offset(start.x, start.y),
                 end = Offset(end.x, end.y),
-                strokeWidth = railStroke,
+                strokeWidth = activeRailStroke,
             )
         }
-        plannedPoints.forEach { point ->
+        activePoints.forEach { point ->
             drawCircle(
-                color = TerrainRouteOrange,
-                radius = 3f * density,
+                color = TerrainActiveRouteOrange,
+                radius = 4f * density,
                 center = Offset(point.x, point.y),
             )
         }
@@ -220,7 +240,7 @@ internal fun PetTerrainDebugOverlay(
         model.touchdownRails.forEach { rail ->
             val active = rail.key == model.activeRailKey
             drawCircle(
-                color = if (active) TerrainActiveYellow else TerrainRouteOrange,
+                color = if (active) TerrainActiveYellow else TerrainTouchdownViolet,
                 radius = if (active) 5f * density else 4f * density,
                 center = Offset(rail.bounds.left, rail.bounds.top),
             )
@@ -292,7 +312,7 @@ internal fun PetTerrainDebugOverlay(
                 color = if (label.rail.key == model.activeRailKey) {
                     TerrainActiveYellow
                 } else {
-                    TerrainRouteOrange
+                    TerrainTouchdownViolet
                 },
                 topLeft = topLeft,
             )
@@ -374,7 +394,9 @@ private val TerrainRailGreen = Color(0xFF22C55E)
 private val TerrainActiveYellow = Color(0xFFFACC15)
 private val TerrainObstacleRed = Color(0x40EF4444)
 private val TerrainObstacleRedOutline = Color(0xCCEF4444)
-private val TerrainRouteOrange = Color(0xFFF97316)
+private val TerrainTouchdownViolet = Color(0xFFA855F7)
+private val TerrainCandidateRouteBlue = Color(0xCC60A5FA)
+private val TerrainActiveRouteOrange = Color(0xFFFF6D00)
 private val TerrainFootprintWhite = Color(0xFFF8FAFC)
 private val TerrainLegendBackground = Color(0xD914172A)
 private val TerrainLabelBackground = Color(0xB814172A)

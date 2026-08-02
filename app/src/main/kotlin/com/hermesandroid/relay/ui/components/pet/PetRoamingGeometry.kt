@@ -850,6 +850,62 @@ fun planPetBubbleExploration(
 }
 
 /**
+ * Debug-only connectivity graph for the currently measured terrain. Every
+ * returned edge is an exact-endpoint, collision-checked direct transfer within
+ * [maximumRouteLength]. It describes possible movement, not planner selection.
+ */
+fun planPetDebugRouteGraph(
+    rails: Iterable<PetRoamingRail>,
+    bounds: PetSafeBounds,
+    uiObstacles: Iterable<PetObstacle>,
+    footprint: PetFootprint,
+    maximumRouteLength: Float,
+): List<PetRoute> {
+    require(maximumRouteLength > 0f && maximumRouteLength.isFinite()) {
+        "Maximum debug route length must be finite and positive."
+    }
+    val ordered = rails.distinctBy(PetRoamingRail::key)
+        .sortedWith(compareBy<PetRoamingRail> { it.bounds.top }.thenBy { it.key })
+    return buildList {
+        for (firstIndex in ordered.indices) {
+            for (secondIndex in (firstIndex + 1) until ordered.size) {
+                val first = ordered[firstIndex]
+                val second = ordered[secondIndex]
+                if (abs(first.bounds.top - second.bounds.top) <= PET_ROUTE_EPSILON) {
+                    continue
+                }
+                val overlapLeft = maxOf(first.bounds.left, second.bounds.left)
+                val overlapRight = minOf(first.bounds.right, second.bounds.right)
+                val (firstX, secondX) = when {
+                    overlapLeft <= overlapRight -> {
+                        val sharedX = (overlapLeft + overlapRight) / 2f
+                        sharedX to sharedX
+                    }
+                    first.bounds.right < second.bounds.left ->
+                        first.bounds.right to second.bounds.left
+                    else -> first.bounds.left to second.bounds.right
+                }
+                val start = PetPoint(firstX, first.bounds.top)
+                val destination = PetPoint(secondX, second.bounds.top)
+                val route = findOverlayRoute(
+                    start = start,
+                    requestedDestination = destination,
+                    bounds = bounds,
+                    uiObstacles = uiObstacles,
+                    footprint = footprint,
+                ) ?: continue
+                val exactEndpointTolerance = PET_ROUTE_EPSILON * PET_ROUTE_EPSILON
+                if (route.start.distanceSquaredTo(start) > exactEndpointTolerance) continue
+                if (route.destination.distanceSquaredTo(destination) > exactEndpointTolerance) {
+                    continue
+                }
+                if (route.length <= maximumRouteLength + PET_ROUTE_EPSILON) add(route)
+            }
+        }
+    }
+}
+
+/**
  * Route between sibling segments without entering the UI surface below them.
  * The generic visibility router remains the source of collision truth; this
  * wrapper clips its search space to the half-plane at or above both rails.

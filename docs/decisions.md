@@ -2504,8 +2504,9 @@ top of a response bubble without ever covering its text or jumping through it.
   one, two, or three stops. App animation settings, foreground/activity state,
   scrolling, dialogs, Android animator scale, and TalkBack touch exploration
   always take precedence.
-- Debug builds may paint the measured terrain, narrow-bubble touchdown points, active rail, expanded collision
-  regions, footprint, behavior gate, and latest route through a default-off
+- Debug builds may paint the measured terrain, narrow-bubble touchdown points,
+  active rail, expanded collision regions, footprint, behavior gate, dashed
+  collision-checked candidate routes, and the solid currently active route through a default-off
   Developer Options overlay. The Canvas is pointer-transparent, never changes
   planning, and is cleared when Developer Options are locked.
 - Installed Petdex pets use the same renderer and planner without manifest edits
