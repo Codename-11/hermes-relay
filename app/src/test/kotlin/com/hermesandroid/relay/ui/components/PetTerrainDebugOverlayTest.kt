@@ -58,7 +58,7 @@ class PetTerrainDebugOverlayTest {
                 "route chat",
                 "rail composer:0  move WalkRight",
                 "gate patrolling",
-                "perches 1  rails 1  obstacles 1",
+                "perches 1  rails 1  hops 0  obstacles 1",
             ),
             petTerrainLegendLines(model),
         )
@@ -84,22 +84,31 @@ class PetTerrainDebugOverlayTest {
             key = "${CHAT_PET_USER_MESSAGE_PERCH_PREFIX}${CHAT_PET_STEP_MESSAGE_MARKER}user-key",
             bounds = PetObstacle(230f, 220f, 270f, 260f),
         )
+        val tinyUser = PetMeasuredPerch(
+            key = "${CHAT_PET_USER_MESSAGE_PERCH_PREFIX}${CHAT_PET_STEP_MESSAGE_MARKER}tiny-key",
+            bounds = PetObstacle(250f, 280f, 270f, 320f),
+        )
         val assistantRail = rail("assistant:0", assistant.key, 60f, 120f, 200f)
+        val userTouchdown = rail("user:touchdown", narrowUser.key, 250f, 190f, 250f)
         val model = model(
-            perches = listOf(assistant, narrowUser),
+            perches = listOf(assistant, narrowUser, tinyUser),
             rails = listOf(assistantRail),
+            touchdownRails = listOf(userTouchdown),
             activeRailKey = assistantRail.key,
         )
 
         assertEquals("P0 A*:assistant-key", petTerrainPerchLabels(model)[0].text)
-        assertEquals("P1 U*:user-key NO-RAIL", petTerrainPerchLabels(model)[1].text)
+        assertEquals("P1 U*:user-key HOP", petTerrainPerchLabels(model)[1].text)
+        assertEquals("P2 U*:tiny-key NO-RAIL", petTerrainPerchLabels(model)[2].text)
         assertEquals("R0→P0 ACT", petTerrainRailLabels(model).single().text)
+        assertEquals("H0→P1", petTerrainTouchdownLabels(model).single().text)
     }
 
     private fun model(
         routeLabel: String? = "settings",
         perches: List<PetMeasuredPerch> = emptyList(),
         rails: List<PetRoamingRail> = emptyList(),
+        touchdownRails: List<PetRoamingRail> = emptyList(),
         activeRailKey: String? = null,
         expandedObstacles: List<PetObstacle> = emptyList(),
         latestPlannedRoute: PetRoute? = null,
@@ -110,6 +119,7 @@ class PetTerrainDebugOverlayTest {
         safeBounds = PetSafeBounds(10f, 20f, 280f, 600f),
         perches = perches,
         rails = rails,
+        touchdownRails = touchdownRails,
         activeRailKey = activeRailKey,
         expandedObstacles = expandedObstacles,
         footprint = PetFootprint(width = 56f, height = 56f, clearance = 4f),

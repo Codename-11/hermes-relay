@@ -85,7 +85,10 @@ The companion has a durable home and an optional autonomous roaming mode:
   cards, attachments, tool calls, background tasks, and phone/voice actions are
   excluded. Older stepping geometry may come from a settled non-empty user or
   assistant bubble, including a rich bubble whose measured top is otherwise
-  safe; narrow bubbles simply do not produce a walkable rail.
+  safe. A bubble too narrow for a walkable rail may still contribute one
+  centered touchdown when at least 35% of the pet width is visibly supported;
+  the pet briefly lands and immediately continues instead of walking or idling
+  over its text.
 - Horizontal travel uses directional walking aliases and a duration rounded to
   complete walk cycles, preventing sliding feet. Turns pause briefly. Vertical
   travel scales its duration with route length, uses a squash anticipation,
@@ -108,7 +111,8 @@ The companion has a durable home and an optional autonomous roaming mode:
   are open.
 - Debug builds provide **Developer Options → Show pet terrain overlay**. The
   default-off, pointer-transparent layer paints measured perches, usable rails,
-  collision bounds, the active rail, footprint, latest route, and current
+  narrow-bubble touchdown points, collision bounds, the active rail, footprint,
+  latest route, and current
   behavior gate without changing planning. Locking Developer Options clears it.
 
 The behavior director has one deterministic priority order: direct interaction,

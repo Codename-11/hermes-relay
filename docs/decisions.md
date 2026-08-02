@@ -2478,7 +2478,9 @@ top of a response bubble without ever covering its text or jumping through it.
   sparse chats without that chain defer the visit. The newest response gets the
   full cross and greeting, then the pet may inspect one to three successively
   older visible rails according to temperament before retracing the same bounded
-  journey. Unsafe geometry and interactive response rows are skipped rather than
+  journey. A measured bubble too narrow for walking may contribute a centered,
+  zero-width touchdown when at least 35% of the pet width is supported; it is a
+  transient route step, never an idle or patrol surface. Unsafe geometry and interactive response rows are skipped rather than
   crossed, and a sparse gap ends exploration instead of inventing a ledge.
 - Settled Chat uses one text-safe habitat order: the measured side pocket beside
   the newest settled bubble, then its raised top edge, then the outer composer
@@ -2502,7 +2504,7 @@ top of a response bubble without ever covering its text or jumping through it.
   one, two, or three stops. App animation settings, foreground/activity state,
   scrolling, dialogs, Android animator scale, and TalkBack touch exploration
   always take precedence.
-- Debug builds may paint the measured terrain, active rail, expanded collision
+- Debug builds may paint the measured terrain, narrow-bubble touchdown points, active rail, expanded collision
   regions, footprint, behavior gate, and latest route through a default-off
   Developer Options overlay. The Canvas is pointer-transparent, never changes
   planning, and is cleared when Developer Options are locked.

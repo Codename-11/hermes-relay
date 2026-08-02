@@ -348,6 +348,35 @@ fun petPerchRail(
 }
 
 /**
+ * A centered, zero-width touchdown for a measured perch that is too narrow to
+ * carry the complete pet footprint as a walking rail. Touchdowns are transient
+ * route steps only: callers must not expose them to autonomous rail patrol or
+ * treat them as persistent support.
+ */
+fun petPerchTouchdownRail(
+    perch: PetMeasuredPerch,
+    footprint: PetFootprint,
+    outer: PetSafeBounds,
+    minimumSurfaceWidth: Float,
+    verticalClearance: Float = 0f,
+): PetSafeBounds? {
+    require(minimumSurfaceWidth >= 0f && minimumSurfaceWidth.isFinite()) {
+        "Minimum touchdown width must be finite and non-negative."
+    }
+    require(verticalClearance >= 0f && verticalClearance.isFinite()) {
+        "Touchdown clearance must be finite and non-negative."
+    }
+    val visibleLeft = maxOf(perch.bounds.left, outer.left - footprint.horizontalRadius)
+    val visibleRight = minOf(perch.bounds.right, outer.right + footprint.horizontalRadius)
+    if (visibleRight - visibleLeft < minimumSurfaceWidth) return null
+
+    val centerX = ((visibleLeft + visibleRight) / 2f).coerceIn(outer.left, outer.right)
+    val centerY = (perch.bounds.top - footprint.verticalRadius - verticalClearance)
+        .coerceIn(outer.top, outer.bottom)
+    return PetSafeBounds(centerX, centerY, centerX, centerY)
+}
+
+/**
  * A zero-width landing point beside a measured perch. The preferred side is
  * used when the full pet footprint fits in that gutter; otherwise the opposite
  * side is tried. Returning null is safer than overlapping the surface.
@@ -712,6 +741,10 @@ fun planPetRailJourney(
                 footprint = footprint,
             ) ?: return@mapNotNull null
             if (route.start.distanceSquaredTo(currentPoint) > 1f) return@mapNotNull null
+            if (
+                route.destination.distanceSquaredTo(destination) >
+                PET_ROUTE_EPSILON * PET_ROUTE_EPSILON
+            ) return@mapNotNull null
             if (route.length > maximumStepLength + PET_ROUTE_EPSILON) return@mapNotNull null
             PetRailJourneyStep(candidate, route)
         }

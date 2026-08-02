@@ -154,8 +154,10 @@ normal Hermes Relay screens.
   to the clear outer side of the message, jump beside it, walk across its raised
   rail, and wave. It may then hop to older visible user or assistant rails before
   retracing the same bounded path and dropping to the composer. Its full
-  footprint stays above the text, and no hop exceeds 210 dp. Narrow or blocked
-  bubbles do not become rails. Cards, attachments, tool calls, background tasks,
+  footprint stays above the text, and no hop exceeds 210 dp. A narrow bubble
+  cannot become a walking rail, but one with enough visible top support can be a
+  brief centered touchdown between hops; the pet never walks or idles there.
+  Blocked or extremely narrow bubbles are skipped. Cards, attachments, tool calls, background tasks,
   and phone/voice actions cannot be the greeting destination; a settled rich
   user or assistant bubble may still provide a safe measured top stepping rail.
 - Directional clips match left/right travel; a brief turn pause, jump-to-fall
@@ -185,7 +187,7 @@ Temperament never bypasses scrolling, dialogs, active Hermes work, disabled
 animations, reduced motion, or TalkBack touch exploration.
 
 Debug builds also offer **Developer Options → Show pet terrain overlay**. It
-draws measured perches, usable rails, collision regions, the active rail, the
+draws measured perches, usable rails, narrow-bubble touchdown points, collision regions, the active rail, the
 latest planned route, and the current movement gate without changing pet
 behavior. The overlay is off by default and does not intercept touches.
 

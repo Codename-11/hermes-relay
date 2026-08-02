@@ -268,6 +268,37 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `narrow perch becomes a centered touchdown but not a walking rail`() {
+        val footprint = PetFootprint(width = 80f, height = 80f)
+        val outer = PetSafeBounds(40f, 40f, 360f, 760f)
+        val narrow = PetMeasuredPerch(
+            key = "chat-message-perch:user:step:narrow",
+            bounds = PetObstacle(250f, 400f, 310f, 500f),
+        )
+
+        assertNull(petPerchRail(narrow, footprint, outer, verticalClearance = 6f))
+        assertEquals(
+            PetSafeBounds(280f, 354f, 280f, 354f),
+            petPerchTouchdownRail(
+                perch = narrow,
+                footprint = footprint,
+                outer = outer,
+                minimumSurfaceWidth = 28f,
+                verticalClearance = 6f,
+            ),
+        )
+        assertNull(
+            petPerchTouchdownRail(
+                perch = narrow,
+                footprint = footprint,
+                outer = outer,
+                minimumSurfaceWidth = 61f,
+                verticalClearance = 6f,
+            ),
+        )
+    }
+
+    @Test
     fun `bubble excursion rejects an edge hop that would cross bubble content`() {
         val bubble = PetMeasuredPerch(
             key = "chat-message-perch:assistant-1",
@@ -639,6 +670,42 @@ class PetRoamingGeometryTest {
         )
         assertEquals(listOf(lower, middle, target), journey.map { it.rail })
         assertTrue(journey.all { it.route.length <= 180f })
+    }
+
+    @Test
+    fun `rail journey may touch a zero width bubble point without settling there`() {
+        val footprint = PetFootprint(width = 80f, height = 80f)
+        val outer = PetSafeBounds(40f, 40f, 360f, 760f)
+        val composer = PetRoamingRail(
+            key = "composer",
+            perchKey = "composer",
+            bounds = PetSafeBounds(80f, 700f, 320f, 700f),
+        )
+        val touchdown = PetRoamingRail(
+            key = "user:touchdown",
+            perchKey = "user",
+            bounds = PetSafeBounds(280f, 500f, 280f, 500f),
+        )
+        val target = PetRoamingRail(
+            key = "assistant",
+            perchKey = "assistant",
+            bounds = PetSafeBounds(180f, 300f, 320f, 300f),
+        )
+
+        val journey = planPetRailJourney(
+            startRail = composer,
+            start = PetPoint(280f, 700f),
+            targetRail = target,
+            rails = listOf(touchdown),
+            bounds = outer,
+            uiObstacles = emptyList(),
+            footprint = footprint,
+            maximumStepLength = 250f,
+        )
+
+        requireNotNull(journey)
+        assertEquals(listOf(touchdown, target), journey.map { it.rail })
+        assertEquals(PetPoint(280f, 500f), journey.first().route.destination)
     }
 
     @Test

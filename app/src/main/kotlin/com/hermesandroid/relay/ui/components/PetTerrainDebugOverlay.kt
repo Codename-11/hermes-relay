@@ -32,6 +32,7 @@ internal data class PetTerrainDebugModel(
     val safeBounds: PetSafeBounds,
     val perches: List<PetMeasuredPerch>,
     val rails: List<PetRoamingRail>,
+    val touchdownRails: List<PetRoamingRail> = emptyList(),
     val activeRailKey: String?,
     val expandedObstacles: List<PetObstacle>,
     val footprint: PetFootprint,
@@ -41,7 +42,7 @@ internal data class PetTerrainDebugModel(
     val gateLabel: String,
 ) {
     val activeRail: PetRoamingRail?
-        get() = rails.firstOrNull { it.key == activeRailKey }
+        get() = (rails + touchdownRails).firstOrNull { it.key == activeRailKey }
 
     val plannedPoints: List<PetPoint>
         get() = latestPlannedRoute?.points.orEmpty()
@@ -51,13 +52,15 @@ internal fun petTerrainLegendLines(model: PetTerrainDebugModel): List<String> = 
     "route ${model.routeLabel ?: "none"}",
     "rail ${model.activeRailKey ?: "none"}  move ${model.locomotionLabel}",
     "gate ${model.gateLabel}",
-    "perches ${model.perches.size}  rails ${model.rails.size}  obstacles ${model.expandedObstacles.size}",
+    "perches ${model.perches.size}  rails ${model.rails.size}  hops ${model.touchdownRails.size}  " +
+        "obstacles ${model.expandedObstacles.size}",
 )
 
 internal data class PetTerrainPerchLabel(
     val text: String,
     val perch: PetMeasuredPerch,
     val hasRail: Boolean,
+    val hasTouchdown: Boolean,
 )
 
 internal data class PetTerrainRailLabel(
@@ -88,11 +91,17 @@ internal fun petTerrainCompactPerchKey(key: String): String {
 internal fun petTerrainPerchLabels(model: PetTerrainDebugModel): List<PetTerrainPerchLabel> =
     model.perches.mapIndexed { index, perch ->
         val hasRail = model.rails.any { rail -> rail.perchKey == perch.key }
+        val hasTouchdown = model.touchdownRails.any { rail -> rail.perchKey == perch.key }
         PetTerrainPerchLabel(
             text = "P$index ${petTerrainCompactPerchKey(perch.key)}" +
-                if (hasRail) "" else " NO-RAIL",
+                when {
+                    hasRail -> ""
+                    hasTouchdown -> " HOP"
+                    else -> " NO-RAIL"
+                },
             perch = perch,
             hasRail = hasRail,
+            hasTouchdown = hasTouchdown,
         )
     }
 
@@ -102,6 +111,17 @@ internal fun petTerrainRailLabels(model: PetTerrainDebugModel): List<PetTerrainR
         val perchIndex = perchIndices[rail.perchKey]?.let { "P$it" } ?: "P?"
         PetTerrainRailLabel(
             text = "R$index→$perchIndex" + if (rail.key == model.activeRailKey) " ACT" else "",
+            rail = rail,
+        )
+    }
+}
+
+internal fun petTerrainTouchdownLabels(model: PetTerrainDebugModel): List<PetTerrainRailLabel> {
+    val perchIndices = model.perches.mapIndexed { index, perch -> perch.key to index }.toMap()
+    return model.touchdownRails.mapIndexed { index, rail ->
+        val perchIndex = perchIndices[rail.perchKey]?.let { "P$it" } ?: "P?"
+        PetTerrainRailLabel(
+            text = "H$index→$perchIndex" + if (rail.key == model.activeRailKey) " ACT" else "",
             rail = rail,
         )
     }
@@ -132,6 +152,9 @@ internal fun PetTerrainDebugOverlay(
     val railLabels = remember(model.perches, model.rails, model.activeRailKey) {
         petTerrainRailLabels(model)
     }
+    val touchdownLabels = remember(model.perches, model.touchdownRails, model.activeRailKey) {
+        petTerrainTouchdownLabels(model)
+    }
     val terrainLabelStyle = TextStyle(
         color = Color.White,
         fontFamily = FontFamily.Monospace,
@@ -142,6 +165,9 @@ internal fun PetTerrainDebugOverlay(
     }
     val railLabelLayouts = remember(railLabels, textMeasurer) {
         railLabels.map { label -> textMeasurer.measure(label.text, terrainLabelStyle) }
+    }
+    val touchdownLabelLayouts = remember(touchdownLabels, textMeasurer) {
+        touchdownLabels.map { label -> textMeasurer.measure(label.text, terrainLabelStyle) }
     }
 
     Canvas(modifier = modifier) {
@@ -191,6 +217,14 @@ internal fun PetTerrainDebugOverlay(
                 strokeWidth = if (active) activeRailStroke else railStroke,
             )
         }
+        model.touchdownRails.forEach { rail ->
+            val active = rail.key == model.activeRailKey
+            drawCircle(
+                color = if (active) TerrainActiveYellow else TerrainRouteOrange,
+                radius = if (active) 5f * density else 4f * density,
+                center = Offset(rail.bounds.left, rail.bounds.top),
+            )
+        }
 
         perchLabels.zip(perchLabelLayouts).forEach { (label, layout) ->
             val topLeft = Offset(
@@ -233,6 +267,32 @@ internal fun PetTerrainDebugOverlay(
                     TerrainActiveYellow
                 } else {
                     TerrainRailGreen
+                },
+                topLeft = topLeft,
+            )
+        }
+        touchdownLabels.zip(touchdownLabelLayouts).forEach { (label, layout) ->
+            val topLeft = Offset(
+                label.rail.bounds.left.coerceIn(
+                    0f,
+                    (size.width - layout.size.width).coerceAtLeast(0f),
+                ),
+                label.rail.bounds.top.coerceIn(
+                    0f,
+                    (size.height - layout.size.height).coerceAtLeast(0f),
+                ),
+            )
+            drawRect(
+                color = TerrainLabelBackground,
+                topLeft = topLeft,
+                size = Size(layout.size.width.toFloat(), layout.size.height.toFloat()),
+            )
+            drawText(
+                textLayoutResult = layout,
+                color = if (label.rail.key == model.activeRailKey) {
+                    TerrainActiveYellow
+                } else {
+                    TerrainRouteOrange
                 },
                 topLeft = topLeft,
             )
