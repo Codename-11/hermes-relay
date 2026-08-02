@@ -634,6 +634,47 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `scroll control trims crossing rails but keeps its raised perch`() {
+        val footprint = PetFootprint(width = 70f, height = 70f)
+        val outer = PetSafeBounds(left = 0f, top = 0f, right = 411f, bottom = 800f)
+        val button = PetMeasuredObstacle(
+            key = "chat-scroll-to-bottom-obstacle",
+            bounds = PetObstacle(left = 347f, top = 620f, right = 395f, bottom = 668f),
+        )
+        val composer = PetMeasuredPerch(
+            key = "chat-composer-perch",
+            bounds = PetObstacle(left = 0f, top = 668f, right = 411f, bottom = 740f),
+        )
+        val buttonLedge = PetMeasuredPerch(
+            key = "chat-scroll-to-bottom-perch",
+            bounds = PetObstacle(left = 335f, top = 620f, right = 407f, bottom = 668f),
+        )
+
+        val composerRails = petPerchSegments(
+            perch = composer,
+            obstacles = listOf(button),
+            footprint = footprint,
+            outer = outer,
+            verticalClearance = 6f,
+        )
+        val buttonRails = petPerchSegments(
+            perch = buttonLedge,
+            obstacles = listOf(button),
+            footprint = footprint,
+            outer = outer,
+            verticalClearance = 6f,
+        )
+
+        assertTrue(
+            composerRails.all { rail ->
+                rail.right + footprint.horizontalRadius <= button.bounds.left
+            },
+        )
+        assertEquals(1, buttonRails.size)
+        assertEquals(579f, buttonRails.single().top, 0f)
+    }
+
+    @Test
     fun `blocked side and top fall back to the outer composer corner`() {
         val habitat = planSettledChatHabitat(
             bubble = PetMeasuredPerch("blocked", PetObstacle(70f, 100f, 360f, 220f)),
