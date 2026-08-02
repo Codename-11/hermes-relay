@@ -307,6 +307,45 @@ internal fun petRailSupportingPoint(
         abs(point.y - rail.bounds.top) <= verticalTolerancePx
 }
 
+/**
+ * Keep the next terrain tour warm while the behavior director handles pacing.
+ * Replanning is event-driven from measured terrain and supported waypoints; an
+ * in-flight jump keeps its already validated route instead of changing course.
+ */
+internal fun planPetTerrainLookahead(
+    current: PetPoint,
+    activeRailKey: String?,
+    rails: Iterable<PetRoamingRail>,
+    bounds: PetSafeBounds,
+    uiObstacles: Iterable<PetObstacle>,
+    footprint: PetFootprint,
+    maximumStepLength: Float,
+    maxExtraStops: Int,
+    mode: PetRailExplorationMode,
+): PetRailExplorationPlan? {
+    val candidates = rails.distinctBy { it.key }
+    val origin = activeRailKey
+        ?.let { key -> candidates.firstOrNull { it.key == key } }
+        ?.takeIf { rail -> petRailSupportingPoint(listOf(rail), current) != null }
+        ?: petRailSupportingPoint(candidates, current)
+        ?: return null
+    val supportedStart = PetPoint(
+        x = current.x.coerceIn(origin.bounds.left, origin.bounds.right),
+        y = origin.bounds.top,
+    )
+    return planPetRailExploration(
+        originRail = origin,
+        start = supportedStart,
+        candidateRails = candidates,
+        bounds = bounds,
+        uiObstacles = uiObstacles,
+        footprint = footprint,
+        maximumStepLength = maximumStepLength,
+        maxExtraStops = maxExtraStops,
+        mode = mode,
+    ).takeIf { it.continuation.isNotEmpty() }
+}
+
 internal fun petAirborneDurationMs(distanceDp: Float): Int {
     val safeDistance = abs(distanceDp).takeIf { it.isFinite() } ?: 0f
     return ((safeDistance / PET_AIRBORNE_SPEED_DP_PER_SECOND) * 1_000f)
@@ -405,6 +444,7 @@ fun FloatingPetCompanion(
     onResetPlacement: () -> Unit,
     onHide: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onExitTerrainDebug: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember(pet.id) { mutableStateOf(false) }
@@ -419,6 +459,7 @@ fun FloatingPetCompanion(
     var activeRailKey by remember(pet.id) { mutableStateOf<String?>(null) }
     var activeDebugRoute by remember(pet.id) { mutableStateOf<PetDebugActiveRoute?>(null) }
     var plannedDebugRoute by remember(pet.id) { mutableStateOf<PetDebugPlannedRoute?>(null) }
+    var lookaheadDebugRoute by remember(pet.id) { mutableStateOf<PetDebugPlannedRoute?>(null) }
     var scrollingRailKey by remember(pet.id) { mutableStateOf<String?>(null) }
     var scrollSupportLost by remember(pet.id) { mutableStateOf(false) }
     var scrollRecoveryPending by remember(pet.id) { mutableStateOf(false) }
@@ -843,6 +884,75 @@ fun FloatingPetCompanion(
         responseVisitPending = visitRequest != null || visitActive,
         canPatrol = canPatrol,
     )
+    LaunchedEffect(
+        debugTerrainOverlay,
+        positioned,
+        canPatrol,
+        route,
+        activeRailKey,
+        roamingRails,
+        composerRails,
+        messageTraversalRails,
+        settledHabitat,
+        autonomousRouteObstacles,
+        messageJourneyObstacles,
+        footprint,
+        visualFootprint,
+        safeBounds,
+        maximumDirectHopPx,
+        maximumMessageHopPx,
+        behaviorPreferences.temperament,
+        surfaceScrolling,
+        dragging,
+        pendingDrop,
+    ) {
+        if (
+            !debugTerrainOverlay || !positioned || !canPatrol || surfaceScrolling ||
+            dragging || pendingDrop != null
+        ) {
+            lookaheadDebugRoute = null
+            return@LaunchedEffect
+        }
+        val chatSurface = route == "chat"
+        val lookahead = planPetTerrainLookahead(
+            current = PetPoint(x.value, y.value),
+            activeRailKey = activeRailKey,
+            rails = if (chatSurface) {
+                (composerRails + messageTraversalRails + listOfNotNull(settledHabitat?.rail))
+                    .distinctBy { it.key }
+            } else {
+                roamingRails
+            },
+            bounds = safeBounds,
+            uiObstacles = if (chatSurface) messageJourneyObstacles else autonomousRouteObstacles,
+            footprint = if (chatSurface) visualFootprint else footprint,
+            maximumStepLength = if (chatSurface) maximumMessageHopPx else maximumDirectHopPx,
+            maxExtraStops = petBubbleExplorationStops(behaviorPreferences.temperament),
+            mode = if (chatSurface) {
+                PetRailExplorationMode.Ascending
+            } else {
+                PetRailExplorationMode.AnyDirection
+            },
+        )
+        lookaheadDebugRoute = lookahead?.let { plan ->
+            petDebugPlannedRoute(
+                targetLabel = petTerrainCompactPerchKey(plan.orderedRails.last().perchKey),
+                routes = buildList {
+                    plan.continuation.forEach { step ->
+                        step.approach?.let(::add)
+                        add(step.route)
+                    }
+                },
+            )
+        }
+        if (lookaheadDebugRoute != null) {
+            Log.d(
+                "PetTerrain",
+                "lookahead target=${lookaheadDebugRoute?.targetLabel} " +
+                    "stops=${lookaheadDebugRoute?.stops?.size ?: 0}",
+            )
+        }
+    }
     val visitTarget = remember(safeAreaSnapshot, visitRequest) {
         visitRequest?.let { request ->
             safeAreaSnapshot.visitTargets.firstOrNull { it.key == request.targetKey }
@@ -1716,6 +1826,7 @@ fun FloatingPetCompanion(
             performBubbleExcursion(bubblePerch)
             onVisitRequestConsumed(request.assistantUiKey)
         } finally {
+            if (debugTerrainOverlay) plannedDebugRoute = null
             locomotion = PetLocomotion.None
             visitActive = false
         }
@@ -1927,8 +2038,12 @@ fun FloatingPetCompanion(
                                 },
                             )
                         }
-                        if (!animatePlannedRailExploration(exploration)) {
-                            return@LaunchedEffect
+                        try {
+                            if (!animatePlannedRailExploration(exploration)) {
+                                return@LaunchedEffect
+                            }
+                        } finally {
+                            if (debugTerrainOverlay) plannedDebugRoute = null
                         }
                         rail = exploration.orderedRails.first()
                         activeRailKey = rail.key
@@ -1958,7 +2073,11 @@ fun FloatingPetCompanion(
                         if (debugTerrainOverlay) {
                             Log.d("PetTerrain", "ambient-attempt target=${bubble.key}")
                         }
-                        returnRail = performBubbleExcursion(bubble)
+                        returnRail = try {
+                            performBubbleExcursion(bubble)
+                        } finally {
+                            if (debugTerrainOverlay) plannedDebugRoute = null
+                        }
                         if (returnRail != null) break
                         if (debugTerrainOverlay) plannedDebugRoute = null
                         if (
@@ -2032,6 +2151,7 @@ fun FloatingPetCompanion(
                 }
             }
         } finally {
+            if (debugTerrainOverlay) plannedDebugRoute = null
             locomotion = PetLocomotion.None
         }
     }
@@ -2071,11 +2191,12 @@ fun FloatingPetCompanion(
                     footprint = footprint,
                     petCenter = draggedPoint ?: PetPoint(x.value, y.value),
                     possibleRoutes = debugPossibleRoutes,
-                    plannedRoute = plannedDebugRoute,
+                    plannedRoute = plannedDebugRoute ?: lookaheadDebugRoute,
                     activeRoute = activeDebugRoute,
                     locomotionLabel = locomotion.name,
                     gateLabel = debugGateLabel,
                 ),
+                onExit = onExitTerrainDebug,
                 modifier = Modifier.fillMaxSize(),
             )
         }

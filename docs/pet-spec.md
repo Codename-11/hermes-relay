@@ -134,7 +134,11 @@ The companion has a durable home and an optional autonomous roaming mode:
 - Debug builds provide **Developer Options → Show pet terrain overlay**. The
   default-off **Pet path inspector** is anchored below the app header and its
   Android status-bar inset so header actions remain accessible, and starts as a
-  slim collapsed live-status bar. Expanding it opens in
+  narrow collapsed live-status bar. Only its grip moves it; placement snaps to
+  the nearest horizontal edge, persists as normalized viewport fractions, and
+  re-clamps after rotation or expansion. **Reset position** returns it below the
+  header. **PASS** mode collapses the inspector and leaves only its unlock button
+  interactive while the diagnostic Canvas continues to render. Expanding opens in
   **Terrain** mode, which shows
   measured perches, usable rails, touchdown points, restrained collision bounds,
   dashed candidate hops, the selected route with directional arrows and numbered
@@ -142,9 +146,12 @@ The companion has a durable home and an optional autonomous roaming mode:
   the selected/active journey; **Full** restores protected bounds, footprint,
   raw labels, behavior gate, and locomotion details. **Freeze** snapshots only
   the displayed model while the live planner and pet continue normally. The
-  full-screen Canvas stays pointer-transparent and only the inspector controls
-  accept input. The selected route is
-  refreshed by each planner pass and cleared when the measured terrain changes;
+  full-screen Canvas and non-control inspector regions stay pointer-transparent.
+  **Exit inspector** disables the persisted overlay toggle. The planner keeps an
+  event-driven lookahead ready during behavior pacing, refreshes it when measured
+  terrain or a supported waypoint changes, and never redirects an in-flight hop.
+  The selected route is refreshed by each planner pass and cleared when the
+  measured terrain changes;
   its stop order shows the outbound choices followed by the exact reverse return.
   Candidate routes are blue, autonomous active routes are orange, recovery paths are pink,
   direct drag/drop paths are teal, and touchdown-only points are violet so

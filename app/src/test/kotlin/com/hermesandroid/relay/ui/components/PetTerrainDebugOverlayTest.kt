@@ -128,6 +128,70 @@ class PetTerrainDebugOverlayTest {
     }
 
     @Test
+    fun `inspector placement starts below the header and stays inside system insets`() {
+        val placement = petTerrainInspectorPlacement(
+            viewportWidth = 1080f,
+            viewportHeight = 2340f,
+            panelWidth = 900f,
+            panelHeight = 150f,
+            safeTop = 264f,
+            bottomInset = 96f,
+            margin = 8f,
+            horizontalFraction = 0.5f,
+            verticalFraction = 0f,
+        )
+
+        assertEquals(90f, placement.x, 0.001f)
+        assertEquals(264f, placement.y, 0.001f)
+        assertEquals(164f, placement.horizontalRange, 0.001f)
+        assertEquals(1822f, placement.verticalRange, 0.001f)
+
+        val bottomDocked = petTerrainInspectorPlacement(
+            viewportWidth = 1080f,
+            viewportHeight = 2340f,
+            panelWidth = 900f,
+            panelHeight = 500f,
+            safeTop = 264f,
+            bottomInset = 96f,
+            margin = 8f,
+            horizontalFraction = 1f,
+            verticalFraction = 1f,
+        )
+        assertEquals(2340f, bottomDocked.y + 500f + 96f + 8f, 0.001f)
+    }
+
+    @Test
+    fun `inspector drag fractions clamp and horizontal release snaps to an edge`() {
+        assertEquals(
+            1f,
+            petTerrainInspectorDraggedFraction(
+                currentPosition = 90f,
+                delta = 200f,
+                rangeStart = 8f,
+                range = 164f,
+            ),
+            0.001f,
+        )
+        assertEquals(
+            0f,
+            petTerrainInspectorDraggedFraction(
+                currentPosition = 90f,
+                delta = -200f,
+                rangeStart = 8f,
+                range = 164f,
+            ),
+            0.001f,
+        )
+        assertEquals(
+            0.5f,
+            petTerrainInspectorDraggedFraction(90f, 20f, 8f, 0f),
+            0.001f,
+        )
+        assertEquals(0f, petTerrainInspectorSnappedHorizontalFraction(0.49f), 0.001f)
+        assertEquals(1f, petTerrainInspectorSnappedHorizontalFraction(0.5f), 0.001f)
+    }
+
+    @Test
     fun `empty optional diagnostics remain safe and explicit`() {
         val model = model(routeLabel = null, activeRailKey = "missing")
 

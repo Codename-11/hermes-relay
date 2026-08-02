@@ -7,8 +7,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,15 +18,19 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,11 +42,15 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -49,12 +59,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hermesandroid.relay.ui.components.pet.PetFootprint
@@ -64,6 +78,7 @@ import com.hermesandroid.relay.ui.components.pet.PetPoint
 import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
 import com.hermesandroid.relay.ui.components.pet.PetRoute
 import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 internal enum class PetDebugRouteKind(val label: String) {
@@ -262,6 +277,49 @@ private fun petTerrainSurfaceName(key: String): String = when {
     else -> petTerrainCompactPerchKey(key)
 }
 
+internal data class PetTerrainInspectorPlacement(
+    val x: Float,
+    val y: Float,
+    val horizontalRange: Float,
+    val verticalRange: Float,
+)
+
+internal fun petTerrainInspectorPlacement(
+    viewportWidth: Float,
+    viewportHeight: Float,
+    panelWidth: Float,
+    panelHeight: Float,
+    safeTop: Float,
+    bottomInset: Float,
+    margin: Float,
+    horizontalFraction: Float,
+    verticalFraction: Float,
+): PetTerrainInspectorPlacement {
+    val horizontalRange = (viewportWidth - panelWidth - margin * 2f).coerceAtLeast(0f)
+    val verticalRange = (
+        viewportHeight - panelHeight - safeTop - bottomInset - margin
+    ).coerceAtLeast(0f)
+    return PetTerrainInspectorPlacement(
+        x = margin + horizontalRange * horizontalFraction.coerceIn(0f, 1f),
+        y = safeTop + verticalRange * verticalFraction.coerceIn(0f, 1f),
+        horizontalRange = horizontalRange,
+        verticalRange = verticalRange,
+    )
+}
+
+internal fun petTerrainInspectorDraggedFraction(
+    currentPosition: Float,
+    delta: Float,
+    rangeStart: Float,
+    range: Float,
+): Float {
+    if (range <= 0f) return 0.5f
+    return ((currentPosition + delta - rangeStart) / range).coerceIn(0f, 1f)
+}
+
+internal fun petTerrainInspectorSnappedHorizontalFraction(fraction: Float): Float =
+    if (fraction < 0.5f) 0f else 1f
+
 internal fun petTerrainLegendLines(model: PetTerrainDebugModel): List<String> = listOf(
     "route ${model.routeLabel ?: "none"}",
     "routes possible ${model.possibleRoutes.size}  active ${model.activeRoute?.kind?.label ?: "none"}",
@@ -353,14 +411,41 @@ internal fun petTerrainTouchdownLabels(model: PetTerrainDebugModel): List<PetTer
 @Composable
 internal fun PetTerrainDebugOverlay(
     model: PetTerrainDebugModel,
+    onExit: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var mode by remember { mutableStateOf(PetTerrainDebugViewMode.Terrain) }
-    var inspectorExpanded by remember { mutableStateOf(false) }
+    var inspectorExpanded by rememberSaveable { mutableStateOf(false) }
+    var passThrough by rememberSaveable { mutableStateOf(false) }
+    var horizontalFraction by rememberSaveable { mutableFloatStateOf(0.5f) }
+    var verticalFraction by rememberSaveable { mutableFloatStateOf(0f) }
+    var panelSize by remember { mutableStateOf(IntSize.Zero) }
     var frozenModel by remember { mutableStateOf<PetTerrainDebugModel?>(null) }
     val displayModel = frozenModel ?: model
+    val density = LocalDensity.current
 
-    Box(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val margin = with(density) { 8.dp.toPx() }
+        val safeTop = WindowInsets.statusBars.getTop(density) + with(density) { 68.dp.toPx() }
+        val bottomInset = WindowInsets.navigationBars.getBottom(density).toFloat()
+        val placement = petTerrainInspectorPlacement(
+            viewportWidth = constraints.maxWidth.toFloat(),
+            viewportHeight = constraints.maxHeight.toFloat(),
+            panelWidth = panelSize.width.toFloat(),
+            panelHeight = panelSize.height.toFloat(),
+            safeTop = safeTop,
+            bottomInset = bottomInset,
+            margin = margin,
+            horizontalFraction = horizontalFraction,
+            verticalFraction = verticalFraction,
+        )
+        val usableWidth = (maxWidth - 16.dp).coerceAtLeast(1.dp)
+        val panelWidth = if (inspectorExpanded) {
+            minOf(usableWidth, 420.dp)
+        } else {
+            minOf(usableWidth, 300.dp)
+        }
+
         PetTerrainDebugCanvas(
             model = displayModel,
             mode = mode,
@@ -370,16 +455,43 @@ internal fun PetTerrainDebugOverlay(
             model = displayModel,
             mode = mode,
             expanded = inspectorExpanded,
+            passThrough = passThrough,
             frozen = frozenModel != null,
             onModeChanged = { mode = it },
             onExpandedChanged = { inspectorExpanded = it },
+            onPassThroughChanged = { enabled ->
+                passThrough = enabled
+                if (enabled) inspectorExpanded = false
+            },
+            onDrag = { delta ->
+                horizontalFraction = petTerrainInspectorDraggedFraction(
+                    currentPosition = placement.x,
+                    delta = delta.x,
+                    rangeStart = margin,
+                    range = placement.horizontalRange,
+                )
+                verticalFraction = petTerrainInspectorDraggedFraction(
+                    currentPosition = placement.y,
+                    delta = delta.y,
+                    rangeStart = safeTop,
+                    range = placement.verticalRange,
+                )
+            },
+            onDragEnd = {
+                horizontalFraction = petTerrainInspectorSnappedHorizontalFraction(horizontalFraction)
+            },
+            onResetPosition = {
+                horizontalFraction = 0.5f
+                verticalFraction = 0f
+            },
             onFreezeChanged = { frozen -> frozenModel = if (frozen) model else null },
+            onExit = onExit,
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .windowInsetsPadding(WindowInsets.statusBars)
-                // Every supported pet surface uses a standard Material top app
-                // bar. Keep its navigation and action targets unobstructed.
-                .padding(start = 8.dp, top = 68.dp, end = 8.dp, bottom = 4.dp),
+                .offset {
+                    IntOffset(placement.x.roundToInt(), placement.y.roundToInt())
+                }
+                .width(panelWidth)
+                .onSizeChanged { panelSize = it },
         )
     }
 }
@@ -390,10 +502,16 @@ private fun PetTerrainInspectorPanel(
     model: PetTerrainDebugModel,
     mode: PetTerrainDebugViewMode,
     expanded: Boolean,
+    passThrough: Boolean,
     frozen: Boolean,
     onModeChanged: (PetTerrainDebugViewMode) -> Unit,
     onExpandedChanged: (Boolean) -> Unit,
+    onPassThroughChanged: (Boolean) -> Unit,
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onResetPosition: () -> Unit,
     onFreezeChanged: (Boolean) -> Unit,
+    onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -411,42 +529,86 @@ private fun PetTerrainInspectorPanel(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (!passThrough) {
+                    PetTerrainInspectorDragHandle(
+                        onDrag = onDrag,
+                        onDragEnd = onDragEnd,
+                    )
+                }
                 Text(
-                    text = "Pet path inspector",
+                    text = when {
+                        passThrough -> "Pet paths"
+                        expanded -> "Pet path inspector"
+                        else -> "Pet paths"
+                    },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                 )
                 Surface(
-                    color = if (frozen) TerrainFrozenSurface else TerrainLiveSurface,
-                    contentColor = if (frozen) TerrainFrozenText else TerrainLiveText,
+                    color = when {
+                        passThrough -> TerrainPassThroughSurface
+                        frozen -> TerrainFrozenSurface
+                        else -> TerrainLiveSurface
+                    },
+                    contentColor = when {
+                        passThrough -> TerrainPassThroughText
+                        frozen -> TerrainFrozenText
+                        else -> TerrainLiveText
+                    },
                     shape = RoundedCornerShape(50),
                     border = BorderStroke(
                         1.dp,
-                        if (frozen) TerrainFrozenText else TerrainLiveText,
+                        when {
+                            passThrough -> TerrainPassThroughText
+                            frozen -> TerrainFrozenText
+                            else -> TerrainLiveText
+                        },
                     ),
                 ) {
                     Text(
-                        text = if (frozen) "FROZEN" else "LIVE",
+                        text = when {
+                            passThrough -> "PASS"
+                            frozen -> "FROZEN"
+                            else -> "LIVE"
+                        },
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                Spacer(Modifier.width(8.dp))
                 IconButton(
-                    onClick = { onExpandedChanged(!expanded) },
+                    onClick = { onPassThroughChanged(!passThrough) },
                     modifier = Modifier.size(40.dp),
                 ) {
                     Icon(
-                        imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (expanded) {
-                            "Collapse pet path inspector"
+                        imageVector = if (passThrough) Icons.Filled.LockOpen else Icons.Filled.Lock,
+                        contentDescription = if (passThrough) {
+                            "Enable pet inspector controls"
                         } else {
-                            "Expand pet path inspector"
+                            "Make pet inspector click-through"
                         },
                     )
+                }
+                if (!passThrough) {
+                    IconButton(
+                        onClick = { onExpandedChanged(!expanded) },
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (expanded) {
+                                Icons.Filled.ExpandLess
+                            } else {
+                                Icons.Filled.ExpandMore
+                            },
+                            contentDescription = if (expanded) {
+                                "Collapse pet path inspector"
+                            } else {
+                                "Expand pet path inspector"
+                            },
+                        )
+                    }
                 }
             }
 
@@ -517,9 +679,53 @@ private fun PetTerrainInspectorPanel(
                             maxLines = 1,
                         )
                     }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = onResetPosition) {
+                            Text("Reset position")
+                        }
+                        TextButton(onClick = onExit) {
+                            Text(
+                                text = "Exit inspector",
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PetTerrainInspectorDragHandle(
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+) {
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragEnd = currentOnDragEnd,
+                    onDragCancel = currentOnDragEnd,
+                ) { change, dragAmount ->
+                    change.consume()
+                    currentOnDrag(dragAmount)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.DragIndicator,
+            contentDescription = "Move pet path inspector",
+            tint = TerrainInspectorSecondaryText,
+        )
     }
 }
 
@@ -991,3 +1197,5 @@ private val TerrainLiveSurface = Color(0x2622C55E)
 private val TerrainLiveText = Color(0xFF69E58C)
 private val TerrainFrozenSurface = Color(0x26FACC15)
 private val TerrainFrozenText = Color(0xFFFDE36D)
+private val TerrainPassThroughSurface = Color(0x2638BDF8)
+private val TerrainPassThroughText = Color(0xFF7DD3FC)

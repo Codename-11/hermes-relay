@@ -725,6 +725,7 @@ fun RelayApp() {
     val petBehaviorPreferences by connectionViewModel.petBehaviorPreferences.collectAsState()
     val petTerrainOverlayEnabled by FeatureFlags.petTerrainOverlayEnabled(sphereContext)
         .collectAsState(false)
+    val petTerrainOverlayScope = rememberCoroutineScope()
     val petPlacement by connectionViewModel.petPlacement.collectAsState()
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val petCompanionCoordinator = remember { PetCompanionCoordinator() }
@@ -2637,6 +2638,11 @@ fun RelayApp() {
                 onHide = { connectionViewModel.setFloatingPet(null) },
                 onOpenAppearance = {
                     navController.navigate(Screen.AppearanceSettings.route) { launchSingleTop = true }
+                },
+                onExitTerrainDebug = {
+                    petTerrainOverlayScope.launch {
+                        FeatureFlags.setPetTerrainOverlayEnabled(sphereContext, false)
+                    }
                 },
             )
         }

@@ -7,6 +7,7 @@ import com.hermesandroid.relay.ui.components.pet.PetFootprint
 import com.hermesandroid.relay.ui.components.pet.PetObstacle
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.ui.components.pet.PetPoint
+import com.hermesandroid.relay.ui.components.pet.PetRailExplorationMode
 import com.hermesandroid.relay.ui.components.pet.PetRoamingRail
 import com.hermesandroid.relay.ui.components.pet.PetSafeBounds
 import com.hermesandroid.relay.ui.components.pet.PetSettledChatHabitat
@@ -18,6 +19,69 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FloatingPetCompanionTest {
+    @Test
+    fun `terrain lookahead plans multiple levels before movement starts`() {
+        val composer = PetRoamingRail(
+            key = "composer:0",
+            perchKey = "composer",
+            bounds = PetSafeBounds(20f, 700f, 180f, 700f),
+        )
+        val recent = PetRoamingRail(
+            key = "message:recent",
+            perchKey = "message-recent",
+            bounds = PetSafeBounds(20f, 500f, 180f, 500f),
+        )
+        val older = PetRoamingRail(
+            key = "message:older",
+            perchKey = "message-older",
+            bounds = PetSafeBounds(20f, 300f, 180f, 300f),
+        )
+
+        val lookahead = requireNotNull(
+            planPetTerrainLookahead(
+                current = PetPoint(100f, 700f),
+                activeRailKey = composer.key,
+                rails = listOf(composer, recent, older),
+                bounds = PetSafeBounds(0f, 0f, 400f, 800f),
+                uiObstacles = emptyList(),
+                footprint = PetFootprint(width = 20f, height = 20f),
+                maximumStepLength = 240f,
+                maxExtraStops = 3,
+                mode = PetRailExplorationMode.Ascending,
+            ),
+        )
+
+        assertEquals(
+            listOf("composer", "message-recent", "message-older"),
+            lookahead.orderedRails.map { it.perchKey },
+        )
+        assertEquals(2, lookahead.continuation.size)
+    }
+
+    @Test
+    fun `terrain lookahead waits for a supported waypoint to replan`() {
+        val rail = PetRoamingRail(
+            key = "composer:0",
+            perchKey = "composer",
+            bounds = PetSafeBounds(20f, 700f, 180f, 700f),
+        )
+
+        assertEquals(
+            null,
+            planPetTerrainLookahead(
+                current = PetPoint(100f, 620f),
+                activeRailKey = rail.key,
+                rails = listOf(rail),
+                bounds = PetSafeBounds(0f, 0f, 400f, 800f),
+                uiObstacles = emptyList(),
+                footprint = PetFootprint(width = 20f, height = 20f),
+                maximumStepLength = 240f,
+                maxExtraStops = 3,
+                mode = PetRailExplorationMode.Ascending,
+            ),
+        )
+    }
+
     @Test
     fun `temperament bounds extra response bubble exploration`() {
         assertEquals(1, petBubbleExplorationStops(PetTemperament.Calm))

@@ -2519,15 +2519,21 @@ top of a response bubble without ever covering its text or jumping through it.
   always take precedence.
 - Debug builds may expose a default-off Pet path inspector anchored below the
   app header and Android status-bar inset, leaving header navigation and actions
-  accessible. It starts collapsed to preserve the live viewport and
-  expands on demand. **Terrain** is the default balanced view; **Plan** isolates selected and active travel, and
+  accessible. It starts as a narrow collapsed bar, moves only from an explicit
+  grip, snaps horizontally, persists normalized viewport placement, re-clamps
+  after viewport or size changes, and exposes a reset action. A recoverable PASS
+  mode collapses it and leaves only the unlock control interactive; non-control
+  regions and the diagnostic Canvas remain click-through. It expands on demand.
+  **Terrain** is the default balanced view; **Plan** isolates selected and active travel, and
   **Full** adds protected bounds, footprint, raw labels, gate, and locomotion
   state. The views distinguish measured terrain, narrow-bubble touchdown points,
   collision-checked candidate routes, the selected out-and-back route with
   directional arrows and numbered stops, and the solid currently active route.
-  Freeze snapshots only the visualization while planning continues. The
-  full-screen Canvas is pointer-transparent, only inspector controls accept
-  input, and diagnostics are cleared when Developer Options are locked.
+  The planner keeps an event-driven lookahead ready while behavior pacing is
+  idle, refreshes it on terrain or supported-waypoint changes, and treats an
+  in-flight transfer as atomic. Freeze snapshots only the visualization while planning continues. The
+  expanded actions can disable the persisted overlay request entirely, and
+  diagnostics are cleared when Developer Options are locked.
 - Installed Petdex pets use the same renderer and planner without manifest edits
   or asset conversion by the user. The catalog preview resolves through the live
   renderer and names the exact direct, mirrored, fallback, or mirrored-fallback
