@@ -377,7 +377,9 @@ internal fun PetTerrainDebugOverlay(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                // Every supported pet surface uses a standard Material top app
+                // bar. Keep its navigation and action targets unobstructed.
+                .padding(start = 8.dp, top = 68.dp, end = 8.dp, bottom = 4.dp),
         )
     }
 }
