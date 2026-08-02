@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pet_preview_idle">Leerlauf</string>
+    <string name="pet_preview_walk_left">Nach links laufen</string>
+    <string name="pet_preview_walk_right">Nach rechts laufen</string>
+    <string name="pet_preview_jump">Springen</string>
+    <string name="pet_preview_fall">Fallen</string>
+    <string name="pet_preview_held">Gehalten</string>
+    <string name="pet_preview_wave">Winken</string>
+    <string name="pet_preview_working">Arbeitet</string>
+    <string name="pet_preview_review">Prüft</string>
+    <string name="pet_preview_waiting">Wartet</string>
+    <string name="pet_preview_error">Fehler</string>
+    <string name="pet_preview_uses_clip">Verwendet %1$s</string>
+    <string name="pet_preview_mirrors_clip">Spiegelt %1$s</string>
+    <string name="pet_preview_falls_back">Greift auf %1$s zurück</string>
+    <string name="pet_preview_mirrors_fallback">Spiegelt die Ersatzanimation %1$s</string>
+</resources>

@@ -882,7 +882,9 @@ class ChatViewModelGatewayInboundTurnTest {
 
         awaitCondition {
             gatewayHarness.rpcLog.any { (method, params) ->
-                method == "prompt.submit" && params["text"] == JsonPrimitive("Run this next")
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Run this next") &&
+                    params["queued"] == JsonPrimitive(true)
             }
         }
         assertTrue(viewModel.queuedMessages.value.isEmpty())

@@ -98,6 +98,7 @@ class RelayVoiceClient(
     private val webSocketFactory: ((Request, WebSocketListener) -> WebSocket)? = null,
     private val realtimeResumeRetryIntervalMs: Long = REALTIME_RESUME_RETRY_INTERVAL_MS,
     private val realtimeResumeRetryWindowMs: Long = REALTIME_RESUME_RETRY_WINDOW_MS,
+    private val voiceOutputFirstAudioTimeoutMs: Long = VOICE_OUTPUT_FIRST_AUDIO_TIMEOUT_MS,
 ) {
 
     companion object {
@@ -108,6 +109,7 @@ class RelayVoiceClient(
         private val WAV_AUDIO = "audio/wav".toMediaType()
         private val OCTET_STREAM = "application/octet-stream".toMediaType()
         private const val REALTIME_TIMEOUT_MS = 90_000L
+        private const val VOICE_OUTPUT_FIRST_AUDIO_TIMEOUT_MS = 15_000L
         private const val REALTIME_AGENT_IDLE_TIMEOUT_MS = 90_000L
         private const val REALTIME_AGENT_MAX_TURN_MS = 5 * 60_000L
         private const val REALTIME_AGENT_WAIT_SLICE_MS = 1_000L
@@ -867,6 +869,7 @@ class RelayVoiceClient(
         val resumeAttempted = AtomicBoolean(false)
         val routeProbeRequested = AtomicBoolean(false)
         val currentSocket = AtomicReference<WebSocket?>()
+        val firstAudioSeen = AtomicBoolean(false)
         val socketGeneration = AtomicLong(0L)
         val activeSocketGeneration = AtomicLong(0L)
         val lastEventId = AtomicLong(0L)
@@ -980,6 +983,7 @@ class RelayVoiceClient(
                     }
                     onEvent(event)
                     if (event.isAudioDelta) {
+                        firstAudioSeen.set(true)
                         event.audioEventId?.let {
                             lastPlayedAudioEventId.updateAndGet { current -> maxOf(current, it) }
                         }
@@ -1123,6 +1127,15 @@ class RelayVoiceClient(
             onHandoff = onHandoff,
             completeFailure = ::completeFailure,
         )
+        val firstAudioWatchdog = launch {
+            delay(voiceOutputFirstAudioTimeoutMs)
+            if (!completed.get() && !firstAudioSeen.get()) {
+                completeFailure(
+                    "Voice output produced no audio within ${voiceOutputFirstAudioTimeoutMs}ms",
+                )
+                currentSocket.get()?.cancel()
+            }
+        }
         try {
             withTimeout(REALTIME_TIMEOUT_MS) {
                 finished.await()
@@ -1132,6 +1145,7 @@ class RelayVoiceClient(
             socket.close(1001, "timeout")
             Result.failure(IOException("Voice output timed out", e))
         } finally {
+            firstAudioWatchdog.cancel()
             routeWatcher?.cancel()
         }
     }

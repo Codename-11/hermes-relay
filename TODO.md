@@ -6,6 +6,24 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Android Plugin Studio protocol follow-ups
+
+The first live declarative Plugin lane is host-local: Relay tools create bounded
+draft JSON, Android previews it through the authenticated Dashboard namespace,
+and exact-digest Keep/Remove actions require an Android user tap. Complete the
+multi-session protocol before treating `lifecycle=session` as an isolation claim:
+
+- Derive draft ownership from trusted Hermes task context and store only an HMAC
+  of that identifier; never accept a model-supplied session owner.
+- Filter draft discovery by the Android app's active Hermes session while keeping
+  profile and connection publications separate with explicit precedence.
+- Replace foreground five-second catalog polling with authenticated catalog
+  invalidation events plus ETag polling fallback.
+- Expire abandoned drafts and pending approvals, and add revision-bound profile
+  versus connection promotion targets.
+
+---
+
 ## Verify Android native dashboard sign-in on device
 
 Android now selects Custom Tab + PKCE for HTTPS gateways that advertise
@@ -1042,12 +1060,14 @@ to tool state, safety prompts, or the current task.
   playback-synchronized amplitude through `shouldMarkRealtimeOutputActive`,
   matching the basic-TTS path. Confirm visually on-device with the 1.4.1 batch.
 
-- **Voice command layer — initial 1.4.1 subset code-complete; live verify and
-  navigation residuals remain.** Exact final transcripts can stop speech,
+- **Voice command layer — upstream stop phrases and phase-aware pause are
+  code-complete; live verify and navigation residuals remain.** Exact final transcripts can end the active voice chat,
   explicitly cancel the active background task, pause/resume Continuous mode,
-  repeat a settled background answer, and start a new Standard chat. Bare `stop`
-  and `cancel`, partial transcripts, and command-like ordinary prompts stay on the
-  normal Hermes route. Realtime `new chat` remains gated on a clean websocket
+  repeat a settled background answer, and start a new Standard chat. Bare
+  `stop` is configurable and exact-only while voice chat is active; bare
+  `pause` remains phase-gated to Continuous mode. `cancel`, partial transcripts,
+  and command-like ordinary prompts stay on the normal Hermes route. Realtime
+  `new chat` remains gated on a clean websocket
   session-rebind boundary; `open overlay` and `return to Hermes` remain future
   navigation commands. Verify barge-in Stop, pause during a background run, local
   command Chat cleanup, and Continuous rearm on device.
@@ -1082,11 +1102,34 @@ and whether the agent is waiting on the user.
   experimental barge-in choice. Relay update is server-first; local Voice/barge-in
   values share one DataStore transaction, with relay rollback on local failure.
 
-- **Barge-in hardening** — keep barge-in experimental until echo/self-recording
+- **Barge-in hardening — code complete; on-device matrix remains.** Full-turn
+  listener ownership, AEC/noise suppression, upstream-compatible RMS
+  calibration and thresholds, configurable playback grace, duck/cut behavior,
+  late-delta fencing, next-turn interruption context, and single-microphone
+  handoff are implemented. Phone testing still needs to cover speakerphone/headphones, quiet/noisy rooms, Standard/Realtime
+  generation and playback, stop/pause, and resume-after-interruption.
 
-is solved. The target path is proper AEC, playback-ducking, and a rule that
+- **Experimental wake word — on-device validation.** Verify first-enable model
+  installation and integrity failure recovery, all supported ABIs, Android
+  notification/microphone permission variants, background-start restrictions,
+  task recreation from the detection notification, acoustic false-positive and
+  false-negative rates, battery impact, stop action, and wake→voice→wake
+  microphone handoff. Voice settings now provide a bounded real-microphone/model
+  test with an input meter; use it to distinguish audio capture from KWS tuning
+  before testing the full activation flow. The first release remains fixed to
+  “Hey Hermes”; do not
+  expose profile-specific phrases until routing and acoustic behavior are
+  implemented and validated.
 
-output audio can never become a user turn.
+- **Android Digital Assistant — on-device validation.** On a physical device,
+  select and remove Hermes through the system Assistant role; verify gesture,
+  power-button, screen-off, credential-lock, and unlocked “Hey Hermes”
+  invocation; confirm the system session appears without overlay/full-screen
+  permissions; exercise compact, expanded, collapsed, and full-Voice handoff
+  states, background tap-through, rotation and insets, cancel/back, microphone
+  denial, network failure, process kill/recreation, and wake→voice→wake
+  resumption. Measure idle battery drain because third-party assistants do not
+  receive Google's dedicated low-power hotword hardware.
 
 - **Audio quality guardrails** — normalize output volume across realtime and
 
@@ -1218,11 +1261,8 @@ Follow-ups:
   - **Sphere-skin parity.** Skins are still process-scoped + `adb push` only — the live tick and the importer cover pets, not skins. Extend the tick to `loadUserSkins` and add a `.json` skin import if hot-loading/adding skins in-app is wanted.
   - `**adb push` into `Android/data` hangs on Samsung scoped storage.** Confirmed: pushing a pet pack to `/sdcard/Android/data/<pkg>/files/pets/` stalls (no bytes written) although `adb shell ls` of the dir works. In-app `.zip` import is the supported path; `/sdcard/Download` pushes fine. Consider softening `docs/pet-spec.md` + user-docs to lead with in-app import over adb.
   - **On-device import/delete smoke.** Import `/sdcard/Download/lucy.zip` via Add a pet → confirm Lucy appears, selects, and animates all states; then remove it and confirm the avatar falls back to the Sphere.
-- **Pet state-change re-decode can flash one blank frame.** When the agent state switches clips, the first frame of the new clip may briefly be blank during decode; prewarm/hold-last-frame to smooth it. Root cause is the same as the next item: `PetAvatar.Render` re-decodes from disk on every clip change.
-- **Pet frame-sequence memory: no cap or downsample (audit 2026-06-19).** `decodeClip` decodes every frame of the selected clip into `List<ImageBitmap>` at full resolution with no `inSampleSize` downscale to the display size and no frame-count/dimension ceiling — a long sequence of large PNGs can use a lot of RAM and a single very large image can OOM `BitmapFactory`. Add `inSampleSize` downsampling to the avatar's draw size and/or a documented hard cap. Spec now warns authors (prefer sprite sheets), but the renderer doesn't enforce it.
-- **Pet decoded-clip cache (audit 2026-06-19).** `PetAvatar.Render` keys `produceState` on `clip`, so idle→thinking→speaking→idle within one turn re-runs `BitmapFactory.decodeFile` from disk each transition (repeated I/O + GC churn, and the blank-frame flash above). Add a small per-avatar `Map<SphereState, PetFrames>` decode cache.
 - **Pet behavior model — richer state association (spec'd 2026-06-19, `docs/pet-spec.md` "Agent states &amp; pet behavior").** Shipped: the honesty clamp (declared reactivity ∩ `PET_RENDERER_CAPABILITIES`), the friendly `writing` alias, the `**working`/tool-use overlay** (pet-local sub-state from `toolCallBurst`; opt-in `working` clip drives both the swap and the Tools badge), the **one-shot reaction layer** (`greet`/`wake` on appear, `done`/`celebrate` on turn-finish — opt-in, play-once-then-revert, transition-derived; `ONE_SHOT_MAX_MS` backstop), and `**intensity` modulation** (opt-in `reactive.intensity` → live playback speedup ≤1.6× via `rememberUpdatedState`; un-clamps the Activity badge). Voice · Tools · Activity reactivity is now complete. Remaining:
   - `**attention` one-shot (only deferred behavior).** A reaction on notification arrival — needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which ride state transitions). Would plumb a notification edge into `AvatarRenderState` (or a side channel) + a `PetOneShot.Attention`. Low priority: the avatar is rarely on-screen when notifications land (backgrounded) — see the value analysis; revisit only if the avatar becomes an always-on surface (persistent overlay / Quest port).
-  - **On-device verification (working + one-shots + intensity).** Best seen in clean mode (`AgentTextFlow` feeds `toolCallBurst` + `streamingIntensity` + state transitions). Confirm: a `working` clip swaps in during a tool run and releases ~600ms after (`WORKING_BURST_THRESHOLD` 0.5); a `done` clip plays once on reply completion then returns to idle; a `greet` clip plays once when the avatar appears; with `intensity:true`, a writing/working loop visibly quickens while streaming. Watch for the known clip re-decode flash on each swap (separate TODO — decoded-clip cache).
+  - **On-device verification (working + one-shots + intensity).** Best seen in clean mode (`AgentTextFlow` feeds `toolCallBurst` + `streamingIntensity` + state transitions). Confirm: a `working` clip swaps in during a tool run and releases ~600ms after (`WORKING_BURST_THRESHOLD` 0.5); a `done` clip plays once on reply completion then returns to idle; a `greet` clip plays once when the avatar appears; with `intensity:true`, a writing/working loop visibly quickens while streaming. Confirm each decoded clip swap holds the previous complete visual until the new state is ready.
 - **Undecodable-but-present image appears valid (audit 2026-06-19).** A file that exists but isn't a decodable image passes the loader's `isFile` check, so the pet shows in the picker but renders blank. Documented as a caveat; consider a cheap header sniff at load time if false-valid pets become a support issue.
 

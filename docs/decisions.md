@@ -828,15 +828,15 @@ Server side (`plugin/relay/config.py`, `plugin/relay/server.py`):
 Client side (`app/src/main/kotlin/.../data/ProfileData.kt`, `auth/AuthManager.kt`, `viewmodel/ChatViewModel.kt`):
 - `Profile` includes the `apiServer*` metadata and exposes `hasIsolatedApi`.
 - `AuthManager.parseAgentProfiles` reads the new `api_server_*` fields with safe defaults so older relays remain compatible.
-- `ConnectionViewModel` keeps a base API client for server health/settings and a chat-routed API client for actual chat. Selecting a profile with `apiServerUrl` swaps chat/session calls to that profile API URL while reusing the Connection's stored API bearer token.
-- **Multiplex routing (2026-07-19).** When dashboard `/api/status` positively reports `gateway_mode=multiplex` and the selected non-default profile appears in its `profiles` list, the chat-routed API client uses the shared listener at `/p/<encoded-profile>`. Dedicated `api_server_url` metadata still wins. Missing/older topology and the server-default selection stay on the root API URL, so no prefix is guessed. The optional compatibility bootstrap recognizes the prefix for slash-command route matching only; upstream middleware remains responsible for authorization and profile runtime scope.
+- `ConnectionViewModel` keeps a base API client for server health/settings and a chat-routed API client for actual chat. Selecting a profile with `apiServerUrl` swaps chat/session calls to that profile API URL using the Connection's stored API bearer token.
+- **Multiplex routing (2026-07-19, amended 2026-07-28).** When dashboard `/api/status` positively reports `gateway_mode=multiplex` and the selected non-default profile appears in its `profiles` list, the chat-routed API client uses the shared listener at `/p/<encoded-profile>`. Dedicated `api_server_url` metadata still wins. Missing/older topology and the server-default selection stay on the root API URL, so no prefix is guessed. A known multiplex profile route uses a separately encrypted per-Connection/per-profile API key configured in the profile sheet; if none exists, Android sends no bearer rather than reusing the root Connection key. The optional compatibility bootstrap recognizes the prefix for slash-command route matching only; upstream middleware remains responsible for authorization and profile runtime scope.
 - `ChatViewModel` send path omits `profile`, `model`, and profile `SOUL.md` overrides when the selected profile has an isolated API route. The profile API server owns its own default model, SOUL, sessions, memory, tools, and `.env`; Android still appends phone context when enabled. If no isolated API route exists, it keeps the compatibility overlay behavior.
 - Chat session browsing is scoped to the selected profile route. On profile switch Android clears the old session list, refetches through the routed API client, and labels the drawer with the active profile/API fallback.
-- Voice requests carry the selected profile to relay-owned `/voice/*` routes. `/voice/config` resolves profile-local `tts`/`stt` where present, while `/voice/output/*` and `/voice/realtime/*` resolve experimental `voice_output` / `realtime_voice` sections from the selected profile config and fall back to relay defaults with explicit `config_scope` metadata.
+- Voice requests carry the selected profile to both upstream dashboard audio routes and relay-owned `/voice/*` routes. Standard `/api/audio/transcribe`, `/api/audio/speak`, `/api/audio/speak-stream`, and provider-catalog requests use the selected profile query; Relay `/voice/config` resolves profile-local `tts`/`stt` where present, while `/voice/output/*` and `/voice/realtime/*` resolve experimental `voice_output` / `realtime_voice` sections from the selected profile config and fall back to relay defaults with explicit `config_scope` metadata.
 
 **Trade-offs / v1 scope:**
 - **Isolation when the profile API is running; overlay only as fallback.** Proper Hermes profile switching requires each profile's API server/gateway to be running and discoverable. If a profile has no API route, the app can still provide the older model/SOUL overlay, but that does not isolate memory, sessions, tools, provider auth, or cron jobs.
-- **Shared-key assumption.** The relay exposes only `api_server_key_present`, never the key. Android reuses the active Connection's stored API bearer for profile API requests. Operators who intentionally use different API keys per profile should pair those profile API servers as separate Connections or keep a shared API key across profile API servers.
+- **Credential isolation.** The relay exposes only `api_server_key_present`, never the key. Dedicated profile API origins retain the Connection credential contract. Shared `/p/<profile>` routes use encrypted profile credentials and never inherit the root key.
 - **SOUL.md size.** Some SOUL files are multi-KB (Mizu's is 8 KB). The full content ships as `system_message` only in overlay fallback mode; isolated profile APIs should rely on their own configured SOUL/default prompt.
 - **Persisted per Connection.** The selected profile name and last session id are persisted per Connection/profile context. Switching Connections clears the in-memory object, then rehydrates the destination Connection's persisted profile once its advertised profile list arrives.
 - **Voice is profile-aware but still relay-mediated.** Voice output/realtime settings can follow the selected profile, but provider secrets stay server-side and the Hermes chat/tool loop still owns the final assistant text. Bridge commands remain unrelated to model choice.
@@ -1120,17 +1120,25 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
   over a higher one. Reachability is only the tiebreaker for candidates
   that share the same priority. This is the DNS SRV priority/weight
   contract — known-good semantics, nothing new to debate.
-- **Reachability probe**: `HEAD` against `${api.tls?https:http}://
-  ${api.host}:${api.port}/health` with a 2-second timeout. The result is
-  cached for 30 seconds per-endpoint so repeated `connect()` calls don't
-  hammer the network. Relay-side reachability is implied — if the API
-  server is reachable the relay usually is too, and the first WSS connect
-  will loudly fail otherwise.
+- **Reachability probes are per surface.** Standard routing probes Dashboard
+  `/api/status` when present, otherwise an explicitly configured API `/health`,
+  with Relay `/health` used only for Relay-only records. Relay socket selection probes the
+  candidate's own Relay `/health`; a healthy Dashboard or API listener never
+  vouches for Relay on another port. Results are cached independently by
+  candidate and surface, so a Relay outage cannot poison healthy standard chat,
+  Manage, sessions, or Vanilla Hermes voice.
 - **Network-change re-probe**: Android's `ConnectivityManager
   .NetworkCallback.onAvailable` / `onLost` triggers a re-probe. If a
   higher-priority candidate became reachable after a network transition,
   the phone reconnects to it; if the current one became unreachable, the
   phone falls through to the next candidate in priority order.
+- **Relay retry state is route-aware.** Transport-failure streaks are scoped to
+  the Relay socket URL, so one LAN failure plus one Tailscale failure cannot
+  evict Tailscale as though it had failed twice. Automatic route replacement
+  preserves the accumulated exponential-backoff attempt; explicit user/network
+  handoff and a successful socket open reset it. If every Relay surface is
+  unavailable, the standard route remains stable while Relay retries the last
+  configured socket with bounded backoff.
 - **TTL defaults by role** (informational — operator can override at
   pair time): `lan` → 7 days, `tailscale` → 30 days, `public` → 30 days,
   unknown role → 7 days (conservative). The longer `tailscale` default
@@ -1968,6 +1976,9 @@ after the turn settles and therefore cannot restore the in-between UI.
    remains exclusive because that transport cannot multiplex live sessions.
 4. Apply the same history fallback to sessions-SSE transport drops and route
    handoffs. A final persisted transcript replaces the checkpoint and clears it.
+5. When `session.resume.inflight` includes user corrections, restore the bounded
+   corrections in server order exactly once between the original user turn and
+   the partial assistant response.
 
 **Consequences.** Reopening Chat or moving between running Gateway chats can
 continue each assistant bubble with its last-known reasoning and tool state
@@ -2254,3 +2265,285 @@ active private route.
 - Android retains a full-screen embedded WebView for compatible dashboard
   cookie providers, while providers that prohibit embedding use the explicit
   brokered native route.
+
+---
+
+## ADR 41 — Android owns full-turn interruption and experimental wake detection
+
+**Status:** Accepted (2026-07-29).
+
+**Context.** Android barge-in previously armed only when speech playback began.
+That left agent generation non-interruptible and recreated the microphone/VAD
+pipeline at the Thinking-to-Speaking boundary. Upstream voice work established
+a safer full-turn lifecycle, quiet calibration before playback, and phase-aware
+bare stop behavior. Upstream wake listening is host-local, but enabling that
+server listener from Android would capture audio on the wrong machine and
+couple Standard voice to non-standard server behavior.
+
+**Decision.**
+
+- Android owns one barge-in listener per active voice response, spanning
+  `Thinking`, `Speaking`, and final audio drain on Standard and Realtime paths.
+  A turn epoch fences callbacks, and teardown completes before replacement
+  capture or another listener can acquire the microphone.
+- Quiet-room RMS calibration occurs before output and freezes at playback
+  start. The gate follows upstream's 90th-percentile ambient floor, 3× default
+  multiplier, generation/playback minimums, 4,000 RMS ceiling, 500 ms grace,
+  and 80%-majority decision window. Calibration frames cannot trigger. The
+  renderer drives playback phase, ambient drift resumes only in quiet gaps,
+  and grace rearms after gaps of at least one second. Android exposes the
+  multiplier and grace for device tuning while preserving upstream defaults.
+- Interruption uses the existing active-turn cancellation seam. Late Standard
+  stream content and Realtime audio are suppressed. Silencing does not cancel
+  a promoted Hermes task; explicit background-task cancellation remains the
+  separate destructive intent.
+- Configurable stop phrases default to exact bare `stop` and end the active
+  voice chat during generation or playback; an empty list disables the feature.
+  The phrase remains ordinary agent input outside voice chat, and longer
+  requests remain agent input. Existing exact pause/resume controls remain
+  phase-gated to Continuous mode.
+- A playback interruption arms the upstream-compatible one-shot note for the
+  next model-bound Standard turn, expires after 120 seconds, and is carried in
+  API-local interface context rather than visible or persisted user text.
+  Generation or pre-audio synthesis interruption does not claim that spoken
+  output was cut off, and Realtime relies on its persistent provider session
+  context.
+- Wake-word detection is Android-local, experimental, and off by default. A
+  user-started microphone foreground service runs sherpa-onnx for the single
+  validated “Hey Hermes” phrase, with an ongoing notification and Stop action.
+  No pre-activation PCM leaves the phone.
+- Wake and voice share a process-wide microphone lease. Detection releases its
+  recorder before entering the existing voice flow and resumes only after voice
+  exits. There is no boot receiver or server wake-listener control.
+- The KWS model is downloaded and SHA-256 verified on first enable. Preferences
+  store enabled state, fixed phrase, strictness, decoder confirmation,
+  start-new-session behavior, and a future-safe profile-routing shape. Only
+  active-profile preservation is implemented; profile-specific phrases are
+  intentionally not claimed.
+- sherpa owns temporal confirmation through `numTrailingBlanks`. Android treats
+  each non-empty keyword result as a completed event, resets the native stream
+  immediately, and does not require the same completed result to recur. Voice
+  settings can arm a bounded real-microphone test; test detections report
+  success without entering voice or acquiring a second microphone owner.
+
+**Consequences.**
+
+- Standard voice remains Dashboard/Gateway-backed and works against unmodified
+  upstream Hermes. Local detection is an Android input affordance, not a Relay
+  server dependency.
+- The sherpa runtime increases Android artifacts for each packaged ABI, while
+  the approximately 6 MB model is device storage rather than APK payload.
+- Continuous wake listening has visible microphone and battery cost and
+  requires explicit device/acoustic validation before the experimental label
+  can be reconsidered.
+- The ordinary foreground-service mode may continue listening in the
+  background, but it does not launch an activity from the background. It holds
+  a detection behind an actionable notification until Hermes is visible.
+  Default-assistant integration is a separate Android system role and lifecycle.
+
+---
+
+## ADR 42 — Full assistant wake uses Android's selected VoiceInteractionService
+
+**Status:** Accepted (2026-07-30).
+
+**Context.** The microphone foreground-service preview can detect in the
+background, but Android correctly prevents an ordinary background app from
+presenting its Activity immediately. Queuing the activation behind a
+notification is therefore not equivalent to a default digital assistant.
+Accessibility, overlays, full-screen intents, or server-side microphones would
+either bypass platform policy, weaken privacy, or break the vanilla-Hermes
+boundary.
+
+**Decision.**
+
+- Hermes declares a `VoiceInteractionService` and associated
+  `VoiceInteractionSessionService`. Android activates it only after the user
+  confirms Hermes as the Assistant role; the app never silently takes the role.
+- The always-running interaction service remains lightweight and owns only
+  opt-in Android-local sherpa-onnx KWS. Session UI and lifecycle work run in a
+  separate process. The system session opens the existing app voice flow with
+  `startVoiceActivity`, including the keyguard-supported platform path.
+- Assistant KWS and the experimental microphone foreground service are separate,
+  mutually exclusive modes. Both use the same model, tuning, privacy boundary,
+  and one-microphone handoff. Voice capture, barge-in, and diagnostics retain
+  their existing process-wide lease.
+- Session state crosses the process boundary through explicit, package-scoped
+  broadcasts. Exit/cancel tears down the existing voice flow, finishes the
+  system session, and retries local wake ownership only after the microphone is
+  free. Process recreation creates a fresh activation rather than relying on an
+  in-memory Activity reference.
+- The system session defaults to a compact bottom bar and can expand without
+  changing turn lifecycle. **Open full voice** disables only the system-owned
+  session UI and foregrounds the app-owned Voice surface. It does not create
+  another voice session or reacquire the microphone. Back collapses an expanded
+  surface first; Back from compact, hide, Stop, or cancel remains terminal,
+  while the hidden session still observes the final `Closed` state and finishes
+  without cancelling the completed turn.
+- Connection, chat, and voice runtime ownership is application-lifetime in the
+  main process rather than Activity-owned. The assistant service may initialize
+  that graph and start a turn while no Activity exists; the app UI later binds
+  the same ViewModels, recorder, players, clients, and turn state. The isolated
+  session process never creates voice collaborators.
+- Standard voice remains dashboard-backed and upstream-only. Assistant mode adds
+  an Android invocation surface; it does not add or require a Relay/server wake
+  endpoint.
+
+**Consequences.**
+
+- Background and locked-screen invocation is mediated by Android's selected
+  assistant UI/session rather than an ordinary background Activity launch.
+- Users can leave Hermes selected for gesture/power-button invocation while
+  turning continuous KWS off, or remove Hermes through Android's Assistant
+  settings.
+- Android does not grant third-party assistants Google's dedicated low-power
+  hotword DSP integration. Local sherpa inference keeps pre-activation audio
+  private but can consume materially more battery than the built-in assistant.
+
+---
+
+## ADR 43 — App-owned voice overlay uses a microphone foreground service
+
+**Status:** Accepted (2026-07-31).
+
+**Context.** A `TYPE_APPLICATION_OVERLAY` remains visible over another app, but
+it does not make its owning process foreground for Android's while-in-use
+microphone app-op. The first capture could begin during the foreground grace
+window, while later captures opened successfully but received silenced PCM.
+Keeping `AudioRecord` in the existing voice runtime was still desirable: wake,
+voice capture, barge-in, and diagnostics already share one process-wide owner.
+
+**Decision.**
+
+- Opening the system voice overlay while Hermes is visible starts a dedicated
+  service with `foregroundServiceType="microphone"` before the app backgrounds.
+  The required ongoing notification explains the microphone access and offers
+  a terminal **Stop voice** action.
+- The service never creates an `AudioRecord` and never acquires a microphone
+  lease. It supplies only the foreground execution capability; the existing
+  `VoiceViewModel` and `VoiceRecorder` remain the sole capture owner.
+- Overlay Hide, Exit, Open Hermes, voice-mode shutdown, add-view failure, and
+  app-task removal stop the service. Notification Stop closes the overlay and
+  exits voice mode rather than leaving an unprotected capture surface visible.
+- The service is distinct from experimental wake-word listening. Wake remains
+  paused during voice and cannot become a second microphone owner.
+
+**Consequences.**
+
+- Repeated overlay turns can receive real microphone PCM after Hermes moves to
+  the background instead of Android substituting silence.
+- Background overlay use has an explicit persistent privacy affordance and
+  cannot silently retain microphone eligibility after the overlay session.
+- Android 14+ while-in-use rules require starting this service from the visible,
+  user-initiated overlay action; an arbitrary background caller cannot create
+  equivalent microphone privilege.
+
+---
+
+## ADR 44 — Floating pets use one measured-rail behavior director
+
+**Status:** Accepted (2026-08-01).
+
+**Context.** An app-level pet is visually pleasant only when its movement reads
+as intentional and never competes with the interface. Treating the entire
+Compose or accessibility tree as walkable geometry would make text and controls
+accidental terrain, while independently launched animation effects can interrupt
+dragging, misrepresent active agent work, or snap to stale coordinates when a
+scroll changes measured bounds. Chat adds a special case: the pet should walk on
+top of a response bubble without ever covering its text or jumping through it.
+
+**Decision.**
+
+- One root overlay owns position and arbitration. It consumes no transcript or
+  control-bar layout space; only the pet-sized target handles pointer input.
+- Appearance persists one 60–120% scale, default 100%, that changes art, touch
+  target, collision footprint, perch eligibility, and route clearance together.
+  The 100% base equals the previous 125% physical size, and legacy stored values
+  are rebased to preserve their rendered size; visual and planner geometry may
+  never scale independently.
+- Screen owners opt in by publishing live-measured perches, obstacles, scrolling,
+  and modal visibility. The supported terrain is Chat's composer and eligible
+  visible settled message bubbles, Terminal's extra-keys toolbar, root Settings
+  summary/category cards, Appearance section cards, and the persistent status
+  strip on Settings/Appearance/About. No accessibility-tree scan or
+  arbitrary-Composable discovery is permitted.
+- Registration does not make a surface rectangle walkable. Bubble interiors
+  remain protected obstacles; only an explicitly derived edge rail or touchdown
+  with exact collision-validated endpoints is autonomous terrain. A validation
+  failure waits locally instead of projecting or snapping to invented geometry.
+- Direct interaction has priority over agent activity, followed by a pending
+  response visit, autonomous roaming, and idle reactions. Activity clips remain
+  truthful because locomotion is eligible only while Hermes is idle.
+- Drag/drop changes placement without changing the roaming preference. The held
+  and falling states suspend autonomous movement until the placement and landing
+  animation settle, then an enabled pet resumes from the valid landing surface.
+- Autonomous, recovery, and direct drag/drop routes are distinct motion/debug
+  kinds. Recovery and direct manipulation cannot be reused as autonomous route
+  eligibility. When a layout update has already placed the pet inside a measured
+  obstacle, recovery is limited to the shortest bounded straight egress to a
+  clear edge and stops there.
+- A response visit is a deterministic bounded terrain journey. Nearby responses
+  use the direct composer/gutter/bubble excursion. Farther visible responses
+  require a complete chain of settled message-top rails with no hop over 210 dp;
+  sparse chats without that chain defer the visit. The newest response gets the
+  full cross and greeting, then the pet may inspect one to three successively
+  older visible rails according to temperament before retracing the same bounded
+  journey. A measured bubble too narrow for walking may contribute a centered,
+  zero-width touchdown when at least 35% of the pet width is supported; it is a
+  transient route step, never an idle or patrol surface. Unsafe geometry and interactive response rows are skipped rather than
+  crossed, and a sparse gap ends exploration instead of inventing a ledge. The
+  active planner uses the same rail-overlap launch point as the debug graph,
+  walking there before takeoff and backtracking past dead-end candidate edges.
+- Settled Chat uses one text-safe habitat order: the measured side pocket beside
+  the newest settled bubble, then its raised top edge, then the outer composer
+  corner. A changed habitat is reached from the live coordinate, never snapped.
+- Settings terrain may be published dynamically by reusable components, but it
+  remains explicit opt-in measured geometry with owner scroll/modal state. The
+  app never turns every card, heading, control, or semantics node into terrain.
+  Root Settings and Appearance explicitly publish selected card tops. Their
+  bounded planner may tour several connected levels in either direction and
+  must retrace the exact selected legs; the same maximum transfer length still
+  rejects any card without a pet-sized clear approach.
+- Temporary suspension preserves screen coordinates. Scrolling stops movement
+  but does not reclassify the route, re-dock, teleport, or dim the pet. Settings,
+  Appearance, and About hide it while a dialog owns the surface. Routes without
+  an approved rail use the persisted logical-edge home.
+- Motion states correspond to physical movement: directional walking for
+  horizontal travel, jump to the apex, fall through descent and manual-drop
+  settling, and held during drag. Airborne duration grows with route length;
+  anticipation, turn pauses, cycle-quantized walking, shadow height, and landing
+  squash are presentation polish around those honest states.
+- Calm, Balanced, and Playful alter cadence and cap older-bubble exploration at
+  one, two, or three stops. App animation settings, foreground/activity state,
+  scrolling, dialogs, Android animator scale, and TalkBack touch exploration
+  always take precedence.
+- Debug builds may expose a default-off Pet path inspector anchored below the
+  app header and Android status-bar inset, leaving header navigation and actions
+  accessible. It starts as a narrow collapsed bar, moves only from an explicit
+  grip, snaps horizontally, persists normalized viewport placement, re-clamps
+  after viewport or size changes, and exposes a reset action. A recoverable PASS
+  mode collapses it and leaves only the unlock control interactive; non-control
+  regions and the diagnostic Canvas remain click-through. It expands on demand.
+  **Terrain** is the default balanced view; **Plan** isolates selected and active travel, and
+  **Full** adds protected bounds, footprint, raw labels, gate, and locomotion
+  state. The views distinguish measured terrain, narrow-bubble touchdown points,
+  collision-checked candidate routes, the selected out-and-back route with
+  directional arrows and numbered stops, and the solid currently active route.
+  The planner keeps an event-driven lookahead ready while behavior pacing is
+  idle, refreshes it on terrain or supported-waypoint changes, and treats an
+  in-flight transfer as atomic. Freeze snapshots only the visualization while planning continues. The
+  expanded actions can disable the persisted overlay request entirely, and
+  diagnostics are cleared when Developer Options are locked.
+- Installed Petdex pets use the same renderer and planner without manifest edits
+  or asset conversion by the user. The catalog preview resolves through the live
+  renderer and names the exact direct, mirrored, fallback, or mirrored-fallback
+  row for each supported action.
+
+**Consequences.**
+
+- Adding another roam surface requires an explicit measured-rail registration
+  and ownership of its scroll/modal state; it is not automatically inferred.
+- Bubble visits remain fun but deterministic and text-safe. When geometry is not
+  provably safe, no visit is preferable to a partially obscured message.
+- Position, activity truth, accessibility behavior, and Petdex fallback semantics
+  share one source of runtime truth instead of drifting across route-local effects.

@@ -1,17 +1,17 @@
-# Custom Avatars
+# Custom avatars and pets
 
-The agent has a face — the animated embodiment you see on the empty chat screen, in full-screen clean/ambient mode, on the voice overlay, during onboarding, and on the startup splash. You can change it. Pick the built-in **Sphere** and recolor it, or drop in your own animated **pet** as a complete replacement.
+Hermes Relay has three separate visual concepts. Changing one does not replace
+the others:
 
-Everything lives under **Settings → Appearance → Agent avatar**, and adding your own is pure data — frames and JSON, never code.
+1. **Profile identity** — the profile image or letter beside the agent name and
+   the first assistant message in a group.
+2. **Background visualization** — Off or the animated **Sphere**, with an
+   optional Sphere skin.
+3. **Floating pet** — None or an installed bitmap companion that stays with you
+   across the app.
 
-## The two-level model
-
-Appearance is two stacked choices:
-
-1. **Agent avatar** — *what* the embodiment is. Either the built-in **Sphere** (an animated ASCII orb) or one of your **pets** (an animated bitmap companion).
-2. **Sphere skin** — *how the Sphere looks*. A second row of chips that recolors the orb. It only appears when the Sphere avatar is selected; pets carry no skins, so the row hides when a pet is chosen.
-
-So the flow is: choose an avatar, and if that avatar is the Sphere, optionally choose a skin.
+Profile identity is managed from the agent sheet. Sphere and pet controls live
+under **Settings → Appearance**.
 
 ## Profile badge image
 
@@ -30,23 +30,35 @@ The imported copy stays on the phone and is scoped to that Connection and
 profile. Changing or removing the host file later does not silently change the
 phone icon; tap import again to refresh it.
 
-## Choosing an avatar
+## Choosing a floating pet
 
-Open **Settings → Appearance → Agent avatar**. The Sphere is always the first chip; any valid pets you've installed appear beside it. Selecting a chip switches every surface — chat, clean mode, voice, onboarding, splash — at once.
+Open **Settings → Appearance → Floating pet**. Choose **None** or an installed
+pet. This does not change the profile badge or Sphere.
 
-Each chip shows a small summary of the **live signals** the avatar reacts to, so you know what it does before you pick it:
+Each pet shows a summary of the **live signals** its pack supports:
 
 | Badge | Meaning |
 |-------|---------|
-| **Voice** | Reacts to mic/speech amplitude — swells or bounces while listening and speaking |
-| **Tools** | Pulses on tool-call activity during a turn |
-| **Activity** | General turn activity drives motion (turbulence, ripple, flow) |
+| **Voice** | Pack/renderer supports mic or speech amplitude on hosts that provide it; Android's app-level companion is hidden during full-screen voice |
+| **Tools** | Uses a distinct working clip while Hermes runs a tool |
+| **Activity** | Speeds up supported activity animation as a turn becomes busier |
 
-With no pets installed and the Sphere selected, the app behaves exactly as it always has.
+With no pet selected, no floating companion is shown. The Sphere setting remains
+independent.
+
+For Petdex pets, tap **Browse Petdex**, choose **Install**, and the app converts,
+selects, and maps the pet automatically. You do not edit `pet.json`, rename
+Petdex rows, or create missing animations. The selected installed pet shows an
+interactive **Idle / Walk left / Walk right / Jump / Fall / Held / Wave /
+Working / Review / Waiting / Error** preview. Each choice names the exact clip
+used and says whether it is direct, mirrored, a fallback, or a mirrored fallback.
+An opposite native directional row is **Mirrored**; the legacy in-place
+`running` row used for travel is **Mirrored fallback**; idle art is a plain
+**Fallback** when no travel row exists.
 
 ## Sphere skins
 
-When the Sphere is your avatar, a **Sphere skin** row appears. A skin changes the orb's **colors** (and, optionally, fine motion parameters) — the underlying orb animation stays the same.
+When **Background visualization** is set to Sphere, the **Sphere skin** row changes the orb's colors (and, optionally, fine motion parameters). Pet selection does not affect it.
 
 Built-in skins include:
 
@@ -76,11 +88,16 @@ The app creates the folder on first launch, so it's there waiting after your fir
 For the full format — every state key, the optional motion `params`, color rules, and the reactivity flags — see the Sphere skin spec: [`docs/sphere-spec.md`](https://github.com/Codename-11/hermes-relay/blob/main/docs/sphere-spec.md).
 :::
 
-## Pets — bring your own avatar
+## Pets — bring your own companion
 
-A **pet** is a bitmap companion that replaces the Sphere entirely. It can be animated or still, and it's a **self-contained pack**: a small `pet.json` manifest plus the images it plays back — either PNG frames or a single sprite sheet. Pets are **pure data** — frames and numbers, never code — and the renderer is dependency-free, so a pet is really just a folder of PNGs the app displays or animates.
+A **pet** is a floating bitmap companion, independent of the Sphere and profile
+identity. It can be animated or still, and it is a self-contained pack: a small
+`pet.json` manifest plus PNG/WebP frames or a sprite sheet. Pets are pure data—
+frames and numbers, never executable code.
 
-A pet can have separate clips for the agent's **idle**, **thinking**, and **speaking** states, but the only hard requirement is `idle`. A minimal pet is one idle image and a one-line manifest — a static picture avatar.
+A pet can have separate clips for idle, thinking, writing, tool work, errors,
+reactions, and optional left/right locomotion. Only `idle` is required; one idle
+image and a one-line manifest make a complete static pet.
 
 ### Add a pet
 
@@ -94,15 +111,95 @@ adb push blob/ /sdcard/Android/data/com.axiomlabs.hermesrelay.sideload/files/pet
 On the **googlePlay** flavor, drop the `.sideload` suffix:
 `/sdcard/Android/data/com.axiomlabs.hermesrelay/files/pets/`.
 
-Neither path needs a runtime permission — app-scoped external storage is reachable by `adb push` (or a file manager) directly. Reopen **Settings → Appearance → Agent avatar** and your pet appears as a chip alongside the Sphere.
+Neither path needs a runtime permission—app-scoped external storage is reachable
+by `adb push` or a file manager. Reopen **Settings → Appearance → Floating pet**
+and the pack appears as a companion choice.
 
 ::: tip Easiest: import in the app
-You don't need `adb`. In **Settings → Appearance → Agent avatar**, tap **Add a pet** and pick a file — it accepts a pet pack (`.zip`) **or a single image** (PNG/JPG), which becomes a one-frame **static avatar** with no manifest authoring. A pet zip may contain `pet.json` at the archive root or inside one top-level folder. Imported pets appear immediately; remove them from the **Installed pets** list.
+You don't need `adb`. In **Settings → Appearance → Floating pet**, tap **Add a pet** and pick a Relay pet pack (`.zip`) or a single image, which becomes a one-frame static companion. You can also tap **Browse Petdex** to search the public gallery, review creator/source attribution, and explicitly install a supported pet. Petdex atlases download only after you tap Install and remain available offline afterward. Imported and Petdex pets appear in the same installed list.
 :::
 
 ::: tip Authoring reference
 For the manifest format — clips, sprite sheets, frame-rate limits, reactivity flags, and image best practices — see the Pet spec: [`docs/pet-spec.md`](https://github.com/Codename-11/hermes-relay/blob/main/docs/pet-spec.md).
 :::
+
+### Move or let the pet roam
+
+The companion is app-level, so it keeps the same home while you move between
+normal Hermes Relay screens.
+
+- Long hold the pet, drag it, and release. It snaps to the nearest start/end
+  edge or valid roaming surface with a visible falling/landing animation and
+  remembers a proportional vertical position across rotation, resizing,
+  relaunches, and RTL layouts. Dragging lifts into the held animation, stays
+  clear of registered controls, and does not turn roaming off.
+- Tap the pet to make it wave and open its menu.
+- Turn on **Walk around the interface** to let it roam while Hermes is idle. This
+  is off by default. Supported ledges are the measured top edges of Chat's
+  composer and eligible visible settled user/assistant bubbles, Terminal's
+  extra-keys bar, and the bottom status strip on Settings and About. Hermes Relay
+  uses only these deliberately supported surfaces—it does not scan every button
+  or text field—and the overlay adds no blank strip or lost text space.
+- **Pet size** in Appearance adjusts the companion from 60–120%, with the former
+  maximum size now shown as the 100% default. Existing saved choices keep their
+  physical size. Art, touch target, and routing footprint change together, so a
+  larger pet skips a tight ledge instead of overlapping a control or message.
+- At the settled Chat bottom, the pet rests in blank space beside the latest
+  bubble when that fits, otherwise on its safe top edge, then at the outer
+  composer corner. Selected Settings ledges can register dynamically; ordinary
+  cards, labels, fields, and buttons never become terrain automatically.
+- When Chat's scroll-to-bottom button or Terminal's jump-to-latest pill is
+  visible, the pet shortens or leaves that part of the ledge clear.
+- After a plain assistant response settles, the pet can walk along the composer
+  to the clear outer side of the message, jump beside it, walk across its raised
+  rail, and wave. It may then hop to older visible user or assistant rails before
+  retracing the same bounded path and dropping to the composer. Its full
+  footprint stays above the text, and no hop exceeds 210 dp. A narrow bubble
+  cannot become a walking rail, but one with enough visible top support can be a
+  brief centered touchdown between hops; the pet never walks or idles there.
+  Blocked or extremely narrow bubbles are skipped. Cards, attachments, tool calls, background tasks,
+  and phone/voice actions cannot be the greeting destination; a settled rich
+  user or assistant bubble may still provide a safe measured top stepping rail.
+- Directional clips match left/right travel; a brief turn pause, jump-to-fall
+  apex, responsive shadow, landing squash, and walk-cycle-matched speed make the
+  movement read as grounded. Between response visits, idle variety rotates
+  through hops, waves, and rests.
+- Scrolling Chat, Settings, or About pauses the pet exactly where it is, at full
+  opacity. It resumes by replanning from that live point—no snap or teleport to
+  the saved edge. Settings/About dialogs suspend it. On a screen without a
+  supported ledge, it stays docked.
+- Use the pet menu to pause roaming, reset position, open Appearance, or hide it.
+  TalkBack offers move-to-start/end, move-up/down, and reset actions so dragging
+  is never required.
+
+The pet's behavior has a predictable priority: your tap/drag/drop first, then
+Hermes activity, a newly completed response visit, normal roaming, and finally
+idle reactions. Under **Pet temperament**, choose how often an otherwise-idle
+pet acts:
+
+| Temperament | Response visit | Extra older rails | Roam interval | Idle reaction |
+|-------------|----------------|-------------------|---------------|---------------|
+| **Calm** | 2.5 seconds | up to 1 | 12 seconds | 28 seconds |
+| **Balanced** (default) | 1.5 seconds | up to 2 | 8 seconds | 18 seconds |
+| **Playful** | 0.75 seconds | up to 3 | 5 seconds | 10 seconds |
+
+Temperament never bypasses scrolling, dialogs, active Hermes work, disabled
+animations, reduced motion, or TalkBack touch exploration.
+
+Debug builds also offer **Developer Options → Show pet terrain overlay**. It
+draws measured perches, usable rails, narrow-bubble touchdown points, collision
+regions, the active rail, dashed possible routes, the solid route currently
+being traversed, and the current movement gate without changing pet
+behavior. Blue dashed lines are possible transfers, orange is the active route,
+and violet points are touchdown-only. The overlay is off by default and does not intercept touches.
+
+Agent state and locomotion are separate. `running`/`working` means Hermes is
+performing work in place; `walking-left`/`walking-right` or
+`running-left`/`running-right` means the pet is physically crossing the safe
+strip. Directional motion is used only while Hermes is idle, so thinking,
+writing, tool work, errors, and reactions always take priority. Petdex's current
+directional rows are preserved automatically; legacy Petdex pets without those
+rows still move but show their idle art during travel.
 
 ### Generate a pet with AI
 
@@ -272,8 +369,8 @@ A 256 px cell is the **canvas**, not the size the character should fill. After b
 Sprite animation is frame-stepped, so smoothness comes from **frame count**, not speed — which is why this kit defaults to a **4×4 grid (16 frames)**. If a 16-frame sheet drifts, keep the 4×4 grid and fix registration first: generate states one at a time, keep the same reference and seed, or use one stable state-specific frame as a locked base and animate only blink, mouth, glow, sparkles, or a contained prop. Only drop to **3×3** or **2×2** when frame count is negotiable. And **match fps to frame count** so the loop length stays sane: 16 frames at `fps: 8` is a calm ~2 s cycle, while *4* frames at `fps: 8` is a frantic half-second. Keep calm states (`idle`/`listening`) a little slower than active ones (`speaking`/`done`).
 :::
 
-::: tip Resolution: size for the biggest surface
-The avatar is **contain-fit** into whatever space it occupies, and *one* asset set serves every surface — so author for the **largest** place it appears (the full-screen chat background) and small placements (the voice overlay) just downscale and stay sharp. For static per-state packs, use native **2048×2048** stills when you care about full-width, high-DPI phones; **1024×1024** is a lighter default. Avoid generating a 256 px still and upscaling it later — that makes a bigger file, not real detail. For animated sheets, **256 px cells** (a 1024×1024 sheet for a 4×4 grid) are a good default; 512 px cells (2048×2048 sheet) add crispness at a modest memory cost because a sheet decodes as one bitmap. You can also fine-tune the running speed live in **Settings → Appearance** without re-authoring.
+::: tip Resolution: size for the companion target
+The pet art uses a 60 dp base size (50 dp in compact layouts), followed by the 60–120% Appearance scale, so huge full-screen assets waste memory. A 1024×1024 still is already generous; downsize finished assets when practical. For animated sheets, 256 px cells are a good default. You can also fine-tune playback speed in **Settings → Appearance** without re-authoring.
 :::
 
 ::: warning Three things AI image models get wrong
@@ -283,14 +380,14 @@ The avatar is **contain-fit** into whatever space it occupies, and *one* asset s
 :::
 
 ::: tip Static packs are first-class
-Want to confirm the pipeline today before perfecting nine animated sheets? Generate nine expressive stills and reference each as a one-frame `frames` clip (`"frames": ["idle.png"]`) instead of a `sheet`. Use `1024×1024` for a light pack or native `2048×2048` for crisp expanded mobile rendering. No in-state motion, but every state is visibly distinct, including brief still `greet` and `done` reactions.
+Want to confirm the pipeline today before perfecting nine animated sheets? Generate expressive stills and reference each as a one-frame `frames` clip (`"frames": ["idle.png"]`) instead of a `sheet`. `1024×1024` is already generous for the mobile companion target. No in-state motion, but every authored state remains visibly distinct, including brief still `greet` and `done` reactions.
 :::
 
 For a smooth, perfectly-stable animated character, hand-drawn pixel art still wins — but for a charming "good enough" companion, AI stills or sprite sheets get you there without ever opening a drawing app.
 
 ## Accessibility & reduced motion
 
-If you disable animations — either the app's own setting or your phone's OS-level **reduce motion** — or if a screen reader is active, the avatar renders as a **still frame** instead of looping. The Sphere pins to a single frame; a pet freezes on its current frame and its voice bounce is suppressed.
+If you disable app animations, Android's animator scale is 0, or TalkBack touch exploration is active, autonomous roaming stops and the pet renders as a still frame. Scrolling Chat, Settings, or About pauses autonomous travel without teleporting or dimming the pet: it lifts slightly, follows its measured ledge while that ledge remains visible, then falls and lands when scrolling settles. The keyboard/short-screen layout changes the base art from 60 dp to 50 dp while the saved size scale remains effective; typing does not dim, pause, or disable interaction with the pet. TalkBack custom actions provide movement, reset, Appearance, and hide controls without long-hold dragging. The Sphere follows its own independent motion setting.
 
 When authoring a pet, make the first `idle` frame a good, legible still — that's what people who prefer reduced motion will see.
 
@@ -298,8 +395,11 @@ When authoring a pet, make the first `idle` frame a good, legible still — that
 
 **My pet (or skin) doesn't show up in the picker.** Invalid or incomplete packs are simply skipped — they never appear, and one bad pack never breaks the picker for the rest. Check logcat for the skip reason: tag `PetLoader` for pets, `SphereSkinLoader` for sphere skins.
 
-**I pushed files but nothing changed.** Pets and skins are scanned at app start. Fully restart the app after pushing files, then reopen Appearance.
+**I pushed files but nothing changed.** Reopen Appearance to refresh pets. For
+reliable installation on devices where scoped storage stalls `adb push`, use
+**Add a pet** in the app. Sphere skins are still scanned at app start, so restart
+the app after pushing a skin.
 
 **My pet appears but renders blank.** A file that exists but isn't a decodable image (a corrupt or mislabeled `.png`) passes the manifest check but can't be drawn. Confirm your images actually open before shipping a pack.
 
-**I deleted a pet that was selected.** No problem — if the selected pet is removed, the avatar falls back to the **Sphere** automatically.
+**I deleted a pet that was selected.** The floating-pet choice resets to **None**. The profile identity and Sphere are unchanged.

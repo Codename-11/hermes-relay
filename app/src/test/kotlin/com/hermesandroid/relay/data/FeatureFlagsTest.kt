@@ -48,4 +48,29 @@ class FeatureFlagsTest {
 
         assertTrue(FeatureFlags.devOptionsUnlocked(context).first())
     }
+
+    @Test
+    fun petTerrainOverlayDefaultsOff() = runTest {
+        assertFalse(FeatureFlags.petTerrainOverlayEnabled(context).first())
+    }
+
+    @Test
+    fun petTerrainOverlayRequiresDevBuildUnlockAndRequest() {
+        assertFalse(FeatureFlags.petTerrainOverlayEffective(false, true, true))
+        assertFalse(FeatureFlags.petTerrainOverlayEffective(true, false, true))
+        assertFalse(FeatureFlags.petTerrainOverlayEffective(true, true, false))
+        assertTrue(FeatureFlags.petTerrainOverlayEffective(true, true, true))
+    }
+
+    @Test
+    fun lockingDeveloperOptionsSuppressesAndClearsPetTerrainOverlay() = runTest {
+        FeatureFlags.setPetTerrainOverlayEnabled(context, true)
+        assertEquals(FeatureFlags.isDevBuild, FeatureFlags.petTerrainOverlayEnabled(context).first())
+
+        FeatureFlags.lockDevOptions(context)
+        assertFalse(FeatureFlags.petTerrainOverlayEnabled(context).first())
+
+        FeatureFlags.unlockDevOptions(context)
+        assertFalse(FeatureFlags.petTerrainOverlayEnabled(context).first())
+    }
 }

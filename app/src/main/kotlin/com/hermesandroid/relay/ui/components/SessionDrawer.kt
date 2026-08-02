@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -90,6 +91,7 @@ fun SessionDrawerContent(
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onRenameSession: (String, String) -> Unit,
+    onCopySessionId: ((String) -> Unit)? = null,
     /**
      * When true, the Threads affordance (header spool + filter chip) shows even with no
      * Thread sessions present yet — i.e. the relay Threads capability is paired + opted in
@@ -483,6 +485,7 @@ fun SessionDrawerContent(
                             }
                         },
                         onRename = { renameDialogSession = session },
+                        onCopySessionId = { onCopySessionId?.invoke(session.sessionId) },
                         onDelete = { deleteDialogSession = session }
                     )
                 }
@@ -593,6 +596,7 @@ private fun SessionItem(
     onTogglePinned: () -> Unit,
     onToggleArchived: () -> Unit,
     onRename: () -> Unit,
+    onCopySessionId: () -> Unit,
     onDelete: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -711,6 +715,16 @@ private fun SessionItem(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
             ) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chat_copy_session_id)) },
+                    leadingIcon = {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onCopySessionId()
+                    },
+                )
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.drawer_rename)) },
                     leadingIcon = {

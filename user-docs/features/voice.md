@@ -112,6 +112,13 @@ Open a chat and tap the microphone FAB in the bottom-right corner. The first tim
 
 To exit voice mode, tap the X in the top-right of the overlay.
 
+Choose **Overlay** during an active turn before leaving Hermes to keep Voice
+available as a wide compact bar over the app you are using. Android will request
+display-over-other-apps access the first time. Expand it for transcript and
+response details, minimize it to the existing bubble, or choose **Open full
+voice** to return to Hermes without restarting the turn. This optional floating
+control is separate from Android Assistant mode below.
+
 ## Interaction Modes
 
 Change in **Settings → Voice → Interaction mode**. All three share the same overlay — only the mic button's behavior changes.
@@ -177,15 +184,106 @@ These controls always show and apply to both engines:
 
 ### Barge-in
 
-New as of 2026-04-17. Lets you interrupt the agent by speaking while it's replying — the same turn-taking pattern ChatGPT and Siri use. **Default off** because echo-cancellation quality varies widely across Android phones; opt in once and the setting persists.
+Lets you interrupt the agent by speaking while it is thinking or talking. One
+listener stays active across the whole response, so the microphone does not
+re-arm between generation and playback. It is **on by default** to match Hermes
+Voice and can be disabled at any time.
 
-- **Interrupt when I speak** — master toggle. Default off.
-- **Sensitivity** — `Off / Low / Default / High`. Higher values fire on quieter / shorter speech. Start with Default; drop to Low if your phone false-triggers on its own TTS, raise to High if you find yourself having to speak up.
+- **Interrupt when I speak** — master toggle. Default on.
+- **Sensitivity** — `Off / Low / Default / High` controls Silero's speech confirmation. Higher values react to quieter or shorter speech; Off disables detection without changing the master switch.
+- **Room-noise threshold** — multiplier applied to the calibrated quiet-room RMS. The upstream default is `3×`; higher values require your speech to be louder relative to the room.
+- **Playback grace** — ignores likely echo immediately after playback starts. The upstream default is `0.50 s`.
 - **Resume after interruption** — default on. After you interrupt, if you then stay quiet for ~600 ms, the agent resumes reading from the next sentence of its response. A quick breath or "wait, actually…" that you decide not to finish won't throw away its answer. Turn off if you'd rather a hard cut every time.
+- **VAD diagnostics** — optional Logcat detail for calibrated floor, RMS, threshold, phase, and decisions. Leave off unless tuning a device.
 
 **Device compatibility.** If your phone doesn't support hardware echo cancellation (`AcousticEchoCanceler`), you'll see a warning badge next to the master toggle: *"Your device may have limited echo cancellation. Barge-in quality will vary."* You can still enable barge-in, but expect more false triggers from the phone's own speaker feeding back into the mic. **Using headphones fixes this entirely** — the mic never hears the TTS output, so VAD has nothing to confuse.
 
-**How it feels in practice.** As soon as you start speaking, the agent's voice briefly ducks in volume (about 30 %) — that's the app acknowledging "I think I heard something" before committing. If you keep speaking, it stops entirely within a fraction of a second and you're back in recording mode. If it was a false trigger (one stray frame of background noise), the volume pops back up to full after ~500 ms with no interruption.
+Before playback, the app samples roughly 450 ms of room noise and uses its 90th
+percentile as the floor, with the same bounded generation/playback thresholds,
+500 ms grace, and majority decision window as upstream Hermes. Calibration
+frames do not trigger interruption. The detector follows real playback gaps,
+uses the quieter generation threshold between output spans, and rearms grace
+only after a gap of at least one second. The phone's speaker therefore cannot
+teach calibration the wrong noise floor. As soon as you start speaking, the agent's voice
+briefly ducks in volume (about 30%). Sustained, model-confirmed speech stops the
+active generation or playback and captures your replacement request. A false
+trigger returns to full volume after about 500 ms.
+
+**Stop phrases** default to exact bare “stop” and can be edited as a
+comma-separated list; clearing the list disables them. A match ends the active
+voice chat during generation or playback. Outside voice chat, and for longer
+requests such as “stop the container,” the words go to the agent normally.
+Exact pause/resume controls remain specific to Continuous mode.
+
+When you interrupt spoken playback and continue with a new request, Standard
+Voice privately tells the next model turn that its prior spoken reply was cut
+off. That one-shot context expires after two minutes and is never added to the
+visible or persisted transcript. Stopping speech does not cancel a promoted
+background task; use the task's explicit cancel action or say the explicit
+background-task cancellation command.
+
+### Android Digital Assistant
+
+Hermes can optionally become Android's default Digital Assistant, similar to
+Home Assistant's assistant integration. This is the supported path for
+system-mediated background and locked-screen invocation.
+
+1. Open **Settings → Voice → Listening**.
+2. Under **Android Digital Assistant**, tap **Choose Hermes**.
+3. Grant microphone permission and confirm Hermes in Android's role dialog.
+4. Return to Voice settings and enable **Background “Hey Hermes”** if you want
+   continuous wake detection.
+
+Hermes never changes the default assistant silently. Once selected, the system
+assistant gesture or power-button shortcut can open a Hermes session even when
+continuous wake is off. Android presents a real assistant session and hands it
+to the existing voice flow; Standard voice still uses the upstream Dashboard
+audio routes and does not require Relay.
+
+Assistant invocation opens as a compact bar over the current screen. Tap the
+up arrow to expand transcript and response details, then collapse it without
+ending the turn. **Open full voice** continues the same request in Hermes'
+existing Voice screen without restarting the session or handing the microphone
+to a second recorder. Back collapses an expanded assistant first; Back from the
+compact bar or Stop closes the assistant turn normally.
+
+The optional background listener uses the same Android-local sherpa model and
+keeps pre-activation audio on the phone. It releases the microphone before the
+assistant session starts listening and resumes after the session closes. It is
+separate from the experimental notification-based listener below; enabling
+either wake mode disables the other.
+
+To pause continuous listening but keep gesture invocation, turn off
+**Background “Hey Hermes”**. To remove Hermes as the default assistant, tap
+**Android settings** and choose another assistant or **None**.
+
+Third-party assistants do not receive Google's dedicated low-power hotword
+hardware. Continuous local microphone and CPU use can therefore have a
+noticeable battery cost; leave background wake off if gesture-only invocation
+is enough. The integration does not use accessibility, overlay permission,
+full-screen intents, server wake listeners, or Picovoice credentials.
+
+### Experimental wake word
+
+Under **Voice Settings → Listening**, enable **Listen for “Hey Hermes”** to use
+the Android-local wake-word preview. It is off by default. The first enable
+downloads and verifies an English keyword model of about 6 MB. The APK includes
+the sherpa-onnx runtime but not the model.
+
+Detection runs on the phone: microphone audio is not uploaded before the phrase
+activates voice. Android requires a user-started microphone foreground service,
+shows an ongoing privacy notification, and provides a **Stop** action. The
+listener does not start at boot. When the phrase is detected, the wake listener
+releases the microphone before the normal voice flow records anything, stays
+paused for the voice session, then resumes after voice exits.
+
+The initial preview supports one phrase, “Hey Hermes.” **Strictness** controls
+false activations (higher is stricter), **Confirmation frames** controls how
+many matching decoder frames are required, and **Start a new session** chooses
+between a fresh chat and the selected profile's current session.
+Profile-specific wake phrases and routing are not supported yet. Continuous
+local listening uses additional battery and still needs device-specific
+acoustic testing.
 
 ### Hermes Chat + Voice Output
 

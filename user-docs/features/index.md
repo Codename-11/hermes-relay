@@ -21,6 +21,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | [Vanilla Hermes Setup](/guide/getting-started#_3-connect-chat) | Connect through the Dashboard/Gateway; add API fallback or Relay later when needed |
 | [Token Tracking](/features/tokens) | Per-message usage and cost |
 | [Tool Progress](/features/tools) | Configurable display — Off, Compact, or Detailed |
+| [Plugins](/features/plugins) | Native reactive pages, including Relay-assisted agent-created previews |
 
 ## Bridge Core
 

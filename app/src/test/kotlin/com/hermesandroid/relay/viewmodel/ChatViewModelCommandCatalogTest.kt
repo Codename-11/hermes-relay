@@ -65,7 +65,12 @@ class ChatViewModelCommandCatalogTest {
             put("agent", buildJsonObject {
                 put("personalities", buildJsonObject {
                     put("concise", "Be concise")
-                    put("coach", "Coach the user")
+                    put("coach", buildJsonObject {
+                        put("description", "A supportive coach")
+                        put("system_prompt", "Coach the user")
+                        put("tone", "supportive")
+                        put("style", "ask questions")
+                    })
                 })
             })
             put("display", buildJsonObject { put("personality", "concise") })
@@ -75,6 +80,10 @@ class ChatViewModelCommandCatalogTest {
             val parsed = parseDashboardPersonalityConfig(root)
             assertEquals(listOf("concise", "coach"), parsed.names)
             assertEquals("Be concise", parsed.prompts["concise"])
+            assertEquals(
+                "Coach the user\nTone: supportive\nStyle: ask questions",
+                parsed.prompts["coach"],
+            )
             assertEquals("concise", parsed.defaultName)
             assertEquals("gpt-test", parsed.modelName)
         }

@@ -37,6 +37,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -62,6 +64,9 @@ import com.hermesandroid.relay.ui.components.TerminalSearchBar
 import com.hermesandroid.relay.ui.components.TerminalSessionInfoSheet
 import com.hermesandroid.relay.ui.components.TerminalTabBar
 import com.hermesandroid.relay.ui.components.TerminalWebView
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import org.json.JSONObject
@@ -69,6 +74,9 @@ import org.json.JSONObject
 // xterm.js theme background — kept in one place so the Compose shell and the
 // WebView content don't flash against each other.
 private val TerminalBackground = Color(0xFF1A1A2E)
+private const val TERMINAL_EXTRA_KEYS_PET_PERCH = "terminal-extra-keys"
+private const val TERMINAL_JUMP_TO_LATEST_PET_OBSTACLE = "terminal-jump-to-latest"
+private val TERMINAL_PET_ROUTES = setOf("terminal")
 
 @Composable
 fun TerminalScreen(
@@ -113,6 +121,24 @@ fun TerminalScreen(
     // so the user has to pick explicitly between preserving the tmux session
     // (Detach) or tearing it down (Kill).
     var closeConfirmTabId by remember { mutableStateOf<Int?>(null) }
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    val terminalBlocksPet = !isConnected ||
+        (activeTab?.attached == false && activeTab?.error != null) ||
+        (activeTab != null && activeTab?.userStarted == false) ||
+        showSearch || showInfoSheet || closeConfirmTabId != null
+    SideEffect {
+        petCompanionCoordinator.publishSurface(
+            owner = "terminal",
+            // scrolledUp describes a durable history position, not an active
+            // gesture. Treating it as motion left the pet permanently dimmed
+            // and paused until the user returned to the live tail.
+            scrolling = false,
+            hidden = terminalBlocksPet,
+        )
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface("terminal") }
+    }
 
     Column(
         modifier = Modifier
@@ -367,7 +393,11 @@ fun TerminalScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 12.dp)
-                        .zIndex(2f),
+                        .zIndex(2f)
+                        .petObstacleSurface(
+                            key = TERMINAL_JUMP_TO_LATEST_PET_OBSTACLE,
+                            routes = TERMINAL_PET_ROUTES,
+                        ),
                 ) {
                     Text(
                         text = stringResource(R.string.term_jump_latest),
@@ -497,7 +527,12 @@ fun TerminalScreen(
             // Scaffold whose bottomBar already owns the nav-bar inset, so
             // padding again left a dead gap below the keys. imePadding alone
             // keeps the bar above the soft keyboard when it's open.
-            modifier = Modifier.imePadding()
+            modifier = Modifier
+                .imePadding()
+                .petPerchSurface(
+                    key = TERMINAL_EXTRA_KEYS_PET_PERCH,
+                    routes = TERMINAL_PET_ROUTES,
+                ),
         )
     }
 

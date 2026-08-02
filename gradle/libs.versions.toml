@@ -1,6 +1,6 @@
 [versions]
-appVersionName = "1.5.3"
-appVersionCode = "36"
+appVersionName = "1.6.0"
+appVersionCode = "37"
 agp = "9.3.1"
 kotlin = "2.4.10"
 compose-bom = "2026.06.01"
@@ -28,6 +28,8 @@ camera = "1.6.1"
 play-publisher = "4.0.0"
 media3 = "1.10.1"
 androidVad = "2.0.10"
+sherpaOnnx = "v1.13.4"
+onnxRuntime = "1.27.0"
 spatialsdk = "0.13.2"
 play-app-update = "2.1.0"
 
@@ -105,6 +107,8 @@ meta-spatial-sdk-mruk = { group = "com.meta.spatial", name = "meta-spatial-sdk-m
 
 # android-vad (Silero) — on-device voice activity detection for barge-in (B2)
 android-vad-silero = { group = "com.github.gkonovalov.android-vad", name = "silero", version.ref = "androidVad" }
+sherpa-onnx = { group = "com.github.k2-fsa", name = "sherpa-onnx", version.ref = "sherpaOnnx" }
+onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxRuntime" }
 
 # Google Play In-App Update — googlePlay flavor ONLY (FLEXIBLE flow).
 # Sideload uses the GitHub releases UpdateChecker instead and must NOT pull

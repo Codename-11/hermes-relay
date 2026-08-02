@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pet_preview_idle">Parado</string>
+    <string name="pet_preview_walk_left">Andar para a esquerda</string>
+    <string name="pet_preview_walk_right">Andar para a direita</string>
+    <string name="pet_preview_jump">Pular</string>
+    <string name="pet_preview_fall">Cair</string>
+    <string name="pet_preview_held">Segurando</string>
+    <string name="pet_preview_wave">Acenar</string>
+    <string name="pet_preview_working">Trabalhando</string>
+    <string name="pet_preview_review">Revisando</string>
+    <string name="pet_preview_waiting">Aguardando</string>
+    <string name="pet_preview_error">Erro</string>
+    <string name="pet_preview_uses_clip">Usa %1$s</string>
+    <string name="pet_preview_mirrors_clip">Espelha %1$s</string>
+    <string name="pet_preview_falls_back">Usa %1$s como alternativa</string>
+    <string name="pet_preview_mirrors_fallback">Espelha a animação alternativa %1$s</string>
+</resources>

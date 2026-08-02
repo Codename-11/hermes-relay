@@ -1,32 +1,306 @@
 # Pet spec
 
-The agent avatar (the embodiment shown on the empty chat screen, clean mode,
-the voice overlay, onboarding, and the startup splash) is a **swappable
-component**. The built-in **Sphere** ships with the app, and you can side-load
-your own **"pet"** — a still or animated bitmap frame-sequence / sprite atlas —
-to replace it. This document is the authoring reference.
+The floating pet is an optional app-level Android companion that can stand and
+walk on supported screen surfaces. It is independent of both the active
+profile's identity image and the Sphere background visualization. You can
+side-load a still or animated bitmap frame-sequence / sprite atlas as a pet.
+This document is the authoring reference.
 
-> **See also** [`sphere-spec.md`](./sphere-spec.md) — the Sphere avatar has its
-> own skin system; pets and Sphere skins are the two ways to customize the agent
-> avatar.
+> **See also** [`sphere-spec.md`](./sphere-spec.md) — the Sphere is an optional
+> background visualization with its own skin system. Choosing or hiding a pet
+> does not change the Sphere, and choosing a Sphere skin does not change the
+> pet.
 
 > A pet is a self-contained pack of images plus a small JSON manifest. Pets are
 > **pure data** — frames + numbers, never code. The renderer is dependency-free
 > (Android `BitmapFactory` + a rate-capped Compose `Canvas`), so a pet is just a
 > set of PNGs the app plays back. Pets are an Android feature; the docs-site
-> embed always renders the Sphere.
+> Sphere embed is a separate visualization.
 
-## Two levels: avatar, then skin
+## Three independent appearance concepts
 
-Appearance has a two-level model:
+Android keeps these concepts separate:
 
-1. **Agent avatar** — Sphere (built-in) or one of your pets.
-2. **Sphere skin** — only applies to the Sphere avatar (see
-   [`sphere-spec.md`](./sphere-spec.md)). When a pet is selected, skins don't
-   apply and the skin chips hide.
+1. **Profile identity** — the profile image or letter fallback that identifies
+   the speaking agent in the top bar and at the first assistant message in a
+   group.
+2. **Background visualization** — Off or Sphere. Sphere skins apply only to this
+   visualization (see [`sphere-spec.md`](./sphere-spec.md)).
+3. **Floating pet** — None or one selected pet companion.
 
-Pick your avatar in **Settings → Appearance → Agent avatar**. Valid pets appear
-as chips alongside the Sphere; selecting one switches every surface at once.
+Pick a companion in **Settings → Appearance → Floating pet**. One app-level host
+keeps it present across normal in-app navigation. Selecting a pet does not
+replace the profile identity or Sphere.
+
+## Placement and roaming
+
+The companion has a durable home and an optional autonomous roaming mode:
+
+- Long hold the pet, drag it, and release. Direct manipulation follows the
+  finger anywhere inside the visible overlay without terrain or obstacle
+  projection; release visibly falls to the nearest valid measured surface
+  below, or the nearest safe surface when none is below. Dragging never changes
+  the roaming preference, so an enabled
+  pet resumes exploring after it lands. The app stores a logical edge plus a
+  normalized vertical position—not raw pixels. The placement therefore adapts to
+  rotation, resizing, and RTL layouts. **Reset position** restores the default
+  end-edge home near the lower-right Chat area in left-to-right layouts (and
+  mirrors correctly in right-to-left layouts).
+- Tap the pet for a wave and its menu. The tap reaction is lower priority than
+  active Hermes work and never interrupts a drag or drop. The menu can enable or
+  pause roaming, reset position, open Appearance, or hide the companion.
+- **Walk around the interface** is opt-in and off by default. Screen owners
+  explicitly register curated perches and obstacles using their live measured
+  bounds; the app does not scan arbitrary UI elements or treat the accessibility
+  tree as walkable geometry. The supported perches are Chat's composer and
+  eligible visible settled user/assistant bubbles, Terminal's extra-keys toolbar,
+  root Settings summary/category card tops, Appearance section-card tops, and
+  the persistent bottom status strip on Settings, Appearance, and About. They
+  use existing control or content edges, so the overlay inserts no spacer and
+  reduces no text or control layout area. Other routes keep the pet docked at
+  its saved edge. The Petdex gallery hides the global companion because it
+  already renders pet previews and its cards contain install/source controls.
+  Additional Settings terrain can publish through the same live registry, but
+  every card/header remains an explicit opt-in with current scroll/modal state;
+  arbitrary Compose or accessibility elements never become terrain.
+- A registered bubble is not wholly walkable terrain. Its interior remains a
+  protected obstacle; autonomous travel may use only an explicitly derived top
+  or outer-edge rail, or a narrow touchdown point, with exact collision-validated
+  endpoints. If no bounded route validates, the pet waits locally instead of
+  projecting onto a candidate or inventing a viewport-edge ledge.
+- An eligible visible bubble may expose temporary side-edge hop footholds so
+  several ordinary bubbles can bridge a cumulative gap larger than 210 dp.
+  An exterior gutter is preferred;
+  a viewport-filling bubble may instead expose one sprite-wide inset edge lane.
+  That lane permits only immediate jump/fall traversal, while registered
+  controls keep full touch-target clearance and the rest of the bubble stays
+  blocked. Footholds require a preflighted return to persistent terrain and
+  never become walking, idle, settled, scroll-support, home, or drag destinations.
+- Obstacle-adjacent transfers retain the 210 dp step budget. A collision-free
+  blank-space gap between measured message levels may use one distance-scaled
+  ballistic transfer up to 360 dp, avoiding an invented midair landing point.
+- At the settled Chat bottom, the home hierarchy is a full-footprint side pocket
+  beside the latest bubble, its raised top edge, then the outer composer corner.
+  A wide pocket permits pacing; a narrow valid pocket becomes an idle point.
+  Layout and scroll updates replan from the live coordinate without teleporting.
+- Appearance scales the pet from 60–120% (100% default). The new 100% default is
+  the previous control's 125% physical size; stored values are rebased once so
+  existing choices keep the same rendered size. The same value drives
+  art, the minimum-accessible touch target, collision footprint, perch fit, and
+  route clearance. A larger pet skips a narrow ledge instead of covering UI.
+- Visible jump-to-latest controls are registered as temporary obstacles: Chat's
+  scroll-to-bottom button and Terminal's jump-to-latest pill trim the ledge into
+  pet-sized safe segments, or block it when no usable segment remains. When the
+  controls disappear, their measured obstacle is removed.
+- Interactive thinking blocks and the complete bodies of root Settings and
+  Appearance cards are registered as obstacles. Their measured top edges remain
+  valid rails, but autonomous and recovery paths cannot cross their controls.
+- After a plain assistant response settles, the pet may make one deterministic
+  visit. A nearby response uses the direct clear-gutter excursion. A farther
+  visible response is reachable only through settled message tops whose
+  collision-checked hops each stay within 210 dp. The pet crosses and greets the
+  newest response, may then inspect one to three successively older visible
+  rails according to temperament, and retraces the same validated levels to the
+  composer. With no complete chain, a sparse new chat defers or ends the tour
+  instead of making a screen-height leap. Exterior gutter and route travel
+  remains airborne rather than presenting an invisible walkable ledge. The full
+  sprite footprint remains above the bubble and its jump/drop path does not
+  cross text. The greeting destination must be a settled plain assistant row:
+  cards, attachments, tool calls, background tasks, and phone/voice actions are
+  excluded. Older stepping geometry may come from a settled non-empty user or
+  assistant bubble, including a rich bubble whose measured top is otherwise
+  safe. A bubble too narrow for a walkable rail may still contribute one
+  centered touchdown when at least 35% of the pet width is visibly supported;
+  the pet briefly lands and immediately continues instead of walking or idling
+  over its text. Before a hop, the pet may walk along its current rail to the
+  collision graph's validated launch point. The route search backtracks around
+  a legal-but-dead-end foothold, while still requiring the complete return path
+  before the first jump.
+- Horizontal travel uses directional walking aliases and a duration rounded to
+  complete walk cycles, preventing sliding feet. Turns pause briefly. Vertical
+  travel scales its duration with route length, uses a squash anticipation,
+  `jumping` through the apex, `falling` on descent, an altitude-responsive
+  shadow, and a small landing squash. Ambient
+  idle actions cycle through a hop, wave, and rest rather than repeating one
+  animation continuously. TalkBack vertical moves intentionally pause roaming
+  before applying free-form placement.
+- Only the pet-sized target consumes touch input; the root positioning layer is
+  click-through. While a supported surface is actively scrolling, the target
+  also yields direct gestures to the screen beneath it. Registered UI bounds
+  constrain autonomous movement and drop landing selection, while direct
+  dragging itself remains finger-driven.
+- Roaming requires an idle agent, the foreground app, enabled animation, and an
+  available safe rail. Agent activity, scrolling, dragging, an open pet menu,
+  startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
+  exploration stops autonomous travel. During scrolling, the pet follows its
+  current measured or synthetic habitat rail while it remains valid; it does
+  not re-dock or teleport. The IME/short-screen compact layout uses 50 dp base
+  art before the saved size scale. Settings, Appearance, and About publish
+  their scroll state and hide the companion while their dialogs are open.
+- Debug builds provide **Developer Options → Show pet terrain overlay**. The
+  default-off **Pet path inspector** is anchored below the app header and its
+  Android status-bar inset so header actions remain accessible, and starts as a
+  narrow collapsed live-status bar. Only its grip moves it; placement snaps to
+  the nearest horizontal edge, persists as normalized viewport fractions, and
+  re-clamps after rotation or expansion. **Reset position** returns it below the
+  header. **PASS** mode collapses the inspector and leaves only its unlock button
+  interactive while the diagnostic Canvas continues to render. Expanding opens in
+  **Terrain** mode, which shows
+  measured perches, usable rails, touchdown points, restrained collision bounds,
+  dashed candidate hops, the selected route with directional arrows and numbered
+  stops, and the currently active segment. **Plan** hides raw terrain to isolate
+  the selected/active journey; **Full** restores protected bounds, footprint,
+  raw labels, behavior gate, and locomotion details. **Freeze** snapshots only
+  the displayed model while the live planner and pet continue normally. The
+  full-screen Canvas and non-control inspector regions stay pointer-transparent.
+  **Exit inspector** disables the persisted overlay toggle. The planner keeps an
+  event-driven lookahead ready during behavior pacing, refreshes it when measured
+  terrain or a supported waypoint changes, and never redirects an in-flight hop.
+  The selected route is refreshed by each planner pass and cleared when the
+  measured terrain changes;
+  its stop order shows the outbound choices followed by the exact reverse return.
+  Candidate routes are blue, autonomous active routes are orange, recovery paths are pink,
+  direct drag/drop paths are teal, and touchdown-only points are violet so
+  eligibility cannot be mistaken for selection. Recovery and direct manipulation
+  never make their path eligible for ambient travel. Locking Developer Options
+  clears it.
+
+The behavior director has one deterministic priority order: direct interaction,
+Hermes activity, a pending response visit, autonomous roaming, then idle. This
+keeps user intent and truthful agent-state animation ahead of decorative motion.
+TalkBack users also get actions to move to start/end, move up/down, reset, open
+Appearance, and hide without performing a drag gesture.
+
+### Temperament and pacing
+
+Appearance offers three phone-local behavior presets. They change how often an
+otherwise-idle pet may act and how many older visible rails a response tour may
+inspect; they do not bypass any safety, activity, scrolling, dialog,
+reduced-motion, or accessibility gate.
+
+| Temperament | Response visit | Extra older rails | Roam interval | Idle reaction |
+|-------------|----------------|-------------------|---------------|---------------|
+| **Calm** | after 2.5 s | up to 1 | every 12 s | every 28 s |
+| **Balanced** (default) | after 1.5 s | up to 2 | every 8 s | every 18 s |
+| **Playful** | after 0.75 s | up to 3 | every 5 s | every 10 s |
+
+## Petdex catalog and custom packs
+
+Appearance offers two installation paths:
+
+- **Browse Petdex** opens a searchable public catalog. Android prefers Petdex's
+  compact v2 manifest and falls back to the v1 manifest if v2 cannot be loaded.
+  Catalog metadata is cached in memory for five minutes. The gallery requests
+  the same cropped, cached idle-frame thumbnails as Hermes Desktop while a
+  virtualized grid keeps the full catalog reachable; the full atlas is
+  downloaded to the phone only after an explicit Install action. Installation
+  converts and selects the pet immediately; enabling roaming and optionally
+  choosing a temperament are the only behavior settings. Petdex users do not
+  edit a manifest, rename rows, or create extra animations. The global floating
+  companion is suppressed on this dense gallery route so it cannot cover card
+  actions; the gallery previews remain visible.
+- **Add a pet** imports a custom Relay-format `.zip` or single image from device
+  storage. This path remains independent of Petdex and accepts the manifest
+  format documented below.
+
+Each Petdex card shows the submitting creator and links to its source page.
+Petdex does not provide one uniform license for every community asset, so a
+catalog listing is not permission to redistribute or relicense the art. Review
+the linked source and creator-provided terms before reuse outside the app.
+
+Installing converts the supported Petdex atlas into a normal local Relay pet
+pack under `files/pets/petdex-<slug>/`, retaining `source: "petdex"`, the source
+URL, and creator attribution in `pet.json`. The installed `pet.json` and
+spritesheet are sufficient for rendering, so the selected companion continues
+to work offline. Network access is needed to refresh the catalog, load an
+uncached gallery thumbnail, or install another pet. An installed Petdex pet can
+be selected, hidden, or removed like a custom pack.
+
+### Petdex trust and resource limits
+
+Petdex network access is deliberately narrow:
+
+- Catalog requests accept HTTPS on port 443 only from `petdex.dev` or
+  `assets.petdex.dev`; asset requests accept only `assets.petdex.dev`. URLs with
+  embedded credentials are rejected, and each redirect is revalidated (maximum
+  three redirects).
+- v2 and v1 catalog responses are limited to 4 MiB and 8 MiB respectively, with
+  at most 10,000 entries. Per-pet metadata is limited to 256 KiB.
+- Spritesheets are limited to 32 MiB and 16 million decoded pixels, must be PNG
+  or WebP, and must match a supported Petdex atlas layout.
+- Installation uses a temporary directory, validates the exact generated Relay
+  pack, then swaps it into place atomically. A failed download or validation
+  does not replace an existing installed pet.
+
+The importer downloads only Petdex metadata and the referenced spritesheet; it
+does not run install scripts or execute pack content.
+
+### Petdex atlas mapping
+
+Android supports both current 8-column × 9-row and legacy 9-column × 8-row
+Petdex atlases. Cells are 192 × 208 pixels. Current rows use their canonical
+counts—idle 6, running-right 8, running-left 8, waving 4, jumping 5, failed 8,
+waiting 6, running 6, and review 6. Android derives an average fps from each
+row's canonical total duration (700–1220 ms); its constant-fps clip model cannot
+express Desktop's longer final-frame hold exactly. `startFrame` selects the row
+without copying the atlas.
+
+Packs written by the original Android adapter may still declare six frames for
+every current row. The loader recognizes generated `source: "petdex"` clips by
+their canonical geometry and offsets and normalizes them at read time, so an
+existing install loses blank wave/jump cells and regains full directional/error
+cycles without a reinstall. Custom pack frame counts are never rewritten.
+
+The adapter preserves Petdex's source row names instead of flattening them:
+
+| Meaning | Current Petdex row | Relay use |
+|---------|--------------------|-----------|
+| Rest | `idle` | Idle and ultimate fallback |
+| Review | `review` | Thinking/review fallback |
+| In-place work | `running` | Working/tool and streaming fallback |
+| Horizontal travel | `running-left`, `running-right` | Physical locomotion only while the agent is idle |
+| Waiting | `waiting` | Listening/waiting compatibility and preview |
+| Greeting/completion | `waving` | Speaking, greet/done, tap, and ambient-wave fallback |
+| Failure | `failed` | Error fallback |
+| Celebration | `jumping` | Success/celebrate, physical jump, and fall fallback |
+
+Legacy `wave`, `run`, and `jump` row names remain accepted. Legacy atlases do
+not contain directional rows, so they remain valid activity-reactive pets but
+use the legacy run row (mirrored for rightward travel) when available. Custom
+Relay packs may add
+`walking-left`/`walking-right`, `walk-left`/`walk-right`,
+`running-left`/`running-right`, or `run-left`/`run-right` clips.
+
+Locomotion and activity are intentionally separate. Directional clips can be
+selected only when the agent state is Idle; thinking, streaming, tool work,
+errors, and one-shot reactions always win.
+
+### Capability preview and honest fallbacks
+
+The selected installed Petdex pet has an interactive preview for **Idle, Walk
+left, Walk right, Jump, Fall, Held, Wave, Working, Review, Waiting,** and
+**Error**. Each choice is rendered through the same resolver as the overlay and
+names the exact manifest/Petdex row used. The label also says whether that row
+is direct, mirrored, a fallback, or a mirrored fallback, so a missing optional
+animation is visible before the pet roams.
+
+The important fallback rules are:
+
+- left/right travel accepts the matching `walking-*`, `walk-*`, `running-*`, or
+  `run-*` row; if only the opposite direction exists it is mirrored. A legacy
+  `run`/`running` row is treated as left-facing travel and mirrored to the right.
+  The preview labels an opposite native directional row **Mirrored**, but labels
+  the legacy in-place row **Mirrored fallback** because it is not native travel
+  art. If no travel row exists, idle art moves as a plain **Fallback**.
+- `falling`/`fall` falls back to `jumping`/`jump`, then idle. Jump, held, and wave
+  each fall back to idle when their optional row is absent.
+- Working uses `working`, `run`, or `running`; Review uses `thinking` or `review`;
+  Waiting uses `listening` or `waiting`; Error uses `error` or `failed`. The
+  renderer's existing activity chain ultimately falls back to idle.
+
+This preview describes pack/renderer capability. A host can still suppress an
+otherwise available action when its current route, agent state, accessibility
+policy, or measured geometry does not permit it.
 
 ## Where pets live
 
@@ -55,10 +329,10 @@ adb push blob/ /sdcard/Android/data/com.axiomlabs.hermesrelay.sideload/files/pet
 On the **googlePlay** flavor, drop the `.sideload` suffix from the package —
 `/sdcard/Android/data/com.axiomlabs.hermesrelay/files/pets/`.
 
-Then reopen **Settings → Appearance → Agent avatar** — valid pets appear in the
+Then reopen **Settings → Appearance → Floating pet** — valid pets appear in the
 picker. Invalid/incomplete packs are skipped (check logcat, tag `PetLoader`);
-one bad pack never breaks the picker, and with no pets installed the app behaves
-exactly as today (Sphere only).
+one bad pack never breaks the picker, and with no pets installed the companion
+picker offers **None**.
 
 The in-app **Add a pet** importer accepts either a `.zip` pack or a single image.
 Zip packs may put `pet.json` at the archive root or inside one top-level folder;
@@ -81,11 +355,11 @@ node scripts/package-pet.mjs path/to/my-pet --out my-pet.zip
   "id": "blob",
   "label": "Blob",
   "description": "A friendly blob companion",
-  "reactive": { "voice": true, "tools": false, "intensity": false },
+  "reactive": { "voice": false, "tools": false, "intensity": true },
   "states": {
     "idle":     { "frames": ["idle_0.png", "idle_1.png", "idle_2.png"], "fps": 6 },
     "thinking": { "frames": ["think_0.png", "think_1.png"], "fps": 8 },
-    "speaking": { "sheet": "talk.png", "frameWidth": 64, "frameHeight": 64, "frameCount": 4, "fps": 12 }
+    "writing":  { "sheet": "write.png", "frameWidth": 64, "frameHeight": 64, "frameCount": 4, "fps": 12 }
   },
   "defaults": { "frames": ["idle_0.png"], "fps": 1 }
 }
@@ -99,6 +373,9 @@ node scripts/package-pet.mjs path/to/my-pet --out my-pet.zip
 | `id` | recommended | Stable identity + persistence key. Falls back to the pack directory name. |
 | `label` | no | Shown in the picker. Falls back to `id`. |
 | `description` | no | Free text. |
+| `source` | no | Informational origin identifier, such as `petdex`; never fetched or executed by the loader. |
+| `sourceUrl` | no | Informational source/attribution page; never fetched by the loader. |
+| `creator` | no | Creator attribution retained with gallery-installed packs. |
 | `reactive` | no | Which live signals the pet honors. See below. |
 | `states` | **yes** | Per-state clips. A usable `idle` clip is **required**. |
 | `defaults` | no | Fallback clip for any state with no usable clip. |
@@ -110,8 +387,9 @@ A **clip** is one animation loop, defined as **either**:
 - a **frame sequence** — `"frames": ["a.png", "b.png", ...]`, or
 - a **sprite sheet** — `"sheet": "atlas.png"` plus `"frameWidth"`,
   `"frameHeight"`, and `"frameCount"` (cells are read left-to-right,
-  top-to-bottom; any rectangular grid works — a 4×4 sheet holds 16 frames,
-  decoded as one bitmap regardless of cell count).
+  top-to-bottom; optional `"startFrame"` chooses the zero-based first cell).
+  Any rectangular grid works — a 4×4 sheet holds 16 frames, decoded as one
+  bitmap regardless of cell count.
 
 Both forms take an `"fps"` (frames per second; clamped to **1–60**, default
 `8`). All clips **loop** while their state is active. A frame sequence may contain
@@ -147,10 +425,9 @@ the pack, or decodes as an image. Those remain load-time checks (see
 ## Agent states & pet behavior
 
 The point of per-state clips is to make the agent's activity **legible** — a
-glance at the pet tells you whether it's idle, thinking, writing, or talking.
-This mirrors a 30-year convention (Microsoft Agent's `Think`/`Write`/`Process`
-animation set, Live2D motion groups, VTuber lip-sync): a **looping base clip per
-activity**, plus amplitude-driven motion while speaking.
+glance at the pet tells you whether it's idle, thinking, writing, working, or in
+an error state. This mirrors a 30-year convention (Microsoft Agent's
+`Think`/`Write`/`Process` animation set): a **looping base clip per activity**.
 
 The agent reports six activity states; you author clips by name and they resolve
 through a fallback chain (first existing clip wins). The names you write are
@@ -159,15 +436,21 @@ through a fallback chain (first existing clip wins). The names you write are
 | Agent activity | What it means | Author clip (alias) | Fallback chain |
 |----------------|---------------|---------------------|----------------|
 | **Idle** | Waiting between turns | `idle` | `idle` |
-| **Thinking** | Reasoning before output | `thinking` | `thinking` → `idle` |
-| **Working** | Running a tool, mid-turn | `working` | *opt-in overlay — see below* |
-| **Streaming** | Writing / producing output | `writing` *(or `streaming`)* | `writing` → `streaming` → `speaking` → `thinking` → `idle` |
-| **Listening** | Mic open (voice) | `listening` | `listening` → `idle` |
-| **Speaking** | Talking via TTS (voice) | `speaking` | `speaking` → `writing` → `thinking` → `idle` |
-| **Error** | A turn failed | `error` | `error` → `thinking` → `idle` |
+| **Thinking** | Reasoning before output | `thinking` *(or `review`)* | `thinking` → `review` → `idle` |
+| **Working** | Running a tool, mid-turn | `working` *(or `run`/`running`)* | *opt-in overlay — see below* |
+| **Streaming** | Writing / producing output | `writing` *(or `streaming`)* | `writing` → `streaming` → `working` → `run` → `running` → `review` → `thinking` → `idle` |
+| **Listening** | Mic open (voice) | `listening` *(or `waiting`)* | `listening` → `waiting` → `idle` |
+| **Speaking** | Talking via TTS (voice) | `speaking` *(or `talking`)* | `speaking` → `talking` → `wave` → `waving` → `writing` → `idle` |
+| **Error** | A turn failed | `error` *(or `failed`)* | `error` → `failed` → `review` → `thinking` → `idle` |
 
 `idle` is the **only** hard requirement; every other state falls back to it.
 Author the subset you want and the chain fills the rest.
+
+The app-level host receives Chat's Idle, Thinking, Streaming, Error, tool-burst,
+and completion signals. The manifest vocabulary retains `listening` and
+`speaking` for pack compatibility and preview tooling, but Android hides the pet
+during its full-screen voice presentation. The Sphere and voice presentation
+remain separate systems.
 
 ### The `working` overlay — tool use vs. thinking
 
@@ -185,12 +468,13 @@ what lights the **Tools** badge — no separate flag needed.
 ### Authoring ladder (how much buys how much)
 
 - **Minimal — 1 clip:** `idle`. A present, state-agnostic companion.
-- **Basic — 3 clips:** `idle` + `thinking` + `speaking`. Rest / busy / talking —
-  the core spine. (Add `voice` reactivity for a talking bounce.)
-- **Standard — 5 clips:** add `writing` (distinct output loop) and `listening`
-  (mic open), so chat-output vs. voice-output vs. mic-open read at a glance.
-- **Rich — 7 clips:** add `error` and `working` (the tool-use overlay, so the
-  user sees *thinking* vs. *running a tool* vs. *writing*). The full story.
+- **Basic — 3 clips:** `idle` + `thinking` + `writing`. Rest / reasoning / output
+  form the live Chat spine.
+- **Standard — 5 clips:** add `error` and `working` (the tool-use overlay), so
+  the user sees *thinking* vs. *running a tool* vs. *writing*.
+- **Compatibility — optional clips:** `listening` and `speaking` remain valid
+  manifest states for preview tooling and possible non-Android hosts, but the
+  current Android companion host does not drive them.
 - **Expressive — + reactions:** add one-shot `greet` and `done` clips (below) for
   personality on top of the sustained loops.
 
@@ -222,7 +506,7 @@ These are specified so authors can plan, but the renderer doesn't drive them
 yet — they're tracked in `TODO.md`. Authoring the clips/flags now is harmless.
 
 - **`attention` reaction** — a one-shot when a notification arrives. Reserved: it
-  needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which
+  needs a host event the pet doesn't yet receive (unlike `greet`/`done`, which
   ride activity-state transitions).
 
 ## Reactivity — optional and detectable
@@ -232,20 +516,20 @@ summary so users see what a pet does before selecting it.
 
 | Flag | Default | Effect when `true` |
 |------|---------|--------------------|
-| `voice` | `true` | Voice amplitude gives a subtle scale "bounce" while speaking/listening. |
+| `voice` | `true` | Declares voice-amplitude bounce support in the renderer and preview. The current Android Chat perch does not provide voice amplitude. |
 | `tools` | *auto* | **Driven by the `working` clip, not this flag.** A pet that ships a usable `working` clip reacts to tool use (swaps to it while a tool runs) and advertises **Tools**; one without it doesn't — so the flag is ignored and can't over-promise. |
 | `intensity` | `false` | The active clip plays **faster** as agent activity ramps (up to ~1.6× at peak) — a base/working loop visibly "works harder" while output streams. Advertises **Activity**. |
 
-The badge only ever advertises what the renderer actually delivers: a declared
-flag the renderer doesn't honor is dropped, so a pet can't over-promise. The
-clips carry most of a pet's expressiveness (idle vs. thinking vs. working vs.
-writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
-`intensity` (playback speed) add the live motion on top.
+Capability badges describe what the pack and renderer support, not which signals
+every host surface supplies. On the Android Chat perch, `working` and
+`intensity` are live; `voice` is retained for pack compatibility and preview.
+The clips carry most of a pet's expressiveness, while the working overlay and
+intensity-driven playback speed add live motion on top.
 
 ## Frames and images
 
 - PNG with alpha is recommended (transparent background composites cleanly).
-- Frames are **contain-fit and centered** in the avatar area, preserving aspect
+- Frames are **contain-fit and centered** in the pet area, preserving aspect
   ratio — they don't have to match the screen's shape.
 - Sprite-sheet cells need their own internal padding. Treat the declared
   `frameWidth`/`frameHeight` as the **transparent cell canvas**, not as the
@@ -259,19 +543,21 @@ writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
   non-PNG file with a `.png` name) is **not** caught at load time — the pet still
   appears valid in the picker but renders **blank**. Verify your images actually
   open before shipping a pack.
-- **Memory:** while a pet is selected, every frame of its current clip is decoded
-  into memory at **full resolution** (there is no downscaling). Many large frames
-  can use a lot of RAM, and a single very large image can fail to decode. For a
-  static per-state pack, one `2048×2048` PNG per state is reasonable for
-  full-width, high-density phones because each clip contains only one frame and
-  only the **current** clip is decoded. For animated frame sequences, keep frames
-  smaller and clip lengths modest (≤ ~30 frames); for many frames prefer a
+- **Memory:** bitmap bounds are inspected before allocation. A frame sequence is
+  limited to 120 files and 8 million cumulative decoded pixels; a sprite sheet
+  is limited to 16 million decoded pixels. Assets within those limits are decoded
+  at full resolution (there is no downscaling). For animated frame sequences,
+  keep frames smaller and clip lengths modest (≤ ~30 frames); for many frames prefer a
   **sprite sheet** over a long frame sequence — a sheet decodes as one bitmap, so
   its cells can be larger (256–512 px) without the per-frame cost of a sequence.
-  **Size art to the largest surface the avatar appears on** (the full-screen
-  chat background): a 128 px cell or still upscaled that far looks pixelated,
-  while smaller surfaces (the voice overlay) just downscale and stay sharp.
-  Only the **selected** pet's **current** clip is decoded, off the main thread.
+  **Size art for the companion perch**: a 128 px cell or still is sufficient
+  for the 50/60 dp base rendered pet, even at the 120% setting, and avoids
+  unnecessary decode cost.
+  Decoding runs off the main thread. The selected avatar keeps a four-entry
+  decoded-clip LRU and a two-sheet LRU so common activity/locomotion transitions
+  avoid repeat disk reads without allowing an unbounded cache. While an uncached
+  state is decoding, the last complete visual remains on screen rather than
+  exposing a blank Canvas frame.
 - File names must stay **inside the pack directory** — paths that escape it
   (`../…`) are rejected.
 
@@ -296,10 +582,8 @@ contained tool/gear for `working`, mouth/gesture for `speaking`, warm warning
 accent for `error`, a clear wave for `greet`, and a celebratory smile/accent for
 `done`. Use transparent PNGs (or chroma-key then remove it), keep the same safe
 box margins, and avoid scenery/text/backgrounds. For normal use, `1024×1024`
-stills are a good lighter target. For high-DPI phones where the avatar may expand
-near full screen width, author stills natively at `2048×2048` rather than
-upscaling a small `256×256` image; the larger canvas only helps if the drawing
-itself has real high-resolution linework.
+stills are already larger than the Android companion perch requires; downsize
+finished assets when practical to reduce package and decode cost.
 
 For animated sheets, the reliable AI workflow is:
 
@@ -334,10 +618,77 @@ live in the user guide under **Custom Avatars → Generate a pet with AI**
 
 ## Reduced motion / accessibility
 
-When the user disables animations (app setting or OS reduce-motion) or a screen
-reader is exploring, the avatar is rendered **paused** — the pet freezes on its
-current frame and the voice bounce is suppressed. Author the first `idle` frame
-to be a good, legible still.
+When the user disables animations, Android animator scale is 0, or TalkBack touch
+exploration is active, autonomous roaming stops and the pet is rendered
+**paused**. Transcript, Settings, Appearance, and About scrolling pause autonomous travel
+without re-docking, teleporting, or dimming the companion.
+With the keyboard open or on a short screen its base art compacts from 60 dp to
+50 dp before the persisted 60–120% scale is applied. Keyboard visibility does
+not dim or pause the pet: playback, roaming on valid compact terrain, taps, and
+dragging remain available while typing. Dialogs on
+supported Settings/Appearance/About routes suspend the companion entirely.
+Temperament never overrides these gates. Author the first `idle` frame to be a
+good, legible still. The companion exposes its name and current state, plus
+non-drag move/reset/configure/hide accessibility actions.
+
+During a scroll, a pet lifts slightly and remains attached to its registered
+ledge or text-safe settled Chat habitat while that terrain stays visible. Root
+Settings and Appearance publish live card-top ledges, so their vertical motion
+changes the supported level before the planner resumes; this also prevents a
+moving chat bubble from sliding under a pet settled beside it.
+If a scrolling content ledge leaves the safe
+viewport, the overlay keeps the pet at its last safe screen coordinate and uses
+the falling state; after the gesture and fling settle, it lands on the nearest
+visible valid lower rail (or jumps to the nearest remaining rail when none is
+below). An incidental message rail is never selected as the recovery landing;
+the latest text-safe Chat habitat remains eligible. The pet does not scroll
+off-screen with content, and no unregistered Settings card becomes terrain
+automatically. If changing layout leaves the pet already intersecting a bubble,
+autonomous movement does not project through content. A separately labeled
+recovery may take only the shortest bounded straight egress to a clear edge of
+the obstacle the pet is already inside; it stops there and never makes that path
+eligible for roaming.
+
+## On-device visual review checklist
+
+Use a Petdex pet with current directional rows where possible, then repeat the
+fallback checks with a pack missing one or more optional rows:
+
+- [ ] With roaming enabled, the pet walks the composer end-to-end above the
+  control without covering input text, buttons, or the scroll-to-bottom control.
+- [ ] After a plain assistant response, it approaches through the outer gutter,
+  jumps beside the bubble, walks across the raised top rail, waves, returns to
+  the same edge, and drops to the composer without covering message text.
+- [ ] In a filled viewport, a distant newest response is reached through nearby
+  eligible bubble tops and returned from through the same bounded terrain. In a
+  sparse new chat with no complete chain, no screen-height visit starts.
+- [ ] A narrow bubble or blocked gutter is skipped; cards, attachments, tool
+  rows, and phone/voice action bubbles are never visited.
+- [ ] Bubble interiors remain protected. Autonomous movement uses only the
+  painted exact edge/touchdown routes and waits in place when every candidate is
+  blocked; recovery and drag/drop paths are labeled separately.
+- [ ] Scrolling Chat, Settings, Appearance, and About keeps the pet attached to valid
+  measured or synthetic habitat, with no teleport, edge snap, or scroll-only
+  dimming; motion replans after scrolling stops and the moving pet target does
+  not steal the scroll gesture. Settings/Appearance/About dialogs suspend it.
+- [ ] Left/right travel faces correctly. The Petdex preview reports and visibly
+  demonstrates direct, mirrored, fallback, and mirrored-fallback selection for
+  Walk left/right, Jump, Fall, Held, Wave, Working, Review, Waiting, and Error.
+- [ ] A tap waves and opens the menu. Long hold lifts into held art; drag follows
+  the finger across the visible overlay; release visibly falls and settles on a valid persisted or
+  roaming surface with a landing squash, without changing the roaming preference.
+- [ ] Jump anticipation, apex transition to falling, altitude-responsive shadow,
+  landing squash, turn pauses, and foot-speed synchronization read naturally.
+- [ ] Calm, Balanced, and Playful produce visibly different response/patrol/idle
+  pacing without interrupting direct interaction or active Hermes work.
+- [ ] Terminal walks the extra-keys toolbar; root Settings and Appearance tour
+  several measured card tops and retrace the numbered route to their origin;
+  the pet never crosses or captures the cards' interactive bodies;
+  Settings/Appearance/About retain the bottom status rail as persistent terrain.
+  Routes without a registered rail stay docked.
+- [ ] App animation-off, Android animator scale 0, and TalkBack touch exploration
+  stop autonomous motion. TalkBack can move, reset, configure, and hide the pet
+  without dragging.
 
 ## Minimal example
 
@@ -350,9 +701,22 @@ pets/blob/idle.png
 { "id": "blob", "label": "Blob", "states": { "idle": { "frames": ["idle.png"], "fps": 1 } } }
 ```
 
-A single-frame `idle` is a complete, valid pet (a static image avatar).
+A single-frame `idle` is a complete, valid static pet.
 
 ## Removing a pet
 
 Delete the pack directory (or its `pet.json`) and reopen Appearance. If the
-removed pet was selected, the avatar falls back to the **Sphere** automatically.
+removed pet was selected, the floating-pet choice resets to **None**. The Sphere
+and profile identity are unchanged.
+
+## Migration from the combined picker
+
+For one release, Android reads the former `agent_avatar` preference when the new
+floating-pet preference is absent:
+
+- `sphere` or no previous selection becomes **Floating pet: None**.
+- A valid pet id remains selected as the floating companion.
+- A missing or deleted pet resolves to no companion.
+
+The Sphere remains the default background visualization. Profile images and
+letter fallbacks are not migrated because they were never pet selections.

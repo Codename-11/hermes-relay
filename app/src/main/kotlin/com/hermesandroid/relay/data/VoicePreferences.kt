@@ -13,6 +13,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
+val DEFAULT_VOICE_STOP_PHRASES: List<String> = listOf("stop")
 
 /**
  * User-tunable voice mode preferences.
@@ -36,6 +41,8 @@ data class VoiceSettings(
     val audioRoute: String = VoiceAudioRoute.Auto.storageValue,
     val interactionMode: String = "tap",
     val silenceThresholdMs: Long = 1250L,
+    /** Exact phrases that end an active voice chat; empty disables the command. */
+    val stopPhrases: List<String> = DEFAULT_VOICE_STOP_PHRASES,
     /**
      * When true, voice keeps progress visual and waits for the settled Hermes
      * answer before speaking. Tool status, service updates, and intermediate
@@ -200,6 +207,7 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         // un-namespaced means switching profiles never churns these.
         private val KEY_INTERACTION_MODE = stringPreferencesKey("voice_interaction_mode")
         private val KEY_SILENCE_THRESHOLD_MS = longPreferencesKey("voice_silence_threshold_ms")
+        private val KEY_STOP_PHRASES = stringPreferencesKey("voice_stop_phrases")
         private val KEY_FINAL_ANSWER_ONLY = booleanPreferencesKey("voice_final_answer_only")
         private val KEY_PRESENTATION_MODE = stringPreferencesKey("voice_presentation_mode")
         private val KEY_REALTIME_TRACE_DETAILS = booleanPreferencesKey("voice_realtime_trace_details")
@@ -215,6 +223,10 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         const val DEFAULT_PRESENTATION_MODE = "focus"
         const val DEFAULT_REALTIME_TRACE_DETAILS = false
         const val DEFAULT_REALTIME_PERSISTENT_SESSION = true
+        private val stopPhrasesJson = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+        }
 
         /**
          * Build the storage name for a per-profile [base] key under [scope].
@@ -280,6 +292,7 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
             // --- global (shared across profiles) ---
             interactionMode = prefs[KEY_INTERACTION_MODE] ?: DEFAULT_INTERACTION_MODE,
             silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
+            stopPhrases = decodeStopPhrases(prefs[KEY_STOP_PHRASES]),
             finalAnswerOnly = prefs[KEY_FINAL_ANSWER_ONLY] ?: DEFAULT_FINAL_ANSWER_ONLY,
             presentationMode = VoicePresentationMode.fromStorage(
                 prefs[KEY_PRESENTATION_MODE] ?: DEFAULT_PRESENTATION_MODE,
@@ -393,6 +406,15 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         dataStore.edit { it[KEY_SILENCE_THRESHOLD_MS] = ms.coerceAtLeast(500L) }
     }
 
+    suspend fun setStopPhrases(phrases: List<String>) {
+        val normalized = phrases.asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .toList()
+        dataStore.edit { it[KEY_STOP_PHRASES] = stopPhrasesJson.encodeToString(normalized) }
+    }
+
     suspend fun setFinalAnswerOnly(enabled: Boolean) {
         dataStore.edit { it[KEY_FINAL_ANSWER_ONLY] = enabled }
     }
@@ -407,6 +429,17 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
 
     suspend fun setRealtimePersistentSession(enabled: Boolean) {
         dataStore.edit { it[KEY_REALTIME_PERSISTENT_SESSION] = enabled }
+    }
+
+    private fun decodeStopPhrases(raw: String?): List<String> {
+        if (raw == null) return DEFAULT_VOICE_STOP_PHRASES
+        return runCatching { stopPhrasesJson.decodeFromString<List<String>>(raw) }
+            .getOrDefault(DEFAULT_VOICE_STOP_PHRASES)
+            .asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .toList()
     }
 
     /**

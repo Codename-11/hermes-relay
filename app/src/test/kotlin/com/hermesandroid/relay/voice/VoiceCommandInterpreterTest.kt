@@ -70,6 +70,111 @@ class VoiceCommandInterpreterTest {
     }
 
     @Test
+    fun `default stop phrase ends an active voice chat in every phase`() {
+        assertEquals(
+            VoiceCommandAction.EndVoiceChat,
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "stop",
+                VoiceCommandContext(
+                    voiceChatActive = true,
+                ),
+            ),
+        )
+        assertEquals(
+            VoiceCommandAction.EndVoiceChat,
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "STOP!!!",
+                VoiceCommandContext(
+                    voiceChatActive = true,
+                    responseActive = true,
+                    interruptedActiveResponse = true,
+                ),
+            ),
+        )
+        assertNull(
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "stop the container",
+                VoiceCommandContext(
+                    responseActive = true,
+                    interruptedActiveResponse = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `custom stop phrases are exact configurable and disableable`() {
+        assertEquals(
+            VoiceCommandAction.EndVoiceChat,
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "Goodbye, Hermes!",
+                VoiceCommandContext(
+                    voiceChatActive = true,
+                    stopPhrases = listOf("goodbye hermes"),
+                ),
+            ),
+        )
+        assertNull(
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "goodbye hermes after this task",
+                VoiceCommandContext(
+                    voiceChatActive = true,
+                    stopPhrases = listOf("goodbye hermes"),
+                ),
+            ),
+        )
+        assertNull(
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "stop",
+                VoiceCommandContext(
+                    voiceChatActive = true,
+                    stopPhrases = emptyList(),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `stop phrase is ordinary input outside voice chat`() {
+        assertNull(
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "stop",
+                VoiceCommandContext(voiceChatActive = false),
+            ),
+        )
+    }
+
+    @Test
+    fun `explicit background cancellation wins over a conflicting custom stop phrase`() {
+        assertEquals(
+            VoiceCommandAction.CancelBackgroundTask,
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "cancel the background task",
+                VoiceCommandContext(
+                    voiceChatActive = true,
+                    stopPhrases = listOf("cancel the background task"),
+                    backgroundTaskActive = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `bare pause after barge in pauses continuous mode in generation or playback`() {
+        assertEquals(
+            VoiceCommandAction.PauseContinuousListening,
+            VoiceCommandInterpreter.interpretFinalTranscript(
+                "pause",
+                VoiceCommandContext(
+                    responseActive = true,
+                    interruptedActiveResponse = true,
+                    continuousModeSelected = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `state gates stop and background cancellation`() {
         assertNull(
             VoiceCommandInterpreter.interpretFinalTranscript(

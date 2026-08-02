@@ -22,6 +22,7 @@ object FeatureFlags {
 
     // DataStore keys
     private val KEY_DEV_OPTIONS_UNLOCKED = booleanPreferencesKey("dev_options_unlocked")
+    private val KEY_PET_TERRAIN_OVERLAY = booleanPreferencesKey("pet_terrain_overlay")
 
     /** Whether the app is running a debug build. */
     val isDevBuild: Boolean get() = BuildConfig.DEV_MODE
@@ -31,6 +32,35 @@ object FeatureFlags {
         context.relayDataStore.data.map { prefs ->
             prefs[KEY_DEV_OPTIONS_UNLOCKED] ?: isDevBuild
         }
+
+    /**
+     * Developer-only visualization of the floating pet's measured terrain.
+     *
+     * The persisted request is intentionally weaker than both gates: release
+     * builds can never enable it, and explicitly locking Developer Options
+     * suppresses it immediately.
+     */
+    fun petTerrainOverlayEnabled(context: Context): Flow<Boolean> =
+        context.relayDataStore.data.map { prefs ->
+            petTerrainOverlayEffective(
+                isDevBuild = isDevBuild,
+                devOptionsUnlocked = prefs[KEY_DEV_OPTIONS_UNLOCKED] ?: isDevBuild,
+                requested = prefs[KEY_PET_TERRAIN_OVERLAY] ?: false,
+            )
+        }
+
+    internal fun petTerrainOverlayEffective(
+        isDevBuild: Boolean,
+        devOptionsUnlocked: Boolean,
+        requested: Boolean,
+    ): Boolean = isDevBuild && devOptionsUnlocked && requested
+
+    /** Persist the developer's overlay request. Runtime gates remain authoritative. */
+    suspend fun setPetTerrainOverlayEnabled(context: Context, enabled: Boolean) {
+        context.relayDataStore.edit { prefs ->
+            prefs[KEY_PET_TERRAIN_OVERLAY] = enabled
+        }
+    }
 
     /** Unlock Developer Options. */
     suspend fun unlockDevOptions(context: Context) {
@@ -43,6 +73,7 @@ object FeatureFlags {
     suspend fun lockDevOptions(context: Context) {
         context.relayDataStore.edit { prefs ->
             prefs[KEY_DEV_OPTIONS_UNLOCKED] = false
+            prefs[KEY_PET_TERRAIN_OVERLAY] = false
         }
     }
 

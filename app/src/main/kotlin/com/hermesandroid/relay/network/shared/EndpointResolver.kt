@@ -48,6 +48,16 @@ data class RouteProbeOutcome(
 )
 
 /**
+ * Service whose reachability is being resolved. Standard Hermes surfaces and
+ * Relay are intentionally independent: a healthy Dashboard must not vouch for
+ * a dead Relay listener on the same host.
+ */
+enum class EndpointSurface {
+    Standard,
+    Relay,
+}
+
+/**
  * Picks the highest-priority **reachable** [EndpointCandidate] from a
  * per-device list, driven by ADR 24 "Multi-endpoint pairing + network-aware
  * switching" (2026-04-19).
@@ -124,9 +134,14 @@ class EndpointResolver(
      */
     val probeOutcomes: StateFlow<Map<String, RouteProbeOutcome>> = _probeOutcomes.asStateFlow()
 
-    private fun recordOutcome(candidate: EndpointCandidate, reachable: Boolean, detail: String?) {
+    private fun recordOutcome(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface,
+        reachable: Boolean,
+        detail: String?,
+    ) {
         _probeOutcomes.update { outcomes ->
-            outcomes + (cacheKey(candidate) to RouteProbeOutcome(
+            outcomes + (cacheKey(candidate, surface) to RouteProbeOutcome(
                 reachable = reachable,
                 detail = detail,
                 atMillis = clock(),
@@ -167,21 +182,44 @@ class EndpointResolver(
         private const val PROBE_TIMEOUT_DETAIL = "No answer (timed out)"
 
         /**
-         * Stable cache key for a candidate: `"<role>|<primary host>:<port>"`.
+         * Stable cache key for one candidate surface:
+         * `"<surface>|<role>|<surface host>:<port>"`.
          * Roles are preserved case-verbatim (HMAC canonicalization contract)
          * but hostnames are lowercased — two roles pointing at the same
          * host:port share reachability state.
          */
-        internal fun cacheKey(candidate: EndpointCandidate): String =
-            "${candidate.role}|${candidate.routeAuthority() ?: candidate.primaryRouteUrl().orEmpty().lowercase()}"
+        internal fun cacheKey(
+            candidate: EndpointCandidate,
+            surface: EndpointSurface = EndpointSurface.Standard,
+        ): String {
+            val authority = when (surface) {
+                EndpointSurface.Standard ->
+                    candidate.routeAuthority() ?: candidate.primaryRouteUrl().orEmpty().lowercase()
+                EndpointSurface.Relay ->
+                    routeAuthority(candidate.relay?.url).orEmpty()
+            }
+            return "${surface.name.lowercase()}|${candidate.role}|$authority"
+        }
+
+        private fun routeAuthority(rawUrl: String?): String? {
+            val candidate = rawUrl?.trim()?.takeIf { it.isNotBlank() } ?: return null
+            val httpUrl = when {
+                candidate.startsWith("ws://", ignoreCase = true) ->
+                    "http://${candidate.substringAfter("://")}"
+                candidate.startsWith("wss://", ignoreCase = true) ->
+                    "https://${candidate.substringAfter("://")}"
+                else -> candidate
+            }
+            return httpUrl.toHttpUrlOrNull()?.let { url -> "${url.host}:${url.port}" }
+        }
     }
 
     /**
      * Run the resolver against [candidates].
      *
      *  1. Group by `priority` ascending.
-     *  2. For each priority group, race a HEAD /health probe against every
-     *     candidate in the group (2 s per candidate). First 2xx wins; ties
+     *  2. For each priority group, race the selected surface's health probe
+     *     against every candidate in the group. First 2xx wins; ties
      *     broken by whichever response lands first.
      *  3. If the entire group is unreachable, fall through to the next
      *     priority group.
@@ -193,37 +231,42 @@ class EndpointResolver(
      * its tier). An empty [candidates] list returns null immediately without
      * touching the network.
      */
-    suspend fun resolve(candidates: List<EndpointCandidate>): EndpointCandidate? {
-        if (candidates.isEmpty()) return null
+    suspend fun resolve(
+        candidates: List<EndpointCandidate>,
+        surface: EndpointSurface = EndpointSurface.Standard,
+    ): EndpointCandidate? {
+        val eligible = candidates.filter { probeTarget(it, surface) != null }
+        if (eligible.isEmpty()) return null
 
         // Strict priority: sort ascending so priority-0 lands first. Grouping
         // preserves emitted order within a priority class (DNS SRV parity).
-        val groups = candidates.groupBy { it.priority }.toSortedMap()
+        val groups = eligible.groupBy { it.priority }.toSortedMap()
 
         for ((priority, group) in groups) {
             Log.d(TAG, "probing priority=$priority group (size=${group.size})")
-            val winner = raceGroup(group)
+            val winner = raceGroup(group, surface)
             if (winner != null) {
+                val winnerUrl = probeTarget(winner, surface)?.baseUrl
                 Log.i(TAG, "resolve winner: role=${winner.role} " +
-                    "route=${winner.primaryRouteUrl()} priority=$priority")
+                    "surface=$surface route=$winnerUrl priority=$priority")
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Info,
                     title = context?.getString(R.string.endpoint_diag_selected) ?: "Endpoint selected",
                     detail = "priority=$priority",
                     endpointRole = winner.role,
-                    url = winner.primaryRouteUrl(),
+                    url = winnerUrl,
                 )
                 return winner
             }
         }
 
-        Log.w(TAG, "resolve: no reachable candidate across ${candidates.size} record(s)")
+        Log.w(TAG, "resolve: no reachable $surface candidate across ${eligible.size} record(s)")
         DiagnosticsLog.record(
             category = DiagnosticCategory.Endpoint,
             severity = DiagnosticSeverity.Warning,
             title = context?.getString(R.string.endpoint_diag_no_reachable) ?: "No reachable endpoint",
-            detail = "${candidates.size} configured route(s) failed health probes",
+            detail = "${eligible.size} configured $surface route(s) failed health probes",
         )
         return null
     }
@@ -237,17 +280,20 @@ class EndpointResolver(
      * for "first 2xx wins" so latency matters. The losing probes' results
      * still land in the cache, though, so the next call benefits.
      */
-    private suspend fun raceGroup(group: List<EndpointCandidate>): EndpointCandidate? {
+    private suspend fun raceGroup(
+        group: List<EndpointCandidate>,
+        surface: EndpointSurface,
+    ): EndpointCandidate? {
         if (group.isEmpty()) return null
         if (group.size == 1) {
             val only = group.first()
-            return if (isReachable(only)) only else null
+            return if (isReachable(only, surface)) only else null
         }
 
         // Fast-path: any cached-reachable candidate wins immediately without
         // touching the network.
         for (candidate in group) {
-            val cached = probeCache[cacheKey(candidate)]
+            val cached = probeCache[cacheKey(candidate, surface)]
             if (cached != null && cached.expiresAt > clock() && cached.reachable) {
                 return candidate
             }
@@ -256,7 +302,7 @@ class EndpointResolver(
         return coroutineScope {
             val deferred = group.map { candidate ->
                 async(Dispatchers.IO) {
-                    if (isReachable(candidate)) candidate else null
+                    if (isReachable(candidate, surface)) candidate else null
                 }
             }
             // Collect results in arrival order: iterate through awaitAll +
@@ -276,8 +322,11 @@ class EndpointResolver(
      * [probeCache] first; on miss or expiry, runs a HEAD /health probe and
      * records the result.
      */
-    private suspend fun isReachable(candidate: EndpointCandidate): Boolean {
-        val key = cacheKey(candidate)
+    private suspend fun isReachable(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface,
+    ): Boolean {
+        val key = cacheKey(candidate, surface)
         val now = clock()
         val cached = probeCache[key]
         if (cached != null && cached.expiresAt > now) {
@@ -285,7 +334,7 @@ class EndpointResolver(
             return cached.reachable
         }
 
-        val reachable = probe(candidate)
+        val reachable = probe(candidate, surface)
         val ttl = if (reachable) CACHE_TTL_MS else NEGATIVE_CACHE_TTL_MS
         probeCache[key] = CacheEntry(expiresAt = now + ttl, reachable = reachable)
         return reachable
@@ -299,9 +348,12 @@ class EndpointResolver(
      * Returns false on any failure (timeout, I/O, non-2xx, invalid URL).
      * We never raise: a bad record shouldn't crash the connect loop.
      */
-    private suspend fun probe(candidate: EndpointCandidate): Boolean {
+    private suspend fun probe(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface,
+    ): Boolean {
         val startedAtMs = clock()
-        val target = probeTarget(candidate)
+        val target = probeTarget(candidate, surface)
         val url = target?.requestUrl?.toHttpUrlOrNull()
             ?: run {
                 Log.w(TAG, "probe: invalid url for role=${candidate.role}")
@@ -313,7 +365,7 @@ class EndpointResolver(
                     endpointRole = candidate.role,
                     url = candidate.primaryRouteUrl(),
                 )
-                recordOutcome(candidate, reachable = false, detail = "Invalid route URL")
+                recordOutcome(candidate, surface, reachable = false, detail = "Invalid route URL")
                 return false
             }
         val fastClient = httpClient.newBuilder()
@@ -351,6 +403,7 @@ class EndpointResolver(
                         )
                         recordOutcome(
                             candidate,
+                            surface,
                             reachable = ok,
                             detail = if (ok) null else "HTTP ${resp.code} from ${target.path}",
                         )
@@ -366,7 +419,7 @@ class EndpointResolver(
                         url = target.baseUrl,
                         elapsedMs = clock() - startedAtMs,
                     )
-                    recordOutcome(candidate, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
+                    recordOutcome(candidate, surface, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
                     false
                 }
             } catch (_: TimeoutCancellationException) {
@@ -379,7 +432,7 @@ class EndpointResolver(
                     url = target.baseUrl,
                     elapsedMs = clock() - startedAtMs,
                 )
-                recordOutcome(candidate, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
+                recordOutcome(candidate, surface, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
                 false
             } catch (e: Exception) {
                 Log.d(TAG, "probe failed role=${candidate.role} " +
@@ -393,14 +446,20 @@ class EndpointResolver(
                     url = target.baseUrl,
                     elapsedMs = clock() - startedAtMs,
                 )
-                recordOutcome(candidate, reachable = false, detail = humanProbeFailure(e))
+                recordOutcome(candidate, surface, reachable = false, detail = humanProbeFailure(e))
                 false
             }
         }
     }
 
     /** Choose the standard Dashboard/Gateway surface first when advertised. */
-    private fun probeTarget(candidate: EndpointCandidate): ProbeTarget? {
+    private fun probeTarget(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface,
+    ): ProbeTarget? {
+        if (surface == EndpointSurface.Relay) {
+            return relayProbeTarget(candidate)
+        }
         candidate.dashboard?.url
             ?.trim()
             ?.trimEnd('/')
@@ -421,6 +480,10 @@ class EndpointResolver(
             )
         }
 
+        return relayProbeTarget(candidate)
+    }
+
+    private fun relayProbeTarget(candidate: EndpointCandidate): ProbeTarget? {
         candidate.relay?.url
             ?.trim()
             ?.trimEnd('/')
@@ -467,13 +530,21 @@ class EndpointResolver(
      * transition can skip the known-dead active route without suppressing a
      * valid fallback for the whole positive cache window.
      */
-    fun markUnreachable(candidate: EndpointCandidate) {
-        val key = cacheKey(candidate)
+    fun markUnreachable(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface = EndpointSurface.Standard,
+    ) {
+        val key = cacheKey(candidate, surface)
         probeCache[key] = CacheEntry(
             expiresAt = clock() + NEGATIVE_CACHE_TTL_MS,
             reachable = false,
         )
-        recordOutcome(candidate, reachable = false, detail = "Network changed — assumed offline")
+        recordOutcome(
+            candidate,
+            surface,
+            reachable = false,
+            detail = "Network changed — assumed offline",
+        )
     }
 
     /**

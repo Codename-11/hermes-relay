@@ -29,8 +29,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -50,7 +51,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLocale
@@ -62,7 +62,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
@@ -70,9 +69,10 @@ import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
+import com.hermesandroid.relay.ui.components.pet.petVisitTargetSurface
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import kotlinx.coroutines.delay
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -97,6 +97,12 @@ fun MessageBubble(
      * the long-press menu, so legacy call sites keep the copy-only behavior.
      */
     onQuoteMessage: ((String) -> Unit)? = null,
+    /**
+     * Reads a completed assistant response through the active voice renderer.
+     * Null hides the entry; the owning screen uses that to limit the action to
+     * idle Conversation voice sessions.
+     */
+    onSpeakMessage: ((String) -> Unit)? = null,
     /**
      * Invoked when the user taps a FAILED inbound attachment card.
      * `attachmentIndex` is the position in [ChatMessage.attachments] so the
@@ -140,6 +146,8 @@ fun MessageBubble(
     recoveringAnswer: Boolean = false,
     imageGenerationStylePreference: String = "rotate",
     imageGenerationRotationIndex: Int = 0,
+    petVisitTargetKey: String? = null,
+    petPerchKey: String? = null,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -240,36 +248,52 @@ fun MessageBubble(
     val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
 
     CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
-    // Identity (the active profile avatar) is shown once in the top bar, so
-    // message bubbles no longer reserve a per-group avatar gutter — that width
-    // is reclaimed for wider bubbles. Outer alignment keeps user bubbles right.
+    // The active profile image is sender identity, distinct from both the
+    // floating pet companion and the ambient Sphere. Reserve one stable gutter
+    // for an assistant run and render the identity only on its first message.
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
     ) {
+    if (!isUser && !isSystem) {
+        Box(
+            modifier = Modifier.width(40.dp),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            if (shouldShowMessageGroupAvatar(
+                    isUser = isUser,
+                    isSystem = isSystem,
+                    isFirstInGroup = isFirstInGroup,
+                    agentName = message.agentName,
+                )
+            ) {
+                Surface(
+                    // Decorative: the adjacent visible agent name already owns
+                    // the identity announcement, avoiding duplicate TalkBack copy.
+                    modifier = Modifier.size(32.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                ) {
+                    AgentAvatarFace(
+                        name = message.agentName.orEmpty(),
+                        letterStyle = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+        }
+    }
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.weight(1f),
         horizontalAlignment = alignment
     ) {
-        // Agent name label (above assistant bubbles, only first in group), with
-        // the active profile's local icon (if set) — a small avatar by the name.
+        // Agent name label sits beside the first group identity avatar. Pet
+        // companions never enter this row.
         if (!isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
-            val agentIconPath = LocalAgentIconPath.current
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.padding(bottom = 2.dp, start = 4.dp),
             ) {
-                if (!agentIconPath.isNullOrBlank()) {
-                    AsyncImage(
-                        model = File(agentIconPath),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(16.dp)
-                            .clip(CircleShape),
-                    )
-                }
                 Text(
                     text = localizeAgentName(message.agentName),
                     style = MaterialTheme.typography.labelSmall,
@@ -294,7 +318,7 @@ fun MessageBubble(
                         // realtime engine chip ("Realtime Agent") are spoken
                         // turns, so they share it; only the text differs.
                         leadingIcon = if (badge == "Voice" || badge == "Realtime Agent") {
-                            Icons.Filled.VolumeUp
+                            Icons.AutoMirrored.Filled.VolumeUp
                         } else {
                             null
                         },
@@ -309,6 +333,7 @@ fun MessageBubble(
                 thinkingContent = message.thinkingContent,
                 isStreaming = message.isThinkingStreaming,
                 timestamp = message.timestamp,
+                petObstacleKey = "chat-thinking:${message.uiKey}",
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     .padding(bottom = 4.dp)
@@ -324,6 +349,7 @@ fun MessageBubble(
                         stringResource(R.string.bubble_advisor_unavailable)
                     },
                     isStreaming = false,
+                    petObstacleKey = "chat-thinking:${message.uiKey}:advisor:${reference.index}",
                     headerText = buildString {
                         append(stringResource(R.string.bubble_advisor_prefix))
                         append(reference.index)
@@ -382,7 +408,8 @@ fun MessageBubble(
         var showMessageActions by remember { mutableStateOf(false) }
         val haptic = LocalHapticFeedback.current
         val showEditAction = onEditMessage != null && isUser
-        if (onQuoteMessage != null || showEditAction) {
+        val showSpeakAction = shouldShowSpeakResponseAction(message, onSpeakMessage != null)
+        if (onQuoteMessage != null || showEditAction || showSpeakAction) {
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
@@ -400,6 +427,21 @@ fun MessageBubble(
                         onClick = {
                             showMessageActions = false
                             onQuoteMessage(message.content)
+                        },
+                    )
+                }
+                if (showSpeakAction) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.msg_bubble_speak_response)) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            showMessageActions = false
+                            onSpeakMessage?.invoke(message.content)
                         },
                     )
                 }
@@ -454,7 +496,7 @@ fun MessageBubble(
                         // action menu is the discoverability moment, so it gets the
                         // same tactile confirm every chat app fires.
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (onQuoteMessage != null || showEditAction) {
+                        if (onQuoteMessage != null || showEditAction || showSpeakAction) {
                             showMessageActions = true
                         } else {
                             onCopyMessage(message.content)
@@ -462,9 +504,29 @@ fun MessageBubble(
                     }
                 )
                 .semantics { contentDescription = a11yDescription }
+                .then(
+                    if (petVisitTargetKey != null) {
+                        Modifier.petVisitTargetSurface(
+                            key = petVisitTargetKey,
+                            routes = setOf("chat"),
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
+                .then(
+                    if (petPerchKey != null) {
+                        Modifier.petPerchSurface(
+                            key = petPerchKey,
+                            routes = setOf("chat"),
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
-                SelectionContainer {
+                val messageTextContent: @Composable () -> Unit = {
                     if (isUser || isSystem) {
                         // Plain text for user and system messages
                         Text(
@@ -489,6 +551,15 @@ fun MessageBubble(
                             )
                         }
                     }
+                }
+                // Conversation voice owns long-press with its action menu.
+                // Disable partial-text selection in that state so Android's
+                // floating selection toolbar does not stack over Copy/Quote/
+                // Speak response. Normal chat retains selectable message text.
+                if (showSpeakAction) {
+                    DisableSelection { messageTextContent() }
+                } else {
+                    SelectionContainer { messageTextContent() }
                 }
 
                 // Inline generated images (assistant only) — rendered OUTSIDE
@@ -719,6 +790,69 @@ fun MessageBubble(
     } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
 }
+
+/**
+ * Only a settled, plain assistant response can become a transient pet visit
+ * target. Rich cards, attachments, and tool/action rows remain interaction
+ * surfaces for the user rather than pet destinations.
+ */
+internal fun isPetVisitTargetCandidate(message: ChatMessage): Boolean =
+    message.role == MessageRole.ASSISTANT &&
+        !message.isStreaming &&
+        !message.isThinkingStreaming &&
+        message.content.isNotBlank() &&
+        message.toolCalls.isEmpty() &&
+        message.cards.isEmpty() &&
+        message.attachments.isEmpty() &&
+        message.backgroundTask == null &&
+        message.agentName != "Voice action" &&
+        message.agentName != "Phone action" &&
+        !message.id.startsWith("voice-intent-")
+
+/** The newest settled user or assistant bubble can provide text-safe habitat geometry. */
+internal fun isPetPerchCandidate(message: ChatMessage): Boolean =
+    (message.role == MessageRole.ASSISTANT || message.role == MessageRole.USER) &&
+        !message.isStreaming &&
+        !message.isThinkingStreaming &&
+        message.content.isNotBlank() &&
+        message.backgroundTask == null &&
+        message.agentName != "Voice action" &&
+        message.agentName != "Phone action" &&
+        !message.id.startsWith("voice-intent-")
+
+internal fun newestPetVisitTargetUiKey(messages: List<ChatMessage>): String? =
+    messages.lastOrNull { message ->
+        message.role == MessageRole.ASSISTANT
+    }?.takeIf(::isPetVisitTargetCandidate)?.uiKey
+
+internal fun newestPetPerchUiKey(messages: List<ChatMessage>): String? =
+    messages.lastOrNull()?.takeIf(::isPetPerchCandidate)?.uiKey
+
+/** All settled visible-message candidates that may become journey stepping stones. */
+internal fun petPerchUiKeys(messages: List<ChatMessage>): Set<String> =
+    messages.asSequence().filter(::isPetPerchCandidate).map { it.uiKey }.toSet()
+
+/** The completion edge is usable only after the newest assistant row itself settles. */
+internal fun newestPetAssistantIsSettled(messages: List<ChatMessage>): Boolean =
+    messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.let { message ->
+        !message.isStreaming && !message.isThinkingStreaming
+    } == true
+
+internal fun shouldShowSpeakResponseAction(
+    message: ChatMessage,
+    handlerAvailable: Boolean,
+): Boolean =
+    handlerAvailable &&
+        message.role == MessageRole.ASSISTANT &&
+        !message.isStreaming &&
+        message.content.isNotBlank()
+
+internal fun shouldShowMessageGroupAvatar(
+    isUser: Boolean,
+    isSystem: Boolean,
+    isFirstInGroup: Boolean,
+    agentName: String?,
+): Boolean = !isUser && !isSystem && isFirstInGroup && !agentName.isNullOrBlank()
 
 @Composable
 private fun MessagePathBadge(text: String, leadingIcon: ImageVector? = null) {

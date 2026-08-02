@@ -365,8 +365,10 @@ class DashboardApiClient(
      * `available=false` with an empty list when the server has no API key
      * configured; the API key itself never leaves the server.
      */
-    suspend fun getElevenLabsVoices(): Result<ElevenLabsVoices> = withContext(Dispatchers.IO) {
-        getJson("/api/audio/elevenlabs/voices").mapCatching { parseElevenLabsVoices(it) }
+    suspend fun getElevenLabsVoices(profile: String? = null): Result<ElevenLabsVoices> =
+        withContext(Dispatchers.IO) {
+            getJson("/api/audio/elevenlabs/voices${profileQuery(profile)}")
+                .mapCatching { parseElevenLabsVoices(it) }
     }
 
     /**
@@ -1058,7 +1060,12 @@ class DashboardApiClient(
             }
         }
 
-        fun gatewayWebSocketUrl(baseUrl: String, ticket: String, path: String = "/api/ws"): String? {
+        fun gatewayWebSocketUrl(
+            baseUrl: String,
+            ticket: String,
+            path: String = "/api/ws",
+            profile: String? = null,
+        ): String? {
             val httpUrl = baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return null
             val websocketPrefix = when (httpUrl.scheme) {
                 "https" -> "wss://"
@@ -1074,6 +1081,11 @@ class DashboardApiClient(
             val url = httpUrl.newBuilder()
                 .encodedPath(encodedPath)
                 .addQueryParameter("ticket", ticket)
+                .apply {
+                    profile?.trim()?.takeIf { it.isNotBlank() }?.let {
+                        addQueryParameter("profile", it)
+                    }
+                }
                 .build()
                 .toString()
             return websocketPrefix + url.substringAfter("://")

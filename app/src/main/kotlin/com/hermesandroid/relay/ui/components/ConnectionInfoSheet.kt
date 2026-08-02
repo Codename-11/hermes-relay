@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import android.content.ClipData
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -20,10 +22,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Bolt
@@ -36,7 +40,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
@@ -74,13 +77,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -88,9 +87,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import com.hermesandroid.relay.R
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -661,6 +663,13 @@ fun RelayInfoSheet(
 // triggers, the Personality section visually de-emphasizes (alpha drop) and
 // the Profile section footer spells out the override.
 
+private enum class AgentPassportPicker {
+    Profile,
+    Personality,
+    Model,
+    Reasoning,
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgentInfoSheet(
@@ -674,6 +683,9 @@ fun AgentInfoSheet(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val resolvedProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
+    val effectiveSessionProfileName by
+        connectionViewModel.effectiveSessionProfileName.collectAsState()
+    val profilePresentation by connectionViewModel.profilePresentation.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val isProfileLocked by connectionViewModel.isProfileLocked.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
@@ -685,6 +697,7 @@ fun AgentInfoSheet(
     val gatewayProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val apiModelOptions by chatViewModel.apiModelOptions.collectAsState()
+    val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
     val selectedReasoning by chatViewModel.selectedReasoningEffort.collectAsState()
     val approvalMode by chatViewModel.approvalMode.collectAsState()
     val approvalCapability by chatViewModel.approvalModeCapability.collectAsState()
@@ -692,12 +705,22 @@ fun AgentInfoSheet(
     val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
     val fastEnabled by chatViewModel.fastEnabled.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    val chatReady by connectionViewModel.chatReady.collectAsState()
+    val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
     val messages by chatViewModel.messages.collectAsState()
     val sessions by chatViewModel.sessions.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
     val contextWindow by chatViewModel.contextWindow.collectAsState()
     val appStats by AppAnalytics.stats.collectAsState()
+    val effectiveApiServerUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    val relayUrl by connectionViewModel.relayUrl.collectAsState()
+    val effectiveRelayUrl by connectionViewModel.effectiveRelayUrl.collectAsState()
+    val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
+    val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
+    val voiceReady by connectionViewModel.voiceReady.collectAsState()
+    val proactiveEnabled by connectionViewModel.proactiveEnabled.collectAsState()
     val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
     val allConnections by connectionViewModel.connectionStore.connections.collectAsState()
     val activeConnectionId by
@@ -705,9 +728,9 @@ fun AgentInfoSheet(
     val authState by connectionViewModel.authState.collectAsState()
 
     var selectedTab by remember { mutableStateOf(0) }
-    var expandedSection by remember { mutableStateOf<String?>(null) }
-    var profilePickerExpanded by remember { mutableStateOf(false) }
+    var activePicker by remember { mutableStateOf<AgentPassportPicker?>(null) }
     var showIdentityEditor by remember { mutableStateOf(false) }
+    var showProfileManager by remember { mutableStateOf(false) }
 
     val activeConnection = remember(allConnections, activeConnectionId) {
         allConnections.firstOrNull { it.id == activeConnectionId }
@@ -722,23 +745,63 @@ fun AgentInfoSheet(
         connectionLabel = null,
         localDisplayAlias = profileDisplayAlias,
     )
-    val profileLabel = profileDisplayAlias
-        ?: AgentDisplay.profileDisplayName(resolvedProfile)
-        ?: agentName
+    val profileLabel = selectedProfile?.let {
+        AgentDisplay.profileDisplayName(it) ?: it.name
+    } ?: stringResource(R.string.conn_info_server_default)
+    val serverDefaultLabel = stringResource(R.string.conn_info_server_default)
     val modelLabel = AgentDisplay.displayModelName(selectedModel ?: gatewayModel)
         ?: AgentDisplay.displayModelName(resolvedProfile?.model)
         ?: AgentDisplay.displayModelName(serverModel)
-        ?: stringResource(R.string.conn_info_server_default)
+        ?: serverDefaultLabel
+    val serverDefaultModelLabel = AgentDisplay.displayModelName(serverModel)
+        ?: AgentDisplay.displayModelName(resolvedProfile?.model)
     val providerLabel = modelProviders
         .firstOrNull { it.slug.equals(gatewayProvider, ignoreCase = true) }
         ?.name
         ?.takeIf { it.isNotBlank() }
         ?: gatewayProvider.takeIf { it.isNotBlank() }
-    val connected = gatewayAvailability == GatewayAvailability.Ready
-    val routeLabel = activeEndpoint?.displayLabel()
-        ?: activeConnection?.primaryHost?.takeIf { it.isNotBlank() }
-        ?: activeConnection?.label
-        ?: stringResource(R.string.session_path_gateway)
+    val sessionModelLabel = AgentDisplay.displayModelName(currentSession?.model)
+        ?: modelLabel
+    val sessionProviderLabel = currentSession?.model
+        ?.takeIf { it.isNotBlank() }
+        ?.let { sessionModel ->
+            modelProviders.firstOrNull { sessionModel in it.models }?.name
+        }
+        ?: providerLabel.takeIf { currentSession?.model.isNullOrBlank() }
+    val connected = chatReady
+    val resolvedPresence = resolvedProfile?.let {
+        ProfilePresenceResolver.resolve(it, connected)
+    }
+    val sessionTransport = sessionPathTransport(
+        connectionViewModel.resolveStreamingEndpoint(streamingEndpoint),
+    )
+    val routeLabel = if (sessionTransport.isGateway) {
+        activeConnection?.routeCandidates
+            ?.firstOrNull {
+                it.dashboard?.url?.trimEnd('/') == effectiveDashboardUrl.trimEnd('/')
+            }
+            ?.displayLabel()
+            ?: effectiveDashboardUrl.takeIf { it.isNotBlank() }?.let { url ->
+                com.hermesandroid.relay.data.Connection.endpointCandidateFromDashboardUrl(
+                    role = com.hermesandroid.relay.data.Connection.inferRouteRole(url),
+                    priority = 0,
+                    dashboardUrl = url,
+                )?.displayLabel()
+            }
+    } else {
+        activeEndpoint?.displayLabel()
+            ?: com.hermesandroid.relay.data.Connection
+                .extractDefaultLabel(effectiveApiServerUrl)
+                .takeIf { it.isNotBlank() }
+    }
+    val sessionCaps = sessionCapabilities(
+        transport = sessionTransport,
+        gatewayAvailability = gatewayAvailability,
+        relayConnected = relayConnectionState == ConnectionState.Connected,
+        relayConfigured = relayUrl.isNotBlank(),
+        voiceReady = voiceReady,
+        threadsActive = proactiveEnabled && authState is AuthState.Paired,
+    )
     val contextLabel = contextWindow?.let {
         "${compactTokenCount(it.usedTokens)} / ${compactTokenCount(it.maxTokens)}"
     } ?: "—"
@@ -747,6 +810,75 @@ fun AgentInfoSheet(
     val gatewayControlsAvailable = gatewayAvailability != GatewayAvailability.Unreachable &&
         gatewayAvailability != GatewayAvailability.SignInRequired &&
         gatewayAvailability != GatewayAvailability.Unsupported
+    val unavailableModelLabel = stringResource(R.string.chat_not_on_plan)
+    val modelNeedsSetupLabel = stringResource(R.string.chat_needs_setup)
+    val passportModelOptions = remember(
+        modelProviders,
+        apiModelOptions,
+        agentProfiles,
+        selectedModel,
+        modelLabel,
+        unavailableModelLabel,
+        modelNeedsSetupLabel,
+    ) {
+        val fallbackOptions = (
+            apiModelOptions +
+                agentProfiles.mapNotNull { profile ->
+                    AgentDisplay.requestModelName(profile.model)?.let { ApiModelOption(it) }
+                } +
+                listOfNotNull(
+                    AgentDisplay.requestModelName(selectedModel)?.let { ApiModelOption(it) },
+                )
+            )
+            .distinctBy { it.id }
+        buildList {
+            add(
+                ChatInputPickerOption(
+                    label = serverDefaultLabel,
+                    value = null,
+                    secondary = serverDefaultModelLabel,
+                    selected = selectedModel == null,
+                ),
+            )
+            modelProviders
+                .sortedByDescending { it.isCurrent }
+                .forEach { provider ->
+                    provider.models.distinct().forEach { model ->
+                        val unavailable = model in provider.unavailableModels
+                        add(
+                            ChatInputPickerOption(
+                                label = model,
+                                value = model,
+                                provider = provider.slug,
+                                group = provider.name,
+                                secondary = when {
+                                    unavailable -> unavailableModelLabel
+                                    !provider.authenticated ->
+                                        provider.warning ?: modelNeedsSetupLabel
+                                    else -> null
+                                },
+                                selected = selectedModel == model,
+                                enabled = !unavailable,
+                            ),
+                        )
+                    }
+                }
+            val gatewayModelIds = modelProviders.flatMap { it.models }.toSet()
+            fallbackOptions
+                .filterNot { it.id in gatewayModelIds }
+                .forEach { model ->
+                    add(
+                        ChatInputPickerOption(
+                            label = AgentDisplay.displayModelName(model.id) ?: model.id,
+                            value = model.id,
+                            group = "Routes",
+                            secondary = model.routeDetail,
+                            selected = selectedModel == model.id,
+                        ),
+                    )
+                }
+        }
+    }
 
     LaunchedEffect(Unit) {
         chatViewModel.refreshModelOptions()
@@ -757,42 +889,23 @@ fun AgentInfoSheet(
     }
 
     val passportScrollState = rememberScrollState()
-    val passportNestedScrollConnection = remember(passportScrollState) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                val isDownwardBodyDrag =
-                    source == NestedScrollSource.UserInput &&
-                        available.y > 0f &&
-                        passportScrollState.value == 0
-                return if (isDownwardBodyDrag) {
-                    Offset(x = 0f, y = available.y)
-                } else {
-                    Offset.Zero
-                }
-            }
-        }
+    LaunchedEffect(showIdentityEditor) {
+        passportScrollState.scrollTo(0)
+    }
+
+    BackHandler(enabled = showIdentityEditor) {
+        showIdentityEditor = false
     }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .padding(top = 8.dp, bottom = 8.dp)
-                    .width(40.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant),
-            )
-        },
+        sheetGesturesEnabled = false,
+        dragHandle = null,
     ) {
         Column(
             modifier = Modifier
-                .nestedScroll(passportNestedScrollConnection)
+                .fillMaxHeight(0.94f)
                 .verticalScroll(
                     state = passportScrollState,
                     overscrollEffect = null,
@@ -812,61 +925,36 @@ fun AgentInfoSheet(
                 modelLabel = modelLabel,
                 providerLabel = providerLabel,
                 connected = connected,
-                routeLabel = routeLabel,
-                messageCount = messages.size,
+                presence = resolvedPresence,
+                hasSoul = resolvedProfile?.hasSoul == true,
+                skillCount = resolvedProfile?.skillCount ?: 0,
+                transportLabel = transportFriendlyName(sessionTransport.type),
+                sessionLabel = currentSessionId?.take(8) ?: "—",
                 contextLabel = contextLabel,
-                onProfileClick = { profilePickerExpanded = !profilePickerExpanded },
-            )
-            if (profilePickerExpanded) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                    ),
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        ProfileRadioRow(
-                            primary = stringResource(R.string.conn_info_server_default),
-                            secondary = AgentDisplay.profileDisplayName(resolvedProfile),
-                            selected = selectedProfile == null,
-                            enabled = !isProfileLocked && profileSwitchEnabled,
-                            onSelect = {
-                                connectionViewModel.selectProfile(null)
-                                chatViewModel.activateGatewayProfile(null)
-                                profilePickerExpanded = false
-                            },
-                        )
-                        agentProfiles
-                            .filterNot { AgentDisplay.isServerDefaultAlias(it.name) }
-                            .forEach { profile ->
-                                ProfileRadioRow(
-                                    primary = AgentDisplay.profileDisplayName(profile)
-                                        ?: profile.name.replaceFirstChar { it.uppercase() },
-                                    secondary = profile.model.takeIf { it.isNotBlank() },
-                                    selected = selectedProfile?.name == profile.name,
-                                    enabled = !isProfileLocked && profileSwitchEnabled,
-                                    onSelect = {
-                                        connectionViewModel.selectProfile(profile)
-                                        chatViewModel.activateGatewayProfile(profile)
-                                        profilePickerExpanded = false
-                                    },
-                                )
-                            }
-                    }
-                }
-            }
-
-            AgentPassportTabs(
-                selected = selectedTab,
-                onSelected = {
-                    selectedTab = it
-                    expandedSection = null
-                },
+                onProfileClick = { activePicker = AgentPassportPicker.Profile },
             )
 
-            if (selectedTab == 0) {
+            if (showIdentityEditor) {
+                AgentPassportIdentityEditor(
+                    connectionViewModel = connectionViewModel,
+                    profileDisplayAlias = profileDisplayAlias,
+                    fallbackName = agentName,
+                    effectiveProfile = resolvedProfile,
+                    hasProfiles = agentProfiles.isNotEmpty(),
+                    onBack = { showIdentityEditor = false },
+                    onManageProfiles = { showProfileManager = true },
+                    onInspectProfile = { profile ->
+                        onDismiss()
+                        onNavigateToProfileInspector(profile.name)
+                    },
+                )
+            } else {
+                AgentPassportTabs(
+                    selected = selectedTab,
+                    onSelected = { selectedTab = it },
+                )
+
+                if (selectedTab == 0) {
                 Surface(
                     shape = RoundedCornerShape(22.dp),
                     color = MaterialTheme.colorScheme.surfaceContainer,
@@ -894,142 +982,32 @@ fun AgentInfoSheet(
                                 selectedPersonality,
                                 defaultPersonality,
                             ),
-                            expanded = expandedSection == "personality",
+                            expanded = false,
                             enabled = !isStreaming,
-                            onClick = {
-                                expandedSection =
-                                    if (expandedSection == "personality") null else "personality"
-                            },
+                            onClick = { activePicker = AgentPassportPicker.Personality },
                         )
-                        if (expandedSection == "personality") {
-                            Column(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            ) {
-                                ProfileRadioRow(
-                                    primary = stringResource(R.string.conn_info_none),
-                                    secondary = stringResource(
-                                        R.string.conn_info_no_personality_overlay,
-                                    ),
-                                    selected = selectedPersonality == "none" ||
-                                        selectedPersonality == "neutral",
-                                    enabled = !isStreaming,
-                                    onSelect = {
-                                        chatViewModel.selectPersonality("none")
-                                        expandedSection = null
-                                    },
-                                )
-                                personalityNames.forEach { personality ->
-                                    ProfileRadioRow(
-                                        primary = personality.replaceFirstChar { it.uppercase() },
-                                        secondary = null,
-                                        selected = selectedPersonality == personality,
-                                        enabled = !isStreaming,
-                                        onSelect = {
-                                            chatViewModel.selectPersonality(personality)
-                                            expandedSection = null
-                                        },
-                                    )
-                                }
-                            }
-                        }
                         PassportDivider()
                         PassportConfigRow(
                             icon = Icons.Filled.ViewInAr,
                             title = stringResource(R.string.conn_info_model_title),
-                            value = selectedModel
-                                ?: stringResource(R.string.conn_info_server_default),
-                            expanded = expandedSection == "model",
-                            enabled = !isStreaming,
-                            onClick = {
-                                expandedSection =
-                                    if (expandedSection == "model") null else "model"
+                            value = selectedModel ?: if (modelLabel == serverDefaultLabel) {
+                                serverDefaultLabel
+                            } else {
+                                stringResource(R.string.conn_info_server_default_model, modelLabel)
                             },
+                            expanded = false,
+                            enabled = !isStreaming,
+                            onClick = { activePicker = AgentPassportPicker.Model },
                         )
-                        if (expandedSection == "model") {
-                            Column(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            ) {
-                                ProfileRadioRow(
-                                    primary = stringResource(R.string.conn_info_server_default),
-                                    secondary = AgentDisplay.displayModelName(serverModel),
-                                    selected = selectedModel == null,
-                                    enabled = !isStreaming,
-                                    onSelect = {
-                                        chatViewModel.selectModel(null)
-                                        expandedSection = null
-                                    },
-                                )
-                                modelProviders.forEach { provider ->
-                                    provider.models.forEach { model ->
-                                        ProfileRadioRow(
-                                            primary = model,
-                                            secondary = provider.name,
-                                            selected = selectedModel == model,
-                                            enabled = !isStreaming,
-                                            onSelect = {
-                                                chatViewModel.selectModel(model, provider.slug)
-                                                expandedSection = null
-                                            },
-                                        )
-                                    }
-                                }
-                                val gatewayModelIds =
-                                    modelProviders.flatMap { it.models }.toSet()
-                                apiModelOptions
-                                    .filterNot { it.id in gatewayModelIds }
-                                    .forEach { model ->
-                                        ProfileRadioRow(
-                                            primary = AgentDisplay.displayModelName(model.id)
-                                                ?: model.id,
-                                            secondary = model.routeDetail,
-                                            selected = selectedModel == model.id,
-                                            enabled = !isStreaming,
-                                            onSelect = {
-                                                chatViewModel.selectApiModel(model.id)
-                                                expandedSection = null
-                                            },
-                                        )
-                                    }
-                            }
-                        }
                         PassportDivider()
                         PassportConfigRow(
                             icon = Icons.Filled.Psychology,
                             title = stringResource(R.string.chat_select_reasoning_effort),
                             value = reasoningLabel(selectedReasoning),
-                            expanded = expandedSection == "reasoning",
+                            expanded = false,
                             enabled = gatewayControlsAvailable && !isStreaming,
-                            onClick = {
-                                expandedSection =
-                                    if (expandedSection == "reasoning") null else "reasoning"
-                            },
+                            onClick = { activePicker = AgentPassportPicker.Reasoning },
                         )
-                        if (expandedSection == "reasoning") {
-                            val reasoningOptions = listOf(
-                                "none" to stringResource(R.string.chat_reasoning_none),
-                                "minimal" to stringResource(R.string.chat_reasoning_minimal),
-                                "low" to stringResource(R.string.chat_reasoning_low),
-                                "medium" to stringResource(R.string.chat_reasoning_medium),
-                                "high" to stringResource(R.string.chat_reasoning_high),
-                                "xhigh" to "XHigh",
-                            )
-                            Column(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            ) {
-                                reasoningOptions.forEach { (value, label) ->
-                                    ProfileRadioRow(
-                                        primary = label,
-                                        secondary = null,
-                                        selected = selectedReasoning == value,
-                                        enabled = gatewayControlsAvailable && !isStreaming,
-                                        onSelect = {
-                                            chatViewModel.selectReasoningEffort(value)
-                                            expandedSection = null
-                                        },
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -1087,42 +1065,31 @@ fun AgentInfoSheet(
 
                 TextButton(
                     modifier = Modifier.fillMaxWidth(),
-                    onClick = { showIdentityEditor = !showIdentityEditor },
+                    onClick = { showIdentityEditor = true },
                 ) {
                     Icon(Icons.Filled.Edit, contentDescription = null)
                     Spacer(Modifier.size(8.dp))
                     Text(stringResource(R.string.conn_info_customize_identity))
                 }
-                if (showIdentityEditor) {
-                    Surface(
-                        shape = RoundedCornerShape(22.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
+                resolvedProfile?.let { profile ->
+                    TextButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            onDismiss()
+                            onNavigateToProfileInspector(profile.name)
+                        },
                     ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            DisplayAliasSection(
-                                currentAlias = profileDisplayAlias,
-                                fallbackName = agentName,
-                                onSave = connectionViewModel::setProfileDisplayAlias,
-                            )
-                            AgentIconRow(connectionViewModel)
-                            selectedProfile?.let { profile ->
-                                TextButton(
-                                    onClick = {
-                                        onDismiss()
-                                        onNavigateToProfileInspector(profile.name)
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text(stringResource(R.string.conn_info_manage_profiles))
-                                }
-                            }
-                        }
+                        Icon(Icons.Filled.Visibility, contentDescription = null)
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            stringResource(
+                                R.string.conn_info_inspect_profile,
+                                AgentDisplay.profileDisplayName(profile) ?: profile.name,
+                            ),
+                        )
                     }
                 }
-            } else {
+                } else {
                 AgentPassportSessionTab(
                     currentSessionLabel = currentSession?.title
                         ?.takeIf { it.isNotBlank() }
@@ -1134,16 +1101,232 @@ fun AgentInfoSheet(
                         appStats.currentSessionTokensIn,
                         appStats.currentSessionTokensOut,
                     ),
+                    sessionId = currentSessionId,
+                    sessionProfileName = effectiveSessionProfileName,
+                    modelLabel = sessionModelLabel,
+                    providerLabel = sessionProviderLabel,
+                    reasoningLabel = selectedReasoning?.let(::reasoningLabel)
+                        ?: stringResource(R.string.conn_info_server_default),
+                    approvalMode = approvalMode,
+                    approvalCapability = approvalCapability,
+                    fastEnabled = fastEnabled,
+                    contextLabel = contextLabel,
+                    transport = sessionTransport,
                     routeLabel = routeLabel,
-                    connectionLabel = activeConnection?.label ?: routeLabel,
-                    connected = connected,
+                    capabilities = sessionCaps,
+                    relayConnectionState = relayConnectionState,
+                    apiServerUrl = effectiveApiServerUrl,
+                    relayUrl = effectiveRelayUrl,
+                    streamingEndpoint = streamingEndpoint,
+                    gatewayAvailability = gatewayAvailability,
+                    serverCapabilities = serverCapabilities,
+                    connectionLabel = activeConnection?.label ?: routeLabel ?: "—",
                     authState = authState,
                     onManageConnections = {
                         onDismiss()
                         onNavigateToConnections()
                     },
                 )
+                }
             }
+        }
+    }
+
+    when (activePicker) {
+        AgentPassportPicker.Profile -> {
+            val selectedProfileKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
+            val visibleProfileKeys = ProfilePresentationPolicy.visibleKeys(
+                profiles = agentProfiles,
+                presentation = profilePresentation,
+                selectedKey = selectedProfileKey,
+            )
+            val options = visibleProfileKeys.mapNotNull { profileKey ->
+                if (profileKey == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY) {
+                    ChatInputPickerOption(
+                        label = serverDefaultLabel,
+                        value = null,
+                        secondary = AgentDisplay.profileDisplayName(resolvedProfile),
+                        selected = selectedProfile == null,
+                        enabled = !isProfileLocked && profileSwitchEnabled,
+                    )
+                } else {
+                    agentProfiles.firstOrNull { it.name == profileKey }?.let { profile ->
+                        ChatInputPickerOption(
+                            label = AgentDisplay.profileDisplayName(profile)
+                                ?: profile.name.replaceFirstChar { it.uppercase() },
+                            value = profile.name,
+                            secondary = profile.model.takeIf { it.isNotBlank() },
+                            selected = selectedProfile?.name == profile.name,
+                            enabled = !isProfileLocked && profileSwitchEnabled,
+                        )
+                    }
+                }
+            }
+            OptionPickerSheet(
+                title = stringResource(R.string.conn_info_profile),
+                options = options,
+                onSelect = { option ->
+                    val profile = option.value?.let { name ->
+                        agentProfiles.firstOrNull { it.name == name }
+                    }
+                    connectionViewModel.selectProfile(profile)
+                    chatViewModel.activateGatewayProfile(profile)
+                    activePicker = null
+                },
+                onDismiss = { activePicker = null },
+            )
+        }
+        AgentPassportPicker.Personality -> OptionPickerSheet(
+            title = stringResource(R.string.conn_info_personality_title),
+            options = buildList {
+                add(
+                    ChatInputPickerOption(
+                        label = stringResource(R.string.conn_info_none),
+                        value = "none",
+                        secondary = stringResource(R.string.conn_info_no_personality_overlay),
+                        selected = AgentDisplay.isClearedPersonality(selectedPersonality),
+                    ),
+                )
+                personalityNames.forEach { personality ->
+                    add(
+                        ChatInputPickerOption(
+                            label = personality.replaceFirstChar { it.uppercase() },
+                            value = personality,
+                            selected = selectedPersonality == personality,
+                        ),
+                    )
+                }
+            },
+            onSelect = { option ->
+                option.value?.let(chatViewModel::selectPersonality)
+                activePicker = null
+            },
+            onDismiss = { activePicker = null },
+        )
+        AgentPassportPicker.Model -> ModelPickerSheet(
+            options = passportModelOptions,
+            refreshing = modelOptionsRefreshing,
+            onRefresh = { chatViewModel.refreshModelOptions(refresh = true) },
+            onSelect = { option ->
+                activePicker = null
+                if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
+                    option.value?.let(chatViewModel::selectApiModel)
+                } else {
+                    chatViewModel.selectModel(option.value, option.provider)
+                }
+            },
+            onDismiss = { activePicker = null },
+        )
+        AgentPassportPicker.Reasoning -> OptionPickerSheet(
+            title = stringResource(R.string.chat_select_reasoning_effort),
+            options = listOf(
+                "none" to stringResource(R.string.chat_reasoning_none),
+                "minimal" to stringResource(R.string.chat_reasoning_minimal),
+                "low" to stringResource(R.string.chat_reasoning_low),
+                "medium" to stringResource(R.string.chat_reasoning_medium),
+                "high" to stringResource(R.string.chat_reasoning_high),
+                "xhigh" to "XHigh",
+            ).map { (value, label) ->
+                ChatInputPickerOption(
+                    label = label,
+                    value = value,
+                    selected = selectedReasoning == value,
+                    enabled = gatewayControlsAvailable && !isStreaming,
+                )
+            },
+            onSelect = { option ->
+                option.value?.let(chatViewModel::selectReasoningEffort)
+                activePicker = null
+            },
+            onDismiss = { activePicker = null },
+        )
+        null -> Unit
+    }
+
+    if (showProfileManager) {
+        ProfileDisplayManagerDialog(
+            profiles = agentProfiles,
+            presentation = profilePresentation,
+            selectedProfileName = selectedProfile?.name,
+            onMove = connectionViewModel::moveProfile,
+            onHiddenChange = connectionViewModel::setProfileHidden,
+            onReset = connectionViewModel::resetProfilePresentation,
+            onDismiss = { showProfileManager = false },
+        )
+    }
+}
+
+@Composable
+private fun AgentPassportIdentityEditor(
+    connectionViewModel: ConnectionViewModel,
+    profileDisplayAlias: String?,
+    fallbackName: String,
+    effectiveProfile: Profile?,
+    hasProfiles: Boolean,
+    onBack: () -> Unit,
+    onManageProfiles: () -> Unit,
+    onInspectProfile: (Profile) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = stringResource(R.string.settings_back),
+            )
+        }
+        Text(
+            text = stringResource(R.string.conn_info_customize_identity),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            DisplayAliasSection(
+                currentAlias = profileDisplayAlias,
+                fallbackName = fallbackName,
+                onSave = connectionViewModel::setProfileDisplayAlias,
+            )
+            AgentIconRow(connectionViewModel)
+        }
+    }
+
+    if (hasProfiles) {
+        OutlinedButton(
+            onClick = onManageProfiles,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(imageVector = Icons.Filled.Tune, contentDescription = null)
+            Spacer(modifier = Modifier.size(8.dp))
+            Text(stringResource(R.string.conn_info_manage_profiles))
+        }
+    }
+
+    effectiveProfile?.let { profile ->
+        TextButton(
+            onClick = { onInspectProfile(profile) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                stringResource(
+                    R.string.conn_info_inspect_profile,
+                    AgentDisplay.profileDisplayName(profile) ?: profile.name,
+                ),
+            )
         }
     }
 }
@@ -1155,12 +1338,41 @@ private fun AgentPassportHeader(
     modelLabel: String,
     providerLabel: String?,
     connected: Boolean,
-    routeLabel: String,
-    messageCount: Int,
+    presence: ProfilePresence?,
+    hasSoul: Boolean,
+    skillCount: Int,
+    transportLabel: String,
+    sessionLabel: String,
     contextLabel: String,
     onProfileClick: () -> Unit,
 ) {
     val brand = LocalBrand.current
+    val (presenceLabel, presenceColor) = when (presence) {
+        ProfilePresence.ONLINE ->
+            stringResource(R.string.conn_info_profile_online) to brand.green
+        ProfilePresence.AVAILABLE ->
+            stringResource(R.string.conn_info_profile_available) to MaterialTheme.colorScheme.primary
+        ProfilePresence.OFFLINE ->
+            stringResource(R.string.conn_info_profile_offline) to MaterialTheme.colorScheme.error
+        null -> if (connected) {
+            stringResource(R.string.conn_info_connected) to brand.green
+        } else {
+            stringResource(R.string.conn_info_disconnected) to MaterialTheme.colorScheme.error
+        }
+    }
+    val identityMetadata = listOfNotNull(
+        providerLabel,
+        stringResource(R.string.conn_info_soul).takeIf { hasSoul },
+        stringResource(R.string.conn_info_skills_count, skillCount).takeIf { skillCount > 0 },
+    ).joinToString(" · ")
+    val connectionValue = listOf(
+        transportLabel,
+        if (connected) {
+            stringResource(R.string.conn_info_connected)
+        } else {
+            stringResource(R.string.conn_info_disconnected)
+        },
+    ).joinToString(" · ")
     Surface(
         shape = RoundedCornerShape(24.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -1169,7 +1381,10 @@ private fun AgentPassportHeader(
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
         ),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -1192,11 +1407,12 @@ private fun AgentPassportHeader(
                 }
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Text(
                             text = agentName,
@@ -1204,122 +1420,124 @@ private fun AgentPassportHeader(
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
+                            modifier = Modifier.weight(1f),
                         )
-                        Surface(
-                            modifier = Modifier.clickable(onClick = onProfileClick),
-                            shape = RoundedCornerShape(999.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                            ),
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.PushPin,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                                Text(
-                                    text = "${stringResource(R.string.conn_info_profile)}: $profileLabel",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Icon(
-                                    imageVector = Icons.Filled.KeyboardArrowDown,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(presenceColor),
+                            )
+                            Text(
+                                text = presenceLabel,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = presenceColor,
+                                maxLines = 1,
+                            )
                         }
                     }
-                    Text(
-                        text = listOfNotNull(
-                            stringResource(R.string.conn_info_server_default),
-                            modelLabel,
-                            providerLabel,
-                        )
-                            .joinToString(" · "),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    ) {
-                        Box(
-                            Modifier
-                                .size(9.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (connected) {
-                                        brand.green
-                                    } else {
-                                        MaterialTheme.colorScheme.error
-                                    },
-                                ),
-                        )
+                    if (identityMetadata.isNotBlank()) {
                         Text(
-                            text = if (connected) {
-                                stringResource(R.string.conn_info_connected)
-                            } else {
-                                stringResource(R.string.conn_info_disconnected)
-                            },
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (connected) {
-                                brand.green
-                            } else {
-                                MaterialTheme.colorScheme.error
-                            },
+                            text = identityMetadata,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
             }
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 14.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-            )
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onProfileClick),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                ),
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Text(
+                        text = stringResource(R.string.conn_info_active_profile).uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = profileLabel,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (!agentName.equals(profileLabel, ignoreCase = true)) {
+                                Text(
+                                    text = agentName,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Row(modifier = Modifier.fillMaxWidth()) {
-                PassportMetric(
-                    icon = Icons.Filled.Language,
-                    label = stringResource(R.string.session_path_gateway),
-                    value = stringResource(R.string.conn_info_server_default),
+                PassportTechnicalField(
+                    label = stringResource(R.string.conn_info_model_title),
+                    value = modelLabel,
                     modifier = Modifier.weight(1f),
                 )
-                PassportMetricDivider()
-                PassportMetric(
-                    icon = Icons.Filled.Security,
-                    label = routeLabel,
-                    value = if (connected) {
-                        stringResource(R.string.conn_info_connected)
-                    } else {
-                        stringResource(R.string.conn_info_disconnected)
-                    },
+                PassportTechnicalDivider(height = 44.dp)
+                PassportTechnicalField(
+                    label = stringResource(R.string.conn_info_connection),
+                    value = connectionValue,
+                    valueColor = if (connected) brand.green else MaterialTheme.colorScheme.error,
                     modifier = Modifier.weight(1f),
                 )
-                PassportMetricDivider()
-                PassportMetric(
-                    icon = Icons.Filled.ChatBubble,
-                    label = stringResource(R.string.conn_info_messages),
-                    value = messageCount.toString(),
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                PassportTechnicalField(
+                    label = stringResource(R.string.conn_info_session_title),
+                    value = sessionLabel,
                     modifier = Modifier.weight(1f),
                 )
-                PassportMetricDivider()
-                PassportMetric(
-                    icon = Icons.Filled.Storage,
+                PassportTechnicalDivider(height = 42.dp)
+                PassportTechnicalField(
                     label = stringResource(R.string.conn_info_context),
                     value = contextLabel,
+                    modifier = Modifier.weight(1f),
+                )
+                PassportTechnicalDivider(height = 42.dp)
+                PassportTechnicalField(
+                    label = stringResource(R.string.conn_info_transport),
+                    value = transportLabel,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -1328,32 +1546,26 @@ private fun AgentPassportHeader(
 }
 
 @Composable
-private fun PassportMetric(
-    icon: ImageVector,
+private fun PassportTechnicalField(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     Column(
-        modifier = modifier.padding(horizontal = 3.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier.padding(horizontal = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(18.dp),
-        )
         Text(
-            text = label,
+            text = label.uppercase(),
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelLarge,
+            color = valueColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1361,13 +1573,12 @@ private fun PassportMetric(
 }
 
 @Composable
-private fun PassportMetricDivider() {
+private fun PassportTechnicalDivider(height: Dp) {
     Box(
         modifier = Modifier
-            .height(52.dp)
-            .padding(horizontal = 1.dp)
+            .height(height)
             .widthIn(min = 1.dp, max = 1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
     )
 }
 
@@ -1377,7 +1588,9 @@ private fun AgentPassportTabs(
     onSelected: (Int) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectableGroup(),
     ) {
         listOf(
             stringResource(R.string.subagent_lane_label_fallback),
@@ -1386,7 +1599,11 @@ private fun AgentPassportTabs(
             Surface(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable { onSelected(index) },
+                    .selectable(
+                        selected = selected == index,
+                        role = Role.Tab,
+                        onClick = { onSelected(index) },
+                    ),
                 color = Color.Transparent,
                 contentColor = if (selected == index) {
                     MaterialTheme.colorScheme.primary
@@ -1429,10 +1646,18 @@ private fun PassportConfigRow(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val expansionState = stringResource(
+        if (expanded) {
+            R.string.profile_inspector_expanded_state
+        } else {
+            R.string.profile_inspector_collapsed_state
+        },
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
+            .semantics { stateDescription = expansionState }
             .padding(horizontal = 16.dp, vertical = 7.dp)
             .alpha(if (enabled) 1f else 0.58f),
         verticalAlignment = Alignment.CenterVertically,
@@ -1651,6 +1876,7 @@ private fun PassportSegmentedControl(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .selectableGroup()
             .clip(RoundedCornerShape(14.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .padding(3.dp)
@@ -1660,7 +1886,12 @@ private fun PassportSegmentedControl(
             Surface(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable(enabled = enabled) { onSelected(index) },
+                    .selectable(
+                        selected = selected == index,
+                        enabled = enabled,
+                        role = Role.RadioButton,
+                        onClick = { onSelected(index) },
+                    ),
                 shape = RoundedCornerShape(11.dp),
                 color = if (selected == index) {
                     MaterialTheme.colorScheme.primary
@@ -1691,12 +1922,43 @@ private fun AgentPassportSessionTab(
     currentSessionLabel: String,
     messageCount: Int,
     tokenSummary: String,
-    routeLabel: String,
+    sessionId: String?,
+    sessionProfileName: String?,
+    modelLabel: String,
+    providerLabel: String?,
+    reasoningLabel: String,
+    approvalMode: GatewayApprovalMode?,
+    approvalCapability: GatewayApprovalModeCapability,
+    fastEnabled: Boolean?,
+    contextLabel: String,
+    transport: SessionPathTransport,
+    routeLabel: String?,
+    capabilities: List<SessionCapability>,
+    relayConnectionState: ConnectionState,
+    apiServerUrl: String,
+    relayUrl: String,
+    streamingEndpoint: String,
+    gatewayAvailability: GatewayAvailability,
+    serverCapabilities: com.hermesandroid.relay.network.upstream.ServerCapabilities,
     connectionLabel: String,
-    connected: Boolean,
     authState: AuthState,
     onManageConnections: () -> Unit,
 ) {
+    val approvalLabel = when (approvalCapability) {
+        GatewayApprovalModeCapability.Unknown ->
+            stringResource(R.string.conn_info_checking)
+        GatewayApprovalModeCapability.Unsupported ->
+            stringResource(R.string.conn_info_approval_mode_unsupported)
+        GatewayApprovalModeCapability.Supported -> when (approvalMode) {
+            GatewayApprovalMode.Manual ->
+                stringResource(R.string.conn_info_approval_mode_manual)
+            GatewayApprovalMode.Smart ->
+                stringResource(R.string.conn_info_approval_mode_smart)
+            GatewayApprovalMode.Off ->
+                stringResource(R.string.conn_info_approval_mode_off)
+            null -> stringResource(R.string.conn_info_checking)
+        }
+    }
     Surface(
         shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -1715,8 +1977,38 @@ private fun AgentPassportSessionTab(
                 fontWeight = FontWeight.SemiBold,
             )
             InfoRow(stringResource(R.string.conn_info_name), currentSessionLabel)
+            InfoRow(
+                stringResource(R.string.conn_info_session_id),
+                sessionId?.take(12) ?: "—",
+                monospace = true,
+            )
+            InfoRow(
+                stringResource(R.string.conn_info_profile),
+                sessionProfileName ?: stringResource(R.string.conn_info_server_default),
+                monospace = sessionProfileName != null,
+            )
             InfoRow(stringResource(R.string.conn_info_messages), messageCount.toString())
             InfoRow(stringResource(R.string.conn_info_tokens), tokenSummary)
+            InfoRow(stringResource(R.string.conn_info_context), contextLabel)
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+            )
+            InfoRow(stringResource(R.string.conn_info_model_title), modelLabel)
+            providerLabel?.let {
+                InfoRow(stringResource(R.string.voice_settings_label_provider), it)
+            }
+            InfoRow(stringResource(R.string.conn_info_reasoning), reasoningLabel)
+            InfoRow(stringResource(R.string.conn_info_approval_policy), approvalLabel)
+            InfoRow(
+                stringResource(R.string.conn_info_fast_mode_title),
+                if (fastEnabled == true) {
+                    stringResource(R.string.conn_info_fast)
+                } else if (fastEnabled == false) {
+                    stringResource(R.string.appearance_font_normal)
+                } else {
+                    stringResource(R.string.conn_info_server_default)
+                },
+            )
         }
     }
     Surface(
@@ -1736,18 +2028,14 @@ private fun AgentPassportSessionTab(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
+            SessionPathSummary(
+                transport = transport,
+                routeLabel = routeLabel,
+                capabilities = capabilities,
+            )
             InfoRow(
                 stringResource(R.string.conn_info_name),
                 connectionLabel,
-            )
-            InfoRow(
-                stringResource(R.string.session_path_gateway),
-                routeLabel,
-                valueColor = if (connected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.error
-                },
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1761,6 +2049,17 @@ private fun AgentPassportSessionTab(
                 )
                 authStateChip(authState)
             }
+            SessionPathDetails(
+                transport = transport,
+                routeLabel = routeLabel,
+                relayConnectionState = relayConnectionState,
+                capabilities = capabilities,
+                apiServerUrl = apiServerUrl,
+                relayUrl = relayUrl,
+                streamingEndpoint = streamingEndpoint,
+                gatewayAvailability = gatewayAvailability,
+                serverCapabilities = serverCapabilities,
+            )
         }
     }
     OutlinedButton(
@@ -1938,6 +2237,24 @@ private fun LegacyAgentInfoSheet(
 
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    var profileApiKeyInput by remember(activeConnectionId, selectedProfile?.name) {
+        mutableStateOf("")
+    }
+    var profileApiKeyStored by remember(activeConnectionId, selectedProfile?.name) {
+        mutableStateOf(false)
+    }
+    var profileApiKeyVisible by remember(activeConnectionId, selectedProfile?.name) {
+        mutableStateOf(false)
+    }
+    var profileApiKeySaving by remember(activeConnectionId, selectedProfile?.name) {
+        mutableStateOf(false)
+    }
+
+    LaunchedEffect(activeConnectionId, selectedProfile?.name) {
+        profileApiKeyStored = selectedProfile?.name
+            ?.let { connectionViewModel.getProfileApiKey(it) }
+            ?.isNotBlank() == true
+    }
 
     // Pre-resolve strings for non-composable contexts (toast function)
     val usingServerDefaultToast = stringResource(R.string.conn_info_using_server_default)
@@ -1950,6 +2267,10 @@ private fun LegacyAgentInfoSheet(
     val switchedToConnectionToast = stringResource(R.string.conn_info_switched_to_connection)
     val copyPairingCodeDesc = stringResource(R.string.conn_info_copy_pairing_code)
     val pairingCodeLabel = stringResource(R.string.conn_info_pairing_code)
+    val profileApiKeySavedToast = stringResource(R.string.conn_info_profile_api_key_saved)
+    val profileApiKeyClearedToast = stringResource(R.string.conn_info_profile_api_key_cleared)
+    val profileApiKeySaveFailedToast =
+        stringResource(R.string.conn_info_profile_api_key_save_failed)
 
     // Transient confirmation when the user picks a different profile or
     // personality from inside the sheet. Routed to the top info-banner
@@ -2296,6 +2617,127 @@ private fun LegacyAgentInfoSheet(
                         Spacer(modifier = Modifier.size(8.dp))
                         Text(stringResource(R.string.conn_info_manage_profiles))
                     }
+
+                    selectedProfile
+                        ?.takeIf {
+                            it.apiServerKeyPresent &&
+                                connectionViewModel.selectedProfileUsesMultiplexApiKey()
+                        }
+                        ?.let { profile ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.conn_info_profile_api_key_title),
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Text(
+                                    text = stringResource(R.string.conn_info_profile_api_key_hint),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                OutlinedTextField(
+                                    value = profileApiKeyInput,
+                                    onValueChange = { profileApiKeyInput = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    enabled = !profileApiKeySaving,
+                                    label = {
+                                        Text(
+                                            stringResource(
+                                                if (profileApiKeyStored) {
+                                                    R.string.conn_info_profile_api_key_stored
+                                                } else {
+                                                    R.string.conn_info_profile_api_key_not_stored
+                                                },
+                                            ),
+                                        )
+                                    },
+                                    visualTransformation = if (profileApiKeyVisible) {
+                                        VisualTransformation.None
+                                    } else {
+                                        PasswordVisualTransformation()
+                                    },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = {
+                                                profileApiKeyVisible = !profileApiKeyVisible
+                                            },
+                                        ) {
+                                            Icon(
+                                                imageVector = if (profileApiKeyVisible) {
+                                                    Icons.Filled.VisibilityOff
+                                                } else {
+                                                    Icons.Filled.Visibility
+                                                },
+                                                contentDescription = null,
+                                            )
+                                        }
+                                    },
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (profileApiKeyStored) {
+                                        TextButton(
+                                            enabled = !profileApiKeySaving,
+                                            onClick = {
+                                                profileApiKeySaving = true
+                                                connectionViewModel.updateProfileApiKey(
+                                                    profileName = profile.name,
+                                                    key = "",
+                                                ) { success ->
+                                                    profileApiKeySaving = false
+                                                    if (success) {
+                                                        profileApiKeyStored = false
+                                                        profileApiKeyInput = ""
+                                                        toast(profileApiKeyClearedToast)
+                                                    } else {
+                                                        toast(profileApiKeySaveFailedToast)
+                                                    }
+                                                }
+                                            },
+                                        ) {
+                                            Text(stringResource(R.string.conn_info_profile_api_key_clear))
+                                        }
+                                    }
+                                    TextButton(
+                                        enabled = profileApiKeyInput.isNotBlank() &&
+                                            !profileApiKeySaving,
+                                        onClick = {
+                                            profileApiKeySaving = true
+                                            connectionViewModel.updateProfileApiKey(
+                                                profileName = profile.name,
+                                                key = profileApiKeyInput,
+                                            ) { success ->
+                                                profileApiKeySaving = false
+                                                if (success) {
+                                                    profileApiKeyStored = true
+                                                    profileApiKeyInput = ""
+                                                    toast(profileApiKeySavedToast)
+                                                } else {
+                                                    toast(profileApiKeySaveFailedToast)
+                                                }
+                                            }
+                                        },
+                                    ) {
+                                        if (profileApiKeySaving) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                strokeWidth = 2.dp,
+                                            )
+                                        } else {
+                                            Text(stringResource(R.string.conn_info_profile_api_key_save))
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                     val inspectProfileText = stringResource(R.string.conn_info_inspect_profile)
                     val inspectorTarget = resolvedDisplayProfile

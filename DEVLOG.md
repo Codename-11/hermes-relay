@@ -14,6 +14,95 @@ scope. The localization registry records Android coverage only; Russian public
 documentation and marketing pages continue to use the canonical English
 fallback until those surfaces are translated separately.
 
+## 2026-07-31 — Upstream-compatible voice interruption semantics
+
+Android full-turn barge-in now follows upstream Hermes' RMS behavior: roughly
+450 ms of quiet-room calibration, a 90th-percentile floor, 3× default
+multiplier, separate generation/playback minimums, a bounded ceiling, 500 ms
+playback grace, and an 80%-majority decision window. Calibration remains frozen
+against speaker output and cannot itself trigger. Renderer-driven phase tracking
+returns to generation thresholds in quiet output gaps and rearms playback grace
+only after a gap of at least one second. Opt-in Logcat diagnostics expose the
+inputs used for device tuning. Barge-in is enabled by default while retaining its master,
+Silero sensitivity, RMS multiplier, playback grace, and resume controls.
+
+Voice stop phrases now use an editable exact-match list that defaults to
+`stop`; clearing the list disables the behavior. A match ends the active voice
+chat in generation or playback, but the same word outside voice chat and longer
+requests continue through normal Hermes input. Continuous-mode pause/resume and
+explicit background-task cancellation retain their narrower state gates.
+
+Interrupting spoken playback arms the upstream one-shot interruption note for
+the next Standard model-bound message. The latch expires after 120 seconds and
+travels only in API-local voice interface context, never in visible or
+persisted user text. Generation and pre-audio synthesis interruption do not mark
+an unspoken reply, Realtime keeps its provider-session context, and silencing remains independent
+from cancellation of promoted background work.
+
+## 2026-07-30 — Expandable Android assistant surface
+
+Android Digital Assistant sessions now open as a compact bottom bar over the
+current app, expand in place for transcript and response detail, and collapse
+without changing the active turn. Open full voice disables only the
+system-owned session UI and reveals the existing app Voice surface, preserving
+the same session, response stream, and microphone owner.
+
+Connection, chat, and voice state machines now have one main-process,
+application-lifetime owner. Assistant activation can initialize and run a cold
+voice turn without constructing or foregrounding `MainActivity`; opening full
+Voice binds the Activity to those same ViewModels and audio resources.
+
+The optional `SYSTEM_ALERT_WINDOW` Voice surface now follows the same
+wide-bar-to-expanded-sheet progression while retaining its minimized bubble.
+It remains a separately user-invoked control for turns that began in the app;
+the Assistant-role session does not require display-over-other-apps permission.
+
+The assistant window is transparent outside the bar or sheet, leaves the
+underlying app unresized, and restricts touch interception to the measured
+surface. Back collapses an expanded surface first; Back from compact, Stop, and
+ordinary dismissal remain terminal. A hidden full-Voice handoff instead follows
+the app-owned turn through its final Closed state.
+Package-scoped lifecycle reconciliation also clears assistant state if Android
+reclaims the separately processed UI while full Voice remains active.
+
+Assistant activation is ID-aware and single-flight. Duplicate delivery cannot
+re-arm capture, Retry replaces a pending readiness attempt, and Stop invalidates
+the attempt before chat, Voice, or microphone mutations. Scoped voice settings
+must hydrate from DataStore before route readiness, and process extraction
+preserves connection-catalog isolation plus the existing gateway route-flip
+settle window.
+
+Physical-device validation on a Samsung SM-S938U confirmed cold invocation over
+a non-Hermes foreground app, compact and expanded presentation without
+foregrounding `MainActivity`, and one main-process microphone owner. Locked
+invocation reached a shown system assistant session without runtime or recorder
+errors; Samsung's secure lock screen prevented screenshot-based visual review.
+
+## 2026-07-30 — Foreground wake-word diagnostics and recovery
+
+The Android-local sherpa listener now treats each non-empty keyword result as a
+completed KWS event, resets the stream immediately, and maps the stored
+confirmation setting to sherpa's native trailing-blank confirmation instead of
+requiring an already-completed result to recur across application frames. Voice
+settings can arm a ten-second test against the same foreground service,
+microphone owner, installed model, and current tuning; it displays live input
+level and reports detection without opening voice or transmitting audio.
+
+Expected empty-transcript responses after activation now record a no-speech
+diagnostic and return voice to its ready state with a retry hint rather than
+surfacing the provider's HTTP error. Other transcription failures retain the
+existing error path. Foreground-service behavior is documented explicitly:
+background detections remain pending behind the notification until Hermes is
+visible; Android default-assistant integration is a separate mode. Opening the
+visible Voice settings screen also reconciles an enabled listener after package
+replacement or process death without adding boot/background auto-start.
+
+Focused wake preferences/core and no-speech classification tests pass.
+Sideload lint, sideload debug packaging, and Google Play debug Kotlin
+compilation pass. This batch adds no model, native library, ABI, permission, or
+network dependency; the existing approximately 6 MB downloaded model and
+packaged sherpa ABI footprint are unchanged.
+
 ## 2026-07-30 — Voice transcript identity alignment
 
 Android voice Focus mode now keys transcript rows with the same stable UI
@@ -23,8 +112,54 @@ identity; using the mutable domain ID in the voice overlay could otherwise
 collide during that transition and close the app.
 
 Focused JVM coverage recreates two visible rows with a shared reconciled server
-ID and verifies distinct stable transcript keys.
+ID and verifies distinct stable transcript keys. Sideload production and
+Android-test Kotlin compilation pass. The existing full-overlay instrumentation
+fixture remains blocked by its continuously animating surface never reaching
+Compose idleness.
 
+## 2026-07-30 — Opt-in Android Digital Assistant mode
+
+Android now declares an explicit `VoiceInteractionService` and separately
+processed `VoiceInteractionSessionService`. Only Android's user-confirmed
+Assistant role activates the integration. Optional background “Hey Hermes”
+detection reuses the local sherpa model and tuning, releases its recorder before
+the system session opens the existing voice flow, and resumes after session
+exit. Package-scoped lifecycle messages reconcile prompt/listen state,
+transcript/response presentation, cancellation, errors, and process recreation.
+
+The Digital Assistant listener and the existing experimental microphone
+foreground service are separate, mutually exclusive opt-ins. Both retain local
+pre-activation privacy and the shared one-microphone contract. Standard voice
+continues through the upstream Dashboard audio surface. Voice settings include
+role status, setup, removal, runtime status, and the limitation that third-party
+assistants do not receive Google's low-power hotword hardware.
+
+## 2026-07-29 — Full-turn voice interruption and local wake-word preview
+
+Android barge-in now owns one microphone/VAD listener from response generation
+through playback drain for both Standard and Realtime voice. Quiet-room RMS
+calibration freezes before output begins, playback receives a grace interval,
+and model-confirmed majority filtering separates actual interruption from raw
+ducking hints. Turn epochs, stream cancellation, late-delta suppression, and
+an awaited microphone handoff keep an interrupted response from speaking again
+or racing the replacement recording. Exact stop/pause intent is phase-aware,
+while explicit background-task cancellation remains separate from silencing.
+
+An opt-in Android-local “Hey Hermes” preview uses sherpa-onnx in a user-started
+microphone foreground service. Its approximately 6 MB English model is
+downloaded and hash-verified on first enable rather than bundled. The service
+keeps pre-activation audio local, exposes an ongoing Stop notification, pauses
+for active voice, and shares a process-wide single-microphone ownership
+contract with voice recording, barge-in, and realtime diagnostics. The stored
+configuration includes strictness, confirmation frames, new-session behavior,
+and a deliberately inactive future profile-routing shape.
+
+Focused JVM coverage exercises calibration, grace, listener teardown,
+Thinking-to-Speaking ownership, generation/playback interruption, command
+gating, wake preferences, activation, and microphone exclusion. Android
+compilation for both distribution flavors, sideload lint, and sideload APK
+packaging pass with all four supported ABIs. On-device acoustic, foreground
+service, and lifecycle checks remain the corresponding validation gates.
 ## 2026-07-28 — Android 1.5.2 production release
 
 Android 1.5.2 shipped from the approved `dev` to `main` release tree as
@@ -6769,3 +6904,16 @@ After:  Phone (HTTP/SSE) → API Server (:8642)          [chat — direct]
 - Deploy docs site (GitHub Pages or similar)
 - Phase 2: Terminal channel (xterm.js in WebView, tmux integration)
 - Phase 3: Bridge channel migration
+
+# 2026-07-30 — Wake-word strictness tuning
+
+- Lowered the unset Android wake-word strictness default from `0.6` to `0.3` after physical-device testing showed reliable activation only at the lower slider positions.
+- Added the live numeric strictness value to Voice settings so tuning is observable.
+- Preserved saved user values and the existing three-frame confirmation default; this adjustment does not migrate working installations or broaden the detector acceptance window beyond the selected threshold.
+
+# 2026-07-30 — OEM assistant-picker compatibility
+
+- Added the standard `android.intent.action.ASSIST` activity filter because some OEM assistant pickers enumerate Assist activities even when a valid `VoiceInteractionService` is present.
+- Routed activity-based Assist invocations through the existing system-assistant activation protocol so both Android entry points share microphone ownership and session lifecycle behavior.
+- Added the required `recognitionService` metadata and a bounded recognition component after device validation showed Samsung could grant the package role while leaving the active voice-interaction service empty. The component does not open the microphone; Hermes assistant sessions continue to use the established transcription pipeline.
+- Declared `CATEGORY_VOICE` on the Assist activity and retained `ACTION_ASSIST` on the explicit activation intent. `VoiceInteractionSession.startVoiceActivity()` adds the voice category, and Android rejects the launch as `START_NOT_VOICE_COMPATIBLE` unless the target filter matches both.
