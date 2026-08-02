@@ -1170,6 +1170,14 @@
     <string name="floating_pet_action_reset">位置をリセット</string>
     <string name="appearance_pet_roaming">画面内を歩き回る</string>
     <string name="appearance_pet_roaming_desc">Hermes が待機中のとき、選択した Petdex またはカスタムペットは UI の安全な場所だけを歩きます。思考中、ツールの使用、発話、スクロール、視覚効果の軽減、全画面表示では一時停止します。</string>
+    <string name="appearance_pet_temperament">ペットの気質</string>
+    <string name="appearance_pet_temperament_desc">待機中に返信を訪れたり、歩き回ったり、反応したりする頻度を設定します。視覚効果の軽減とアクセシビリティによる一時停止が常に優先されます。</string>
+    <string name="appearance_pet_temperament_calm">おだやか</string>
+    <string name="appearance_pet_temperament_calm_desc">ゆったり：2.5 秒後に返信を訪れ、12 秒ごとに歩き、28 秒ごとに反応します。</string>
+    <string name="appearance_pet_temperament_balanced">バランス</string>
+    <string name="appearance_pet_temperament_balanced_desc">気が散らない程度に活発：1.5 秒後に返信を訪れ、8 秒ごとに歩き、18 秒ごとに反応します。</string>
+    <string name="appearance_pet_temperament_playful">遊び好き</string>
+    <string name="appearance_pet_temperament_playful_desc">元気で好奇心旺盛：0.75 秒後に返信を訪れ、5 秒ごとに歩き、10 秒ごとに反応します。</string>
     <string name="floating_pet_state_idle">待機中</string>
     <string name="floating_pet_state_thinking">思考中</string>
     <string name="floating_pet_state_streaming">応答中</string>

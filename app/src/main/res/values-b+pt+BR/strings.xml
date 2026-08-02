@@ -1100,6 +1100,14 @@
     <string name="floating_pet_action_reset">Redefinir posição</string>
     <string name="appearance_pet_roaming">Passear pela interface</string>
     <string name="appearance_pet_roaming_desc">Quando Hermes está ocioso, o mascote selecionado do Petdex ou personalizado anda somente por áreas seguras da interface. Pensamento, uso de ferramentas, fala, rolagem, movimento reduzido e telas cheias pausam o passeio.</string>
+    <string name="appearance_pet_temperament">Temperamento do mascote</string>
+    <string name="appearance_pet_temperament_desc">Define com que frequência o mascote visita respostas, passeia e reage quando está ocioso. Movimento reduzido e pausas de acessibilidade sempre têm prioridade.</string>
+    <string name="appearance_pet_temperament_calm">Calmo</string>
+    <string name="appearance_pet_temperament_calm_desc">Sem pressa: visita após 2,5 s, passeia a cada 12 s e reage a cada 28 s.</string>
+    <string name="appearance_pet_temperament_balanced">Equilibrado</string>
+    <string name="appearance_pet_temperament_balanced_desc">Animado sem distrair: visita após 1,5 s, passeia a cada 8 s e reage a cada 18 s.</string>
+    <string name="appearance_pet_temperament_playful">Brincalhão</string>
+    <string name="appearance_pet_temperament_playful_desc">Ativo e curioso: visita após 0,75 s, passeia a cada 5 s e reage a cada 10 s.</string>
     <string name="floating_pet_state_idle">Ocioso</string>
     <string name="floating_pet_state_thinking">Pensando</string>
     <string name="floating_pet_state_streaming">Respondendo</string>

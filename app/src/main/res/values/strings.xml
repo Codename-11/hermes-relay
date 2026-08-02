@@ -1259,6 +1259,14 @@
     <string name="floating_pet_action_reset">Reset position</string>
     <string name="appearance_pet_roaming">Walk around the interface</string>
     <string name="appearance_pet_roaming_desc">When Hermes is idle, the selected Petdex or custom companion walks only on UI-safe perches. Thinking, tool work, speech, scrolling, reduced motion, and full-screen surfaces pause it.</string>
+    <string name="appearance_pet_temperament">Pet temperament</string>
+    <string name="appearance_pet_temperament_desc">Sets how often your pet visits responses, roams, and reacts while idle. Reduced motion and accessibility pauses always take priority.</string>
+    <string name="appearance_pet_temperament_calm">Calm</string>
+    <string name="appearance_pet_temperament_calm_desc">Unhurried: visits after 2.5 s, roams every 12 s, and reacts every 28 s.</string>
+    <string name="appearance_pet_temperament_balanced">Balanced</string>
+    <string name="appearance_pet_temperament_balanced_desc">Lively without distraction: visits after 1.5 s, roams every 8 s, and reacts every 18 s.</string>
+    <string name="appearance_pet_temperament_playful">Playful</string>
+    <string name="appearance_pet_temperament_playful_desc">Busy and curious: visits after 0.75 s, roams every 5 s, and reacts every 10 s.</string>
     <string name="floating_pet_state_idle">Idle</string>
     <string name="floating_pet_state_thinking">Thinking</string>
     <string name="floating_pet_state_streaming">Streaming</string>

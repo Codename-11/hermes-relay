@@ -784,6 +784,8 @@ fun AppearanceSettingsScreen(
                         HorizontalDivider()
 
                         val petSpeed by connectionViewModel.petSpeed.collectAsState()
+                        val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
+                        val petTemperament by connectionViewModel.petTemperament.collectAsState()
                         Text(
                             text = stringResource(R.string.appearance_playback_speed, "%.1f".format(java.util.Locale.US, petSpeed)),
                             style = MaterialTheme.typography.labelLarge,
@@ -840,12 +842,48 @@ fun AppearanceSettingsScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
                             Switch(
                                 checked = petRoamingEnabled,
                                 onCheckedChange = { connectionViewModel.setPetRoamingEnabled(it) },
                             )
                         }
+
+                        Text(
+                            text = stringResource(R.string.appearance_pet_temperament),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = stringResource(R.string.appearance_pet_temperament_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .alpha(if (petRoamingEnabled) 1f else 0.6f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            petTemperamentOptions.forEach { option ->
+                                FilterChip(
+                                    selected = option.temperament == petTemperament,
+                                    onClick = {
+                                        connectionViewModel.setPetTemperament(option.temperament)
+                                    },
+                                    enabled = petRoamingEnabled,
+                                    label = { Text(stringResource(option.labelRes)) },
+                                )
+                            }
+                        }
+                        Text(
+                            text = stringResource(
+                                petTemperamentOption(petTemperament).descriptionRes,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.alpha(if (petRoamingEnabled) 1f else 0.6f),
+                        )
                         TextButton(onClick = connectionViewModel::resetPetPlacement) {
                             Text(stringResource(R.string.floating_pet_action_reset))
                         }

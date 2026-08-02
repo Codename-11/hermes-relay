@@ -1157,6 +1157,14 @@
     <string name="floating_pet_action_reset">Position zurücksetzen</string>
     <string name="appearance_pet_roaming">Durch die Oberfläche laufen</string>
     <string name="appearance_pet_roaming_desc">Wenn Hermes inaktiv ist, läuft der ausgewählte Petdex- oder benutzerdefinierte Begleiter nur auf sicheren UI-Flächen. Denken, Werkzeugnutzung, Sprachausgabe, Scrollen, reduzierte Bewegung und Vollbildansichten pausieren ihn.</string>
+    <string name="appearance_pet_temperament">Temperament des Begleiters</string>
+    <string name="appearance_pet_temperament_desc">Legt fest, wie oft der Begleiter Antworten besucht, umherläuft und im Leerlauf reagiert. Reduzierte Bewegung und Bedienungshilfen haben immer Vorrang.</string>
+    <string name="appearance_pet_temperament_calm">Ruhig</string>
+    <string name="appearance_pet_temperament_calm_desc">Gemächlich: besucht nach 2,5 s, läuft alle 12 s umher und reagiert alle 28 s.</string>
+    <string name="appearance_pet_temperament_balanced">Ausgewogen</string>
+    <string name="appearance_pet_temperament_balanced_desc">Lebhaft, ohne abzulenken: besucht nach 1,5 s, läuft alle 8 s umher und reagiert alle 18 s.</string>
+    <string name="appearance_pet_temperament_playful">Verspielt</string>
+    <string name="appearance_pet_temperament_playful_desc">Beschäftigt und neugierig: besucht nach 0,75 s, läuft alle 5 s umher und reagiert alle 10 s.</string>
     <string name="floating_pet_state_idle">Inaktiv</string>
     <string name="floating_pet_state_thinking">Denkt nach</string>
     <string name="floating_pet_state_streaming">Antwortet</string>

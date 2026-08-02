@@ -32,6 +32,10 @@ import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.DEFAULT_PET_TEMPERAMENT
+import com.hermesandroid.relay.data.PetBehaviorPreferences
+import com.hermesandroid.relay.data.PetBehaviorPreferencesRepository
+import com.hermesandroid.relay.data.PetTemperament
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
@@ -443,6 +447,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // One-shot "Live voice conversation" hint on the input bar's voice slot
         private val KEY_VOICE_HINT_SEEN = booleanPreferencesKey("voice_mode_hint_seen")
     }
+
+    private val petBehaviorPreferencesRepository =
+        PetBehaviorPreferencesRepository(application)
 
     // --- Core networking components ---
 
@@ -1311,6 +1318,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val petRoamingEnabled: StateFlow<Boolean> = application.relayDataStore.data
         .map { preferences -> preferences[KEY_PET_ROAMING_ENABLED] ?: false }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** Stable preference seam for the floating-pet behavior director. */
+    val petBehaviorPreferences: StateFlow<PetBehaviorPreferences> =
+        petBehaviorPreferencesRepository.flow.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            PetBehaviorPreferences(),
+        )
+
+    val petTemperament: StateFlow<PetTemperament> = petBehaviorPreferences
+        .map(PetBehaviorPreferences::temperament)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_TEMPERAMENT)
 
     /** Durable logical placement; pixels are resolved from the current safe viewport. */
     val petPlacement: StateFlow<PetPlacement> = application.relayDataStore.data
@@ -6471,6 +6490,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_PET_ROAMING_ENABLED] = enabled
             }
+        }
+    }
+
+    fun setPetTemperament(temperament: PetTemperament) {
+        viewModelScope.launch {
+            petBehaviorPreferencesRepository.setTemperament(temperament)
         }
     }
 
