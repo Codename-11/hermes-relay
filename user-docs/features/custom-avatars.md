@@ -40,11 +40,21 @@ Each pet shows a summary of the **live signals** its pack supports:
 | Badge | Meaning |
 |-------|---------|
 | **Voice** | Pack/renderer supports mic or speech amplitude on hosts that provide it; Android's app-level companion is hidden during full-screen voice |
-| **Tools** | Pulses on tool-call activity during a turn |
-| **Activity** | General turn activity drives motion (turbulence, ripple, flow) |
+| **Tools** | Uses a distinct working clip while Hermes runs a tool |
+| **Activity** | Speeds up supported activity animation as a turn becomes busier |
 
 With no pet selected, no floating companion is shown. The Sphere setting remains
 independent.
+
+For Petdex pets, tap **Browse Petdex**, choose **Install**, and the app converts,
+selects, and maps the pet automatically. You do not edit `pet.json`, rename
+Petdex rows, or create missing animations. The selected installed pet shows an
+interactive **Idle / Walk left / Walk right / Jump / Fall / Held / Wave /
+Working / Review / Waiting / Error** preview. Each choice names the exact clip
+used and says whether it is direct, mirrored, a fallback, or a mirrored fallback.
+An opposite native directional row is **Mirrored**; the legacy in-place
+`running` row used for travel is **Mirrored fallback**; idle art is a plain
+**Fallback** when no travel row exists.
 
 ## Sphere skins
 
@@ -119,23 +129,49 @@ The companion is app-level, so it keeps the same home while you move between
 normal Hermes Relay screens.
 
 - Long hold the pet, drag it, and release. It snaps to the nearest start/end
-  edge and remembers a proportional vertical position across rotation, resizing,
-  relaunches, and RTL layouts.
+  edge with a visible falling/landing animation, disables roaming, and remembers
+  a proportional vertical position across rotation, resizing, relaunches, and
+  RTL layouts. Dragging lifts into the held animation and stays clear of
+  registered controls.
+- Tap the pet to make it wave and open its menu.
 - Turn on **Walk around the interface** to let it roam while Hermes is idle. This
-  is off by default. The first supported ledges are the measured top edges of
-  Chat's composer and Terminal's extra-keys bar. Hermes Relay uses only these
-  deliberately supported controls—it does not scan every button or text field—
-  and adds no blank strip or lost content space.
+  is off by default. Supported ledges are the measured top edges of Chat's
+  composer and newest visible settled assistant bubble, Terminal's extra-keys
+  bar, and the bottom status strip on Settings and About. Hermes Relay uses only
+  these deliberately supported surfaces—it does not scan every button or text
+  field—and the overlay adds no blank strip or lost text space.
 - When Chat's scroll-to-bottom button or Terminal's jump-to-latest pill is
-  visible, the pet shortens or leaves that part of the ledge clear. Moves between
-  supported screen perches, ledge hops, and a drop away from a ledge use its jump
-  animation to settle onto the next safe perch; left/right travel along a ledge
-  uses directional walking. TalkBack up/down actions pause roaming and keep the
-  new free-form position. On a screen without a supported ledge, the pet stays
-  docked.
+  visible, the pet shortens or leaves that part of the ledge clear.
+- After a plain response settles, the pet can walk along the composer to the
+  clear outer side of the message, jump beside it, walk across a raised rail
+  above the bubble, wave, return to the same edge, and drop to the composer. Its
+  full footprint stays above the text. Narrow or blocked bubbles, cards,
+  attachments, tool rows, and phone/voice actions are skipped.
+- Directional clips match left/right travel; a brief turn pause, jump-to-fall
+  apex, responsive shadow, landing squash, and walk-cycle-matched speed make the
+  movement read as grounded. Between response visits, idle variety rotates
+  through hops, waves, and rests.
+- Scrolling Chat, Settings, or About pauses the pet exactly where it is, at full
+  opacity. It resumes by replanning from that live point—no snap or teleport to
+  the saved edge. Settings/About dialogs suspend it. On a screen without a
+  supported ledge, it stays docked.
 - Use the pet menu to pause roaming, reset position, open Appearance, or hide it.
   TalkBack offers move-to-start/end, move-up/down, and reset actions so dragging
   is never required.
+
+The pet's behavior has a predictable priority: your tap/drag/drop first, then
+Hermes activity, a newly completed response visit, normal roaming, and finally
+idle reactions. Under **Pet temperament**, choose how often an otherwise-idle
+pet acts:
+
+| Temperament | Response visit | Roam interval | Idle reaction |
+|-------------|----------------|---------------|---------------|
+| **Calm** | 2.5 seconds | 12 seconds | 28 seconds |
+| **Balanced** (default) | 1.5 seconds | 8 seconds | 18 seconds |
+| **Playful** | 0.75 seconds | 5 seconds | 10 seconds |
+
+Temperament never bypasses scrolling, dialogs, active Hermes work, disabled
+animations, reduced motion, or TalkBack touch exploration.
 
 Agent state and locomotion are separate. `running`/`working` means Hermes is
 performing work in place; `walking-left`/`walking-right` or
@@ -331,7 +367,7 @@ For a smooth, perfectly-stable animated character, hand-drawn pixel art still wi
 
 ## Accessibility & reduced motion
 
-If you disable app animations, Android's animator scale is 0, or TalkBack touch exploration is active, autonomous roaming stops and the pet renders as a still frame. Scrolling the transcript also pauses and dims it. TalkBack custom actions provide movement and reset without long-hold dragging. The Sphere follows its own independent motion setting.
+If you disable app animations, Android's animator scale is 0, or TalkBack touch exploration is active, autonomous roaming stops and the pet renders as a still frame. Scrolling Chat, Settings, or About pauses it in place without teleporting or dimming it. The keyboard/short-screen layout compacts the art from 48 dp to 40 dp, and the keyboard pause is visually subdued. TalkBack custom actions provide movement, reset, Appearance, and hide controls without long-hold dragging. The Sphere follows its own independent motion setting.
 
 When authoring a pet, make the first `idle` frame a good, legible still — that's what people who prefer reduced motion will see.
 
@@ -339,7 +375,10 @@ When authoring a pet, make the first `idle` frame a good, legible still — that
 
 **My pet (or skin) doesn't show up in the picker.** Invalid or incomplete packs are simply skipped — they never appear, and one bad pack never breaks the picker for the rest. Check logcat for the skip reason: tag `PetLoader` for pets, `SphereSkinLoader` for sphere skins.
 
-**I pushed files but nothing changed.** Pets and skins are scanned at app start. Fully restart the app after pushing files, then reopen Appearance.
+**I pushed files but nothing changed.** Reopen Appearance to refresh pets. For
+reliable installation on devices where scoped storage stalls `adb push`, use
+**Add a pet** in the app. Sphere skins are still scanned at app start, so restart
+the app after pushing a skin.
 
 **My pet appears but renders blank.** A file that exists but isn't a decodable image (a corrupt or mislabeled `.png`) passes the manifest check but can't be drawn. Confirm your images actually open before shipping a pack.
 
