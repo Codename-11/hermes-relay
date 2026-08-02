@@ -159,7 +159,7 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
 </table>
 
 The Android app ships complete AI-assisted catalogs for **Deutsch**, **Español**,
-**日本語**, **Português (Brasil)**, and **简体中文**. Choose a language from
+**日本語**, **Português (Brasil)**, **Русский**, and **简体中文**. Choose a language from
 **Settings → Appearance → Language**; translation status and fluent review are
 tracked independently so community corrections remain easy to contribute.
 

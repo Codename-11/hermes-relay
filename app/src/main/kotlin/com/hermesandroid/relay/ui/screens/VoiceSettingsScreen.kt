@@ -307,7 +307,12 @@ fun VoiceSettingsScreen(
                         else -> InteractionMode.TapToTalk
                     },
                 )
-                snackbarHost.showSnackbar("${preset.displayName} preset applied")
+                snackbarHost.showSnackbar(
+                    context.getString(
+                        R.string.voice_preset_applied,
+                        context.getString(presetDisplayNameRes(preset)),
+                    ),
+                )
             } finally {
                 presetApplying = false
             }
@@ -672,6 +677,22 @@ private fun RealtimeVoicePromotion.toPresetSettings(): VoicePresetPromotionSetti
 // Mode presets — compact bundles over controls already present on this screen.
 // ---------------------------------------------------------------------------
 
+/** Display-name resource per preset (shown as the active-preset caption). */
+private fun presetDisplayNameRes(preset: VoiceModePreset): Int = when (preset) {
+    VoiceModePreset.HandsFree -> R.string.voice_preset_hands_free
+    VoiceModePreset.LowLatency -> R.string.voice_preset_low_latency
+    VoiceModePreset.CarefulTools -> R.string.voice_preset_careful_tools
+    VoiceModePreset.QuietVisualOnly -> R.string.voice_preset_quiet_visual
+}
+
+/** Compact segmented-button label resource per preset. */
+private fun presetShortLabelRes(preset: VoiceModePreset): Int = when (preset) {
+    VoiceModePreset.HandsFree -> R.string.voice_preset_hands_free
+    VoiceModePreset.LowLatency -> R.string.voice_preset_fast
+    VoiceModePreset.CarefulTools -> R.string.voice_preset_careful
+    VoiceModePreset.QuietVisualOnly -> R.string.voice_preset_quiet
+}
+
 @Composable
 private fun VoiceModePresetCard(
     activePreset: VoiceModePreset?,
@@ -679,9 +700,9 @@ private fun VoiceModePresetCard(
     applying: Boolean,
     onSelect: (VoiceModePreset) -> Unit,
 ) {
-    SectionCard(title = "Mode preset") {
+    SectionCard(title = stringResource(R.string.voice_settings_mode_preset_title)) {
         Text(
-            text = "Tune interaction, interruption, trace, and long-task delivery together.",
+            text = stringResource(R.string.voice_settings_mode_preset_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -704,7 +725,7 @@ private fun VoiceModePresetCard(
                             enabled = enabled && !applying,
                         ) {
                             Text(
-                                text = preset.shortLabel,
+                                text = stringResource(presetShortLabelRes(preset)),
                                 style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -717,13 +738,14 @@ private fun VoiceModePresetCard(
 
         Spacer(Modifier.height(8.dp))
         Text(
-            text = activePreset?.displayName ?: "Custom",
+            text = activePreset?.let { stringResource(presetDisplayNameRes(it)) }
+                ?: stringResource(R.string.voice_preset_custom),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
             text = activePreset?.description
-                ?: "Your manual values do not exactly match a preset.",
+                ?: stringResource(R.string.voice_preset_manual_values),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -741,7 +763,7 @@ private fun VoiceModePresetCard(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "Engine, route, provider, model, voice, and credentials stay unchanged.",
+            text = stringResource(R.string.voice_preset_keep_unchanged),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1613,7 +1635,7 @@ private fun StreamingVoiceOutputEditor(
             modifier = Modifier.weight(1f).height(52.dp),
             shape = RoundedCornerShape(16.dp),
         ) {
-            Text("Discard", fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.voice_settings_discard), fontWeight = FontWeight.SemiBold)
         }
         }
     }
@@ -1667,7 +1689,7 @@ internal fun VoiceProviderGroupCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Provider", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.voice_settings_label_provider), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
                 stringResource(R.string.voice_settings_provider_desc),
                 style = MaterialTheme.typography.bodySmall,
@@ -1729,10 +1751,10 @@ internal fun VoiceProviderGroupCard(
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("Refreshes from the provider", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.voice_settings_refreshes_from_provider), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { pickerOpen = true }, enabled = controlsEnabled) {
-                    Text("Change provider")
+                    Text(stringResource(R.string.voice_settings_change_provider))
                     Icon(Icons.Filled.ChevronRight, contentDescription = null, modifier = Modifier.size(18.dp))
                 }
             }
@@ -1741,7 +1763,7 @@ internal fun VoiceProviderGroupCard(
     if (pickerOpen) {
         AlertDialog(
             onDismissRequest = { pickerOpen = false },
-            title = { Text("Choose provider") },
+            title = { Text(stringResource(R.string.voice_settings_choose_provider_title)) },
             text = {
                 Column(
                     modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
@@ -1752,8 +1774,8 @@ internal fun VoiceProviderGroupCard(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Voice output", style = MaterialTheme.typography.titleSmall)
-                            Text(if (enabled) "Enabled" else "Disabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.voice_settings_voice_output_label), style = MaterialTheme.typography.titleSmall)
+                            Text(if (enabled) stringResource(R.string.voice_settings_enabled_status) else stringResource(R.string.voice_settings_disabled_status), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Switch(checked = enabled, onCheckedChange = onEnabledChange, enabled = controlsEnabled)
                     }
@@ -1782,7 +1804,7 @@ internal fun VoiceProviderGroupCard(
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { pickerOpen = false }) { Text("Done") } },
+            confirmButton = { TextButton(onClick = { pickerOpen = false }) { Text(stringResource(R.string.settings_done)) } },
         )
     }
 }
@@ -1816,7 +1838,7 @@ internal fun ModelAndVoiceGroupCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Model & voice", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.voice_settings_model_and_voice_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
                 stringResource(R.string.voice_settings_voice_desc),
                 style = MaterialTheme.typography.bodySmall,
@@ -1836,7 +1858,7 @@ internal fun ModelAndVoiceGroupCard(
                     Icon(Icons.Filled.ViewInAr, contentDescription = null, modifier = Modifier.padding(9.dp))
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Model", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.model_picker_title), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(selectedModel?.label ?: modelValue, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     selectedModel?.detail?.let { detail ->
                         Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1895,7 +1917,7 @@ internal fun ModelAndVoiceGroupCard(
                                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
                                         contentColor = MaterialTheme.colorScheme.primary,
                                     ) {
-                                        Text("Recommended", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+                                        Text(stringResource(R.string.voice_settings_recommended), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
                                     }
                                 }
                             }
@@ -1942,7 +1964,7 @@ internal fun ModelAndVoiceGroupCard(
                     enabled = enabled,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(if (voiceListExpanded) "Show fewer voices" else "View all ${allVoices.size} voices")
+                    Text(if (voiceListExpanded) stringResource(R.string.voice_settings_show_fewer_voices) else stringResource(R.string.voice_settings_view_all_voices, allVoices.size))
                     Icon(
                         if (voiceListExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
                         contentDescription = null,
@@ -1954,7 +1976,7 @@ internal fun ModelAndVoiceGroupCard(
     }
     if (modelPickerOpen) {
         ChoicePickerDialog(
-            title = "Choose a model",
+            title = stringResource(R.string.voice_settings_choose_model),
             choices = modelChoices,
             selected = modelValue,
             onSelected = {
@@ -2055,7 +2077,7 @@ private fun ChoicePickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.pair_close)) } },
     )
 }
 
@@ -2180,7 +2202,7 @@ private fun StaticProviderCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Provider", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.voice_settings_label_provider), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(
                     modifier = Modifier.size(44.dp),
@@ -2205,7 +2227,7 @@ private fun StaticProviderCard(
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Uses host configuration", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.voice_settings_uses_host_config), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = onAction) {
                         Text(actionLabel)
@@ -2231,7 +2253,7 @@ private fun StaticModelVoiceCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Model & voice", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.voice_settings_model_and_voice_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(
                     modifier = Modifier.size(42.dp),
@@ -2240,7 +2262,7 @@ private fun StaticModelVoiceCard(
                     contentColor = MaterialTheme.colorScheme.primary,
                 ) { Icon(Icons.Filled.ViewInAr, contentDescription = null, modifier = Modifier.padding(10.dp)) }
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Model", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.model_picker_title), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(model, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 }
                 PreviewCircleButton(active = false, loading = false, enabled = enabled, contentDescription = "Preview standard voice", onClick = onPreview)
@@ -2259,7 +2281,7 @@ private fun StaticModelVoiceCard(
                     ) { Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.padding(9.dp)) }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(voice, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Text("Configured in Standard Hermes", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.voice_settings_configured_in_standard), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     PreviewCircleButton(active = false, loading = false, enabled = enabled, contentDescription = "Preview $voice", onClick = onPreview)
                 }
@@ -2288,13 +2310,13 @@ private fun VoiceSaveActions(
                 enabled = enabled && !saving,
                 modifier = Modifier.weight(1f).height(52.dp),
                 shape = RoundedCornerShape(16.dp),
-            ) { Text("Discard", fontWeight = FontWeight.SemiBold) }
+            ) { Text(stringResource(R.string.voice_settings_discard), fontWeight = FontWeight.SemiBold) }
             Button(
                 onClick = onSave,
                 enabled = enabled && !saving,
                 modifier = Modifier.weight(1f).height(52.dp),
                 shape = RoundedCornerShape(16.dp),
-            ) { Text(if (saving) "Saving…" else "Save changes", fontWeight = FontWeight.SemiBold) }
+            ) { Text(if (saving) stringResource(R.string.voice_settings_saving) else stringResource(R.string.voice_settings_save_changes), fontWeight = FontWeight.SemiBold) }
         }
     }
 }
@@ -2417,7 +2439,7 @@ private fun RealtimeBehaviorSettingsCard(
                         }
                     },
                 )
-                Text("When the answer is ready", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                Text(stringResource(R.string.voice_settings_when_answer_ready), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
                 val modes = listOf(
                     "speak_verbatim" to "Exact",
                     "speak_when_idle" to "Summary",
@@ -3163,7 +3185,7 @@ private fun LegacyRealtimeAgentCard(
 private fun DeliveryModeInfoDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Answer delivery") },
+        title = { Text(stringResource(R.string.voice_settings_answer_delivery_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 DeliveryModeInfoRow(
@@ -3186,7 +3208,7 @@ private fun DeliveryModeInfoDialog(onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Got it")
+                Text(stringResource(R.string.paired_devices_got_it))
             }
         },
     )
@@ -3714,9 +3736,9 @@ private fun StandardVoiceServerConfigCard(
             val behaviorFields = fields.filter { field -> field.key.startsWith("voice.") }
             if (behaviorFields.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                Text("Hermes host behavior", style = MaterialTheme.typography.labelLarge)
+                Text(stringResource(R.string.voice_settings_host_behavior_title), style = MaterialTheme.typography.labelLarge)
                 Text(
-                    text = "These settings control voice mode on the Hermes host. They do not change the phone microphone controls on the Listening tab.",
+                    text = stringResource(R.string.voice_settings_host_behavior_body),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -4414,7 +4436,7 @@ private fun VoiceProfileSummaryCard(
     val displayedVoiceSummary = if (profileScoped) {
         voiceSummary
     } else {
-        "Standard Hermes · Host configuration"
+        stringResource(R.string.voice_standard_host_config)
     }
     Card(
         modifier = Modifier
@@ -4472,7 +4494,7 @@ private fun VoiceProfileSummaryCard(
                 contentColor = MaterialTheme.colorScheme.primary,
             ) {
                 Text(
-                    text = if (profileScoped) "Profile" else "Host",
+                    text = if (profileScoped) stringResource(R.string.voice_settings_label_profile) else stringResource(R.string.voice_settings_label_host),
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                 )
@@ -4493,7 +4515,7 @@ private fun VoiceModePickerDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Voice mode") },
+        title = { Text(stringResource(R.string.settings_voice_mode)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
@@ -4521,10 +4543,10 @@ private fun VoiceModePickerDialog(
                 }
                 if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Text("Output route", style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.voice_settings_output_route_label), style = MaterialTheme.typography.labelLarge)
                     listOf(
                         VoiceAudioRoute.Auto to "Automatic",
-                        VoiceAudioRoute.Standard to "Standard Hermes",
+                        VoiceAudioRoute.Standard to stringResource(R.string.voice_provider_standard),
                         VoiceAudioRoute.Relay to "Relay voice output",
                     ).forEach { (route, label) ->
                         val available = route != VoiceAudioRoute.Relay || relayVoiceReady
@@ -4545,7 +4567,7 @@ private fun VoiceModePickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_done)) } },
     )
 }
 
@@ -4556,6 +4578,7 @@ private fun StandardVoiceOutputOverview(
     onOpenManage: (() -> Unit)?,
     voiceViewModel: VoiceViewModel,
 ) {
+    val context = LocalContext.current
     var values by remember(client) { mutableStateOf<JsonObject?>(null) }
     var loading by remember(client) { mutableStateOf(client != null) }
     LaunchedEffect(client) {
@@ -4588,23 +4611,23 @@ private fun StandardVoiceOutputOverview(
     }
     val ready = availability == StandardVoiceAvailability.Ready
     StaticProviderCard(
-        provider = provider ?: "Standard Hermes",
+        provider = provider ?: stringResource(R.string.voice_provider_standard),
         detail = when {
-            loading -> "Reading host voice configuration…"
-            values == null -> "Open Manage to configure the host voice provider"
-            else -> "Uses this Hermes host’s existing configuration"
+            loading -> stringResource(R.string.voice_reading_host_config)
+            values == null -> stringResource(R.string.voice_open_manage_provider)
+            else -> stringResource(R.string.voice_uses_host_config)
         },
         ready = ready,
-        actionLabel = if (onOpenManage == null) null else "Manage provider",
+        actionLabel = if (onOpenManage == null) null else context.getString(R.string.voice_settings_manage_provider),
         onAction = onOpenManage,
     )
     StaticModelVoiceCard(
-        model = model ?: "Server default",
-        voice = voice ?: "Server default",
+        model = model ?: stringResource(R.string.settings_server_default),
+        voice = voice ?: stringResource(R.string.settings_server_default),
         enabled = ready,
         onPreview = { voiceViewModel.testVoice() },
     )
-    LanguageQualitySummaryCard(summary = "Host-wide Standard Hermes settings")
+    LanguageQualitySummaryCard(summary = context.getString(R.string.voice_settings_host_wide_standard_desc))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

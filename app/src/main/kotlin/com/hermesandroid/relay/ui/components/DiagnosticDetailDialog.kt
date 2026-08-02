@@ -63,6 +63,8 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val plainText = remember(entry) { entry.toPlainText() }
     val severityName = entry.severity.name
+    val copiedToast = stringResource(R.string.diag_copied)
+    val exportChooserTitle = stringResource(R.string.diag_export)
 
     // Info-severity pre-flight: routine log lines only become GitHub issues once
     // the reporter says what they expected instead (that answer replaces the
@@ -165,7 +167,7 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                     OutlinedButton(
                         onClick = {
                             IssueReport.copyToClipboard(context, plainText)
-                            toast(context, "Diagnostic copied")
+                            toast(context, copiedToast)
                         },
                     ) { Text(stringResource(R.string.common_copy)) }
                     OutlinedButton(
@@ -174,7 +176,7 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                                 context,
                                 subject = "Hermes-Relay diagnostic — ${entry.title}",
                                 text = plainText,
-                                chooserTitle = "Export diagnostic",
+                                chooserTitle = exportChooserTitle,
                             )
                             if (!shared) {
                                 IssueReport.copyToClipboard(context, plainText)
@@ -246,7 +248,7 @@ internal fun DiagnosticSeverityChip(severity: DiagnosticSeverity) {
     }
     Surface(shape = RoundedCornerShape(50), color = bg) {
         Text(
-            text = severity.name.uppercase(),
+            text = stringResource(severityLabelRes(severity)).uppercase(),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
             color = fg,

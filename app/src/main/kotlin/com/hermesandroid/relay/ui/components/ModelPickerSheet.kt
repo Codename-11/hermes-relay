@@ -83,8 +83,9 @@ fun ModelPickerSheet(
     }
     // groupBy preserves key insertion order, so providers stay current-first
     // (the caller sorts is_current to the front).
-    val grouped = remember(filtered) {
-        filtered.groupBy { it.group?.takeIf { g -> g.isNotBlank() } ?: "Other" }
+    val otherGroupLabel = stringResource(R.string.model_picker_other)
+    val grouped = remember(filtered, otherGroupLabel) {
+        filtered.groupBy { it.group?.takeIf { g -> g.isNotBlank() } ?: otherGroupLabel }
     }
 
     ModalBottomSheet(
@@ -106,7 +107,7 @@ fun ModelPickerSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "Model", style = MaterialTheme.typography.titleMedium)
+                    Text(text = stringResource(R.string.model_picker_model), style = MaterialTheme.typography.titleMedium)
                     Text(
                         text = "${modelOptions.size} models",
                         style = MaterialTheme.typography.labelMedium,
@@ -131,7 +132,7 @@ fun ModelPickerSheet(
                             )
                         }
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text(if (refreshing) "Refreshing" else "Refresh")
+                        Text(if (refreshing) stringResource(R.string.model_picker_refreshing) else stringResource(R.string.model_picker_refresh))
                     }
                 }
             }
