@@ -2517,12 +2517,15 @@ top of a response bubble without ever covering its text or jumping through it.
   one, two, or three stops. App animation settings, foreground/activity state,
   scrolling, dialogs, Android animator scale, and TalkBack touch exploration
   always take precedence.
-- Debug builds may paint the measured terrain, narrow-bubble touchdown points,
-  active rail, expanded collision regions, footprint, behavior gate, dashed
-  collision-checked candidate routes, the selected out-and-back route with numbered
-  stops, and the solid currently active route through a default-off
-  Developer Options overlay. The Canvas is pointer-transparent, never changes
-  planning, and is cleared when Developer Options are locked.
+- Debug builds may expose a default-off Pet path inspector. **Terrain** is the
+  default balanced view; **Plan** isolates selected and active travel, and
+  **Full** adds protected bounds, footprint, raw labels, gate, and locomotion
+  state. The views distinguish measured terrain, narrow-bubble touchdown points,
+  collision-checked candidate routes, the selected out-and-back route with
+  directional arrows and numbered stops, and the solid currently active route.
+  Freeze snapshots only the visualization while planning continues. The
+  full-screen Canvas is pointer-transparent, only inspector controls accept
+  input, and diagnostics are cleared when Developer Options are locked.
 - Installed Petdex pets use the same renderer and planner without manifest edits
   or asset conversion by the user. The catalog preview resolves through the live
   renderer and names the exact direct, mirrored, fallback, or mirrored-fallback

@@ -132,11 +132,15 @@ The companion has a durable home and an optional autonomous roaming mode:
   art before the saved size scale. Settings, Appearance, and About publish
   their scroll state and hide the companion while their dialogs are open.
 - Debug builds provide **Developer Options → Show pet terrain overlay**. The
-  default-off, pointer-transparent layer paints measured perches, usable rails,
-  narrow-bubble touchdown points, collision bounds, the active rail, footprint,
-  dashed collision-checked candidate routes, the selected out-and-back route in
-  yellow with numbered stops, the solid route active only during traversal, and
-  the current behavior gate without changing planning. The selected route is
+  default-off **Pet path inspector** opens in **Terrain** mode, which shows
+  measured perches, usable rails, touchdown points, restrained collision bounds,
+  dashed candidate hops, the selected route with directional arrows and numbered
+  stops, and the currently active segment. **Plan** hides raw terrain to isolate
+  the selected/active journey; **Full** restores protected bounds, footprint,
+  raw labels, behavior gate, and locomotion details. **Freeze** snapshots only
+  the displayed model while the live planner and pet continue normally. The
+  full-screen Canvas stays pointer-transparent and only the inspector controls
+  accept input. The selected route is
   refreshed by each planner pass and cleared when the measured terrain changes;
   its stop order shows the outbound choices followed by the exact reverse return.
   Candidate routes are blue, autonomous active routes are orange, recovery paths are pink,

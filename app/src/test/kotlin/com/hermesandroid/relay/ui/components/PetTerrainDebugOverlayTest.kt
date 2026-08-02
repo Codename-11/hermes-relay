@@ -69,6 +69,65 @@ class PetTerrainDebugOverlayTest {
     }
 
     @Test
+    fun `debug views progressively disclose planner terrain and raw geometry`() {
+        val plan = petTerrainDebugLayerVisibility(PetTerrainDebugViewMode.Plan)
+        val terrain = petTerrainDebugLayerVisibility(PetTerrainDebugViewMode.Terrain)
+        val full = petTerrainDebugLayerVisibility(PetTerrainDebugViewMode.Full)
+
+        assertEquals(false, plan.rails)
+        assertEquals(false, plan.candidates)
+        assertEquals(false, plan.rawLabels)
+
+        assertEquals(true, terrain.perches)
+        assertEquals(true, terrain.rails)
+        assertEquals(true, terrain.candidates)
+        assertEquals(true, terrain.compactRailLabels)
+        assertEquals(false, terrain.safeBounds)
+        assertEquals(false, terrain.rawLabels)
+        assertEquals(false, terrain.footprint)
+
+        assertEquals(true, full.safeBounds)
+        assertEquals(true, full.rawLabels)
+        assertEquals(true, full.footprint)
+        assertEquals(false, full.compactRailLabels)
+    }
+
+    @Test
+    fun `inspector summarizes the selected route in product language`() {
+        val composer = rail(
+            key = "composer:0",
+            perchKey = CHAT_PET_WALK_REGION,
+            left = 20f,
+            top = 180f,
+            right = 200f,
+        )
+        val planned = requireNotNull(
+            petDebugPlannedRoute(
+                targetLabel = "A:latest",
+                routes = listOf(
+                    PetRoute(listOf(PetPoint(20f, 180f), PetPoint(90f, 180f))),
+                    PetRoute(listOf(PetPoint(90f, 180f), PetPoint(90f, 90f))),
+                ),
+            ),
+        )
+        val model = model(
+            rails = listOf(composer),
+            activeRailKey = composer.key,
+            plannedRoute = planned,
+        )
+
+        assertEquals("Composer → Assistant · 3 stops", petTerrainInspectorSummary(model))
+    }
+
+    @Test
+    fun `inspector explicitly reports when no route is selected`() {
+        val composer = rail("composer:0", CHAT_PET_WALK_REGION, 20f, 180f, 200f)
+        val model = model(rails = listOf(composer), activeRailKey = composer.key)
+
+        assertEquals("Composer · no selected route", petTerrainInspectorSummary(model))
+    }
+
+    @Test
     fun `empty optional diagnostics remain safe and explicit`() {
         val model = model(routeLabel = null, activeRailKey = "missing")
 
