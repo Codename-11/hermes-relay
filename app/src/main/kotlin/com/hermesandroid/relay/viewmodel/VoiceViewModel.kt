@@ -4016,7 +4016,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 if (rtAssistantMessageId.isNotBlank()) {
                     chatVm.failRealtimeAgentTurn(
                         rtAssistantMessageId,
-                        "Voice connection was interrupted. Tap the mic to try again.",
+                        getApplication<Application>().getString(R.string.voice_connection_interrupted),
                     )
                 }
                 surfaceError(err, context = "voice_config")
@@ -4149,7 +4149,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (!assistantMessageId.isNullOrBlank()) {
             chatVm.failRealtimeAgentTurn(
                 assistantMessageId,
-                "Voice connection was interrupted. Tap the mic to try again.",
+                getApplication<Application>().getString(R.string.voice_connection_interrupted),
             )
         }
         closeRealtimeSession()

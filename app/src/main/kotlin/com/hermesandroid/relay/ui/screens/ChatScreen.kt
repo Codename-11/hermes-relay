@@ -1278,6 +1278,38 @@ fun ChatScreen(
         }
     }
 
+    // Slash command descriptions (resolved in composable scope — the
+    // remember/derivedStateOf block below is NOT composable, so stringResource
+    // must be called here, not inside it).
+    val slashDescNew = stringResource(R.string.slash_new_session)
+    val slashDescRetry = stringResource(R.string.slash_retry_last)
+    val slashDescUndo = stringResource(R.string.slash_remove_exchange)
+    val slashDescTitle = stringResource(R.string.slash_set_title)
+    val slashDescCompress = stringResource(R.string.slash_compress)
+    val slashDescRollback = stringResource(R.string.slash_checkpoints)
+    val slashDescStop = stringResource(R.string.slash_kill_bg)
+    val slashDescResume = stringResource(R.string.slash_resume)
+    val slashDescBackground = stringResource(R.string.slash_background_prompt)
+    val slashDescBtw = stringResource(R.string.slash_side_question)
+    val slashDescQueue = stringResource(R.string.slash_queue_prompt)
+    val slashDescApprove = stringResource(R.string.slash_approve)
+    val slashDescDeny = stringResource(R.string.slash_deny)
+    val slashDescModel = stringResource(R.string.slash_switch_model)
+    val slashDescProvider = stringResource(R.string.slash_providers)
+    val slashDescPersonality = stringResource(R.string.slash_personality)
+    val slashDescVerbose = stringResource(R.string.slash_tool_progress)
+    val slashDescYolo = stringResource(R.string.slash_auto_approve)
+    val slashDescReasoning = stringResource(R.string.slash_reasoning)
+    val slashDescVoice = stringResource(R.string.slash_voice_mode)
+    val slashDescReloadMcp = stringResource(R.string.slash_reload_mcp)
+    val slashDescHelp = stringResource(R.string.slash_commands)
+    val slashDescStatus = stringResource(R.string.slash_session_info)
+    val slashDescUsage = stringResource(R.string.slash_token_usage)
+    val slashDescInsights = stringResource(R.string.slash_analytics)
+    val slashDescCommands = stringResource(R.string.slash_browse)
+    val slashDescProfile = stringResource(R.string.slash_active_profile)
+    val slashDescClearPersonality = stringResource(R.string.slash_clear_personality)
+
     // Build all commands dynamically: built-in + personalities + server
     // skills + (gateway) the server's commands.catalog
     val allCommands by remember(availableSkills, personalityNames, serverCommands) {
@@ -1286,36 +1318,36 @@ fun ChatScreen(
             // Only includes commands available via gateway (not cli_only)
             val builtIn = listOf(
                 // Session
-                SlashCommand("/new", "Start a new session", "session"),
-                SlashCommand("/retry", "Retry the last message", "session"),
-                SlashCommand("/undo", "Remove the last exchange", "session"),
-                SlashCommand("/title", "Set a title for this session", "session"),
+                SlashCommand("/new", slashDescNew, "session"),
+                SlashCommand("/retry", slashDescRetry, "session"),
+                SlashCommand("/undo", slashDescUndo, "session"),
+                SlashCommand("/title", slashDescTitle, "session"),
                 SlashCommand("/branch", "Branch/fork the current session", "session"),
-                SlashCommand("/compress", "Compress conversation context", "session"),
-                SlashCommand("/rollback", "List or restore checkpoints", "session"),
-                SlashCommand("/stop", "Kill running background processes", "session"),
-                SlashCommand("/resume", "Resume a previous session", "session"),
-                SlashCommand("/background", "Run a prompt in the background", "session"),
-                SlashCommand("/btw", "Side question using session context", "session"),
-                SlashCommand("/queue", "Queue a prompt for the next turn", "session"),
-                SlashCommand("/approve", "Approve a pending command", "session"),
-                SlashCommand("/deny", "Deny a pending command", "session"),
+                SlashCommand("/compress", slashDescCompress, "session"),
+                SlashCommand("/rollback", slashDescRollback, "session"),
+                SlashCommand("/stop", slashDescStop, "session"),
+                SlashCommand("/resume", slashDescResume, "session"),
+                SlashCommand("/background", slashDescBackground, "session"),
+                SlashCommand("/btw", slashDescBtw, "session"),
+                SlashCommand("/queue", slashDescQueue, "session"),
+                SlashCommand("/approve", slashDescApprove, "session"),
+                SlashCommand("/deny", slashDescDeny, "session"),
                 // Configuration
-                SlashCommand("/model", "Switch model for this session", "configuration"),
-                SlashCommand("/provider", "Show available providers", "configuration"),
-                SlashCommand("/personality", "Set a predefined personality", "configuration"),
-                SlashCommand("/verbose", "Cycle tool progress display", "configuration"),
-                SlashCommand("/yolo", "Toggle auto-approve mode", "configuration"),
-                SlashCommand("/reasoning", "Set reasoning effort level", "configuration"),
-                SlashCommand("/voice", "Toggle voice mode", "configuration"),
-                SlashCommand("/reload-mcp", "Reload MCP servers", "configuration"),
+                SlashCommand("/model", slashDescModel, "configuration"),
+                SlashCommand("/provider", slashDescProvider, "configuration"),
+                SlashCommand("/personality", slashDescPersonality, "configuration"),
+                SlashCommand("/verbose", slashDescVerbose, "configuration"),
+                SlashCommand("/yolo", slashDescYolo, "configuration"),
+                SlashCommand("/reasoning", slashDescReasoning, "configuration"),
+                SlashCommand("/voice", slashDescVoice, "configuration"),
+                SlashCommand("/reload-mcp", slashDescReloadMcp, "configuration"),
                 // Info
-                SlashCommand("/help", "Show available commands", "info"),
-                SlashCommand("/status", "Show session info", "info"),
-                SlashCommand("/usage", "Show token usage", "info"),
-                SlashCommand("/insights", "Usage analytics", "info"),
-                SlashCommand("/commands", "Browse all commands", "info"),
-                SlashCommand("/profile", "Show active profile", "info"),
+                SlashCommand("/help", slashDescHelp, "info"),
+                SlashCommand("/status", slashDescStatus, "info"),
+                SlashCommand("/usage", slashDescUsage, "info"),
+                SlashCommand("/insights", slashDescInsights, "info"),
+                SlashCommand("/commands", slashDescCommands, "info"),
+                SlashCommand("/profile", slashDescProfile, "info"),
             )
 
             // Dynamic personality commands from server, plus the upstream
@@ -1323,7 +1355,7 @@ fun ChatScreen(
             val personalities = listOf(
                 SlashCommand(
                     command = "/personality none",
-                    description = "Clear the personality overlay",
+                    description = slashDescClearPersonality,
                     category = "personality"
                 )
             ) + personalityNames.map { name ->
@@ -3069,8 +3101,8 @@ fun ChatScreen(
             }
             val inputCaption = when {
                 isStreaming && hasContent && steerableTurn ->
-                    "↳ sends now — Hermes adjusts mid-turn"
-                isStreaming && hasContent -> "↳ delivered after this turn finishes"
+                    stringResource(R.string.chat_sends_now)
+                isStreaming && hasContent -> stringResource(R.string.chat_delivered_after_turn)
                 isStreaming && steerNotice != null -> steerNotice
                 else -> null
             }
@@ -3107,7 +3139,7 @@ fun ChatScreen(
             val serverDefaultModelDetail = AgentDisplay.displayModelName(serverModelName)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
             val hasModelChoices = modelProviders.any { it.models.isNotEmpty() } || sseModelOptions.isNotEmpty()
-            val serverDefaultLabel = stringResource(R.string.chat_server_default_sessions)
+            val serverDefaultLabel = stringResource(R.string.chat_server_default)
             val notOnPlanLabel = stringResource(R.string.chat_not_on_plan)
             val needsSetupLabel = stringResource(R.string.chat_needs_setup)
             val modelDefaultLabel = stringResource(R.string.chat_model_label)
@@ -3286,7 +3318,7 @@ fun ChatScreen(
                                     com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
                                         "This Hermes build has no voice routes — update hermes-agent or pair Relay"
                                     else ->
-                                        "Voice needs a reachable Hermes dashboard or Relay voice route"
+                                        context.getString(R.string.chat_voice_needs_route)
                                 },
                                 Toast.LENGTH_SHORT,
                             ).show()
@@ -3664,6 +3696,7 @@ private fun ChatColdStartLoadingState(
     onNavigateToConnections: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val commands = remember(
         connectionLabel,
         chatMode,
@@ -3673,6 +3706,7 @@ private fun ChatColdStartLoadingState(
         isLoadingSessions,
     ) {
         buildChatLoadingCommands(
+            context = context,
             connectionLabel = connectionLabel,
             chatMode = chatMode,
             apiReachable = apiReachable,
@@ -3773,6 +3807,7 @@ private fun ChatColdStartLoadingState(
 }
 
 private fun buildChatLoadingCommands(
+    context: android.content.Context,
     connectionLabel: String?,
     chatMode: ChatMode,
     apiReachable: Boolean,
@@ -3782,15 +3817,15 @@ private fun buildChatLoadingCommands(
 ): List<ChatLoadingCommand> {
     val hasConnection = !connectionLabel.isNullOrBlank()
     val chatModeDetail = when (chatMode) {
-        ChatMode.ENHANCED_HERMES -> "sessions stream"
-        ChatMode.PORTABLE -> "portable stream"
+        ChatMode.ENHANCED_HERMES -> context.getString(R.string.chat_stream_sessions)
+        ChatMode.PORTABLE -> context.getString(R.string.chat_stream_portable)
         ChatMode.DISCONNECTED -> "waiting"
     }
     return listOf(
         ChatLoadingCommand(
             state = if (hasConnection) ChatLoadingCommandState.Done else ChatLoadingCommandState.Active,
             command = "/state restore",
-            detail = if (hasConnection) "active config loaded" else "loading config",
+            detail = if (hasConnection) context.getString(R.string.chat_config_active) else context.getString(R.string.chat_config_loading),
         ),
         ChatLoadingCommand(
             state = when {
@@ -3798,7 +3833,7 @@ private fun buildChatLoadingCommands(
                 else -> ChatLoadingCommandState.Pending
             },
             command = "/route resolve",
-            detail = connectionLabel?.takeIf { it.isNotBlank() } ?: "selecting route",
+            detail = connectionLabel?.takeIf { it.isNotBlank() } ?: context.getString(R.string.chat_selecting_route),
         ),
         ChatLoadingCommand(
             state = when {
@@ -3807,7 +3842,7 @@ private fun buildChatLoadingCommands(
                 else -> ChatLoadingCommandState.Pending
             },
             command = "/hermes ping",
-            detail = if (apiReachable) "online" else "contacting server",
+            detail = if (apiReachable) "online" else context.getString(R.string.chat_contacting_server),
         ),
         ChatLoadingCommand(
             state = when {
@@ -4052,7 +4087,7 @@ private fun ingestAttachmentFromUri(
             )
         )
     } catch (e: Exception) {
-        Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.chat_failed_read_file), Toast.LENGTH_SHORT).show()
     }
 }
 

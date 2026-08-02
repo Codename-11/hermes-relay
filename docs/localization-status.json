@@ -13,7 +13,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "200499e302e28bf5b6f6d68ca7d1a5f3be4498ea1888cb0b47021d65f33f2a82",
+        "main": "ea322945453cb843adc7c77273945137ec26c46a76896f009089e6b00a240a64",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -48,7 +48,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "200499e302e28bf5b6f6d68ca7d1a5f3be4498ea1888cb0b47021d65f33f2a82",
+        "main": "ea322945453cb843adc7c77273945137ec26c46a76896f009089e6b00a240a64",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -72,7 +72,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "200499e302e28bf5b6f6d68ca7d1a5f3be4498ea1888cb0b47021d65f33f2a82",
+        "main": "ea322945453cb843adc7c77273945137ec26c46a76896f009089e6b00a240a64",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -96,7 +96,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "200499e302e28bf5b6f6d68ca7d1a5f3be4498ea1888cb0b47021d65f33f2a82",
+        "main": "ea322945453cb843adc7c77273945137ec26c46a76896f009089e6b00a240a64",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -115,12 +115,27 @@
       },
       "website_source_sha256": "fa34022613a537b752a54b940cc166e4aa83bc7cb888a601c461780eca76c342"
     },
+    "ru": {
+      "native_name": "Русский",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "ea322945453cb843adc7c77273945137ec26c46a76896f009089e6b00a240a64",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete",
+        "readme": "english-fallback",
+        "user_docs": "english-fallback",
+        "website": "english-fallback"
+      }
+    },
     "zh-Hans": {
       "native_name": "简体中文",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "200499e302e28bf5b6f6d68ca7d1a5f3be4498ea1888cb0b47021d65f33f2a82",
+        "main": "ea322945453cb843adc7c77273945137ec26c46a76896f009089e6b00a240a64",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {

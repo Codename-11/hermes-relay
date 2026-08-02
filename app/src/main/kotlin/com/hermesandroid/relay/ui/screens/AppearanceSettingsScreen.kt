@@ -292,6 +292,7 @@ fun AppearanceSettingsScreen(
                         AppLanguage.JAPANESE to stringResource(R.string.appearance_language_japanese),
                         AppLanguage.SIMPLIFIED_CHINESE to stringResource(R.string.appearance_language_simplified_chinese),
                         AppLanguage.SPANISH to stringResource(R.string.appearance_language_spanish),
+                        AppLanguage.RUSSIAN to stringResource(R.string.appearance_language_russian),
                     )
 
                     FlowRow(

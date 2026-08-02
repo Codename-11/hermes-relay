@@ -28,6 +28,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -43,7 +45,7 @@ fun ThinkingBlock(
     /** Message timestamp shown right-aligned in the header (null hides it). */
     timestamp: Long? = null,
     headerText: String? = null,
-    accessibilityLabel: String = "Thinking",
+    accessibilityLabel: String = stringResource(R.string.thinking_thinking_short),
     /** Stable key when this interactive block participates in Chat pet terrain. */
     petObstacleKey: String? = null,
 ) {
@@ -89,7 +91,7 @@ fun ThinkingBlock(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = headerText ?: if (isStreaming) "Thinking..." else "Thought process",
+                    text = headerText ?: if (isStreaming) stringResource(R.string.thinking_thinking) else stringResource(R.string.thinking_title),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.tertiary
                 )
@@ -104,7 +106,7 @@ fun ThinkingBlock(
                 }
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    contentDescription = if (expanded) stringResource(R.string.tool_progress_cd_collapse) else stringResource(R.string.tool_progress_cd_expand),
                     modifier = Modifier.size(16.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )

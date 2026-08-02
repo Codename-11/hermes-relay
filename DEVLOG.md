@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-02 — Android Russian localization
+
+Android now ships complete Russian catalogs for the main and sideload builds.
+The in-app language picker, Android locale configuration, chat and voice labels,
+tool and status presentation, diagnostics, onboarding, and plural resources are
+registered against the canonical English catalog. Existing non-English catalogs
+were refreshed to retain exact resource and format-argument parity.
+
+The integration preserves PR #276 as the source contribution while excluding
+unrelated recovery, routing, and test-stability changes from the localization
+scope. The localization registry records Android coverage only; Russian public
+documentation and marketing pages continue to use the canonical English
+fallback until those surfaces are translated separately.
+
 ## 2026-07-31 — Upstream-compatible voice interruption semantics
 
 Android full-turn barge-in now follows upstream Hermes' RMS behavior: roughly
@@ -146,7 +160,6 @@ gating, wake preferences, activation, and microphone exclusion. Android
 compilation for both distribution flavors, sideload lint, and sideload APK
 packaging pass with all four supported ABIs. On-device acoustic, foreground
 service, and lifecycle checks remain the corresponding validation gates.
-
 ## 2026-07-28 — Android 1.5.2 production release
 
 Android 1.5.2 shipped from the approved `dev` to `main` release tree as

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pet_preview_idle">Ожидание</string>
+    <string name="pet_preview_walk_left">Идёт влево</string>
+    <string name="pet_preview_walk_right">Идёт вправо</string>
+    <string name="pet_preview_jump">Прыжок</string>
+    <string name="pet_preview_fall">Падение</string>
+    <string name="pet_preview_held">В руках</string>
+    <string name="pet_preview_wave">Приветствие</string>
+    <string name="pet_preview_working">Работает</string>
+    <string name="pet_preview_review">Проверяет</string>
+    <string name="pet_preview_waiting">Ждёт</string>
+    <string name="pet_preview_error">Ошибка</string>
+    <string name="pet_preview_uses_clip">Использует %1$s</string>
+    <string name="pet_preview_mirrors_clip">Отражает %1$s</string>
+    <string name="pet_preview_falls_back">Использует резервную анимацию %1$s</string>
+    <string name="pet_preview_mirrors_fallback">Отражает резервную анимацию %1$s</string>
+</resources>
