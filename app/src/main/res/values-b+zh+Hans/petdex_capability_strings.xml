@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pet_preview_idle">待机</string>
+    <string name="pet_preview_walk_left">向左行走</string>
+    <string name="pet_preview_walk_right">向右行走</string>
+    <string name="pet_preview_jump">跳跃</string>
+    <string name="pet_preview_fall">下落</string>
+    <string name="pet_preview_held">被抓住</string>
+    <string name="pet_preview_wave">挥手</string>
+    <string name="pet_preview_working">工作中</string>
+    <string name="pet_preview_review">检查中</string>
+    <string name="pet_preview_waiting">等待中</string>
+    <string name="pet_preview_error">错误</string>
+    <string name="pet_preview_uses_clip">使用 %1$s</string>
+    <string name="pet_preview_mirrors_clip">镜像 %1$s</string>
+    <string name="pet_preview_falls_back">回退到 %1$s</string>
+    <string name="pet_preview_mirrors_fallback">镜像回退动画 %1$s</string>
+</resources>
