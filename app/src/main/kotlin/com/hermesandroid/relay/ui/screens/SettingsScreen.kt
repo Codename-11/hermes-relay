@@ -71,8 +71,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -111,6 +111,7 @@ import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
  * Root Settings destination. After the 2026-04-11 split, Settings is a
@@ -297,12 +298,19 @@ fun SettingsScreen(
 
     val settingsScrollState = rememberScrollState()
     val petCompanionCoordinator = LocalPetCompanionCoordinator.current
-    SideEffect {
-        petCompanionCoordinator.publishSurface(
-            owner = "settings",
-            scrolling = settingsScrollState.isScrollInProgress,
-            hidden = showAgentSheet || showProfileLockDialog || showChangelog,
-        )
+    LaunchedEffect(settingsScrollState, petCompanionCoordinator) {
+        snapshotFlow {
+            settingsScrollState.isScrollInProgress to
+                (showAgentSheet || showProfileLockDialog || showChangelog)
+        }
+            .distinctUntilChanged()
+            .collect { (scrolling, hidden) ->
+                petCompanionCoordinator.publishSurface(
+                    owner = "settings",
+                    scrolling = scrolling,
+                    hidden = hidden,
+                )
+            }
     }
     DisposableEffect(petCompanionCoordinator) {
         onDispose { petCompanionCoordinator.clearSurface("settings") }
