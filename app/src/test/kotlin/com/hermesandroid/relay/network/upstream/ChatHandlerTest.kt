@@ -69,6 +69,37 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun addUserMessage_replayedUiIdentityDoesNotCreateDuplicateComposeKey() {
+        val uiKey = "95f99e98-cd62-4a60-8001-c66f6de9eecc"
+        handler.addUserMessage(
+            createUserMessage("client-first", "Hello").copy(uiKey = uiKey),
+        )
+        handler.addUserMessage(
+            createUserMessage("client-replay", "Hello").copy(uiKey = uiKey),
+        )
+
+        assertEquals(listOf(uiKey), handler.messages.value.map(ChatMessage::uiKey))
+    }
+
+    @Test
+    fun addPlaceholderMessage_replayedUiIdentityDoesNotCreateDuplicateComposeKey() {
+        val uiKey = "95f99e98-cd62-4a60-8001-c66f6de9eecc"
+        val placeholder = ChatMessage(
+            id = "assistant-live",
+            uiKey = uiKey,
+            role = MessageRole.ASSISTANT,
+            content = "",
+            timestamp = 1L,
+            isStreaming = true,
+        )
+
+        handler.addPlaceholderMessage(placeholder)
+        handler.addPlaceholderMessage(placeholder.copy(id = "assistant-rebound"))
+
+        assertEquals(listOf(uiKey), handler.messages.value.map(ChatMessage::uiKey))
+    }
+
+    @Test
     fun clearMessages_emptiesMessageList() {
         handler.addUserMessage(createUserMessage("msg-1", "Test"))
         handler.clearMessages()
@@ -1795,6 +1826,48 @@ class ChatHandlerTest {
 
 
     // --- Relay typed stream.event rendering ---
+
+    @Test
+    fun applyRelayStreamEvent_serverIdRebindKeepsOneStableUiRow() {
+        val clientId = "95f99e98-cd62-4a60-8001-c66f6de9eecc"
+        val serverId = "server-assistant-id"
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = clientId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+        handler.applyRelayStreamEvent(
+            clientId,
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 1,
+                event = "message.started",
+                payload = buildJsonObject {
+                    put("message", buildJsonObject { put("id", serverId) })
+                },
+            ),
+        )
+        handler.applyRelayStreamEvent(
+            clientId,
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 2,
+                event = "assistant.delta",
+                payload = buildJsonObject { put("delta", "Hello") },
+            ),
+        )
+
+        val message = handler.messages.value.single()
+        assertEquals(serverId, message.id)
+        assertEquals(clientId, message.uiKey)
+        assertEquals("Hello", message.content)
+    }
 
     @Test
     fun applyRelayStreamEvent_rendersAssistantDeltaToolLifecycleAndDone() {

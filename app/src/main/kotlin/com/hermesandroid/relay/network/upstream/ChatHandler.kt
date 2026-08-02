@@ -320,47 +320,54 @@ class ChatHandler {
         fun boolField(name: String): Boolean? = (payload[name] as? JsonPrimitive)?.booleanOrNull
         val toolName = textField("tool_name", "tool", "name") ?: "unknown"
         val callId = textField("call_id", "tool_call_id") ?: toolName
+        // The caller owns one client placeholder id for the whole Relay stream.
+        // message.started can replace that domain id with the server id while
+        // uiKey deliberately retains the client id. Resolve the current domain
+        // id before every event so the tail keeps mutating the same visible row.
+        val currentMessageId = _messages.value.findLast { message ->
+            message.id == messageId || message.uiKey == messageId
+        }?.id ?: messageId
 
         when (envelope.event) {
             "message.started" -> {
                 val msgObj = payload["message"] as? JsonObject
                 val serverMsgId = (msgObj?.get("id") as? JsonPrimitive)?.contentOrNull
-                if (!serverMsgId.isNullOrBlank()) replaceMessageId(messageId, serverMsgId)
+                if (!serverMsgId.isNullOrBlank()) replaceMessageId(currentMessageId, serverMsgId)
             }
             "assistant.delta" -> {
-                textField("delta", "content", "text")?.let { onTextDelta(messageId, it) }
+                textField("delta", "content", "text")?.let { onTextDelta(currentMessageId, it) }
             }
             "tool.progress" -> {
                 textField("delta", "thinking_delta", "thinking", "text", "message")?.let {
-                    onThinkingDelta(messageId, it)
+                    onThinkingDelta(currentMessageId, it)
                 }
             }
-            "tool.pending", "tool.started" -> onToolCallStart(messageId, callId, toolName)
-            "tool.completed" -> onToolCallComplete(messageId, callId, textField("result_preview", "summary", "message"))
-            "tool.failed" -> onToolCallFailed(messageId, callId, textField("error", "message") ?: "Tool failed")
+            "tool.pending", "tool.started" -> onToolCallStart(currentMessageId, callId, toolName)
+            "tool.completed" -> onToolCallComplete(currentMessageId, callId, textField("result_preview", "summary", "message"))
+            "tool.failed" -> onToolCallFailed(currentMessageId, callId, textField("error", "message") ?: "Tool failed")
             "memory.updated", "skill.loaded" -> {
                 val label = when (envelope.event) {
                     "memory.updated" -> "Memory"
                     else -> "Skill"
                 }
-                addMessageBadges(messageId, listOf(label))
+                addMessageBadges(currentMessageId, listOf(label))
             }
             "artifact.created" -> {
-                addMessageBadges(messageId, listOf("Artifact"))
+                addMessageBadges(currentMessageId, listOf("Artifact"))
                 textField("url", "path", "preview", "title")?.takeIf { it.isNotBlank() }?.let {
-                    onThinkingDelta(messageId, "Artifact: $it")
+                    onThinkingDelta(currentMessageId, "Artifact: $it")
                 }
             }
             "assistant.completed" -> {
                 if (boolField("interrupted") == true) {
                     onStreamError("Response interrupted")
                 } else {
-                    onTurnComplete(messageId)
+                    onTurnComplete(currentMessageId)
                 }
             }
-            "run.completed", "done" -> onStreamComplete(messageId)
+            "run.completed", "done" -> onStreamComplete(currentMessageId)
             "error" -> {
-                addMessageBadges(messageId, listOf("Error"))
+                addMessageBadges(currentMessageId, listOf("Error"))
                 onStreamError(textField("message", "error") ?: "Unknown error")
             }
             "session.created", "run.started" -> Unit
@@ -372,6 +379,7 @@ class ChatHandler {
 
     fun addUserMessage(message: ChatMessage) {
         _messages.update { list ->
+            if (list.any { it.uiKey == message.uiKey }) return@update list
             (list + message).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
     }
@@ -942,6 +950,7 @@ class ChatHandler {
     fun addPlaceholderMessage(message: ChatMessage) {
         _isStreaming.value = true
         _messages.update { list ->
+            if (list.any { it.uiKey == message.uiKey }) return@update list
             (list + message).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
     }
