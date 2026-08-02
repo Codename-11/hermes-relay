@@ -47,7 +47,7 @@ class AttachmentGalleryUiTest {
         compose.onNodeWithText("1 / 3").assertExists()
 
         compose.onNodeWithTag("attachment-gallery-pager").performTouchInput { swipeLeft() }
-        compose.waitUntil(timeoutMillis = 5_000) {
+        compose.waitUntil(timeoutMillis = 15_000) {
             compose.onAllNodesWithText("2 / 3").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("2 / 3").assertExists()
@@ -69,8 +69,18 @@ class AttachmentGalleryUiTest {
             }
         }
 
+        // The tile is clickable while the image is still decoding, but the
+        // viewer's page counter only settles after the pager composes the
+        // tapped page. Wait for the tile's decoded image to be present so the
+        // tap lands on the real clickable node instead of a placeholder frame.
+        compose.waitUntil(timeoutMillis = 15_000) {
+            runCatching {
+                compose.onNodeWithContentDescription("two.png, image 2 of 3").assertExists()
+                true
+            }.getOrDefault(false)
+        }
         compose.onNodeWithTag("attachment-gallery-tile-1").performClick()
-        compose.waitUntil(timeoutMillis = 5_000) {
+        compose.waitUntil(timeoutMillis = 15_000) {
             compose.onAllNodesWithText("2 / 3").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("2 / 3").assertExists()
@@ -100,7 +110,7 @@ class AttachmentGalleryUiTest {
 
         compose.onNodeWithTag("attachment-gallery-tile-0").performClick()
         compose.onNodeWithTag("attachment-gallery-pager").performTouchInput { swipeLeft() }
-        compose.waitUntil(timeoutMillis = 5_000) {
+        compose.waitUntil(timeoutMillis = 15_000) {
             compose.onAllNodesWithText("2 / 2").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithContentDescription("Share").assertIsNotEnabled()

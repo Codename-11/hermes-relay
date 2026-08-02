@@ -4951,7 +4951,11 @@ class ChatViewModel : ViewModel() {
             pendingUserText = checkpoint.user.content,
             priorUserMessageCount = checkpoint.priorUserMessageCount,
             onIntermediateHistory = { items ->
-                if (streamRecovery === recovery && ownsTurnCheckpoint(checkpoint, handler)) {
+                if (
+                    !intentionallyCancelled &&
+                    streamRecovery === recovery &&
+                    ownsTurnCheckpoint(checkpoint, handler)
+                ) {
                     handler.loadMessageHistory(items)
                     handler.restoreInFlightTurn(checkpoint)
                     handler.setTurnStatus("Reconnecting to the active turn…")
@@ -5129,7 +5133,11 @@ class ChatViewModel : ViewModel() {
             pendingUserText = pendingUserText,
             priorUserMessageCount = priorUserCount,
             onIntermediateHistory = { items ->
-                if (streamRecovery === recovery && handler.currentSessionId.value == sessionId) {
+                if (
+                    !intentionallyCancelled &&
+                    streamRecovery === recovery &&
+                    handler.currentSessionId.value == sessionId
+                ) {
                     // Progressive recovery: surface already-persisted rows as
                     // they appear. The reload drops the (never-persisted)
                     // streaming placeholder, so re-add one — with a stable id —
@@ -7152,6 +7160,20 @@ class ChatViewModel : ViewModel() {
 
     fun cancelStream() {
         intentionallyCancelled = true
+        // Capture the live placeholder BEFORE aborting answer recovery: with
+        // recovery running, cancelAnswerRecovery(settleUi = false) clears the
+        // handler's streaming flag, so a findLast { isStreaming } afterwards
+        // would miss it and the Stopped badge would never be stamped. When no
+        // streaming row survives to the capture point (the intermediate-history
+        // reload drops the original placeholder and re-adds a "recovering-*"
+        // row on the main looper after the poll returns — a race window),
+        // fall back to the last assistant bubble so the cancelled turn still
+        // reads as stopped instead of vanishing.
+        val handler = chatHandler
+        val streamingMsg = handler?.messages?.value?.findLast { it.isStreaming }
+            ?: handler?.messages?.value?.lastOrNull {
+                it.role == MessageRole.ASSISTANT && "Stopped" !in it.badges
+            }
         // User Stop also aborts a dropped-stream answer recovery. settleUi
         // false: the Stopped-badge block below finalizes the placeholder
         // itself (completing it here first would hide it from findLast).
@@ -7170,12 +7192,9 @@ class ChatViewModel : ViewModel() {
         clearPendingAsk(approvalStamp = "deny")
         clearTurnCheckpoint()
         AppAnalytics.onStreamCancelled()
-        chatHandler?.let { handler ->
-            val streamingMsg = handler.messages.value.findLast { it.isStreaming }
-            if (streamingMsg != null) {
-                handler.markStopped(streamingMsg.id)
-                handler.onStreamComplete(streamingMsg.id)
-            }
+        if (streamingMsg != null) {
+            handler?.markStopped(streamingMsg.id)
+            handler?.onStreamComplete(streamingMsg.id)
         }
     }
 

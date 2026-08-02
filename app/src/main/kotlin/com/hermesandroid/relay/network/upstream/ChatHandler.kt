@@ -3098,6 +3098,11 @@ class ChatHandler {
         _messages.update { messages ->
             messages
                 .filterNot { msg ->
+                    // A user-cancelled bubble (Stopped badge) must survive the
+                    // cleanup pass even when it carries no content: it is the
+                    // visible trace of the interrupted turn, not an empty
+                    // placeholder to sweep away.
+                    "Stopped" !in msg.badges &&
                         msg.id == messageId &&
                         msg.role == MessageRole.ASSISTANT &&
                         msg.toolCalls.isEmpty() &&
