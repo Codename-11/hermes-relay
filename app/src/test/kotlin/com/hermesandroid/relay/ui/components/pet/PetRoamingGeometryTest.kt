@@ -79,6 +79,21 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `interactive card body remains blocked without removing its top edge rail`() {
+        val cardBounds = PetObstacle(left = 20f, top = 100f, right = 180f, bottom = 220f)
+        val segments = petPerchSegments(
+            perch = PetMeasuredPerch("settings-card", cardBounds),
+            obstacles = listOf(PetMeasuredObstacle("settings-controls", cardBounds)),
+            footprint = PetFootprint(width = 40f, height = 40f),
+            outer = PetSafeBounds(left = 0f, top = 0f, right = 200f, bottom = 300f),
+            minimumWidth = 20f,
+            verticalClearance = 6f,
+        )
+
+        assertEquals(listOf(PetSafeBounds(40f, 74f, 160f, 74f)), segments)
+    }
+
+    @Test
     fun `deterministic waypoint ignores blocked and unreachable candidates`() {
         val safe = PetSafeBounds(0f, 0f, 100f, 100f)
         val current = PetPoint(0f, 20f)

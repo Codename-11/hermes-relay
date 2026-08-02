@@ -8,7 +8,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -26,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.LinkedHashMap
 import kotlin.math.roundToInt
 
 /** Never animate a pet faster than this regardless of the spec's `fps`. */
@@ -59,8 +59,34 @@ private const val ONE_SHOT_MAX_MS = 4000L
 /** How long to show a one-frame one-shot reaction before returning to the base loop. */
 private const val ONE_SHOT_STILL_MS = 1800L
 
+/** Runtime guardrails also protect sideloaded custom packs, not only Petdex downloads. */
+internal const val PET_MAX_FRAME_SEQUENCE_FRAMES = 120
+internal const val PET_MAX_FRAME_SEQUENCE_PIXELS = 8L * 1024L * 1024L
+internal const val PET_MAX_SPRITE_SHEET_PIXELS = 16L * 1024L * 1024L
+private const val PET_DECODED_CLIP_CACHE_ENTRIES = 4
+private const val PET_DECODED_SHEET_CACHE_ENTRIES = 2
+
 internal fun petOneShotReleaseDelayMs(frameCount: Int): Long =
     if (frameCount <= 1) ONE_SHOT_STILL_MS else ONE_SHOT_MAX_MS
+
+/** Reject invalid dimensions and cumulative decode requests before allocating a bitmap. */
+internal fun petBitmapFitsPixelBudget(
+    width: Int,
+    height: Int,
+    usedPixels: Long,
+    maximumPixels: Long,
+): Boolean {
+    if (width <= 0 || height <= 0 || usedPixels < 0L || maximumPixels <= 0L) return false
+    val pixels = width.toLong() * height.toLong()
+    return pixels > 0L && usedPixels <= maximumPixels && pixels <= maximumPixels - usedPixels
+}
+
+/** Keep the current visual until the requested clip is decoded; null clips intentionally clear it. */
+internal fun <T> retainPetFrameDuringDecode(
+    previous: T?,
+    decoded: T?,
+    hasRequestedClip: Boolean,
+): T? = if (hasRequestedClip) decoded ?: previous else null
 
 /**
  * The live reactive signals the pet renderer actually consumes **today**. A pet's
@@ -185,10 +211,21 @@ class PetAvatar(
     internal val oneShots: Map<PetOneShot, PetClip> = emptyMap(),
 ) : AgentAvatar {
     override val source: AvatarSource = AvatarSource.USER
-    private val decodedSheets = mutableMapOf<String, DecodedSheet>()
+    private val decodedSheets = LinkedHashMap<String, DecodedSheet>(4, 0.75f, true)
+    private val decodedClips = LinkedHashMap<PetDecodeKey, PetFrames>(8, 0.75f, true)
 
-    private fun decode(clip: PetClip, stabilize: Boolean): PetFrames? =
-        decodeClip(clip, stabilize, decodedSheets)
+    private fun decode(clip: PetClip, stabilize: Boolean): PetFrames? {
+        val key = PetDecodeKey(clip, stabilize)
+        synchronized(decodedClips) { decodedClips[key] }?.let { return it }
+        val decoded = decodeClip(clip, stabilize, decodedSheets) ?: return null
+        synchronized(decodedClips) {
+            decodedClips[key] = decoded
+            while (decodedClips.size > PET_DECODED_CLIP_CACHE_ENTRIES) {
+                decodedClips.remove(decodedClips.keys.first())
+            }
+        }
+        return decoded
+    }
 
     /** A one-shot is fireable only if it ships a clip that can actually show. */
     private fun fireable(kind: PetOneShot): Boolean = (oneShots[kind]?.frameCount ?: 0) > 0
@@ -324,21 +361,32 @@ class PetAvatar(
         // Re-center each frame on its own opaque content at decode time —
         // neutralizes the positional drift common in AI-generated sheets (a
         // character that floats/jumps cell-to-cell). Global Appearance toggle;
-        // flipping it re-decodes via the produceState key.
+        // flipping it selects a separately cached decode.
         val stabilize = LocalPetStabilize.current
 
-        // Decode the active clip off the main thread; null until ready / on
-        // decode failure (graceful — the avatar just renders nothing).
-        val frames by produceState<PetFrames?>(initialValue = null, clip, stabilize) {
-            value = if (clip == null) {
+        // Decode the active clip off the main thread. Keep the last complete
+        // visual while a new state is loading so greet/done/locomotion swaps do
+        // not expose the Canvas as a blank frame.
+        var displayedClip by remember(id, stabilize) {
+            mutableStateOf<DisplayedPetClip?>(null)
+        }
+        LaunchedEffect(id, clip, stabilize, mirrorHorizontally) {
+            val decoded = if (clip == null) {
                 null
             } else {
                 withContext(Dispatchers.IO) { runCatching { decode(clip, stabilize) }.getOrNull() }
+                    ?.let { DisplayedPetClip(it, mirrorHorizontally) }
             }
+            displayedClip = retainPetFrameDuringDecode(
+                previous = displayedClip,
+                decoded = decoded,
+                hasRequestedClip = clip != null,
+            )
         }
 
-        var frameIndex by remember(clip) { mutableIntStateOf(0) }
-        val current = frames
+        val current = displayedClip?.frames
+        val displayedMirror = displayedClip?.mirrorHorizontally == true
+        var frameIndex by remember(current) { mutableIntStateOf(0) }
         val animate = current != null && current.frameCount > 1 && !state.paused
 
         // Live activity level + opt-in speedup, read inside the loop so playback
@@ -404,7 +452,7 @@ class PetAvatar(
         Canvas(modifier = modifier) {
             val f = current ?: return@Canvas
             val index = frameIndex.coerceIn(0, (f.frameCount - 1).coerceAtLeast(0))
-            if (mirrorHorizontally) {
+            if (displayedMirror) {
                 scale(scaleX = -1f, scaleY = 1f, pivot = center) {
                     drawPetFrame(f, index, bounce)
                 }
@@ -428,6 +476,16 @@ private class PetFrames(
     val centerOffsets: List<IntOffset>? = null,
 )
 
+private data class DisplayedPetClip(
+    val frames: PetFrames,
+    val mirrorHorizontally: Boolean,
+)
+
+private data class PetDecodeKey(
+    val clip: PetClip,
+    val stabilize: Boolean,
+)
+
 /** One decoded atlas per selected pet; all of its row clips share these pixels. */
 private data class DecodedSheet(val bitmap: Bitmap, val image: ImageBitmap)
 
@@ -437,7 +495,31 @@ private fun decodeClip(
     decodedSheets: MutableMap<String, DecodedSheet>,
 ): PetFrames? = when (clip) {
     is FrameSequenceClip -> {
-        val bitmaps = clip.files.mapNotNull { file -> BitmapFactory.decodeFile(file.absolutePath) }
+        if (clip.files.isEmpty() || clip.files.size > PET_MAX_FRAME_SEQUENCE_FRAMES) return null
+        val bitmaps = mutableListOf<Bitmap>()
+        var usedPixels = 0L
+        for (file in clip.files) {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            if (
+                !petBitmapFitsPixelBudget(
+                    width = bounds.outWidth,
+                    height = bounds.outHeight,
+                    usedPixels = usedPixels,
+                    maximumPixels = PET_MAX_FRAME_SEQUENCE_PIXELS,
+                )
+            ) {
+                bitmaps.forEach(Bitmap::recycle)
+                return null
+            }
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+            if (bitmap == null) {
+                bitmaps.forEach(Bitmap::recycle)
+                return null
+            }
+            bitmaps += bitmap
+            usedPixels += bounds.outWidth.toLong() * bounds.outHeight.toLong()
+        }
         if (bitmaps.isEmpty()) {
             null
         } else {
@@ -454,11 +536,32 @@ private fun decodeClip(
     }
 
     is SpriteSheetClip -> {
-        if (clip.startFrame < 0) return null
+        if (
+            clip.startFrame < 0 || clip.frameWidth <= 0 || clip.frameHeight <= 0 ||
+            clip.frameCount <= 0
+        ) return null
         val decoded = synchronized(decodedSheets) {
-            decodedSheets[clip.sheet.absolutePath] ?: BitmapFactory.decodeFile(clip.sheet.absolutePath)?.let { bitmap ->
-                DecodedSheet(bitmap, bitmap.asImageBitmap()).also {
-                    decodedSheets[clip.sheet.absolutePath] = it
+            decodedSheets[clip.sheet.absolutePath] ?: run {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(clip.sheet.absolutePath, bounds)
+                if (
+                    !petBitmapFitsPixelBudget(
+                        width = bounds.outWidth,
+                        height = bounds.outHeight,
+                        usedPixels = 0L,
+                        maximumPixels = PET_MAX_SPRITE_SHEET_PIXELS,
+                    )
+                ) {
+                    null
+                } else {
+                    BitmapFactory.decodeFile(clip.sheet.absolutePath)?.let { bitmap ->
+                        DecodedSheet(bitmap, bitmap.asImageBitmap()).also {
+                            decodedSheets[clip.sheet.absolutePath] = it
+                            while (decodedSheets.size > PET_DECODED_SHEET_CACHE_ENTRIES) {
+                                decodedSheets.remove(decodedSheets.keys.first())
+                            }
+                        }
+                    }
                 }
             }
         }
