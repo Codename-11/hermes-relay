@@ -59,7 +59,7 @@ object ProfileApiUrlResolver {
         baseApiUrl: String?,
         selectedProfileName: String?,
         gatewayMode: String?,
-        servedProfiles: Collection<String>,
+        servedProfiles: Collection<String>? = emptyList(),
     ): String? {
         val base = normalize(baseApiUrl)
         val dedicated = resolveForConnection(profileApiUrl, base)
@@ -70,7 +70,7 @@ object ProfileApiUrlResolver {
             ?.takeIf { it.isNotBlank() && !it.equals("default", ignoreCase = true) }
             ?: return base
         val isKnownMultiplexProfile = gatewayMode.equals("multiplex", ignoreCase = true) &&
-            servedProfiles.any { it.equals(profile, ignoreCase = false) }
+            (servedProfiles.orEmpty()).any { it.equals(profile, ignoreCase = false) }
         if (!isKnownMultiplexProfile) return base
 
         val root = base?.toHttpUrlOrNull() ?: return base
