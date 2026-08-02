@@ -502,7 +502,7 @@ private fun CardInputSlot(
             input.holdToConfirm -> {
                 Spacer(Modifier.height(10.dp))
                 HoldToConfirmButton(
-                    label = "Hold to confirm",
+                    label = stringResource(R.string.hermes_card_hold_confirm),
                     enabled = !input.masked || answerText.isNotEmpty(),
                     onConfirmed = {
                         onSubmit(
@@ -510,6 +510,13 @@ private fun CardInputSlot(
                             else HermesCardInput.CONFIRM_VALUE,
                         )
                     },
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.hermes_card_hold_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
             input.masked -> {

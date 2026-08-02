@@ -96,7 +96,7 @@ private fun classifyIoMessage(msg: String, context: String?, ctx: Context?): Hum
             "realtime oauth refresh failed" in msg ||
             "realtime provider credentials" in msg -> HumanError(
             title = ctx?.getString(R.string.error_classify_realtime_auth) ?: "Realtime provider auth unavailable",
-            body = "The realtime voice provider is missing or rejected server-side auth. Refresh provider auth on the relay or choose another provider.",
+            body = ctx?.getString(R.string.error_classify_realtime_auth_body) ?: "The realtime voice provider is missing or rejected server-side auth. Refresh provider auth on the relay or choose another provider.",
             retryable = false,
             actionLabel = ctx?.getString(R.string.error_classify_voice_settings) ?: "Voice settings",
         )
