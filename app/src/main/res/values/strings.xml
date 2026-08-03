@@ -260,6 +260,8 @@
     <string name="error_classify_synthesize">Voice playback failed</string>
     <string name="error_classify_voice_config">Voice config unavailable</string>
     <string name="error_classify_record">Can\'t record</string>
+    <string name="error_classify_mic_busy">Microphone unavailable</string>
+    <string name="error_classify_mic_busy_body">The microphone is busy or blocked. Close other apps using the mic and check Microphone permission in Settings.</string>
     <string name="error_classify_pair">Pairing failed</string>
     <string name="error_classify_save_and_test">Relay check failed</string>
     <string name="error_classify_media_fetch">Couldn\'t fetch attachment</string>

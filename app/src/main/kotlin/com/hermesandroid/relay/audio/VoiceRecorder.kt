@@ -50,6 +50,13 @@ class VoiceRecorder(
         // implementation so the on-screen meter feels the same.
         private const val NOISE_FLOOR = 0.01f
         private const val SPEECH_CEILING = 0.35f
+
+        /** Attempts to open the mic before giving up on a transient failure. */
+        private const val AUDIO_RECORD_RETRIES = 3
+
+        /** Backoff between [AUDIO_RECORD_RETRIES]; covers the barge-in
+         *  listener's async AudioRecord release window (~1 frame). */
+        private const val AUDIO_RECORD_RETRY_BACKOFF_MS = 50L
     }
 
     private val _amplitude = MutableStateFlow(0f)
@@ -83,21 +90,11 @@ class VoiceRecorder(
                 releaseRecorder()
             }
         }
-        val lease = MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.VoiceCapture)
-            ?: throw IllegalStateException("Microphone is in use by another voice feature")
-        microphoneLease = lease
-
-        val minBuffer = try {
-            AudioRecord.getMinBufferSize(
+        val minBuffer = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-            ).coerceAtLeast(SAMPLE_RATE / 10 * BYTES_PER_SAMPLE)
-        } catch (t: Throwable) {
-            MicrophoneOwnershipCoordinator.release(lease)
-            microphoneLease = null
-            throw t
-        }
+        ).coerceAtLeast(SAMPLE_RATE / 10 * BYTES_PER_SAMPLE)
 
         val outFile = File(context.cacheDir, "voice_rec_${System.currentTimeMillis()}.wav")
         currentOutputFile = outFile
@@ -108,39 +105,18 @@ class VoiceRecorder(
         stopRequested.set(false)
         _amplitude.value = 0f
 
+        // The mic is a contended resource. The barge-in listener holds a
+        // MicrophoneOwnershipCoordinator lease during Speaking and releases
+        // it asynchronously ("typically a single frame later" per
+        // BargeInListener.stop's KDoc), so a mic tap can land in the window
+        // where the lease is still held and fail with "Microphone is in use
+        // by another voice feature" even though capture would succeed
+        // milliseconds later. Retry the lease + open briefly; a persistent
+        // failure (permission revoked, mic truly busy) still surfaces.
         val recorder = try {
-            AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.MIC)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .build()
-                )
-                .setBufferSizeInBytes(minBuffer * 2)
-                .build()
-        } catch (t: Throwable) {
-            MicrophoneOwnershipCoordinator.release(lease)
-            microphoneLease = null
-            throw t
-        }
-
-        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
-            recorder.release()
-            currentOutputFile = null
-            MicrophoneOwnershipCoordinator.release(lease)
-            microphoneLease = null
-            throw IllegalStateException("AudioRecord failed to initialize")
-        }
-
-        try {
-            recorder.startRecording()
+            openRecorderWithRetry(minBuffer)
         } catch (e: Exception) {
-            recorder.release()
             currentOutputFile = null
-            MicrophoneOwnershipCoordinator.release(lease)
-            microphoneLease = null
             throw e
         }
 
@@ -156,6 +132,79 @@ class VoiceRecorder(
             "HermesVoiceRecorder",
         ).also { it.start() }
         return outFile
+    }
+
+    /**
+     * Acquire the microphone lease and build/start an [AudioRecord], retrying
+     * on transient failure. [MicrophoneOwnershipCoordinator] prevents
+     * concurrent capture, but a just-released lease (barge-in teardown,
+     * wake-word handoff) can make both the lease acquisition and the
+     * underlying open fail for a few frames; a bounded retry absorbs those
+     * windows without holding the lease past an attempt. On final failure the
+     * lease is released and the last exception is rethrown for the caller's
+     * error surfacing.
+     */
+    private fun openRecorderWithRetry(minBuffer: Int): AudioRecord {
+        var attempt = 0
+        var lastFailure: Exception? = null
+        while (attempt < AUDIO_RECORD_RETRIES) {
+            attempt++
+            val lease = MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.VoiceCapture)
+            if (lease == null) {
+                lastFailure = IllegalStateException("Microphone is in use by another voice feature")
+                if (!retryBackoff(attempt)) break
+                continue
+            }
+            microphoneLease = lease
+            try {
+                val recorder = AudioRecord.Builder()
+                    .setAudioSource(MediaRecorder.AudioSource.MIC)
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(SAMPLE_RATE)
+                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(minBuffer * 2)
+                    .build()
+
+                if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                    recorder.release()
+                    throw IllegalStateException("AudioRecord failed to initialize")
+                }
+
+                try {
+                    recorder.startRecording()
+                } catch (e: Exception) {
+                    recorder.release()
+                    throw e
+                }
+                return recorder
+            } catch (e: Exception) {
+                lastFailure = e
+                MicrophoneOwnershipCoordinator.release(lease)
+                microphoneLease = null
+                Log.w(
+                    TAG,
+                    "AudioRecord open attempt $attempt/$AUDIO_RECORD_RETRIES failed: ${e.message}",
+                )
+                if (!retryBackoff(attempt)) break
+            }
+        }
+        throw lastFailure ?: IllegalStateException("AudioRecord failed to initialize")
+    }
+
+    /** Sleep the retry backoff unless the last attempt was reached. */
+    private fun retryBackoff(attempt: Int): Boolean {
+        if (attempt >= AUDIO_RECORD_RETRIES) return false
+        return try {
+            Thread.sleep(AUDIO_RECORD_RETRY_BACKOFF_MS)
+            true
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
     }
 
     /**

@@ -233,6 +233,22 @@ private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?
 
     val msg = t.message.orEmpty().lowercase()
 
+    // AudioRecord native setup failure — the framework throws
+    // UnsupportedOperationException("Cannot create AudioRecord") (or the
+    // app's own IllegalStateException from the state check) when the mic
+    // can't be opened: another app holds it, our own barge-in listener is
+    // mid-teardown, or RECORD_AUDIO was revoked. The raw framework string
+    // is useless to a user, so map it to an actionable, retryable hint.
+    if ("cannot create audiorecord" in msg || "audiorecord failed to initialize" in msg) {
+        return HumanError(
+            title = ctx?.getString(R.string.error_classify_mic_busy) ?: "Microphone unavailable",
+            body = ctx?.getString(R.string.error_classify_mic_busy_body)
+                ?: "The microphone is busy or blocked. Close other apps using the mic and check Microphone permission in Settings.",
+            retryable = true,
+            actionLabel = ctx?.getString(R.string.error_classify_retry) ?: "Retry",
+        )
+    }
+
     // Upstream rejects new API work with this stable code while an intentional
     // shutdown/external drain is in progress. Keep it distinct from provider
     // 503s: the server is healthy and will accept work after the drain clears.
