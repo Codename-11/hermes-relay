@@ -720,25 +720,36 @@ class DashboardApiClient(
      */
     suspend fun listSessions(
         profile: String? = null,
-        limit: Int = 200,
+        limit: Int = SESSION_LIST_WINDOW_LIMIT,
         archived: String? = null,
     ): Result<List<SessionItem>> =
         withContext(Dispatchers.IO) {
-            val query = buildList {
-                add("limit=${limit.coerceIn(1, 200)}")
-                add("order=recent")
-                add("min_messages=1")
-                val name = profile?.trim().orEmpty()
-                if (name.isNotBlank()) add("profile=${pathSegment(name)}")
-                // Upstream `archived` filter: exclude (default) | only | include.
-                // Omitted unless requested so older hosts see an unchanged request.
-                val archivedMode = archived?.trim().orEmpty()
-                if (archivedMode.isNotBlank()) add("archived=${pathSegment(archivedMode)}")
-            }.joinToString(prefix = "?", separator = "&")
-            getJson("/api/sessions$query").mapCatching { root ->
-                val parsed = json.decodeFromJsonElement(SessionListResponse.serializer(), root)
-                parsed.sessions ?: parsed.items ?: parsed.data ?: emptyList()
+            val sessions = linkedMapOf<String, SessionItem>()
+            for (page in sessionListPages(limit)) {
+                val query = buildList {
+                    // Upstream dashboard GET /api/sessions rejects pages over 100.
+                    // Keep Android's 200-row drawer window via two bounded pages.
+                    add("limit=${page.limit}")
+                    add("offset=${page.offset}")
+                    add("order=recent")
+                    add("min_messages=1")
+                    val name = profile?.trim().orEmpty()
+                    if (name.isNotBlank()) add("profile=${pathSegment(name)}")
+                    // Upstream `archived` filter: exclude (default) | only | include.
+                    // Omitted unless requested so older hosts see an unchanged request.
+                    val archivedMode = archived?.trim().orEmpty()
+                    if (archivedMode.isNotBlank()) add("archived=${pathSegment(archivedMode)}")
+                }.joinToString(prefix = "?", separator = "&")
+                val pageResult = getJson("/api/sessions$query").mapCatching { root ->
+                    val parsed = json.decodeFromJsonElement(SessionListResponse.serializer(), root)
+                    parsed.sessions ?: parsed.items ?: parsed.data ?: emptyList()
+                }
+                if (pageResult.isFailure) return@withContext pageResult
+                val pageSessions = pageResult.getOrThrow()
+                pageSessions.forEach { sessions.putIfAbsent(it.id, it) }
+                if (pageSessions.size < page.limit) break
             }
+            Result.success(sessions.values.take(limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)))
         }
 
     /**

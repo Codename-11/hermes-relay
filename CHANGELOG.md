@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android session history follows the upstream page-size contract.** The drawer keeps its 200-session window through bounded 100-row requests, avoiding HTTP 422 errors from current dashboard servers while preserving active-profile isolation.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
 ## [Android 1.6.0] - 2026-08-02
