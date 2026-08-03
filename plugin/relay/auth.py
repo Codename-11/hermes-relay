@@ -893,7 +893,9 @@ class SessionManager:
         issue_refresh_token:
             When True, also create a persisted trusted-device credential and
             attach the raw one-time refresh token to the returned
-            :class:`Session` for inclusion in ``auth.ok``.
+            :class:`Session` for inclusion in ``auth.ok``. This is an explicit
+            pairing operation, so any older sessions and trusted-device
+            credentials for the same non-empty ``device_id`` are replaced.
         """
         if ttl_seconds is None:
             ttl_seconds = DEFAULT_TTL_SECONDS
@@ -907,6 +909,33 @@ class SessionManager:
         resolved_grants = _materialize_grants(grants, float(ttl_seconds), now)
         refresh_token: str | None = None
         if issue_refresh_token:
+            # A fresh operator-approved pair repairs this device; it does not
+            # authorize another indefinite row for the same app installation.
+            # Keep different devices independent and leave legacy clients with
+            # no device_id alone because an empty id cannot identify ownership.
+            normalized_device_id = device_id.strip()
+            if normalized_device_id:
+                replaced_sessions = [
+                    token
+                    for token, existing in self._sessions.items()
+                    if existing.device_id == normalized_device_id
+                ]
+                for token in replaced_sessions:
+                    del self._sessions[token]
+                replaced_devices = [
+                    refresh_hash
+                    for refresh_hash, existing in self._trusted_devices.items()
+                    if existing.device_id == normalized_device_id
+                ]
+                for refresh_hash in replaced_devices:
+                    del self._trusted_devices[refresh_hash]
+                if replaced_sessions or replaced_devices:
+                    logger.info(
+                        "Re-pair replaced %d session(s) and %d trusted credential(s) for device %s",
+                        len(replaced_sessions),
+                        len(replaced_devices),
+                        normalized_device_id,
+                    )
             refresh_token = _generate_refresh_token()
             refresh_hash = _refresh_token_hash(refresh_token)
             self._trusted_devices[refresh_hash] = TrustedDevice(
