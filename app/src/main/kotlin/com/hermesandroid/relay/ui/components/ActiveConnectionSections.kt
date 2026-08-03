@@ -253,7 +253,7 @@ fun ActiveCardRelayStatusSection(
         statusText = relayStatusWithRole,
         onClick = {
             if (relayUiState == RelayUiState.Stale) {
-                connectionViewModel.connectRelay()
+                connectionViewModel.reconnectIfStale()
                 Toast.makeText(
                     context,
                     reconnectingRelayToast,

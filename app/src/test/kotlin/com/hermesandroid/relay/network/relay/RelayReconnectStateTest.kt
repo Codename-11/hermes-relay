@@ -6,6 +6,40 @@ import org.junit.Test
 class RelayReconnectStateTest {
 
     @Test
+    fun scheduledReconnectPolicyOnlyOverridesOrdinaryWaitingBackoff() {
+        assertEquals(
+            true,
+            canOverrideScheduledRelayReconnect(
+                state = ConnectionState.Reconnecting,
+                backoffWaiting = true,
+                rateLimitBackoffActive = false,
+            ),
+        )
+        assertEquals(
+            false,
+            canOverrideScheduledRelayReconnect(
+                state = ConnectionState.Reconnecting,
+                backoffWaiting = false,
+                rateLimitBackoffActive = false,
+            ),
+        )
+        assertEquals(
+            false,
+            canOverrideScheduledRelayReconnect(
+                state = ConnectionState.Reconnecting,
+                backoffWaiting = true,
+                rateLimitBackoffActive = true,
+            ),
+        )
+    }
+
+    @Test
+    fun rateLimitBackoffRemainsActiveUntilItsDeadline() {
+        assertEquals(true, isRelayRateLimitBackoffActive(untilMs = 10_000, nowMs = 9_999))
+        assertEquals(false, isRelayRateLimitBackoffActive(untilMs = 10_000, nowMs = 10_000))
+    }
+
+    @Test
     fun consecutiveFailuresAreScopedToTheSocketRoute() {
         val state = RelayReconnectState()
 

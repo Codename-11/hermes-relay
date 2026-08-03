@@ -17,7 +17,8 @@ import com.hermesandroid.relay.ui.components.BadgeState
  * underlying moment.
  *
  * Grace-window behavior: when the session is paired but the WSS is
- * currently [com.hermesandroid.relay.network.relay.ConnectionState.Disconnected],
+ * currently [com.hermesandroid.relay.network.relay.ConnectionState.Disconnected]
+ * or waiting in scheduled [com.hermesandroid.relay.network.relay.ConnectionState.Reconnecting] backoff,
  * the VM emits [Connecting] for a short grace window (see
  * `RELAY_RECONNECT_GRACE_MS` in [ConnectionViewModel]) and only promotes
  * to [Stale] if the WSS doesn't come up in time. This avoids the "flash
@@ -45,9 +46,9 @@ sealed interface RelayUiState {
     data object Connected : RelayUiState
 
     /**
-     * Either an in-flight [Connecting]/[com.hermesandroid.relay.network.relay.ConnectionState.Reconnecting]
-     * WSS attempt OR the grace window right after a Paired-but-Disconnected
-     * transition. UI renders this in amber — "we're trying, hold on."
+     * An in-flight [Connecting] WSS attempt, or the grace window right after a
+     * paired socket enters Disconnected/scheduled-Reconnecting state. UI renders
+     * this in amber only while a prompt recovery can still reasonably settle.
      */
     data object Connecting : RelayUiState
 
