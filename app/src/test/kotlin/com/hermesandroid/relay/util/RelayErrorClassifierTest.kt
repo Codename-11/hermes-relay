@@ -53,6 +53,29 @@ class RelayErrorClassifierTest {
     }
 
     @Test
+    fun apiSessionLoadUnauthorizedPointsAtApiKeyInsteadOfRepairingRelay() {
+        val err = classifyError(
+            IOException("List sessions unauthorized - check your API key"),
+            context = "load_sessions",
+        )
+
+        assertEquals("API key rejected", err.title)
+        assertFalse(err.body.contains("re-pair", ignoreCase = true))
+    }
+
+    @Test
+    fun dashboardProfileSessionUnauthorizedDoesNotBlameRelayPairing() {
+        val err = classifyError(
+            IOException("Profile sessions unauthorized - HTTP 401"),
+            context = "load_profile_sessions",
+        )
+
+        assertEquals("Dashboard sign-in required", err.title)
+        assertFalse(err.body.contains("re-pair", ignoreCase = true))
+        assertEquals(null, err.action)
+    }
+
+    @Test
     fun relayUnauthorizedStillPointsAtPairing() {
         val err = classifyError(
             IOException("401 Unauthorized"),

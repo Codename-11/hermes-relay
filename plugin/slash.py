@@ -9,6 +9,7 @@ Subcommands (parsed out of ``raw_args`` by :func:`relay_slash_handler`):
 
     /relay status       Relay reachability + connected-phone summary
     /relay devices      Paired-device list (loopback ``GET /sessions``)
+    /relay revoke ID    Revoke a paired device by token prefix
     /relay pair         Mint a fresh 6-char pairing code on the running relay
     /relay help         This help text
 
@@ -25,6 +26,7 @@ import json
 import logging
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
@@ -142,6 +144,36 @@ def _cmd_devices() -> str:
     return "\n".join(lines)
 
 
+def _cmd_revoke(token_prefix: str) -> str:
+    """Revoke one paired device through the relay's loopback operator path."""
+    prefix = token_prefix.strip()
+    if len(prefix) < 4:
+        return "Usage: `/relay revoke <token-prefix>` (at least 4 characters)."
+
+    port = _relay_port()
+    encoded_prefix = urllib.parse.quote(prefix, safe="")
+    url = f"http://127.0.0.1:{port}/sessions/{encoded_prefix}"
+    req = urllib.request.Request(url, method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return f"No paired device matches `{prefix}`. Run `/relay devices` to refresh."
+        if exc.code == 409:
+            return f"More than one device matches `{prefix}`. Use a longer token prefix."
+        return f"Could not revoke `{prefix}` — relay returned HTTP {exc.code}."
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return (
+            f"Could not revoke `{prefix}` — relay unreachable on "
+            f"127.0.0.1:{port} ({exc})."
+        )
+
+    if isinstance(payload, dict) and payload.get("ok") is True:
+        return f"Revoked paired device `{prefix}`."
+    return f"Relay did not confirm revocation for `{prefix}`."
+
+
 def _seconds_since(epoch_ts: Any) -> Optional[float]:
     """Convert an absolute epoch ``last_seen`` to seconds-ago (best effort)."""
     if not isinstance(epoch_ts, (int, float)):
@@ -188,6 +220,7 @@ _HELP = (
     "/relay — Hermes-Relay control\n"
     "  status   Relay reachability + connected-phone summary\n"
     "  devices  List paired devices\n"
+    "  revoke   Revoke a device by token prefix\n"
     "  pair     Mint a fresh 6-char pairing code\n"
     "  help     Show this help"
 )
@@ -211,6 +244,8 @@ def relay_slash_handler(raw_args: str) -> str:
             return _cmd_status()
         if sub == "devices":
             return _cmd_devices()
+        if sub == "revoke":
+            return _cmd_revoke(argv[1] if len(argv) > 1 else "")
         if sub == "pair":
             return _cmd_pair()
         return f"Unknown subcommand '{sub}'.\n\n{_HELP}"

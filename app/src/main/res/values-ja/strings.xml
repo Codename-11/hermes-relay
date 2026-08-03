@@ -624,6 +624,11 @@
     <string name="settings_plugin_stale">プラグインが古い</string>
     <string name="settings_plugin_connecting">プラグイン接続中</string>
     <string name="settings_plugin_active">プラグインがアクティブです</string>
+    <string name="relay_state_optional">オプション</string>
+    <string name="relay_state_ready">準備完了</string>
+    <string name="relay_state_reconnecting">再接続中</string>
+    <string name="relay_state_unavailable">利用不可</string>
+    <string name="relay_state_needs_repair">再ペアリングが必要</string>
     <string name="settings_no_connection">接続がありません</string>
     <string name="settings_server_default">サーバーのデフォルト</string>
     <string name="settings_connections">接続</string>
@@ -1386,7 +1391,10 @@
     <string name="paired_devices_channel_revoked">%1$s アクセスが取り消されました</string>
     <string name="paired_devices_channel_revoke_failed">%1$s アクセスを取り消すことができませんでした</string>
     <string name="paired_devices_load_error">Relayセッションをロードできませんでした</string>
+    <string name="paired_devices_invalid_session_help">このスマートフォンの Relay セッションが無効になった場合は、Dashboard → Relay から古いデバイスを削除するか、Hermes ホストで /relay revoke &lt;token-prefix&gt; を実行してください。Relay 拡張機能を使用する場合のみ、再度ペアリングしてください。</string>
     <string name="paired_devices_try_again">もう一度やり直してください</string>
+    <string name="paired_devices_manage_sessions">Dashboard を開く</string>
+    <string name="paired_devices_repair_this_phone">このスマートフォンを再ペアリング</string>
     <string name="paired_devices_empty_title">Relayセッションは（まだ）ありません</string>
     <string name="paired_devices_empty_body">この電話をRelayとペアリングすると、ここで表示されます。</string>
     <string name="paired_devices_pair_now">今すぐペアリング</string>
@@ -2361,6 +2369,9 @@
     <string name="conn_info_server_default_model">サーバーのデフォルト: %1$s</string>
     <string name="conn_info_session_desc">Relay ペアリングの詳細とセキュリティ。</string>
     <string name="conn_info_session_title">セッション</string>
+    <string name="conn_info_session_details">セッションの詳細</string>
+    <string name="conn_info_stored_session_details">保存されたセッションの詳細</string>
+    <string name="conn_info_stored_session_details_desc">これらは最後に有効だった Relay セッションの情報で、現在の状態とは異なる場合があります。</string>
     <string name="conn_info_session_token_present">セッショントークン</string>
     <string name="conn_info_show_less">表示を少なくする</string>
     <string name="conn_info_skills_count">%1$d スキル</string>

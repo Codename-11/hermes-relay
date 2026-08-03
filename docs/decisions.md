@@ -134,6 +134,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 - Pairing codes are user-friendly and don't require pre-shared secrets.
 - Session tokens avoid re-pairing on every app restart.
 - Tokens stored in EncryptedSharedPreferences (Android Keystore-backed AES-256-GCM).
+- An explicit re-pair replaces older sessions and trusted credentials for the same non-empty device ID; it does not accumulate duplicate entries for one app installation. Other devices and legacy entries without an identity remain independent.
 
 #### 6a. QR Carries Both API and Relay Credentials (updated 2026-05-03)
 
