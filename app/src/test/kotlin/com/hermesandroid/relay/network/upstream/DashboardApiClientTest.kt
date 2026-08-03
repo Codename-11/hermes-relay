@@ -820,6 +820,8 @@ class DashboardApiClientTest {
         // carry profile=mizu (the desktop's `_open_session_db_for_profile` path).
         val url = request.requestUrl!!
         assertEquals("/api/sessions", url.encodedPath)
+        assertEquals("100", url.queryParameter("limit"))
+        assertEquals("0", url.queryParameter("offset"))
         assertEquals("mizu", url.queryParameter("profile"))
         assertEquals("1", url.queryParameter("min_messages"))
         assertEquals(2, sessions.size)
@@ -830,6 +832,39 @@ class DashboardApiClientTest {
         assertEquals(1250.5, sessions[0].lastActive!!, 0.001)
         assertEquals("Refactor the session API", sessions[0].preview)
         assertEquals("Review title fallbacks", sessions[1].preview)
+    }
+
+    @Test
+    fun listSessions_pagesAtUpstreamMaximumWhilePreservingTwoHundredRowWindow() = runTest {
+        val firstPage = (0 until 100).joinToString(",") { "{\"id\":\"sess-$it\"}" }
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"sessions\":[$firstPage],\"total\":102,\"limit\":100,\"offset\":0}"),
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"sessions":[{"id":"sess-100"},{"id":"sess-101"}],"total":102,"limit":100,"offset":100}""",
+                ),
+        )
+
+        val sessions = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listSessions(profile = "mizu")
+            .getOrThrow()
+
+        val firstRequest = server.takeRequest().requestUrl!!
+        val secondRequest = server.takeRequest().requestUrl!!
+        assertEquals("100", firstRequest.queryParameter("limit"))
+        assertEquals("0", firstRequest.queryParameter("offset"))
+        assertEquals("mizu", firstRequest.queryParameter("profile"))
+        assertEquals("100", secondRequest.queryParameter("limit"))
+        assertEquals("100", secondRequest.queryParameter("offset"))
+        assertEquals("mizu", secondRequest.queryParameter("profile"))
+        assertEquals(102, sessions.size)
+        assertEquals("sess-0", sessions.first().id)
+        assertEquals("sess-101", sessions.last().id)
     }
 
     @Test
