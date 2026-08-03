@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
-- **Android no longer mistakes optional-surface auth failures for expired Relay pairing.** Background session refreshes stay out of the global snackbar, Dashboard and API authorization errors name their owning credential, and Relay-only surfaces use consistent Optional, Ready, Reconnecting, Unavailable, and Needs re-pair states. Recovery prioritizes Dashboard or host session management, while retained credentials are labeled as stored details instead of active pairing.
+- **Android no longer mistakes optional-surface auth failures for expired Relay pairing.** Background session refreshes stay out of the global snackbar, Dashboard and API authorization errors name their owning credential, and Relay-only surfaces use consistent Optional, Ready, Reconnecting, Unavailable, and Needs re-pair states. Foreground recovery retries ordinary Relay backoff immediately while preserving server rate limits, and recovery prioritizes Dashboard or host session management while retained credentials are labeled as stored details instead of active pairing.
 - **Re-pairing repairs one device instead of accumulating duplicate sessions.** An explicit host-approved pair replaces older sessions and refresh credentials for the same device, while the Dashboard and `/relay revoke <token-prefix>` remain available for operator cleanup.
 
 ## [Android 1.6.0] - 2026-08-02

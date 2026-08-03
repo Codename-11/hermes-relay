@@ -2324,7 +2324,7 @@ fun RelayApp() {
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() },
                         onReconnect = {
-                            connectionViewModel.connectRelay()
+                            connectionViewModel.reconnectIfStale()
                             UiMessageBus.status(reconnectingRelayLabel)
                         },
                         onRename = { id, newLabel ->
