@@ -43,6 +43,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -552,14 +553,24 @@ fun MessageBubble(
                         }
                     }
                 }
-                // Conversation voice owns long-press with its action menu.
-                // Disable partial-text selection in that state so Android's
-                // floating selection toolbar does not stack over Copy/Quote/
-                // Speak response. Normal chat retains selectable message text.
+                // Compose's SelectionManager assumes that selectable IDs
+                // captured by a drag remain registered. Reset its owner when
+                // a live Text node becomes a Markdown tree, or settled
+                // Markdown content changes its node topology, so a handle
+                // cannot keep pointing at a removed selectable.
                 if (showSpeakAction) {
                     DisableSelection { messageTextContent() }
                 } else {
-                    SelectionContainer { messageTextContent() }
+                    key(
+                        messageSelectionTopologyKey(
+                            isPlainText = isUser || isSystem,
+                            isStreaming = message.isStreaming,
+                            retainStreamingLayout = retainStreamingLayout,
+                            markdownBody = markdownBody,
+                        ),
+                    ) {
+                        SelectionContainer { messageTextContent() }
+                    }
                 }
 
                 // Inline generated images (assistant only) — rendered OUTSIDE
@@ -789,6 +800,23 @@ fun MessageBubble(
     } // end content Column
     } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
+}
+
+internal data class MessageSelectionTopologyKey(
+    val renderer: String,
+    val markdownBody: String?,
+)
+
+internal fun messageSelectionTopologyKey(
+    isPlainText: Boolean,
+    isStreaming: Boolean,
+    retainStreamingLayout: Boolean,
+    markdownBody: String,
+): MessageSelectionTopologyKey = when {
+    isPlainText -> MessageSelectionTopologyKey(renderer = "plain", markdownBody = null)
+    isStreaming || retainStreamingLayout ->
+        MessageSelectionTopologyKey(renderer = "live", markdownBody = null)
+    else -> MessageSelectionTopologyKey(renderer = "markdown", markdownBody = markdownBody)
 }
 
 /**

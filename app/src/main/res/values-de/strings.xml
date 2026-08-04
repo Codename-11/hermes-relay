@@ -258,6 +258,8 @@
     <string name="error_classify_synthesize">Sprachwiedergabe fehlgeschlagen</string>
     <string name="error_classify_voice_config">Sprachkonfiguration nicht verfügbar</string>
     <string name="error_classify_record">Aufnahme nicht möglich</string>
+    <string name="error_classify_mic_unavailable">Mikrofon nicht verfügbar</string>
+    <string name="error_classify_mic_unavailable_body">Das Mikrofon ist belegt oder blockiert. Schließe andere Apps, die das Mikrofon verwenden, und überprüfe die Mikrofonberechtigung in den Einstellungen.</string>
     <string name="error_classify_pair">Kopplung fehlgeschlagen</string>
     <string name="error_classify_save_and_test">Relay-Prüfung fehlgeschlagen</string>
     <string name="error_classify_media_fetch">Anhang konnte nicht abgerufen werden</string>
