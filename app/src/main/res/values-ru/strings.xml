@@ -242,6 +242,8 @@
     <string name="error_classify_synthesize">Воспроизведение голоса не удалось</string>
     <string name="error_classify_voice_config">Конфигурация голоса недоступна</string>
     <string name="error_classify_record">Нельзя записать</string>
+    <string name="error_classify_mic_unavailable">Микрофон недоступен</string>
+    <string name="error_classify_mic_unavailable_body">Микрофон занят или заблокирован. Закройте другие приложения, использующие микрофон, и проверьте разрешение на доступ к микрофону в настройках.</string>
     <string name="error_classify_pair">Сопряжение не удалось</string>
     <string name="error_classify_save_and_test">Проверка Relay не удалась</string>
     <string name="error_classify_media_fetch">Не удалось получить вложение</string>
@@ -594,6 +596,11 @@
     <string name="settings_plugin_stale">Плагин устарел</string>
     <string name="settings_plugin_connecting">Подключение плагина</string>
     <string name="settings_plugin_active">Плагин активен</string>
+    <string name="relay_state_optional">Необязательно</string>
+    <string name="relay_state_ready">Готово</string>
+    <string name="relay_state_reconnecting">Переподключение</string>
+    <string name="relay_state_unavailable">Недоступно</string>
+    <string name="relay_state_needs_repair">Требуется повторное сопряжение</string>
     <string name="settings_no_connection">Нет соединения</string>
     <string name="settings_server_default">Сервер по умолчанию</string>
     <string name="settings_connections">Подключения</string>
@@ -1379,7 +1386,10 @@
     <string name="paired_devices_channel_revoked">Доступ %1$s отозван</string>
     <string name="paired_devices_channel_revoke_failed">Не удалось отозвать доступ %1$s</string>
     <string name="paired_devices_load_error">Не удалось загрузить сессии Relay</string>
+    <string name="paired_devices_invalid_session_help">Если сессия Relay этого телефона больше недействительна, удалите устаревшие устройства в Dashboard → Relay или выполните /relay revoke &lt;token-prefix&gt; на хосте Hermes. Выполняйте повторное сопряжение, только если используете расширения Relay.</string>
     <string name="paired_devices_try_again">Попробовать снова</string>
+    <string name="paired_devices_manage_sessions">Открыть Dashboard</string>
+    <string name="paired_devices_repair_this_phone">Повторно сопрячь этот телефон</string>
     <string name="paired_devices_empty_title">Нет сессий Relay (пока)</string>
     <string name="paired_devices_empty_body">Сопоставьте этот телефон с вашим Relay, чтобы увидеть его здесь.</string>
     <string name="paired_devices_pair_now">Сопоставить сейчас</string>
@@ -2339,6 +2349,9 @@
     <string name="conn_info_server_default_model">По умолчанию сервера: %1$s</string>
     <string name="conn_info_session_desc">Детали сопряжения Relay и безопасность.</string>
     <string name="conn_info_session_title">Сессия</string>
+    <string name="conn_info_session_details">Сведения о сеансе</string>
+    <string name="conn_info_stored_session_details">Сохранённые сведения о сеансе</string>
+    <string name="conn_info_stored_session_details_desc">Эти сведения сохранены из последнего действительного сеанса Relay и могут быть устаревшими.</string>
     <string name="conn_info_session_token_present">Токен сессии</string>
     <string name="conn_info_show_less">Показать меньше</string>
     <string name="conn_info_skills_count">%1$d навыков</string>

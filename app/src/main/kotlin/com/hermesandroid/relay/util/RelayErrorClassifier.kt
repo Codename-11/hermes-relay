@@ -105,10 +105,19 @@ private fun classifyIoMessage(msg: String, context: String?, ctx: Context?): Hum
             retryable = false,
             actionLabel = ctx?.getString(R.string.error_classify_voice_settings) ?: "Voice settings",
         )
+        context == "load_profile_sessions" &&
+            ("401" in msg || "403" in msg || "unauthorized" in msg || "forbidden" in msg) -> HumanError(
+            title = ctx?.getString(R.string.power_feature_dashboard_signin_label) ?: "Dashboard sign-in required",
+            body = ctx?.getString(R.string.power_feature_dashboard_signin_explain)
+                ?: "Sign in to the Hermes Dashboard to load profile sessions.",
+            retryable = false,
+        )
         (
             "api key" in msg ||
                 "sessions auth failed" in msg ||
                 "api auth" in msg ||
+                (context in setOf("load_sessions", "create_session") &&
+                    ("401" in msg || "403" in msg || "unauthorized" in msg || "forbidden" in msg)) ||
                 (context == "send_message" && ("401" in msg || "unauthorized" in msg))
             ) -> HumanError(
             title = ctx?.getString(R.string.error_classify_api_key) ?: "API key rejected",
@@ -232,6 +241,16 @@ private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?
     if (t == null) return nullFallback(context, ctx)
 
     val msg = t.message.orEmpty().lowercase()
+
+    if ("cannot create audiorecord" in msg || "audiorecord failed to initialize" in msg) {
+        return HumanError(
+            title = ctx?.getString(R.string.error_classify_mic_unavailable) ?: "Microphone unavailable",
+            body = ctx?.getString(R.string.error_classify_mic_unavailable_body)
+                ?: "The microphone is busy or blocked. Close other apps using the mic and check Microphone permission in Settings.",
+            retryable = true,
+            actionLabel = ctx?.getString(R.string.error_classify_retry) ?: "Retry",
+        )
+    }
 
     // Upstream rejects new API work with this stable code while an intentional
     // shutdown/external drain is in progress. Keep it distinct from provider

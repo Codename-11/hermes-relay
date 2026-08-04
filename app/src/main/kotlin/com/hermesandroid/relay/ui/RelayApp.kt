@@ -586,6 +586,7 @@ fun RelayApp() {
     }
 
     val coldStartAuthState by connectionViewModel.authState.collectAsState()
+    val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val effectiveSessionProfileName by connectionViewModel.effectiveSessionProfileName.collectAsState()
     val currentChatSessionId by chatViewModel.currentSessionId.collectAsState()
@@ -2228,10 +2229,18 @@ fun RelayApp() {
                 }
                 // === END PHASE3-safety-rails ===
                 composable(Screen.PairedDevices.route) {
-                    if (coldStartAuthState is AuthState.Paired) {
+                    if (
+                        coldStartAuthState is AuthState.Paired ||
+                        currentPairedSession != null
+                    ) {
                         PairedDevicesScreen(
                             connectionViewModel = connectionViewModel,
                             onBack = { navController.popBackStack() },
+                            onManageSessions = {
+                                navController.navigate(Screen.Manage.route) {
+                                    launchSingleTop = true
+                                }
+                            },
                             onRequestRepair = {
                                 navController.navigate(Screen.Pair.route())
                             }
@@ -2315,7 +2324,7 @@ fun RelayApp() {
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() },
                         onReconnect = {
-                            connectionViewModel.connectRelay()
+                            connectionViewModel.reconnectIfStale()
                             UiMessageBus.status(reconnectingRelayLabel)
                         },
                         onRename = { id, newLabel ->

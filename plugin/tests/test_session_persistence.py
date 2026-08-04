@@ -170,6 +170,52 @@ class SessionPersistenceRoundtripTests(unittest.TestCase):
         )
         self.assertIsNone(recovered)
 
+    def test_explicit_repair_replaces_same_device_session_and_refresh(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        original = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=0,
+            issue_refresh_token=True,
+        )
+        original_refresh = original.refresh_token
+        assert original_refresh is not None
+
+        replacement = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=0,
+            issue_refresh_token=True,
+        )
+
+        self.assertEqual(mgr.active_count(), 1)
+        self.assertIsNone(mgr.get_session(original.token))
+        self.assertIsNotNone(mgr.get_session(replacement.token))
+        self.assertIsNone(
+            mgr.refresh_session(
+                original_refresh,
+                device_name="Phone-A",
+                device_id="dev-a",
+            )
+        )
+
+    def test_explicit_pair_keeps_other_devices(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        phone_a = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            issue_refresh_token=True,
+        )
+        phone_b = mgr.create_session(
+            device_name="Phone-B",
+            device_id="dev-b",
+            issue_refresh_token=True,
+        )
+
+        self.assertEqual(mgr.active_count(), 2)
+        self.assertIsNotNone(mgr.get_session(phone_a.token))
+        self.assertIsNotNone(mgr.get_session(phone_b.token))
+
     def test_existing_session_can_be_upgraded_with_refresh_token(self) -> None:
         mgr = SessionManager(persistence_path=self.path)
         session = mgr.create_session(

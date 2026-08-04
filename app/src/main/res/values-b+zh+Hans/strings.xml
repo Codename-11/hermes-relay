@@ -258,6 +258,8 @@
     <string name="error_classify_synthesize">语音播放失败</string>
     <string name="error_classify_voice_config">语音配置不可用</string>
     <string name="error_classify_record">无法录音</string>
+    <string name="error_classify_mic_unavailable">麦克风不可用</string>
+    <string name="error_classify_mic_unavailable_body">麦克风正被占用或已被阻止。请关闭其他正在使用麦克风的应用，并在“设置”中检查麦克风权限。</string>
     <string name="error_classify_pair">配对失败</string>
     <string name="error_classify_save_and_test">Relay 检查失败</string>
     <string name="error_classify_media_fetch">无法获取附件</string>
@@ -624,6 +626,11 @@
     <string name="settings_plugin_stale">插件过期</string>
     <string name="settings_plugin_connecting">插件连接中</string>
     <string name="settings_plugin_active">插件已激活</string>
+    <string name="relay_state_optional">可选</string>
+    <string name="relay_state_ready">就绪</string>
+    <string name="relay_state_reconnecting">正在重新连接</string>
+    <string name="relay_state_unavailable">不可用</string>
+    <string name="relay_state_needs_repair">需要重新配对</string>
     <string name="settings_no_connection">无连接</string>
     <string name="settings_server_default">服务器默认</string>
     <string name="settings_connections">连接</string>
@@ -1370,7 +1377,10 @@
     <string name="paired_devices_channel_revoked">%1$s 访问权限已撤销</string>
     <string name="paired_devices_channel_revoke_failed">撤销 %1$s 访问权限失败</string>
     <string name="paired_devices_load_error">无法加载 Relay 会话</string>
+    <string name="paired_devices_invalid_session_help">如果此手机的 Relay 会话已失效，请在 Dashboard → Relay 中移除旧设备，或在 Hermes 主机上运行 /relay revoke &lt;token-prefix&gt;。仅当你使用 Relay 扩展功能时才重新配对。</string>
     <string name="paired_devices_try_again">重试</string>
+    <string name="paired_devices_manage_sessions">打开 Dashboard</string>
+    <string name="paired_devices_repair_this_phone">重新配对此手机</string>
     <string name="paired_devices_empty_title">（暂无 Relay 会话）</string>
     <string name="paired_devices_empty_body">将此手机与您的 Relay 配对即可在此处查看。</string>
     <string name="paired_devices_pair_now">立即配对</string>
@@ -2345,6 +2355,9 @@
     <string name="conn_info_server_default_model">服务器默认：%1$s</string>
     <string name="conn_info_session_desc">Relay 配对详情和安全信息。</string>
     <string name="conn_info_session_title">会话</string>
+    <string name="conn_info_session_details">会话详情</string>
+    <string name="conn_info_stored_session_details">已存储的会话详情</string>
+    <string name="conn_info_stored_session_details_desc">这些信息保留自上次有效的 Relay 会话，可能已不是最新状态。</string>
     <string name="conn_info_session_token_present">会话令牌</string>
     <string name="conn_info_show_less">收起</string>
     <string name="conn_info_skills_count">%1$d 项技能</string>

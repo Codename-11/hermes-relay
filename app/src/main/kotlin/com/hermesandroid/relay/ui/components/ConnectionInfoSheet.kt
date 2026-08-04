@@ -212,7 +212,7 @@ private fun connectionChip(state: ConnectionState) {
 private fun authStateChip(state: AuthState) {
     val (label, bg, fg) = when (state) {
         is AuthState.Unpaired -> Triple(
-            stringResource(R.string.conn_info_unpaired),
+            stringResource(R.string.relay_state_optional),
             MaterialTheme.colorScheme.surfaceVariant,
             MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -222,12 +222,12 @@ private fun authStateChip(state: AuthState) {
             MaterialTheme.colorScheme.onTertiaryContainer
         )
         is AuthState.Paired -> Triple(
-            stringResource(R.string.conn_info_paired),
+            stringResource(R.string.relay_state_ready),
             MaterialTheme.colorScheme.primaryContainer,
             MaterialTheme.colorScheme.onPrimaryContainer
         )
         is AuthState.Failed -> Triple(
-            stringResource(R.string.conn_info_failed_reason, state.reason),
+            stringResource(R.string.relay_state_needs_repair),
             MaterialTheme.colorScheme.errorContainer,
             MaterialTheme.colorScheme.onErrorContainer
         )
@@ -358,6 +358,21 @@ fun SessionInfoSheet(
             // Security overhaul (2026-04-11) — show expiry + grants + storage.
             pairedSession?.let { paired ->
                 HorizontalDivider()
+                Text(
+                    text = if (authState is AuthState.Paired) {
+                        stringResource(R.string.conn_info_session_details)
+                    } else {
+                        stringResource(R.string.conn_info_stored_session_details)
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                if (authState !is AuthState.Paired) {
+                    Text(
+                        text = stringResource(R.string.conn_info_stored_session_details_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 val expiryLabel = when {
                     paired.expiresAt == null -> stringResource(R.string.conn_info_never)
                     else -> java.text.DateFormat

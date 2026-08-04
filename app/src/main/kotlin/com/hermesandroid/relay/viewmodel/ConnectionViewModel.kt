@@ -136,12 +136,27 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.put
 
-private data class RelayUiInputs(
+internal data class RelayUiInputs(
     val auth: AuthState,
     val conn: ConnectionState,
     val url: String,
     val configured: Boolean,
 )
+
+internal fun RelayUiInputs.requiresReconnectGrace(): Boolean =
+    configured &&
+        url.isNotBlank() &&
+        auth is AuthState.Paired &&
+        (conn == ConnectionState.Disconnected || conn == ConnectionState.Reconnecting)
+
+internal fun RelayUiInputs.resolveRelayUiState(graceElapsed: Boolean = false): RelayUiState = when {
+    !configured || url.isBlank() -> RelayUiState.NotConfigured
+    auth is AuthState.Failed -> RelayUiState.Expired
+    auth is AuthState.Paired && conn == ConnectionState.Connected -> RelayUiState.Connected
+    conn == ConnectionState.Connecting || auth is AuthState.Pairing -> RelayUiState.Connecting
+    requiresReconnectGrace() -> if (graceElapsed) RelayUiState.Stale else RelayUiState.Connecting
+    else -> RelayUiState.Disconnected
+}
 
 private data class ConnectionHealthInputs(
     val connection: Connection?,
@@ -3429,14 +3444,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 .collect { inputs ->
                     pendingStaleJob?.cancel()
                     pendingStaleJob = null
-                    _relayUiState.value = when {
-                        !inputs.configured || inputs.url.isBlank() -> RelayUiState.NotConfigured
-                        inputs.conn == ConnectionState.Connected -> RelayUiState.Connected
-                        inputs.conn == ConnectionState.Connecting ||
-                            inputs.conn == ConnectionState.Reconnecting ->
-                            RelayUiState.Connecting
-                        inputs.auth is AuthState.Paired &&
-                            inputs.conn == ConnectionState.Disconnected -> {
+                    _relayUiState.value = if (inputs.requiresReconnectGrace()) {
                             // Start the grace-window timer. If the WSS
                             // doesn't come up within RELAY_RECONNECT_GRACE_MS,
                             // we promote to Stale so the UI stops lying
@@ -3444,7 +3452,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             // tap-to-retry affordance.
                             pendingStaleJob = launch {
                                 delay(RELAY_RECONNECT_GRACE_MS)
-                                _relayUiState.value = RelayUiState.Stale
+                                _relayUiState.value = inputs.resolveRelayUiState(graceElapsed = true)
                                 DiagnosticsLog.record(
                                     category = DiagnosticCategory.Relay,
                                     severity = DiagnosticSeverity.Warning,
@@ -3454,14 +3462,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                                 )
                             }
                             RelayUiState.Connecting
+                        } else {
+                            inputs.resolveRelayUiState()
                         }
-                        // The relay rejected our token (revoked, or wiped by a
-                        // relay restart). Reconnecting won't help — surface a
-                        // distinct "pair again" state instead of a generic
-                        // Disconnected the user can't act on.
-                        inputs.auth is AuthState.Failed -> RelayUiState.Expired
-                        else -> RelayUiState.Disconnected
-                    }
                 }
         }
 
@@ -4273,6 +4276,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      *   that can't measure it (or want to force a probe) pass [Long.MAX_VALUE].
      */
     fun revalidateOnResume(awayMs: Long) {
+        // Relay recovery is independent of standard API health. Even a brief
+        // resume should replace ordinary WSS backoff with an immediate attempt.
+        reconnectIfStale()
         val healthy = _apiServerHealth.value == HealthStatus.Reachable
         if (awayMs in 0 until BRIEF_RESUME_REVALIDATE_MS && healthy) {
             return
@@ -6177,17 +6183,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * and from the "Reconnect" button / tap-to-reconnect action on the
      * Relay status row.
      *
-     * No-op when not paired, already connected, connecting, or reconnecting —
-     * avoids duplicate connect calls that would interrupt an in-flight auth.
+     * No-op when not paired, already connected, or actively handshaking. A
+     * scheduled ordinary reconnect is replaced with an immediate attempt; the
+     * connection manager preserves server-issued rate-limit backoff.
      */
     fun reconnectIfStale() {
         if (isDemoMode.value) return // Demo mode is offline — never open a socket.
         val paired = authState.value is AuthState.Paired
-        val disconnected = relayConnectionState.value == ConnectionState.Disconnected
+        val retryableState = relayConnectionState.value == ConnectionState.Disconnected ||
+            relayConnectionState.value == ConnectionState.Reconnecting
         val relayUrl = effectiveRelayUrlSnapshot()
         val hasUrl = relayUrl.isNotBlank()
-        if (paired && disconnected && hasUrl) {
-            connectionManager.connect(relayUrl)
+        if (paired && retryableState && hasUrl) {
+            connectionManager.reconnectNowIfAllowed(relayUrl)
         }
     }
 

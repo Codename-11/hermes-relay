@@ -96,7 +96,6 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.asBadgeState
-import com.hermesandroid.relay.viewmodel.statusText
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -216,17 +215,45 @@ fun ActiveCardRelayStatusSection(
 
     // Pre-resolve strings for Toast (non-composable context)
     val reconnectingRelayToast = stringResource(R.string.active_section_reconnecting_relay)
-    val connectedLabel = stringResource(R.string.conn_info_connected)
+    val relayStatusText = when (relayRowState.phase) {
+        RelayUiState.NotConfigured -> stringResource(R.string.relay_state_optional)
+        RelayUiState.Connected -> stringResource(R.string.relay_state_ready)
+        RelayUiState.Connecting -> stringResource(R.string.relay_state_reconnecting)
+        RelayUiState.Stale,
+        RelayUiState.Disconnected -> stringResource(R.string.relay_state_unavailable)
+        RelayUiState.Expired -> stringResource(R.string.relay_state_needs_repair)
+    }
+    val relayRoleLabel = relayRowState.activeEndpointRole
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?.let { role ->
+            when (role.lowercase()) {
+                "lan" -> "LAN"
+                "tailscale" -> "Tailscale"
+                "public" -> "Public"
+                else -> role
+            }
+        }
+    val relayStatusWithRole = when (relayRowState.phase) {
+        RelayUiState.Connected,
+        RelayUiState.Connecting,
+        RelayUiState.Stale,
+        RelayUiState.Disconnected -> relayRoleLabel
+            ?.let { "$relayStatusText \u00B7 $it" }
+            ?: relayStatusText
+        RelayUiState.NotConfigured,
+        RelayUiState.Expired -> relayStatusText
+    }
 
-    // ADR 24: relayRowState carries both the phase and the active endpoint
-    // role. statusText appends " · <Role>" when the resolver has picked one.
+    // ADR 24: keep the selected route visible without changing the Relay
+    // phase vocabulary shared with the rest of Settings.
     ConnectionStatusRow(
         label = stringResource(R.string.active_section_relay),
         state = relayRowState.asBadgeState(),
-        statusText = relayRowState.statusText(connectedLabel = connectedLabel),
+        statusText = relayStatusWithRole,
         onClick = {
             if (relayUiState == RelayUiState.Stale) {
-                connectionViewModel.connectRelay()
+                connectionViewModel.reconnectIfStale()
                 Toast.makeText(
                     context,
                     reconnectingRelayToast,
@@ -240,20 +267,15 @@ fun ActiveCardRelayStatusSection(
     )
 
     // Pre-resolve strings for Session status
-    val pairedLabel = stringResource(R.string.conn_info_paired)
-    val pairingLabel = stringResource(R.string.conn_info_pairing)
-    val unpairedLabel = stringResource(R.string.conn_info_unpaired)
-    val failedReasonLabel = stringResource(R.string.active_section_failed_reason)
-
     ConnectionStatusRow(
         label = stringResource(R.string.active_section_session),
         isConnected = authState is AuthState.Paired,
         isConnecting = authState is AuthState.Pairing,
         statusText = when (authState) {
-            is AuthState.Paired -> pairedLabel
-            is AuthState.Pairing -> pairingLabel
-            is AuthState.Unpaired -> unpairedLabel
-            is AuthState.Failed -> failedReasonLabel.format((authState as AuthState.Failed).reason)
+            is AuthState.Paired -> stringResource(R.string.relay_state_ready)
+            is AuthState.Pairing -> stringResource(R.string.conn_info_pairing)
+            is AuthState.Unpaired -> stringResource(R.string.relay_state_optional)
+            is AuthState.Failed -> stringResource(R.string.relay_state_needs_repair)
         },
         onClick = onOpenSessionInfo,
         modifier = Modifier.fillMaxWidth(),
@@ -281,7 +303,6 @@ fun ActiveCardFeaturesSection(
         connectionViewModel.standardVoiceAvailability.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
     val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
-    val relayReady by connectionViewModel.relayReady.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
 
@@ -347,29 +368,27 @@ fun ActiveCardFeaturesSection(
         StandardVoiceAvailability.Unknown -> CapabilityTone.Neutral
     }
 
-    val relayValue = when {
-        !relayConfigured -> stringResource(R.string.active_section_optional)
-        relayReady -> stringResource(R.string.active_section_ready)
-        relayUiState == RelayUiState.Stale -> stringResource(R.string.active_section_reconnect)
-        else -> stringResource(R.string.active_section_configured)
+    val relayValue = when (relayUiState) {
+        RelayUiState.NotConfigured -> stringResource(R.string.relay_state_optional)
+        RelayUiState.Connected -> stringResource(R.string.relay_state_ready)
+        RelayUiState.Connecting -> stringResource(R.string.relay_state_reconnecting)
+        RelayUiState.Stale,
+        RelayUiState.Disconnected -> stringResource(R.string.relay_state_unavailable)
+        RelayUiState.Expired -> stringResource(R.string.relay_state_needs_repair)
     }
-    val relayTone = when {
-        !relayConfigured -> CapabilityTone.Neutral
-        relayReady -> CapabilityTone.Good
-        relayUiState == RelayUiState.Stale -> CapabilityTone.Warning
-        else -> CapabilityTone.Info
+    val relayTone = when (relayUiState) {
+        RelayUiState.NotConfigured -> CapabilityTone.Neutral
+        RelayUiState.Connected -> CapabilityTone.Good
+        RelayUiState.Connecting -> CapabilityTone.Info
+        RelayUiState.Stale,
+        RelayUiState.Disconnected,
+        RelayUiState.Expired -> CapabilityTone.Warning
     }
 
-    val terminalValue = when {
-        authState is AuthState.Paired -> stringResource(R.string.active_section_ready)
-        relayConfigured -> stringResource(R.string.active_section_pair_relay)
-        else -> stringResource(R.string.active_section_optional)
-    }
-    val terminalTone = when {
-        authState is AuthState.Paired -> CapabilityTone.Good
-        relayConfigured && authState !is AuthState.Paired -> CapabilityTone.Info
-        else -> CapabilityTone.Neutral
-    }
+    // Terminal rides the same Relay session, so it must never contradict the
+    // Relay tools row with a second, independently-derived directive.
+    val terminalValue = relayValue
+    val terminalTone = relayTone
 
     val proxyValue = if (secureProxyAdvertised) stringResource(R.string.active_section_available) else stringResource(R.string.active_section_not_advertised)
     val proxyTone = if (secureProxyAdvertised) CapabilityTone.Good else CapabilityTone.Neutral
@@ -1439,6 +1458,7 @@ fun ActiveCardSecurityPosture(
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
     val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
+    val authState by connectionViewModel.authState.collectAsState()
     val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
     val pairedDevices by connectionViewModel.pairedDevices.collectAsState()
     var showSecurityDetails by remember { mutableStateOf(false) }
@@ -1450,11 +1470,13 @@ fun ActiveCardSecurityPosture(
         dashboardUrl.startsWith("http://", ignoreCase = true) -> "HTTP"
         else -> stringResource(R.string.active_section_not_configured)
     }
-    val pairedLabel = if (currentPairedSession != null) {
-        stringResource(R.string.active_section_paired)
-    } else {
-        stringResource(R.string.active_section_not_paired)
+    val pairedLabel = when (authState) {
+        is AuthState.Paired -> stringResource(R.string.relay_state_ready)
+        AuthState.Pairing -> stringResource(R.string.relay_state_reconnecting)
+        is AuthState.Failed -> stringResource(R.string.relay_state_needs_repair)
+        AuthState.Unpaired -> stringResource(R.string.relay_state_optional)
     }
+    val relaySessionUsable = authState is AuthState.Paired
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Surface(
@@ -1540,7 +1562,7 @@ fun ActiveCardSecurityPosture(
                     icon = Icons.Filled.Link,
                     label = stringResource(R.string.active_section_relay_session),
                     value = pairedLabel,
-                    positive = currentPairedSession != null,
+                    positive = relaySessionUsable,
                 )
             }
         }
@@ -1555,14 +1577,22 @@ fun ActiveCardSecurityPosture(
                 SecurityAccessRow(
                     icon = Icons.Filled.Devices,
                     label = stringResource(R.string.active_section_paired_devices),
-                    value = stringResource(R.string.active_section_device_count, pairedDevices.size),
+                    value = if (relaySessionUsable) {
+                        stringResource(R.string.active_section_device_count, pairedDevices.size)
+                    } else {
+                        pairedLabel
+                    },
                     onClick = onNavigateToPairedDevices,
                 )
                 HorizontalDivider()
                 SecurityAccessRow(
                     icon = Icons.Filled.Schedule,
                     label = stringResource(R.string.active_section_session_activity),
-                    value = stringResource(R.string.active_section_last_checked_just_now),
+                    value = if (relaySessionUsable) {
+                        stringResource(R.string.active_section_last_checked_just_now)
+                    } else {
+                        pairedLabel
+                    },
                     onClick = onNavigateToPairedDevices,
                 )
             }
@@ -1579,7 +1609,7 @@ fun ActiveCardSecurityPosture(
         }
         OutlinedButton(
             onClick = onRevokeRelay,
-            enabled = currentPairedSession != null,
+            enabled = relaySessionUsable && currentPairedSession != null,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Icon(Icons.Filled.LinkOff, contentDescription = null)

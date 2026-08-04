@@ -1,17 +1,17 @@
 # Hermes-Relay-Server v__VERSION__
 
-**Release Date:** August 2, 2026
+**Release Date:** August 3, 2026
 
-This release adds Realtime Agent final-answer-only speech and Relay-hosted declarative plugin pages for Android.
+This patch makes intentional re-pairing repair the existing device record instead of accumulating duplicate Relay sessions.
 
-Android clients can keep voice progress visual until the settled answer and review agent-created native plugin pages before keeping them. Standard chat and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
+Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
 ## What's changed
 
-### Added
+### Fixed
 
-- **Realtime Agent final-answer-only speech.** Session creation accepts an optional `final_answer_only` flag. When enabled, the provider skips routine acknowledgements, spoken progress, service updates, and intermediate commentary, then speaks the settled Hermes answer. Approval and confirmation prompts, along with blocking failures, remain audible so required user action is not hidden.
-- **Agent-created declarative Android plugin pages.** New Relay tools create bounded JSON-only drafts and expose them through authenticated plugin routes. Android owns enablement, write grants, exact-revision approval, publication, and persistent removal. Generated pages reject executable code, arbitrary network requests, Android intents, traversal, symlink entries, oversized documents, and backend action requests.
+- **Re-pairing replaces stale credentials for the same device.** After the host approves a new pair, Relay revokes older sessions and refresh credentials that belong to that device before issuing the replacement.
+- **Existing and unrelated sessions remain operator-controlled.** The Dashboard and `/relay revoke <token-prefix>` continue to provide explicit cleanup without treating optional Relay pairing as a requirement.
 
 ## Install / update
 

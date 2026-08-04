@@ -152,6 +152,14 @@ internal fun shouldReloadHistoryAfterSuccessfulTurn(
     actualTransport == "sessions" ||
         (actualTransport == "gateway" && gatewayReconcileRequired)
 
+internal fun shouldSuppressPassiveSessionError(context: String?, error: Throwable?): Boolean {
+    if (context != "load_sessions" && context != "load_profile_sessions") return false
+    if (isConnectivityError(error)) return true
+    val message = error?.message?.lowercase().orEmpty()
+    return "401" in message || "403" in message ||
+        "unauthorized" in message || "forbidden" in message
+}
+
 class ChatViewModel : ViewModel() {
 
     private var apiClient: HermesApiClient? = null
@@ -415,12 +423,12 @@ class ChatViewModel : ViewModel() {
         // the server" failure there is non-actionable noise — the themed
         // connection banner + startup sphere already surface the unreachable
         // state. Keep the diagnostics record (classifyError above) but suppress
-        // the redundant, scary "server isn't accepting connections" snackbar
-        // that used to flash from the bottom on first load. Actionable failures
-        // (auth rejected, server error) and all interactive contexts
-        // (send_message, …) still surface normally.
-        if ((context == "load_sessions" || context == "create_session") &&
-            isConnectivityError(t)
+        // the redundant, scary "server isn't accepting connections" snackbar.
+        // Passive session-list auth belongs to Dashboard/API setup and must not
+        // become a global Relay re-pair nag. Interactive create/send/media
+        // failures still surface normally.
+        if (shouldSuppressPassiveSessionError(context, t) ||
+            (context == "create_session" && isConnectivityError(t))
         ) {
             return
         }

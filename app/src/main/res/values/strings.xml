@@ -260,6 +260,8 @@
     <string name="error_classify_synthesize">Voice playback failed</string>
     <string name="error_classify_voice_config">Voice config unavailable</string>
     <string name="error_classify_record">Can\'t record</string>
+    <string name="error_classify_mic_unavailable">Microphone unavailable</string>
+    <string name="error_classify_mic_unavailable_body">The microphone is busy or blocked. Close other apps using the mic and check Microphone permission in Settings.</string>
     <string name="error_classify_pair">Pairing failed</string>
     <string name="error_classify_save_and_test">Relay check failed</string>
     <string name="error_classify_media_fetch">Couldn\'t fetch attachment</string>
@@ -643,6 +645,11 @@
     <string name="settings_plugin_stale">Plugin stale</string>
     <string name="settings_plugin_connecting">Plugin connecting</string>
     <string name="settings_plugin_active">Plugin active</string>
+    <string name="relay_state_optional">Optional</string>
+    <string name="relay_state_ready">Ready</string>
+    <string name="relay_state_reconnecting">Reconnecting</string>
+    <string name="relay_state_unavailable">Unavailable</string>
+    <string name="relay_state_needs_repair">Needs re-pair</string>
     <string name="settings_no_connection">No connection</string>
     <string name="settings_server_default">Server default</string>
     <string name="settings_connections">Connections</string>
@@ -1478,7 +1485,10 @@
     <string name="paired_devices_channel_revoked">%1$s access revoked</string>
     <string name="paired_devices_channel_revoke_failed">Failed to revoke %1$s access</string>
     <string name="paired_devices_load_error">Couldn\'t load relay sessions</string>
+    <string name="paired_devices_invalid_session_help">If this phone\'s Relay session is no longer valid, remove stale devices from Dashboard → Relay or run /relay revoke &lt;token-prefix&gt; on the Hermes host. Pair again only if you use Relay extensions.</string>
     <string name="paired_devices_try_again">Try again</string>
+    <string name="paired_devices_manage_sessions">Open Dashboard</string>
+    <string name="paired_devices_repair_this_phone">Re-pair this phone</string>
     <string name="paired_devices_empty_title">No relay sessions (yet)</string>
     <string name="paired_devices_empty_body">Pair this phone with your relay to see it here.</string>
     <string name="paired_devices_pair_now">Pair now</string>
@@ -2470,6 +2480,9 @@
     <string name="conn_info_server_default_model">Server default: %1$s</string>
     <string name="conn_info_session_desc">Relay pairing details and security.</string>
     <string name="conn_info_session_title">Session</string>
+    <string name="conn_info_session_details">Session details</string>
+    <string name="conn_info_stored_session_details">Stored session details</string>
+    <string name="conn_info_stored_session_details_desc">These details are retained from the last valid Relay session and may no longer be current.</string>
     <string name="conn_info_session_token_present">Session token</string>
     <string name="conn_info_show_less">Show less</string>
     <string name="conn_info_skills_count">%1$d skills</string>

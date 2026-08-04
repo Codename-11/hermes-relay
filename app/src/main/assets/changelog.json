@@ -1,6 +1,34 @@
 {
  "versions": [
   {
+   "version": "1.6.1",
+   "title": "Clearer recovery, steadier chat",
+   "date": "2026-08-03",
+   "sections": [
+    {
+     "header": "Relay stays optional",
+     "bullets": [
+      "Relay-only surfaces now use consistent Optional, Ready, Reconnecting, Unavailable, and Needs re-pair states without nagging from background session refreshes.",
+      "Foreground recovery retries ordinary reconnect backoff immediately and explains whether Relay credentials are merely stored or actually need re-pairing."
+     ]
+    },
+    {
+     "header": "Sessions and chat stay stable",
+     "bullets": [
+      "The session drawer restores its 200-row window through upstream-compatible 100-row pages.",
+      "Selecting streamed text stays stable when a completed response changes to rendered Markdown."
+     ]
+    },
+    {
+     "header": "Voice controls stay reachable",
+     "bullets": [
+      "Manual recording waits for the previous microphone owner to release it and gives a useful recovery message if capture cannot start.",
+      "New-chat coaching yields while Voice owns the composer so it cannot cover the expanding Voice drawer."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.6.0",
    "title": "Pets, plugins, and voice",
    "date": "2026-08-02",

@@ -91,6 +91,7 @@ import java.util.Date
 fun PairedDevicesScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    onManageSessions: () -> Unit,
     onRequestRepair: () -> Unit,
 ) {
     val devices by connectionViewModel.pairedDevices.collectAsState()
@@ -157,7 +158,9 @@ fun PairedDevicesScreen(
                 loading && devices.isEmpty() -> LoadingState()
                 loadError != null && devices.isEmpty() -> ErrorState(
                     message = loadError!!,
-                    onRetry = { connectionViewModel.loadPairedDevices() }
+                    onRetry = { connectionViewModel.loadPairedDevices() },
+                    onManageSessions = onManageSessions,
+                    onRequestRepair = onRequestRepair,
                 )
                 devices.isEmpty() -> EmptyState(onRequestRepair = onRequestRepair)
                 else -> DeviceList(
@@ -376,7 +379,12 @@ private fun LoadingState() {
 }
 
 @Composable
-private fun ErrorState(message: String, onRetry: () -> Unit) {
+private fun ErrorState(
+    message: String,
+    onRetry: () -> Unit,
+    onManageSessions: () -> Unit,
+    onRequestRepair: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -402,8 +410,22 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.paired_devices_invalid_session_help),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(16.dp))
-        OutlinedButton(onClick = onRetry) {
+        Button(onClick = onManageSessions) {
+            Text(stringResource(R.string.paired_devices_manage_sessions))
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onRequestRepair) {
+            Text(stringResource(R.string.paired_devices_repair_this_phone))
+        }
+        Spacer(Modifier.height(4.dp))
+        TextButton(onClick = onRetry) {
             Text(stringResource(R.string.paired_devices_try_again))
         }
     }

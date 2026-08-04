@@ -258,6 +258,8 @@
     <string name="error_classify_synthesize">Sprachwiedergabe fehlgeschlagen</string>
     <string name="error_classify_voice_config">Sprachkonfiguration nicht verfügbar</string>
     <string name="error_classify_record">Aufnahme nicht möglich</string>
+    <string name="error_classify_mic_unavailable">Mikrofon nicht verfügbar</string>
+    <string name="error_classify_mic_unavailable_body">Das Mikrofon ist belegt oder blockiert. Schließe andere Apps, die das Mikrofon verwenden, und überprüfe die Mikrofonberechtigung in den Einstellungen.</string>
     <string name="error_classify_pair">Kopplung fehlgeschlagen</string>
     <string name="error_classify_save_and_test">Relay-Prüfung fehlgeschlagen</string>
     <string name="error_classify_media_fetch">Anhang konnte nicht abgerufen werden</string>
@@ -624,6 +626,11 @@
     <string name="settings_plugin_stale">Plugin veraltet</string>
     <string name="settings_plugin_connecting">Plugin verbindet sich</string>
     <string name="settings_plugin_active">Plugin aktiv</string>
+    <string name="relay_state_optional">Optional</string>
+    <string name="relay_state_ready">Bereit</string>
+    <string name="relay_state_reconnecting">Verbindung wird wiederhergestellt</string>
+    <string name="relay_state_unavailable">Nicht verfügbar</string>
+    <string name="relay_state_needs_repair">Erneut koppeln</string>
     <string name="settings_no_connection">Keine Verbindung</string>
     <string name="settings_server_default">Serverstandard</string>
     <string name="settings_connections">Verbindungen</string>
@@ -1373,7 +1380,10 @@
     <string name="paired_devices_channel_revoked">%1$s-Zugriff widerrufen</string>
     <string name="paired_devices_channel_revoke_failed">%1$s-Zugriff konnte nicht widerrufen werden</string>
     <string name="paired_devices_load_error">Relay-Sitzungen konnten nicht geladen werden</string>
+    <string name="paired_devices_invalid_session_help">Wenn die Relay-Sitzung dieses Telefons nicht mehr gültig ist, entferne veraltete Geräte unter Dashboard → Relay oder führe /relay revoke &lt;token-prefix&gt; auf dem Hermes-Host aus. Kopple nur erneut, wenn du Relay-Erweiterungen verwendest.</string>
     <string name="paired_devices_try_again">Erneut versuchen</string>
+    <string name="paired_devices_manage_sessions">Dashboard öffnen</string>
+    <string name="paired_devices_repair_this_phone">Dieses Telefon erneut koppeln</string>
     <string name="paired_devices_empty_title">Noch keine Relay-Sitzungen</string>
     <string name="paired_devices_empty_body">Kopple dieses Smartphone mit deinem Relay, damit es hier erscheint.</string>
     <string name="paired_devices_pair_now">Jetzt koppeln</string>
@@ -2350,6 +2360,9 @@
     <string name="conn_info_server_default_model">Serverstandard: %1$s</string>
     <string name="conn_info_session_desc">Relay-Kopplungsdetails und Sicherheit.</string>
     <string name="conn_info_session_title">Sitzung</string>
+    <string name="conn_info_session_details">Sitzungsdetails</string>
+    <string name="conn_info_stored_session_details">Gespeicherte Sitzungsdetails</string>
+    <string name="conn_info_stored_session_details_desc">Diese Angaben stammen aus der letzten gültigen Relay-Sitzung und sind möglicherweise nicht mehr aktuell.</string>
     <string name="conn_info_session_token_present">Sitzungstoken</string>
     <string name="conn_info_show_less">Weniger anzeigen</string>
     <string name="conn_info_skills_count">%1$d Skills</string>
