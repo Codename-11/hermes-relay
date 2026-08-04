@@ -3472,9 +3472,13 @@ fun ChatScreen(
 
         // Clean-mode discoverability hint — a quiet, persistent pill teaching
         // the long-press entry. Shown ONLY on the empty / new-chat view; it
-        // disappears the moment a conversation exists or clean mode is entered.
+        // yields the bottom area whenever clean or voice mode owns it.
         AnimatedVisibility(
-            visible = messages.isEmpty() && !ambientMode,
+            visible = shouldShowCleanViewHint(
+                hasMessages = messages.isNotEmpty(),
+                ambientMode = ambientMode,
+                voiceMode = voiceUiState.voiceMode,
+            ),
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
@@ -4176,6 +4180,12 @@ private fun createCameraCaptureUri(context: android.content.Context): Uri {
 }
 
 private val CHAT_INPUT_REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")
+
+internal fun shouldShowCleanViewHint(
+    hasMessages: Boolean,
+    ambientMode: Boolean,
+    voiceMode: Boolean,
+): Boolean = !hasMessages && !ambientMode && !voiceMode
 
 private fun compactModelChipLabel(model: String?, defaultLabel: String): String {
     val raw = model?.trim().orEmpty()
