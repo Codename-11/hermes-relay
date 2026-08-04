@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android no longer mistakes optional-surface auth failures for expired Relay pairing.** Background session refreshes stay out of the global snackbar, Dashboard and API authorization errors name their owning credential, and Relay-only surfaces use consistent Optional, Ready, Reconnecting, Unavailable, and Needs re-pair states. Foreground recovery retries ordinary Relay backoff immediately while preserving server rate limits, and recovery prioritizes Dashboard or host session management while retained credentials are labeled as stored details instead of active pairing.
 - **Voice controls no longer collide with new-chat coaching.** The clean-view hint yields while Voice owns the composer so it cannot cover the expanding Voice drawer.
 
-## [Server 1.5.1] - 2026-08-03
+## [1.5.1] - 2026-08-03
 
 ### Fixed
 
