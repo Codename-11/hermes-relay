@@ -89,12 +89,12 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.6.0 - Pets, plugins, and voice
+v1.6.1 - Clearer recovery, steadier chat
 
-* Floating Petdex companions that can roam across the UI.
-* Safe native pages from installed Hermes plugins.
-* Optional Android Digital Assistant with local "Hey Hermes."
-* Russian plus voice, route, chat, and pet stability improvements.
+* Clear optional Relay status and recovery guidance.
+* Full session history through compatible paging.
+* Stable streamed text selection and Voice microphone handoff.
+* New-chat coaching stays clear of Voice controls.
 ```
 
 ## Category
