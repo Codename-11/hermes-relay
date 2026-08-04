@@ -93,7 +93,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
@@ -209,14 +208,12 @@ fun SettingsScreen(
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
-    val authState by connectionViewModel.authState.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
     val apiServerReachable by connectionViewModel.apiServerReachable.collectAsState()
     val apiServerHealth by connectionViewModel.apiServerHealth.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
-    val relayPaired = authState is AuthState.Paired
     val chatRuntimeStatus = resolveChatRuntimeStatus(
         gateway = when (gatewayAvailability) {
             GatewayAvailability.Ready -> ChatTransportReadiness.Ready
@@ -276,17 +273,28 @@ fun SettingsScreen(
     // The Power tools below all ride the relay plugin. Rather than stamp an
     // identical badge on every card (noise, not signal), the dependency is
     // surfaced ONCE on the section header as a single plugin-state badge.
-    val pluginBadge = when {
-        !relayPaired ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_required), tone = SettingsStatusTone.Info)
-        relayUiState == RelayUiState.Disconnected ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_offline), tone = SettingsStatusTone.Warning)
-        relayUiState == RelayUiState.Stale ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_stale), tone = SettingsStatusTone.Warning)
-        relayUiState == RelayUiState.Connecting ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_connecting), tone = SettingsStatusTone.Info)
-        else ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_active), tone = SettingsStatusTone.Good)
+    val pluginBadge = when (relayUiState) {
+        RelayUiState.NotConfigured -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_optional),
+            tone = SettingsStatusTone.Info,
+        )
+        RelayUiState.Connected -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_ready),
+            tone = SettingsStatusTone.Good,
+        )
+        RelayUiState.Connecting -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_reconnecting),
+            tone = SettingsStatusTone.Info,
+        )
+        RelayUiState.Stale,
+        RelayUiState.Disconnected -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_unavailable),
+            tone = SettingsStatusTone.Warning,
+        )
+        RelayUiState.Expired -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_needs_repair),
+            tone = SettingsStatusTone.Warning,
+        )
     }
 
     // Kick a WSS reconnect when Settings first composes so the Connections

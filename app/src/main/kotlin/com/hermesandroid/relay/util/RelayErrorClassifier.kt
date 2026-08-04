@@ -105,10 +105,19 @@ private fun classifyIoMessage(msg: String, context: String?, ctx: Context?): Hum
             retryable = false,
             actionLabel = ctx?.getString(R.string.error_classify_voice_settings) ?: "Voice settings",
         )
+        context == "load_profile_sessions" &&
+            ("401" in msg || "403" in msg || "unauthorized" in msg || "forbidden" in msg) -> HumanError(
+            title = ctx?.getString(R.string.power_feature_dashboard_signin_label) ?: "Dashboard sign-in required",
+            body = ctx?.getString(R.string.power_feature_dashboard_signin_explain)
+                ?: "Sign in to the Hermes Dashboard to load profile sessions.",
+            retryable = false,
+        )
         (
             "api key" in msg ||
                 "sessions auth failed" in msg ||
                 "api auth" in msg ||
+                (context in setOf("load_sessions", "create_session") &&
+                    ("401" in msg || "403" in msg || "unauthorized" in msg || "forbidden" in msg)) ||
                 (context == "send_message" && ("401" in msg || "unauthorized" in msg))
             ) -> HumanError(
             title = ctx?.getString(R.string.error_classify_api_key) ?: "API key rejected",

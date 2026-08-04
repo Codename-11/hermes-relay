@@ -45,7 +45,7 @@ enum class PowerFeatureGateStatus(
         explanationRes = R.string.power_feature_requires_pairing_explain,
     ),
     PairingExpired(
-        labelRes = R.string.power_feature_pairing_expired_label,
+        labelRes = R.string.relay_state_needs_repair,
         actionLabelRes = R.string.power_feature_pairing_expired_action,
         explanationRes = R.string.power_feature_pairing_expired_explain,
     ),

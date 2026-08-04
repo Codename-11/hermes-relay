@@ -585,6 +585,11 @@
     <string name="settings_plugin_stale">Plugin desatualizado</string>
     <string name="settings_plugin_connecting">Conectando o plugin</string>
     <string name="settings_plugin_active">Plugin ativo</string>
+    <string name="relay_state_optional">Opcional</string>
+    <string name="relay_state_ready">Pronto</string>
+    <string name="relay_state_reconnecting">Reconectando</string>
+    <string name="relay_state_unavailable">Indisponível</string>
+    <string name="relay_state_needs_repair">Precisa parear novamente</string>
     <string name="settings_no_connection">Sem conexão</string>
     <string name="settings_server_default">Padrão do servidor</string>
     <string name="settings_connections">Conexões</string>
@@ -1313,7 +1318,10 @@
     <string name="paired_devices_channel_revoked">Acesso a %1$s revogado</string>
     <string name="paired_devices_channel_revoke_failed">Falha ao revogar o acesso a %1$s</string>
     <string name="paired_devices_load_error">Não foi possível carregar as sessões do relay</string>
+    <string name="paired_devices_invalid_session_help">Se a sessão Relay deste telefone não for mais válida, remova os dispositivos antigos em Dashboard → Relay ou execute /relay revoke &lt;token-prefix&gt; no host Hermes. Faça o pareamento novamente somente se você usa extensões do Relay.</string>
     <string name="paired_devices_try_again">Tentar novamente</string>
+    <string name="paired_devices_manage_sessions">Abrir Dashboard</string>
+    <string name="paired_devices_repair_this_phone">Parear este telefone novamente</string>
     <string name="paired_devices_empty_title">Nenhuma sessão do relay (ainda)</string>
     <string name="paired_devices_empty_body">Pareie este celular com seu relay para vê-lo aqui.</string>
     <string name="paired_devices_pair_now">Parear agora</string>
@@ -2253,6 +2261,9 @@
     <string name="conn_info_server_default_model">Padrão do servidor: %1$s</string>
     <string name="conn_info_session_desc">Detalhes e segurança do pareamento com o Relay.</string>
     <string name="conn_info_session_title">Sessão</string>
+    <string name="conn_info_session_details">Detalhes da sessão</string>
+    <string name="conn_info_stored_session_details">Detalhes da sessão armazenada</string>
+    <string name="conn_info_stored_session_details_desc">Estes dados foram mantidos da última sessão Relay válida e podem não estar atualizados.</string>
     <string name="conn_info_session_token_present">Token de sessão</string>
     <string name="conn_info_show_less">Mostrar menos</string>
     <string name="conn_info_skills_count">%1$d habilidades</string>

@@ -406,8 +406,22 @@ class HermesApiClientTest {
     @Test
     fun urlConstruction_sessionsEndpoint() {
         val baseUrl = "http://localhost:8642"
-        val url = "$baseUrl/api/sessions?limit=200"
-        assertEquals("http://localhost:8642/api/sessions?limit=200", url)
+        val page = sessionListPages(200).first()
+        val url = "$baseUrl/api/sessions?limit=${page.limit}&offset=${page.offset}"
+        assertEquals("http://localhost:8642/api/sessions?limit=100&offset=0", url)
+    }
+
+    @Test
+    fun sessionListPages_preservesWindowWithoutExceedingUpstreamMaximum() {
+        assertEquals(
+            listOf(SessionListPage(limit = 100, offset = 0), SessionListPage(limit = 100, offset = 100)),
+            sessionListPages(200),
+        )
+        assertEquals(
+            listOf(SessionListPage(limit = 100, offset = 0), SessionListPage(limit = 100, offset = 100)),
+            sessionListPages(999),
+        )
+        assertEquals(listOf(SessionListPage(limit = 25, offset = 0)), sessionListPages(25))
     }
 
     @Test

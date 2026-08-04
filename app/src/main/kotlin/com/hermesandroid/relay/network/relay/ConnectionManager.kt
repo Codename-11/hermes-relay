@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.os.SystemClock
 import android.util.Log
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.CertPinStore
@@ -20,6 +21,7 @@ import com.hermesandroid.relay.network.shared.EndpointSurface
 import com.hermesandroid.relay.network.shutdownOffMainThread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,6 +45,20 @@ enum class ConnectionState {
     Connecting,
     Connected,
     Reconnecting
+}
+
+internal fun isRelayRateLimitBackoffActive(untilMs: Long, nowMs: Long): Boolean =
+    untilMs > nowMs
+
+internal fun canOverrideScheduledRelayReconnect(
+    state: ConnectionState,
+    backoffWaiting: Boolean,
+    rateLimitBackoffActive: Boolean,
+): Boolean = !rateLimitBackoffActive && when (state) {
+    ConnectionState.Disconnected -> true
+    ConnectionState.Reconnecting -> backoffWaiting
+    ConnectionState.Connecting,
+    ConnectionState.Connected -> false
 }
 
 /**
@@ -163,6 +179,10 @@ class ConnectionManager(
     @Volatile
     private var serverUrl: String? = null
     private val reconnectState = RelayReconnectState()
+    @Volatile
+    private var reconnectJob: Job? = null
+    @Volatile
+    private var reconnectBackoffWaiting = false
     private var shouldReconnect = true
     // Last HTTP status seen during WSS upgrade, captured in onFailure.
     // Used by scheduleReconnect() to pick an appropriate backoff — notably
@@ -170,6 +190,8 @@ class ConnectionManager(
     // we don't re-fill the ban bucket and brick our own auth window.
     @Volatile
     private var lastUpgradeResponseCode: Int? = null
+    @Volatile
+    private var rateLimitBackoffUntilMs: Long = 0L
 
     // The relay requires the FIRST frame on a socket to be `system/auth` and
     // rejects the whole connection otherwise ("expected system/auth, got
@@ -365,6 +387,41 @@ class ConnectionManager(
     }
 
     /**
+     * Replace an ordinary scheduled reconnect with an immediate attempt.
+     *
+     * Foregrounding the app or opening Relay status is an explicit signal that
+     * the route may be usable again, so exponential/slow-poll backoff should not
+     * make the user wait. A server-issued 429 is different: retrying early would
+     * extend the server block, so that protected backoff is never overridden.
+     */
+    fun reconnectNowIfAllowed(url: String): Boolean {
+        val rateLimitActive = isRelayRateLimitBackoffActive(
+            rateLimitBackoffUntilMs,
+            SystemClock.elapsedRealtime(),
+        )
+        if (!canOverrideScheduledRelayReconnect(
+                state = _connectionState.value,
+                backoffWaiting = reconnectBackoffWaiting,
+                rateLimitBackoffActive = rateLimitActive,
+            )
+        ) {
+            if (rateLimitActive) {
+                Log.i(TAG, "reconnectNowIfAllowed: preserving rate-limit backoff")
+            }
+            return false
+        }
+        reconnectJob?.cancel()
+        reconnectJob = null
+        reconnectBackoffWaiting = false
+        // connectToUrlOnMainPath suppresses duplicate opens while the manager is
+        // Reconnecting. Move to the honest idle state before starting the fresh
+        // resolver/open path; the ViewModel's grace window prevents UI flicker.
+        _connectionState.value = ConnectionState.Disconnected
+        connect(url)
+        return true
+    }
+
+    /**
      * Same as [connect] but bypasses the resolver — used by the network-
      * change callback when we've already picked a winner and just want to
      * reopen the socket against that URL. Keeping this separate prevents
@@ -405,6 +462,14 @@ class ConnectionManager(
         // hits the HTTP root and comes back as 404 Not Found during the
         // upgrade handshake. We still accept an explicit path if present.
         val normalized = normalizeRelayUrl(url)
+        if (isRelayRateLimitBackoffActive(
+                rateLimitBackoffUntilMs,
+                SystemClock.elapsedRealtime(),
+            )
+        ) {
+            Log.i(TAG, "connect: preserving active rate-limit backoff")
+            return
+        }
         val existingState = _connectionState.value
         if (serverUrl == normalized &&
             (existingState == ConnectionState.Connecting ||
@@ -682,10 +747,30 @@ class ConnectionManager(
             if (relayResolved != null) activeRelayEndpoint = relayResolved
             val relayUrl = relayResolved?.relay?.url?.takeIf { it.isNotBlank() }
                 ?: return@launch
+            if (isRelayRateLimitBackoffActive(
+                    rateLimitBackoffUntilMs,
+                    SystemClock.elapsedRealtime(),
+                )
+            ) {
+                // Keep publishing the newly resolved standard/Relay routes, but
+                // leave the protected retry job intact. It will resolve the
+                // latest Relay winner again when the server cooldown expires.
+                Log.i(TAG, "network change: preserving rate-limit retry job")
+                return@launch
+            }
             val normalizedNew = normalizeRelayUrl(relayUrl)
             if (normalizedNew != current) {
                 Log.i(TAG, "network change: swapping $current → $normalizedNew")
-                connectToUrlOnMainPath(relayUrl, closeReason)
+                if (reconnectBackoffWaiting) {
+                    reconnectJob?.cancel()
+                    reconnectJob = null
+                    reconnectBackoffWaiting = false
+                }
+                connectToUrlOnMainPath(
+                    relayUrl,
+                    closeReason,
+                    preserveReconnectBackoff = true,
+                )
             } else if (_connectionState.value == ConnectionState.Disconnected &&
                 reconnectGate()
             ) {
@@ -783,6 +868,11 @@ class ConnectionManager(
 
     fun disconnect() {
         shouldReconnect = false
+        reconnectJob?.cancel()
+        reconnectJob = null
+        reconnectBackoffWaiting = false
+        rateLimitBackoffUntilMs = 0L
+        lastUpgradeResponseCode = null
         DiagnosticsLog.record(
             category = DiagnosticCategory.Relay,
             severity = DiagnosticSeverity.Info,
@@ -838,13 +928,22 @@ class ConnectionManager(
         url: String,
         previousSocketToClose: WebSocket? = null,
         replaceReason: String = "Relay socket replaced",
+        scheduledReconnect: Boolean = false,
     ) {
+        if (isRelayRateLimitBackoffActive(
+                rateLimitBackoffUntilMs,
+                SystemClock.elapsedRealtime(),
+            )
+        ) {
+            Log.i(TAG, "doConnect: preserving active rate-limit backoff")
+            return
+        }
         val existingState = _connectionState.value
         if (previousSocketToClose == null &&
             serverUrl == url &&
             (existingState == ConnectionState.Connecting ||
                 existingState == ConnectionState.Connected ||
-                existingState == ConnectionState.Reconnecting)
+                (existingState == ConnectionState.Reconnecting && !scheduledReconnect))
         ) {
             Log.i(TAG, "doConnect: already ${existingState.name.lowercase()} to $url — skipping duplicate open")
             return
@@ -908,6 +1007,10 @@ class ConnectionManager(
                     return
                 }
                 reconnectState.connected(url)
+                reconnectJob?.cancel()
+                reconnectJob = null
+                reconnectBackoffWaiting = false
+                rateLimitBackoffUntilMs = 0L
                 lastUpgradeResponseCode = null
                 _connectionState.value = ConnectionState.Connected
                 Log.i(TAG, "onOpen: WSS handshake complete ($url)")
@@ -1067,6 +1170,7 @@ class ConnectionManager(
             // block window instead of re-filling the ban bucket at our normal
             // cadence.
             lastUpgradeResponseCode == 429 -> {
+                rateLimitBackoffUntilMs = SystemClock.elapsedRealtime() + RATE_LIMIT_BACKOFF_MS
                 Log.i(TAG, "scheduleReconnect: rate-limited (429) — backing off ${RATE_LIMIT_BACKOFF_MS}ms")
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
@@ -1104,8 +1208,11 @@ class ConnectionManager(
             }
         }
 
-        scope.launch {
+        reconnectJob?.cancel()
+        reconnectBackoffWaiting = true
+        val scheduledJob = scope.launch {
             delay(backoffMs)
+            reconnectBackoffWaiting = false
             // Re-check the gate after the backoff — by the time the delay
             // expires, auth state may have changed (e.g., user hit Revoke
             // during the retry window).
@@ -1128,11 +1235,18 @@ class ConnectionManager(
                         preserveReconnectBackoff = true,
                     )
                 } else {
-                    doConnect(url)
+                    doConnect(url, scheduledReconnect = true)
                 }
             } else if (!reconnectGate()) {
                 Log.i(TAG, "scheduleReconnect: gate turned false during backoff — aborting retry")
                 _connectionState.value = ConnectionState.Disconnected
+            }
+        }
+        reconnectJob = scheduledJob
+        scheduledJob.invokeOnCompletion {
+            if (reconnectJob === scheduledJob) {
+                reconnectJob = null
+                reconnectBackoffWaiting = false
             }
         }
     }

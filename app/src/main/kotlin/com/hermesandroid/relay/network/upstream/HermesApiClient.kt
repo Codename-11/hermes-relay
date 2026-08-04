@@ -596,27 +596,35 @@ class HermesApiClient(
 
     // --- Session CRUD ---
 
-    suspend fun listSessionsResult(limit: Int = 200): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
+    suspend fun listSessionsResult(limit: Int = SESSION_LIST_WINDOW_LIMIT): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
         try {
-            val request = authRequest("$baseUrl/api/sessions?limit=$limit").get().build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(apiFailure(response, "List sessions"))
+            val sessions = linkedMapOf<String, SessionItem>()
+            for (page in sessionListPages(limit)) {
+                val request = authRequest(
+                    "$baseUrl/api/sessions?limit=${page.limit}&offset=${page.offset}",
+                ).get().build()
+                val pageSessions = client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(apiFailure(response, "List sessions"))
+                    }
+                    val body = response.body.string()
+                    if (body.isBlank()) {
+                        return@withContext Result.failure(IOException("List sessions returned an empty response"))
+                    }
+                    val parsed = json.decodeFromString<SessionListResponse>(body)
+                    parsed.data ?: parsed.items ?: parsed.sessions ?: emptyList()
                 }
-                val body = response.body.string()
-                if (body.isBlank()) {
-                    return@withContext Result.failure(IOException("List sessions returned an empty response"))
-                }
-                val parsed = json.decodeFromString<SessionListResponse>(body)
-                Result.success(parsed.data ?: parsed.items ?: parsed.sessions ?: emptyList())
+                pageSessions.forEach { sessions.putIfAbsent(it.id, it) }
+                if (pageSessions.size < page.limit) break
             }
+            Result.success(sessions.values.take(limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)))
         } catch (e: Exception) {
             Log.w(TAG, "Failed to list sessions: ${e.message}")
             Result.failure(e)
         }
     }
 
-    suspend fun listSessions(limit: Int = 200): List<SessionItem> =
+    suspend fun listSessions(limit: Int = SESSION_LIST_WINDOW_LIMIT): List<SessionItem> =
         listSessionsResult(limit).getOrElse { emptyList() }
 
     suspend fun createSessionResult(
