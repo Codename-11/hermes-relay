@@ -106,4 +106,27 @@ class RelayErrorClassifierTest {
         assertEquals("Realtime provider auth unavailable", err.title)
         assertFalse(err.body.contains("server refused", ignoreCase = true))
     }
+
+    @Test
+    fun audioRecordCannotCreateMapsToMicUnavailableHint() {
+        val err = classifyError(
+            UnsupportedOperationException("Cannot create AudioRecord"),
+            context = "record",
+        )
+
+        assertEquals("Microphone unavailable", err.title)
+        assertTrue(err.body.contains("microphone", ignoreCase = true))
+        assertTrue(err.retryable)
+    }
+
+    @Test
+    fun audioRecordFailedToInitializeMapsToMicUnavailableHint() {
+        val err = classifyError(
+            IllegalStateException("AudioRecord failed to initialize"),
+            context = "record",
+        )
+
+        assertEquals("Microphone unavailable", err.title)
+        assertTrue(err.retryable)
+    }
 }

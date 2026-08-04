@@ -238,6 +238,8 @@
     <string name="error_classify_synthesize">Falha na reprodução de voz</string>
     <string name="error_classify_voice_config">Configuração de voz indisponível</string>
     <string name="error_classify_record">Não foi possível gravar</string>
+    <string name="error_classify_mic_unavailable">Microfone indisponível</string>
+    <string name="error_classify_mic_unavailable_body">O microfone está ocupado ou bloqueado. Feche outros apps que estejam usando o microfone e verifique a permissão de microfone nas Configurações.</string>
     <string name="error_classify_pair">Falha no pareamento</string>
     <string name="error_classify_save_and_test">Falha na verificação do Relay</string>
     <string name="error_classify_media_fetch">Não foi possível buscar o anexo</string>
