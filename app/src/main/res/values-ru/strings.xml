@@ -242,6 +242,8 @@
     <string name="error_classify_synthesize">Воспроизведение голоса не удалось</string>
     <string name="error_classify_voice_config">Конфигурация голоса недоступна</string>
     <string name="error_classify_record">Нельзя записать</string>
+    <string name="error_classify_mic_unavailable">Микрофон недоступен</string>
+    <string name="error_classify_mic_unavailable_body">Микрофон занят или заблокирован. Закройте другие приложения, использующие микрофон, и проверьте разрешение на доступ к микрофону в настройках.</string>
     <string name="error_classify_pair">Сопряжение не удалось</string>
     <string name="error_classify_save_and_test">Проверка Relay не удалась</string>
     <string name="error_classify_media_fetch">Не удалось получить вложение</string>

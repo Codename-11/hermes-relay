@@ -23,6 +23,7 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -231,6 +232,45 @@ class VoiceViewModelBargeInTest {
             vm.uiState.value.state,
         )
         verify(atLeast = 1) { recorder.startRecording() }
+    }
+
+    @Test
+    fun `manual mic waits for barge-in reader release before starting capture`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returns readerRelease
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("Hello."), currentIdx = 0)
+        vm.startBargeInListenerForTest()
+        runCurrent()
+
+        vm.startListening()
+        runCurrent()
+
+        verify(exactly = 0) { recorder.startRecording() }
+        readerRelease.complete()
+        runCurrent()
+
+        verify(exactly = 1) { recorder.startRecording() }
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+    }
+
+    @Test
+    fun `manual mic release cancels capture waiting on barge-in shutdown`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returns readerRelease
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("Hello."), currentIdx = 0)
+        vm.startBargeInListenerForTest()
+        runCurrent()
+
+        vm.startListening()
+        runCurrent()
+        vm.stopListening()
+        readerRelease.complete()
+        runCurrent()
+
+        verify(exactly = 0) { recorder.startRecording() }
+        assertEquals(VoiceState.Idle, vm.uiState.value.state)
     }
 
     // -------------------------------------------------------------------

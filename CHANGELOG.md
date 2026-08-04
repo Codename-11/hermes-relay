@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Voice capture waits for the microphone to be released.** Manual recording no longer races barge-in teardown, and AudioRecord startup failures now explain how to free or permit the microphone before retrying.
 - **Android session history follows the upstream page-size contract.** The drawer keeps its 200-session window through bounded 100-row requests, avoiding HTTP 422 errors from current dashboard servers while preserving active-profile isolation.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 - **Android no longer mistakes optional-surface auth failures for expired Relay pairing.** Background session refreshes stay out of the global snackbar, Dashboard and API authorization errors name their owning credential, and Relay-only surfaces use consistent Optional, Ready, Reconnecting, Unavailable, and Needs re-pair states. Foreground recovery retries ordinary Relay backoff immediately while preserving server rate limits, and recovery prioritizes Dashboard or host session management while retained credentials are labeled as stored details instead of active pairing.
