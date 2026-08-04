@@ -222,6 +222,8 @@
     <string name="error_classify_synthesize">Error en la reproducción de voz</string>
     <string name="error_classify_voice_config">Configuración de voz no disponible</string>
     <string name="error_classify_record">No se puede grabar</string>
+    <string name="error_classify_mic_unavailable">Micrófono no disponible</string>
+    <string name="error_classify_mic_unavailable_body">El micrófono está ocupado o bloqueado. Cierra otras aplicaciones que estén usando el micrófono y comprueba el permiso del micrófono en Ajustes.</string>
     <string name="error_classify_pair">El emparejamiento falló</string>
     <string name="error_classify_save_and_test">Error en la comprobación de Relay</string>
     <string name="error_classify_media_fetch">No se ha podido recuperar el archivo adjunto</string>

@@ -258,6 +258,8 @@
     <string name="error_classify_synthesize">音声再生に失敗しました</string>
     <string name="error_classify_voice_config">音声設定が利用できません</string>
     <string name="error_classify_record">録音できません</string>
+    <string name="error_classify_mic_unavailable">マイクを使用できません</string>
+    <string name="error_classify_mic_unavailable_body">マイクが使用中かブロックされています。マイクを使用している他のアプリを閉じ、設定でマイクの権限を確認してください。</string>
     <string name="error_classify_pair">ペアリングに失敗しました</string>
     <string name="error_classify_save_and_test">Relay チェックに失敗しました</string>
     <string name="error_classify_media_fetch">添付ファイルを取得できませんでした</string>

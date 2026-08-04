@@ -258,6 +258,8 @@
     <string name="error_classify_synthesize">语音播放失败</string>
     <string name="error_classify_voice_config">语音配置不可用</string>
     <string name="error_classify_record">无法录音</string>
+    <string name="error_classify_mic_unavailable">麦克风不可用</string>
+    <string name="error_classify_mic_unavailable_body">麦克风正被占用或已被阻止。请关闭其他正在使用麦克风的应用，并在“设置”中检查麦克风权限。</string>
     <string name="error_classify_pair">配对失败</string>
     <string name="error_classify_save_and_test">Relay 检查失败</string>
     <string name="error_classify_media_fetch">无法获取附件</string>

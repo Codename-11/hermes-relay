@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Voice capture waits for the microphone to be released.** Manual recording no longer races barge-in teardown, and AudioRecord startup failures now explain how to free or permit the microphone before retrying.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
 ## [Android 1.6.0] - 2026-08-02

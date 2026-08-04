@@ -57,6 +57,7 @@ import com.hermesandroid.relay.voice.createVoiceBridgeIntentHandler
 // === END PHASE3-voice-intents ===
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -830,6 +831,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // Post-response audio completion retry. Continuous mode uses the same
     // finalizer as tap/hold, then re-arms listening only when explicitly armed.
     private var continuousResumeJob: Job? = null
+    private var pendingListeningStartJob: Job? = null
+    private var listeningStartEpoch: Long = 0L
     private var realtimeAmplitudeDecayJob: Job? = null
     private var firstFrameWatchdogJob: Job? = null
     private var continuousLoopArmed: Boolean = false
@@ -1882,6 +1885,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             setError("Recorder not initialized")
             return
         }
+        if (pendingListeningStartJob?.isActive == true) return
         if (rec.isRecording()) return
         if (_uiState.value.state == VoiceState.Listening) {
             // Listening is reserved for a live AudioRecord. Reconcile a stale
@@ -1903,7 +1907,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // B4: user manually started a turn → tear down the barge-in
         // listener and cancel any pending resume. Normal "tap mic to
         // talk" path also lands here, so we always leave Speaking cleanly.
-        stopBargeInListener()
+        val microphoneRelease = stopBargeInListener()
         cancelStandardSpeechStream("microphone capture started")
         resumeWatchdog?.cancel(); resumeWatchdog = null
         lastInterruptedAtChunkIndex = null
@@ -1914,6 +1918,29 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
         try { realtimePcmPlayer?.stop() } catch (_: Exception) { /* ignore */ }
 
+        if (microphoneRelease == null || microphoneRelease.isCompleted) {
+            startVoiceCapture(rec)
+            return
+        }
+
+        val startEpoch = ++listeningStartEpoch
+        val pendingStart = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                microphoneRelease.join()
+                if (listeningStartEpoch == startEpoch) {
+                    startVoiceCapture(rec)
+                }
+            } finally {
+                if (listeningStartEpoch == startEpoch) {
+                    pendingListeningStartJob = null
+                }
+            }
+        }
+        pendingListeningStartJob = pendingStart
+        pendingStart.start()
+    }
+
+    private fun startVoiceCapture(rec: VoiceRecorder) {
         try {
             rec.startRecording()
             listeningStartedAtMs = System.currentTimeMillis()
@@ -1943,6 +1970,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopListening() {
+        if (cancelPendingListeningStart()) return
         val rec = recorder ?: return
         if (!rec.isRecording()) {
             if (_uiState.value.state == VoiceState.Listening) {
@@ -1998,6 +2026,24 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         currentTurnJob = viewModelScope.launch {
             processVoiceInput(file, inputPcm, inputSampleRate)
         }
+    }
+
+    private fun cancelPendingListeningStart(): Boolean {
+        val pendingStart = pendingListeningStartJob
+        if (pendingStart?.isActive != true) return false
+
+        listeningStartEpoch++
+        pendingStart.cancel()
+        pendingListeningStartJob = null
+        listeningStartedAtMs = 0L
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Idle,
+                amplitude = 0f,
+                outputAudioActive = false,
+            )
+        }
+        return true
     }
 
     private fun listeningDurationMs(): Long {
@@ -2188,6 +2234,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * new turn on the next mic tap).
      */
     fun interruptSpeaking(): Job? {
+        cancelPendingListeningStart()
         Log.i(
             TAG,
             "Interrupting speech pipeline",
@@ -6280,6 +6327,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         continuousLoopArmed = false
         continuousResumeJob?.cancel()
         continuousResumeJob = null
+        pendingListeningStartJob?.cancel()
+        pendingListeningStartJob = null
+        listeningStartEpoch++
         realtimeAmplitudeDecayJob?.cancel()
         realtimeAmplitudeDecayJob = null
         try { recorder?.cancel() } catch (_: Exception) { /* ignore */ }
