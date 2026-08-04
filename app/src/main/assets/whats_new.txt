@@ -1,6 +1,6 @@
-v1.6.0 - Pets, plugins, and voice
+v1.6.1 - Clearer recovery, steadier chat
 
-* Add floating Petdex companions that can roam across the interface.
-* Add safe native pages contributed by installed Hermes plugins.
-* Use Hermes as the optional Android Digital Assistant with local “Hey Hermes.”
-* Add Russian and improve voice, routing, chat, and pet stability.
+* Keep optional Relay recovery scoped to Relay surfaces with clear status labels.
+* Restore the 200-session drawer through upstream-compatible paging.
+* Stabilize streamed text selection and Voice microphone handoff.
+* Keep new-chat coaching clear of the expanding Voice drawer.
