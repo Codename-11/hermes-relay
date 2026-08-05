@@ -855,6 +855,9 @@
     <string name="drawer_refresh_sessions">Sitzungen aktualisieren</string>
     <string name="drawer_new_chat">Neuer Chat</string>
     <string name="drawer_search_placeholder">Sitzungen oder ID suchen...</string>
+    <string name="drawer_search_sessions">Sitzungen durchsuchen</string>
+    <string name="drawer_activity_working">Wird bearbeitet</string>
+    <string name="drawer_activity_needs_input">Eingabe erforderlich</string>
     <string name="drawer_new_thread">Neuer Thread</string>
     <string name="drawer_chats_not_named">Chats werden bei dieser Verbindung nicht automatisch benannt — verwende ⋮ → Umbenennen.</string>
     <string name="drawer_loading_sessions">Sitzungen werden geladen…</string>

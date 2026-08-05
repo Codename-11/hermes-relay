@@ -2,6 +2,10 @@ package com.hermesandroid.relay.ui.components
 
 import android.content.Context
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -57,13 +61,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import java.text.SimpleDateFormat
@@ -85,6 +98,8 @@ fun SessionDrawerContent(
     scopeSubtitle: String? = null,
     isLoading: Boolean = false,
     isOpen: Boolean = true,
+    activityStates: Map<String, SessionActivityState> = emptyMap(),
+    animationEnabled: Boolean = true,
     autoTitlesSupported: Boolean = true,
     onRefresh: (() -> Unit)? = null,
     onNewChat: () -> Unit,
@@ -115,6 +130,7 @@ fun SessionDrawerContent(
     var sourceFilterOpen by remember { mutableStateOf(false) }
     var deleteDialogSession by remember { mutableStateOf<ChatSession?>(null) }
     var query by remember { mutableStateOf("") }
+    var searchExpanded by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
     var pinnedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var archivedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -298,6 +314,21 @@ fun SessionDrawerContent(
                         )
                     }
                 }
+                IconButton(
+                    onClick = { searchExpanded = !searchExpanded },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Search,
+                        contentDescription = stringResource(R.string.drawer_search_sessions),
+                        tint = if (searchExpanded || query.isNotBlank()) {
+                            RelayRefresh.Relay
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
                 // Manual re-pull: the server titles a session asynchronously after
                 // the first turn (and never pushes a rename), so a refresh is the
                 // way to pick up a title the auto-reconcile window missed.
@@ -335,17 +366,19 @@ fun SessionDrawerContent(
                 Text(stringResource(R.string.drawer_new_chat))
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                leadingIcon = {
-                    Icon(Icons.Filled.Search, contentDescription = null)
-                },
-                placeholder = { Text(stringResource(R.string.drawer_search_placeholder)) },
-            )
+            if (searchExpanded || query.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(Icons.Filled.Search, contentDescription = null)
+                    },
+                    placeholder = { Text(stringResource(R.string.drawer_search_placeholder)) },
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -467,6 +500,8 @@ fun SessionDrawerContent(
                     SessionItem(
                         session = session,
                         isActive = session.sessionId == currentSessionId,
+                        activityState = activityStates[session.sessionId],
+                        animationEnabled = animationEnabled,
                         pinned = session.sessionId in pinnedSessionIds,
                         archived = session.sessionId in archivedSessionIds,
                         onClick = { onSelectSession(session.sessionId) },
@@ -590,6 +625,8 @@ fun SessionDrawerContent(
 private fun SessionItem(
     session: ChatSession,
     isActive: Boolean,
+    activityState: SessionActivityState?,
+    animationEnabled: Boolean,
     pinned: Boolean,
     archived: Boolean,
     onClick: () -> Unit,
@@ -603,6 +640,12 @@ private fun SessionItem(
     val locale = LocalLocale.current.platformLocale
     val context = LocalContext.current
     val untitledLabel = stringResource(R.string.drawer_untitled)
+    val activityLabel = when (activityState) {
+        SessionActivityState.Working -> stringResource(R.string.drawer_activity_working)
+        SessionActivityState.NeedsInput -> stringResource(R.string.drawer_activity_needs_input)
+        null -> null
+    }
+    val motion = rememberAccessibleMotionState()
     val backgroundColor = if (isActive) {
         MaterialTheme.colorScheme.secondaryContainer
     } else {
@@ -613,6 +656,13 @@ private fun SessionItem(
         modifier = Modifier
             .fillMaxWidth()
             .background(backgroundColor)
+            .sessionActivityBorder(
+                state = activityState,
+                animated = animationEnabled && motion.osAnimations && !motion.touchExploration,
+            )
+            .semantics {
+                activityLabel?.let { stateDescription = it }
+            }
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -637,6 +687,17 @@ private fun SessionItem(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (activityState != null && activityLabel != null) {
+                    SessionActivityIndicator(activityState, activityLabel)
+                }
+                if (pinned) {
+                    Icon(
+                        Icons.Filled.Star,
+                        contentDescription = null,
+                        tint = RelayRefresh.Amber,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
                 // Agent Thread tag — the clean spool + "Thread", so a source=phone
                 // conversation reads as its own lane in the unified session list (ADR 12).
                 if (isThreadSource(session.source)) {
@@ -687,18 +748,6 @@ private fun SessionItem(
             }
         }
 
-        IconButton(
-            onClick = onTogglePinned,
-            modifier = Modifier.size(36.dp),
-        ) {
-            Icon(
-                Icons.Filled.Star,
-                contentDescription = if (pinned) stringResource(R.string.drawer_unpin_session) else stringResource(R.string.drawer_pin_session),
-                tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(19.dp),
-            )
-        }
-
         Box {
             IconButton(
                 onClick = { menuOpen = true },
@@ -715,6 +764,32 @@ private fun SessionItem(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
             ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (pinned) {
+                                stringResource(R.string.drawer_unpin_session)
+                            } else {
+                                stringResource(R.string.drawer_pin_session)
+                            }
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = null,
+                            tint = if (pinned) {
+                                RelayRefresh.Amber
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onTogglePinned()
+                    },
+                )
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.chat_copy_session_id)) },
                     leadingIcon = {
@@ -774,6 +849,85 @@ private fun SessionItem(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SessionActivityIndicator(state: SessionActivityState, label: String) {
+    val color = when (state) {
+        SessionActivityState.Working -> RelayRefresh.Relay
+        SessionActivityState.NeedsInput -> RelayRefresh.Amber
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(RoundedCornerShape(50))
+                .background(color),
+        )
+        Text(
+            text = label,
+            style = relayMetadataStyle(),
+            color = color,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun Modifier.sessionActivityBorder(
+    state: SessionActivityState?,
+    animated: Boolean,
+): Modifier {
+    if (state == null) return this
+    val color = when (state) {
+        SessionActivityState.Working -> RelayRefresh.Relay
+        SessionActivityState.NeedsInput -> RelayRefresh.Amber
+    }
+    val shouldRotate = animated && state == SessionActivityState.Working
+    val phase = if (shouldRotate) {
+        val transition = rememberInfiniteTransition(label = "session-activity")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2_800, easing = LinearEasing),
+            ),
+            label = "session-activity-rotation",
+        ).value
+    } else {
+        0f
+    }
+    return drawWithContent {
+        drawContent()
+        val strokeWidth = 1.5.dp.toPx()
+        val inset = strokeWidth / 2f
+        val perimeter = 2f * (size.width + size.height)
+        val pathEffect = if (shouldRotate) {
+            PathEffect.dashPathEffect(
+                intervals = floatArrayOf(perimeter * 0.34f, perimeter),
+                phase = perimeter * phase,
+            )
+        } else {
+            null
+        }
+        drawRoundRect(
+            brush = if (shouldRotate) {
+                SolidColor(color)
+            } else {
+                Brush.linearGradient(listOf(color.copy(alpha = 0.72f), color.copy(alpha = 0.28f)))
+            },
+            topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
+            size = androidx.compose.ui.geometry.Size(
+                width = size.width - strokeWidth,
+                height = size.height - strokeWidth,
+            ),
+            cornerRadius = CornerRadius(12.dp.toPx()),
+            style = Stroke(width = strokeWidth, pathEffect = pathEffect),
+        )
     }
 }
 

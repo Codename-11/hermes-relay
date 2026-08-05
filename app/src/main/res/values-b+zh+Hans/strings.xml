@@ -852,6 +852,9 @@
     <string name="drawer_refresh_sessions">刷新会话</string>
     <string name="drawer_new_chat">新对话</string>
     <string name="drawer_search_placeholder">搜索会话或 ID…</string>
+    <string name="drawer_search_sessions">搜索会话</string>
+    <string name="drawer_activity_working">正在处理</string>
+    <string name="drawer_activity_needs_input">需要输入</string>
     <string name="drawer_new_thread">新话题</string>
     <string name="drawer_chats_not_named">此连接上的对话不会自动命名——使用 ⋮ → 重命名。</string>
     <string name="drawer_loading_sessions">正在加载会话…</string>
