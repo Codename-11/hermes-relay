@@ -16,6 +16,7 @@ import com.hermesandroid.relay.viewmodel.realtimeTranscriptState
 import com.hermesandroid.relay.viewmodel.realtimeTurnActiveAfterPromotion
 import com.hermesandroid.relay.viewmodel.voiceSessionExitState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -63,29 +64,19 @@ class VoiceModeOverlayStateTest {
     }
 
     @Test
-    fun transcriptKeys_remainDistinctWhenRowsShareReconciledServerId() {
+    fun transcriptKey_staysStableAcrossServerIdAdoption() {
         val serverId = "7c4af8b7-1bb2-4830-a4e5-0332d5ddcd1f"
-        val messages = listOf(
-            ChatMessage(
-                id = serverId,
-                uiKey = "persisted-assistant-row",
-                role = MessageRole.ASSISTANT,
-                content = "Earlier snapshot",
-                timestamp = 1L,
-            ),
-            ChatMessage(
-                id = serverId,
-                uiKey = "live-assistant-row",
-                role = MessageRole.ASSISTANT,
-                content = "Reconciled live snapshot",
-                timestamp = 2L,
-            ),
+        val live = ChatMessage(
+            id = "client-assistant-id",
+            role = MessageRole.ASSISTANT,
+            content = "Earlier snapshot",
+            timestamp = 1L,
         )
+        val reconciled = live.copy(id = serverId, content = "Reconciled snapshot")
 
-        assertEquals(
-            listOf("persisted-assistant-row", "live-assistant-row"),
-            messages.map(::voiceTranscriptItemKey),
-        )
+        assertEquals(voiceTranscriptItemKey(live), voiceTranscriptItemKey(reconciled))
+        assertEquals("message:client-assistant-id", voiceTranscriptItemKey(reconciled))
+        assertNotEquals("aux:pending-voice-transcript", voiceTranscriptItemKey(reconciled))
     }
 
     @Test

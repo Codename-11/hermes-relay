@@ -177,7 +177,7 @@ BRIEF="${WTDIR}/ISSUE-BRIEF.md"
   if [ -n "$BOTNOTES" ]; then
     printf '%s\n' "$BOTNOTES"
   else
-    echo "_No automated triage comments yet. Add the \`triage:deep\` label on the issue for a code-level analysis, or run the triage workflow._"
+    echo "_No automated triage comments yet. Add the \`triage:deep\` label on the issue for a code-level analysis._"
   fi
 } > "$BRIEF"
 

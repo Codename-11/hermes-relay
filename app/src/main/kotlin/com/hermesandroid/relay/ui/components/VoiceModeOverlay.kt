@@ -427,7 +427,7 @@ fun VoiceModeOverlay(
                                 )
                             }
                             if (pendingTranscriptText != null) {
-                                item(key = "pending-voice-transcript") {
+                                item(key = "aux:pending-voice-transcript") {
                                     CompactTranscriptRow(
                                         message = ChatMessage(
                                             id = "pending-voice-transcript",
@@ -741,7 +741,8 @@ internal fun pendingVoiceTranscriptText(
     return if (alreadyRendered) null else transcribed
 }
 
-internal fun voiceTranscriptItemKey(message: ChatMessage): String = message.uiKey
+/** Message rows and Voice-only auxiliary rows occupy disjoint key namespaces. */
+internal fun voiceTranscriptItemKey(message: ChatMessage): String = "message:${message.uiKey}"
 
 /**
  * Conversation-mode voice controls that live inside the chat composer.

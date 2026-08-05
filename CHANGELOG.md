@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android chat and Voice keep one render identity through recovery.** Checkpoint restore, streamed callbacks, server-ID adoption, and replay now resolve the same owned transcript row before publication, preventing recurring Compose duplicate-key crashes.
+- **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
 ## [Android 1.6.1] - 2026-08-03
