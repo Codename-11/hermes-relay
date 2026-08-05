@@ -1,5 +1,17 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-05 — Focus voice input boundary repair
+
+The Focus voice presentation remains modal without installing a consuming
+pointer handler on the full overlay ancestor. Its click-through guard is now a
+behind-content sibling: empty-space gestures cannot reach the chat or drawer,
+while the mic, close, expand/collapse, and panel controls receive their full
+pointer sequence.
+
+Host-side Compose coverage injects real touch events instead of invoking
+semantic click actions. It verifies both child callback delivery and the modal
+background boundary so the two requirements cannot regress independently.
+
 ## 2026-08-05 — Actionable Android connection diagnostics
 
 Android diagnostic entries now separate the configured route from the exact
