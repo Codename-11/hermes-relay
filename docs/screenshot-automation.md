@@ -80,6 +80,31 @@ python scripts/screenshots.py validate
 - The README sources are currently `1080x2244`. The Play export crops them to
   `1080x2160` because Google Play requires screenshot dimensions between
   320 and 3840 pixels and the long side cannot exceed twice the short side.
+
+## Foreground-service policy video
+
+`scripts/android-fgs-demo.py` drives a real connected phone through the Google
+Play foreground-service evidence sequence and records it with Android's native
+`screenrecord`. It verifies each expected control and notification through the
+UI hierarchy, and aborts rather than producing misleading evidence when a step
+is unavailable.
+
+Use an explicit device serial so a connected emulator cannot receive the run by
+accident:
+
+```bash
+python scripts/android-fgs-demo.py --serial <adb-serial>
+```
+
+The sequence enables Persistent connection, shows its ongoing notification,
+sends and backgrounds a chat turn, returns through the notification, disables
+the setting and proves the notification clears, then repeats the evidence flow
+for the app-owned voice overlay and its **Stop voice** notification action.
+
+Run `--no-record --pause-scale 0.25` first after material UI changes. Before
+publishing the resulting MP4, review every notification-shade frame for private
+network names and unrelated notification content; the driver does not clear or
+alter the user's other notifications.
 - Google Play listing upload stays on Gradle Play Publisher, matching the
   existing Android publishing toolchain. Fastlane is not required.
 

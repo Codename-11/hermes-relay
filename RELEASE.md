@@ -517,7 +517,11 @@ the new app version and a higher `appVersionCode`.
   the version reference and the "Release Notes" section that gets
   pasted into the Play Console "What's new" field. Keep the Play
   "What's new" within **500 characters** and framed around the
-  release's themes, not a feature dump.
+  release's themes, not a feature dump. Compare its **Foreground service
+  permissions** section with the merged `googlePlayRelease` manifest and
+  complete Play Console declarations for every declared service type before
+  approval; the Publisher API can upload a draft and still reject promotion
+  when an App content declaration is missing.
 
 #### Scrub for public distribution
 
