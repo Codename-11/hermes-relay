@@ -8,9 +8,9 @@ import org.junit.Test
 
 class DiagnosticsLogTest {
     @Test
-    fun sanitizeUrlDropsSecretsAndKeepsRoute() {
+    fun sanitizeUrlDropsSecretsAndHostWhileKeepingPath() {
         assertEquals(
-            "https://relay.example.test:8767/health",
+            "https://[host]/health",
             DiagnosticsLog.sanitizeUrl(
                 "https://user:secret@relay.example.test:8767/health?token=abc#frag",
             ),

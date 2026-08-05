@@ -2600,7 +2600,14 @@
     <string name="attachment_type_text">Текст</string>
     <string name="attachment_type_file">Файл</string>
     <string name="crash_title">Hermes-Relay неожиданно закрылся</string>
-    <string name="crash_body">Последняя сессия завершилась аварийно. Отправка этого отчета поможет быстрее исправить проблему.</string>
+    <string name="crash_body">Hermes-Relay перезапустился после непредвиденной проблемы. Приложением можно продолжать пользоваться.</string>
+    <string name="crash_privacy">Ничего не отправлено. Перед отправкой проверьте локально обезличенный отчёт.</string>
+    <string name="crash_review">Проверить отчёт</string>
+    <string name="crash_share_title">Поделиться отчётом о сбое</string>
+    <string name="crash_share_subject">Отчёт о сбое Hermes-Relay — %1$s</string>
+    <string name="crash_toast_no_share">Отчёт скопирован — приложение для отправки не найдено</string>
+    <string name="crash_toast_opened">Полный отчёт скопирован — проверьте проблему GitHub перед отправкой</string>
+    <string name="crash_toast_no_browser">Отчёт скопирован — браузер для GitHub не найден</string>
     <string name="crash_dismiss">Закрыть</string>
     <string name="crash_copy">Скопировать</string>
     <string name="crash_share">Поделиться</string>
@@ -3560,4 +3567,10 @@
     <string name="plugins_keep">Оставить</string>
     <string name="plugins_remove">Удалить</string>
     <string name="plugins_remove_confirm">Удалить «%1$s»? Эта страница плагина больше не будет отображаться на подключённых устройствах Android.</string>
+    <string name="support_bundle_review">Проверить сведения для поддержки</string>
+    <string name="support_bundle_title">Сведения для поддержки</string>
+    <string name="support_bundle_privacy">Ничего не загружается автоматически. Проверьте локальный экспорт с не более чем %1$d отчётами.</string>
+    <string name="support_bundle_copied">Сведения для поддержки скопированы</string>
+    <string name="support_bundle_no_share">Сведения для поддержки скопированы — приложение для отправки не найдено</string>
+    <string name="support_bundle_share_title">Поделиться сведениями поддержки Hermes-Relay</string>
 </resources>

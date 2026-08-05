@@ -6,10 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android support information is local, redacted, and reviewable.** Fatal crashes and handled failures share a bounded on-device record, Diagnostics can copy or share the exact reviewed text, and nothing is uploaded automatically.
+
 ### Fixed
 
 - **Android chat and Voice keep one render identity through recovery.** Checkpoint restore, streamed callbacks, server-ID adoption, and replay now resolve the same owned transcript row before publication, preventing recurring Compose duplicate-key crashes.
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
+- **Android crash reports retain actionable release context.** Reports identify the Android surface, avoid exposing hosts and credentials, migrate earlier local crash records, and release automation retains exact Play and sideload R8 mappings for retrace.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
 ## [Android 1.6.1] - 2026-08-03

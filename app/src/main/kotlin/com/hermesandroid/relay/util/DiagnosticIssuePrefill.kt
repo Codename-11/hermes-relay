@@ -36,12 +36,13 @@ object DiagnosticIssuePrefill {
     }
 
     /**
-     * `bug` for Error entries; `question` (an existing repo label) for
-     * Info/Warning so routine diagnostics don't pollute the bug queue.
+     * `bug,area:android` for Error entries; `question,area:android` for
+     * Info/Warning so routine diagnostics don't pollute the bug queue and all
+     * in-app reports reach the owning Android surface.
      */
     fun issueLabels(entry: DiagnosticLogEntry): String = when (entry.severity) {
-        DiagnosticSeverity.Error -> "bug"
-        else -> "question"
+        DiagnosticSeverity.Error -> "bug,area:android"
+        else -> "question,area:android"
     }
 
     /**
@@ -76,7 +77,7 @@ object DiagnosticIssuePrefill {
         val whatHappened = DiagnosticsLog.redactReportText(expectation)
             ?.takeIf { it.isNotBlank() }
             ?: DEFAULT_WHAT_HAPPENED
-        return buildString {
+        val body = buildString {
             appendLine(
                 "> ⚠️ Before submitting: remove any secrets, tokens, real hostnames/IPs, " +
                     "or personal data from the detail below.",
@@ -111,5 +112,6 @@ object DiagnosticIssuePrefill {
             appendLine()
             append("<sub>Captured by the Hermes-Relay in-app diagnostics log</sub>")
         }
+        return DiagnosticsLog.redactReportText(body).orEmpty()
     }
 }

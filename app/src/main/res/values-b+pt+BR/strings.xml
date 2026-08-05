@@ -2518,7 +2518,14 @@
     <string name="attachment_type_file">Arquivo</string>
     <!-- CrashReportDialog -->
     <string name="crash_title">O Hermes-Relay fechou inesperadamente</string>
-    <string name="crash_body">A última sessão falhou. Enviar este relatório ajuda a corrigir o problema mais rápido.</string>
+    <string name="crash_body">O Hermes-Relay reiniciou após um problema inesperado. Você pode continuar usando o app.</string>
+    <string name="crash_privacy">Nada foi enviado. Revise o relatório editado localmente antes de compartilhar.</string>
+    <string name="crash_review">Revisar relatório</string>
+    <string name="crash_share_title">Compartilhar relatório de falha</string>
+    <string name="crash_share_subject">Relatório de falha do Hermes-Relay — %1$s</string>
+    <string name="crash_toast_no_share">Relatório copiado — nenhum app encontrado para compartilhar</string>
+    <string name="crash_toast_opened">Relatório completo copiado — revise o problema no GitHub antes de enviar</string>
+    <string name="crash_toast_no_browser">Relatório copiado — nenhum navegador encontrado para abrir o GitHub</string>
     <string name="crash_dismiss">Dispensar</string>
     <string name="crash_copy">Copiar</string>
     <string name="crash_share">Compartilhar</string>
@@ -3679,4 +3686,10 @@
     <string name="plugins_keep">Manter</string>
     <string name="plugins_remove">Remover</string>
     <string name="plugins_remove_confirm">Remover “%1$s”? Esta página do plugin não aparecerá mais nos dispositivos Android conectados.</string>
+    <string name="support_bundle_review">Revisar informações de suporte</string>
+    <string name="support_bundle_title">Informações de suporte</string>
+    <string name="support_bundle_privacy">Nada é enviado automaticamente. Revise a exportação local com até %1$d relatórios.</string>
+    <string name="support_bundle_copied">Informações de suporte copiadas</string>
+    <string name="support_bundle_no_share">Informações de suporte copiadas — nenhum app encontrado para compartilhar</string>
+    <string name="support_bundle_share_title">Compartilhar informações de suporte do Hermes-Relay</string>
 </resources>

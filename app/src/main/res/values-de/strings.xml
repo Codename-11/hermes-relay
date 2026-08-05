@@ -2640,7 +2640,14 @@
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay wurde unerwartet beendet</string>
-    <string name="crash_body">Die letzte Sitzung ist abgestürzt. Dieser Bericht hilft, den Fehler schneller zu beheben.</string>
+    <string name="crash_body">Hermes-Relay wurde nach einem unerwarteten Problem neu gestartet. Sie können die App weiter verwenden.</string>
+    <string name="crash_privacy">Es wurde nichts gesendet. Prüfen Sie den lokal bereinigten Bericht vor dem Teilen.</string>
+    <string name="crash_review">Bericht prüfen</string>
+    <string name="crash_share_title">Absturzbericht teilen</string>
+    <string name="crash_share_subject">Hermes-Relay-Absturzbericht — %1$s</string>
+    <string name="crash_toast_no_share">Bericht kopiert — keine App zum Teilen gefunden</string>
+    <string name="crash_toast_opened">Vollständiger Bericht kopiert — GitHub-Problem vor dem Senden prüfen</string>
+    <string name="crash_toast_no_browser">Bericht kopiert — kein Browser für GitHub gefunden</string>
     <string name="crash_dismiss">Schließen</string>
     <string name="crash_copy">Kopieren</string>
     <string name="crash_share">Teilen</string>
@@ -3839,4 +3846,10 @@
     <string name="plugins_keep">Behalten</string>
     <string name="plugins_remove">Entfernen</string>
     <string name="plugins_remove_confirm">„%1$s“ entfernen? Diese Plugin-Seite wird auf verbundenen Android-Geräten nicht mehr angezeigt.</string>
+    <string name="support_bundle_review">Supportinformationen prüfen</string>
+    <string name="support_bundle_title">Supportinformationen</string>
+    <string name="support_bundle_privacy">Nichts wird automatisch hochgeladen. Prüfen Sie den lokalen Export mit bis zu %1$d Berichten.</string>
+    <string name="support_bundle_copied">Supportinformationen kopiert</string>
+    <string name="support_bundle_no_share">Supportinformationen kopiert — keine App zum Teilen gefunden</string>
+    <string name="support_bundle_share_title">Hermes-Relay-Supportinformationen teilen</string>
 </resources>

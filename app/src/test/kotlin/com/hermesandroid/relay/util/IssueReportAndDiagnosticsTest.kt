@@ -115,7 +115,7 @@ class IssueReportAndDiagnosticsTest {
     fun errorEntriesKeepBugTitleAndLabel() {
         val entry = sampleEntry(DiagnosticSeverity.Error, title = "API key rejected")
         assertEquals("[Bug]: API key rejected", DiagnosticIssuePrefill.issueTitle(entry))
-        assertEquals("bug", DiagnosticIssuePrefill.issueLabels(entry))
+        assertEquals("bug,area:android", DiagnosticIssuePrefill.issueLabels(entry))
     }
 
     @Test
@@ -124,7 +124,7 @@ class IssueReportAndDiagnosticsTest {
             val entry = sampleEntry(severity)
             assertEquals("[Diagnostic]: Testing API connection", DiagnosticIssuePrefill.issueTitle(entry))
             // "question" already exists on the repo — the prefill must not invent labels.
-            assertEquals("question", DiagnosticIssuePrefill.issueLabels(entry))
+            assertEquals("question,area:android", DiagnosticIssuePrefill.issueLabels(entry))
         }
     }
 
@@ -161,6 +161,7 @@ class IssueReportAndDiagnosticsTest {
         )
         assertTrue(body.contains("- Connection mode: tailscale"))
         assertFalse(body.contains("LAN / Tailscale / public TLS / other"))
+        assertFalse(body.contains("10.0.0.5"))
     }
 
     @Test
