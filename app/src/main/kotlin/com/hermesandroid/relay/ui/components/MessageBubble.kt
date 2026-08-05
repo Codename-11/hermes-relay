@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -748,16 +749,21 @@ fun MessageBubble(
                 // burst of fragments doesn't stack three near-touching time labels.
                 // Grouping breaks on a >5min gap (ChatScreen), so every pause still
                 // surfaces its own time. Alpha floored at 0.6 for 11sp contrast.
-                // Keep the live bubble's footer structurally quiet. Showing a
-                // timestamp while text is still growing makes it chase every
-                // token and exaggerates any single-frame layout lag. Reveal it
-                // once the message settles into its final layout.
-                if (isLastInGroup && !message.isStreaming) {
+                // Reserve the footer from the first streaming frame so
+                // completion is a color-only transition and cannot resize the
+                // row. Hide the reserved timestamp from accessibility until it
+                // becomes visible.
+                if (isLastInGroup) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = timeFormat.format(Date(message.timestamp)),
                         style = MaterialTheme.typography.labelSmall,
-                        color = textColor.copy(alpha = 0.6f)
+                        color = textColor.copy(alpha = if (message.isStreaming) 0f else 0.6f),
+                        modifier = if (message.isStreaming) {
+                            Modifier.clearAndSetSemantics { }
+                        } else {
+                            Modifier
+                        },
                     )
                 }
 

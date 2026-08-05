@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android chat and Voice stay precisely bottom-pinned through replies and keyboard changes.** The active tail keeps its stable live renderer until another row takes ownership, its timestamp space is reserved from the first frame, and opening the keyboard carries a bottom-following transcript upward instead of covering its latest content.
 - **Android Focus voice controls remain responsive.** The modal click-through guard now sits behind the voice UI instead of consuming pointer events from the mic, close, expansion, and panel controls.
 - **Android diagnostics explain what failed and what to try next.** Relay, route, WebSocket, and API checks distinguish the saved route from the redacted request they actually attempted, name the operation, and provide targeted guidance for connection, DNS, timeout, TLS, authentication, rate-limit, and server failures.
 - **Android chat and Voice keep one render identity through recovery.** Checkpoint restore, streamed callbacks, server-ID adoption, and replay now resolve the same owned transcript row before publication, preventing recurring Compose duplicate-key crashes.

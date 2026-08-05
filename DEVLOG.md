@@ -1,5 +1,27 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-05 — Stable chat-tail completion
+
+Chat and Voice now treat the active streamed reply as the owner of its live
+renderer until a different row becomes the conversation tail. Stream
+completion retains the existing Compose subtree and list anchor; the full
+Markdown renderer is deferred until the row is no longer active or the session
+is revisited.
+
+The last-in-group timestamp occupies its final geometry from the first
+streaming frame and is only revealed at completion. The former repeated
+completion-time `scrollToItem` correction is removed, while measured positive
+growth during an active stream continues to follow the bottom without replacing
+the logical anchor. The visible footer supplies the exact remaining distance so
+rounding or adjacent layout changes cannot leave a residual forward range.
+
+IME expansion participates in that same viewport owner. A transcript already
+at the bottom advances by the measured viewport-height loss throughout the
+keyboard animation; a transcript being read above the bottom preserves its
+existing anchor, and a real drag cancels keyboard follow immediately. Host-side
+coverage verifies renderer ownership, unchanged bubble height, exact footer
+settling, keyboard arming, viewport loss, and history-reading behavior.
+
 ## 2026-08-05 — Focus voice input boundary repair
 
 The Focus voice presentation remains modal without installing a consuming
