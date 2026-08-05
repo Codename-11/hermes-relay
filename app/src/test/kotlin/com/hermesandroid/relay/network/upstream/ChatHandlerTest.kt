@@ -28,6 +28,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import kotlin.random.Random
 
 /**
  * Unit tests for ChatHandler message state management.
@@ -2187,6 +2188,165 @@ class ChatHandlerTest {
         assertFalse(restored.moaReferences.last().available)
         assertTrue(handler.isStreaming.value)
         assertEquals("Running terminal", handler.turnStatus.value)
+    }
+
+    @Test
+    fun loadMessageHistory_thenRestoreCheckpoint_mergesReboundAssistantWithoutDuplicateUiIdentity() {
+        val clientId = "c32c93a8-b54b-4943-87b0-dfd36adb9c3f"
+        val serverId = "server-assistant-id"
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = clientId,
+                role = MessageRole.ASSISTANT,
+                content = "partial answer",
+                timestamp = 2L,
+                isStreaming = true,
+            ),
+        )
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = serverId,
+                    role = "assistant",
+                    content = JsonPrimitive("partial answer"),
+                    timestamp = 2.0,
+                ),
+            ),
+        )
+        assertEquals(serverId, handler.messages.value.single().id)
+        assertEquals(clientId, handler.messages.value.single().uiKey)
+
+        handler.restoreInFlightTurn(
+            ChatTurnCheckpoint(
+                contextKey = "connection/profile",
+                sessionId = "session-1",
+                liveSessionId = "session-1",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("user-client-id", "question", 1L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = clientId,
+                    content = "partial answer",
+                    timestamp = 2L,
+                    thinkingContent = "checkpoint reasoning",
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = 1L,
+                updatedAt = 3L,
+            ),
+        )
+
+        val assistants = handler.messages.value.filter { it.role == MessageRole.ASSISTANT }
+        assertEquals(1, assistants.size)
+        assertEquals(serverId, assistants.single().id)
+        assertEquals(clientId, assistants.single().uiKey)
+        assertEquals("checkpoint reasoning", assistants.single().thinkingContent)
+        assertEquals(
+            handler.messages.value.size,
+            handler.messages.value.map(ChatMessage::uiKey).distinct().size,
+        )
+    }
+
+    @Test
+    fun staleClientCallbacks_afterServerIdAdoption_mutateTheReboundRow() {
+        val clientId = "b229a0f6-4f15-4f86-bce3-a939d5acce82"
+        val serverId = "server-assistant-id"
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = clientId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+        handler.replaceMessageId(clientId, serverId)
+
+        // Gateway recovery callbacks retain the checkpoint/client id even
+        // after history or message.started has adopted the server id.
+        handler.onTextDelta(clientId, "answer")
+        handler.onThinkingDelta(clientId, "reasoning")
+        handler.onToolGenerating(clientId, "terminal")
+
+        val assistant = handler.messages.value.single()
+        assertEquals(serverId, assistant.id)
+        assertEquals(clientId, assistant.uiKey)
+        assertEquals("answer", assistant.content)
+        assertEquals("reasoning", assistant.thinkingContent)
+        assertEquals(1, assistant.toolCalls.size)
+    }
+
+    @Test
+    fun recoveryTransitionModel_neverPublishesDuplicateRenderIdentity() {
+        repeat(64) { seed ->
+            val modelHandler = ChatHandler()
+            val clientId = "client-$seed"
+            val serverId = "server-$seed"
+            val checkpoint = ChatTurnCheckpoint(
+                contextKey = "connection/profile",
+                sessionId = "session-$seed",
+                liveSessionId = "session-$seed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("user-$seed", "question", 1L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = clientId,
+                    content = "partial",
+                    timestamp = 2L,
+                    thinkingContent = "checkpoint",
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = 1L,
+                updatedAt = 2L,
+            )
+            modelHandler.addPlaceholderMessage(
+                ChatMessage(
+                    id = clientId,
+                    role = MessageRole.ASSISTANT,
+                    content = "partial",
+                    timestamp = 2L,
+                    isStreaming = true,
+                ),
+            )
+
+            var serverIdAdopted = false
+            val random = Random(seed)
+            repeat(20) { step ->
+                when (random.nextInt(5)) {
+                    0 -> {
+                        val content = modelHandler.messages.value
+                            .last { it.role == MessageRole.ASSISTANT }
+                            .content
+                        modelHandler.loadMessageHistory(
+                            listOf(
+                                MessageItem(
+                                    id = serverId,
+                                    role = "assistant",
+                                    content = JsonPrimitive(content),
+                                    timestamp = 2.0,
+                                ),
+                            ),
+                        )
+                        serverIdAdopted = true
+                    }
+                    1 -> modelHandler.restoreInFlightTurn(checkpoint)
+                    2 -> modelHandler.onTextDelta(clientId, ".$step")
+                    3 -> modelHandler.onThinkingDelta(clientId, "t$step")
+                    else -> modelHandler.onUsageReceived(clientId, step, step + 1, null, null)
+                }
+
+                val snapshot = modelHandler.messages.value
+                assertEquals(
+                    "seed=$seed step=$step keys=${snapshot.map(ChatMessage::uiKey)}",
+                    snapshot.size,
+                    snapshot.map(ChatMessage::uiKey).distinct().size,
+                )
+                val assistants = snapshot.filter { it.role == MessageRole.ASSISTANT }
+                assertEquals("seed=$seed step=$step", 1, assistants.size)
+                assertEquals(clientId, assistants.single().uiKey)
+                if (serverIdAdopted) assertEquals(serverId, assistants.single().id)
+            }
+        }
     }
 
     @Test

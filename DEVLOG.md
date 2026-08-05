@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-04 — Android transcript identity ownership
+
+ChatHandler now owns one render identity for every published transcript row.
+Checkpoint recovery and all streamed message mutations resolve both the mutable
+server/domain ID and the stable UI identity, so history adoption cannot leave a
+stale client reference that appends a second row. The publication boundary also
+coalesces repeated render identities before Chat or Voice can observe them,
+while keeping the first transcript position and latest state.
+
+Focused coverage composes history reconciliation with checkpoint restore,
+exercises stale post-adoption callbacks, and runs deterministic transition
+sequences across restore, replay, deltas, thinking, and usage updates. Voice's
+temporary transcript row now occupies an auxiliary key namespace disjoint from
+real message rows.
+
 ## 2026-08-02 — Android Russian localization
 
 Android now ships complete Russian catalogs for the main and sideload builds.
