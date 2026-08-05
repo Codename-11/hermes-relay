@@ -218,8 +218,10 @@ private fun severityColor(severity: DiagnosticSeverity): Color = when (severity)
 private fun DiagnosticLogEntry.detailLine(): String? {
     val pieces = listOfNotNull(
         detail,
+        suggestion,
+        operation,
         endpointRole?.let { "route=$it" },
-        url,
+        primaryUrl,
         elapsedMs?.let { "${it}ms" },
     )
     return pieces.joinToString(" - ").takeIf { it.isNotBlank() }

@@ -323,7 +323,7 @@ internal fun buildStatusChecks(
             it.category == category && it.severity == DiagnosticSeverity.Error
         }
 
-    fun DiagnosticLogEntry.message(): String = detail ?: title
+    fun DiagnosticLogEntry.message(): String = suggestion ?: detail ?: title
 
     val checks = mutableListOf<StatusCheck>()
 

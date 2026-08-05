@@ -9,6 +9,7 @@ import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -353,6 +354,10 @@ class EndpointResolver(
         surface: EndpointSurface,
     ): Boolean {
         val startedAtMs = clock()
+        val operation = when (surface) {
+            EndpointSurface.Standard -> "Dashboard or API route health probe"
+            EndpointSurface.Relay -> "Relay route health probe"
+        }
         val target = probeTarget(candidate, surface)
         val url = target?.requestUrl?.toHttpUrlOrNull()
             ?: run {
@@ -362,8 +367,10 @@ class EndpointResolver(
                     severity = DiagnosticSeverity.Error,
                     title = context?.getString(R.string.endpoint_diag_probe_invalid) ?: "Endpoint probe invalid",
                     detail = "No valid Dashboard, API, or Relay URL",
+                    operation = operation,
                     endpointRole = candidate.role,
-                    url = candidate.primaryRouteUrl(),
+                    configuredUrl = candidate.primaryRouteUrl(),
+                    suggestion = "Edit or re-pair this route so it contains a valid service URL.",
                 )
                 recordOutcome(candidate, surface, reachable = false, detail = "Invalid route URL")
                 return false
@@ -397,9 +404,16 @@ class EndpointResolver(
                             severity = if (ok) DiagnosticSeverity.Info else DiagnosticSeverity.Warning,
                             title = probeTitle,
                             detail = if (ok) null else "HTTP ${resp.code}",
+                            operation = operation,
                             endpointRole = candidate.role,
-                            url = target.baseUrl,
+                            configuredUrl = target.baseUrl,
+                            requestUrl = target.requestUrl,
                             elapsedMs = clock() - startedAtMs,
+                            suggestion = if (ok) {
+                                null
+                            } else {
+                                NetworkDiagnosticGuidance.forHttpStatus(resp.code, surface.diagnosticTarget())
+                            },
                         )
                         recordOutcome(
                             candidate,
@@ -415,9 +429,12 @@ class EndpointResolver(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.endpoint_diag_probe_timeout) ?: "Endpoint probe timeout",
                         detail = "No ${target.path} response in ${PROBE_TIMEOUT_MS}ms",
+                        operation = operation,
                         endpointRole = candidate.role,
-                        url = target.baseUrl,
+                        configuredUrl = target.baseUrl,
+                        requestUrl = target.requestUrl,
                         elapsedMs = clock() - startedAtMs,
+                        suggestion = "Check network routing or firewall rules between this device and ${surface.diagnosticTarget()}.",
                     )
                     recordOutcome(candidate, surface, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
                     false
@@ -428,9 +445,12 @@ class EndpointResolver(
                     severity = DiagnosticSeverity.Warning,
                     title = context?.getString(R.string.endpoint_diag_probe_timeout) ?: "Endpoint probe timeout",
                     detail = "No ${target.path} response in ${PROBE_TIMEOUT_MS}ms",
+                    operation = operation,
                     endpointRole = candidate.role,
-                    url = target.baseUrl,
+                    configuredUrl = target.baseUrl,
+                    requestUrl = target.requestUrl,
                     elapsedMs = clock() - startedAtMs,
+                    suggestion = "Check network routing or firewall rules between this device and ${surface.diagnosticTarget()}.",
                 )
                 recordOutcome(candidate, surface, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
                 false
@@ -441,10 +461,13 @@ class EndpointResolver(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Warning,
                     title = context?.getString(R.string.endpoint_diag_probe_failed) ?: "Endpoint probe failed",
-                    detail = e.javaClass.simpleName,
+                    detail = humanProbeFailure(e),
+                    operation = operation,
                     endpointRole = candidate.role,
-                    url = target.baseUrl,
+                    configuredUrl = target.baseUrl,
+                    requestUrl = target.requestUrl,
                     elapsedMs = clock() - startedAtMs,
+                    suggestion = NetworkDiagnosticGuidance.forThrowable(e, surface.diagnosticTarget()),
                 )
                 recordOutcome(candidate, surface, reachable = false, detail = humanProbeFailure(e))
                 false
@@ -519,6 +542,11 @@ class EndpointResolver(
         is SocketTimeoutException -> PROBE_TIMEOUT_DETAIL
         is NoRouteToHostException -> "No route to host"
         else -> e.javaClass.simpleName
+    }
+
+    private fun EndpointSurface.diagnosticTarget(): String = when (this) {
+        EndpointSurface.Standard -> "Dashboard or API server"
+        EndpointSurface.Relay -> "Relay"
     }
 
     /**

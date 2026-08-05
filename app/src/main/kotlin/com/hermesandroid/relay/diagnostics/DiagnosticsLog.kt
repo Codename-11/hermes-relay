@@ -27,7 +27,16 @@ data class DiagnosticLogEntry(
     val severity: DiagnosticSeverity,
     val title: String,
     val detail: String? = null,
+    /** Human-readable action that produced this event, not merely its subsystem. */
+    val operation: String? = null,
     val endpointRole: String? = null,
+    /** User/configuration-facing route before protocol/path normalization. */
+    val configuredUrl: String? = null,
+    /** Exact sanitized URL attempted on the wire, including the diagnostic path. */
+    val requestUrl: String? = null,
+    /** Concrete next troubleshooting step for failures with a known interpretation. */
+    val suggestion: String? = null,
+    /** Legacy single-URL field retained for diagnostics that have not needed split context. */
     val url: String? = null,
     val elapsedMs: Long? = null,
     /**
@@ -36,7 +45,11 @@ data class DiagnosticLogEntry(
      * the detail view shows this. Null for non-error / manually-recorded entries.
      */
     val stacktrace: String? = null,
-)
+) {
+    /** Best route for mode inference and compact list rendering. */
+    val primaryUrl: String?
+        get() = configuredUrl ?: requestUrl ?: url
+}
 
 /**
  * Current health of a single subsystem on the Diagnostics status timeline.
@@ -83,19 +96,29 @@ object DiagnosticsLog {
         severity: DiagnosticSeverity = DiagnosticSeverity.Info,
         title: String,
         detail: String? = null,
+        operation: String? = null,
         endpointRole: String? = null,
+        configuredUrl: String? = null,
+        requestUrl: String? = null,
+        suggestion: String? = null,
         url: String? = null,
         elapsedMs: Long? = null,
         stacktrace: String? = null,
     ) {
+        val safeConfiguredUrl = sanitizeUrl(configuredUrl)
+        val safeRequestUrl = sanitizeUrl(requestUrl)
         val entry = DiagnosticLogEntry(
             timestampMs = System.currentTimeMillis(),
             category = category,
             severity = severity,
             title = clean(title) ?: title.take(MAX_TEXT_LENGTH),
             detail = clean(detail),
+            operation = clean(operation),
             endpointRole = clean(endpointRole),
-            url = sanitizeUrl(url),
+            configuredUrl = safeConfiguredUrl,
+            requestUrl = safeRequestUrl,
+            suggestion = clean(suggestion),
+            url = if (safeConfiguredUrl == null && safeRequestUrl == null) sanitizeUrl(url) else null,
             elapsedMs = elapsedMs,
             stacktrace = redactTrace(stacktrace),
         )
@@ -123,7 +146,11 @@ object DiagnosticsLog {
         title: String,
         detail: String? = null,
         throwable: Throwable? = null,
+        operation: String? = null,
         endpointRole: String? = null,
+        configuredUrl: String? = null,
+        requestUrl: String? = null,
+        suggestion: String? = null,
         url: String? = null,
         elapsedMs: Long? = null,
         reliabilityContext: String? = null,
@@ -133,7 +160,11 @@ object DiagnosticsLog {
             severity = DiagnosticSeverity.Error,
             title = title,
             detail = detail ?: throwable?.message,
+            operation = operation,
             endpointRole = endpointRole,
+            configuredUrl = configuredUrl,
+            requestUrl = requestUrl,
+            suggestion = suggestion,
             url = url,
             elapsedMs = elapsedMs,
             stacktrace = throwable?.let { stackTraceText(it) },

@@ -5267,12 +5267,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 return@launch
             }
 
+            val diagnosticApiUrl = effectiveApiServerUrlSnapshot()
             _apiServerHealth.value = HealthStatus.Probing
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Api,
                 severity = DiagnosticSeverity.Info,
                 title = ctx.getString(R.string.conn_status_testing_standard),
-                url = effectiveApiServerUrlSnapshot(),
+                operation = "Hermes API health check",
+                configuredUrl = diagnosticApiUrl,
+                requestUrl = "${diagnosticApiUrl.trimEnd('/')}/health",
             )
 
             val health = client.checkHealthDetailed()
@@ -5284,7 +5287,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     severity = DiagnosticSeverity.Error,
                     title = ctx.getString(R.string.conn_status_setup_health_failed),
                     detail = health.message,
-                    url = effectiveApiServerUrlSnapshot(),
+                    operation = "Hermes API health check",
+                    configuredUrl = diagnosticApiUrl,
+                    requestUrl = "${diagnosticApiUrl.trimEnd('/')}/health",
                 )
                 onResult(
                     StandardApiSetupResult(
@@ -5365,7 +5370,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 severity = if (reachable) DiagnosticSeverity.Info else DiagnosticSeverity.Error,
                 title = if (reachable) ctx.getString(R.string.conn_status_hermes_ok) else ctx.getString(R.string.conn_status_auth_failed),
                 detail = message,
-                url = effectiveApiServerUrlSnapshot(),
+                operation = "Hermes API sessions authentication check",
+                configuredUrl = diagnosticApiUrl,
+                requestUrl = "${diagnosticApiUrl.trimEnd('/')}/api/sessions",
             )
             onResult(
                 StandardApiSetupResult(
@@ -5587,12 +5594,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 return@launch
             }
 
+            val diagnosticApiUrl = effectiveApiServerUrlSnapshot()
             _apiServerHealth.value = HealthStatus.Probing
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Api,
                 severity = DiagnosticSeverity.Info,
                 title = ctx.getString(R.string.conn_status_testing_api),
-                url = effectiveApiServerUrlSnapshot(),
+                operation = "Hermes API health check",
+                configuredUrl = diagnosticApiUrl,
+                requestUrl = "${diagnosticApiUrl.trimEnd('/')}/health",
             )
             val health = client.checkHealthDetailed()
             if (health is com.hermesandroid.relay.network.upstream.HealthCheckResult.Unhealthy) {
@@ -5603,7 +5613,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     severity = DiagnosticSeverity.Error,
                     title = ctx.getString(R.string.conn_status_api_health_failed),
                     detail = health.message,
-                    url = effectiveApiServerUrlSnapshot(),
+                    operation = "Hermes API health check",
+                    configuredUrl = diagnosticApiUrl,
+                    requestUrl = "${diagnosticApiUrl.trimEnd('/')}/health",
                 )
                 onResult(false, health.message)
                 return@launch
@@ -5624,7 +5636,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 severity = if (reachable) DiagnosticSeverity.Info else DiagnosticSeverity.Error,
                 title = if (reachable) ctx.getString(R.string.conn_status_api_test_ok) else ctx.getString(R.string.conn_status_api_test_failed),
                 detail = message,
-                url = effectiveApiServerUrlSnapshot(),
+                operation = "Hermes API sessions authentication check",
+                configuredUrl = diagnosticApiUrl,
+                requestUrl = "${diagnosticApiUrl.trimEnd('/')}/api/sessions",
             )
             onResult(reachable, message)
         }

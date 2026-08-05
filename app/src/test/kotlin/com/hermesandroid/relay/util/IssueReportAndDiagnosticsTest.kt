@@ -9,6 +9,7 @@ import java.net.URLDecoder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -101,6 +102,10 @@ class IssueReportAndDiagnosticsTest {
         endpointRole: String? = null,
         url: String? = null,
         detail: String? = null,
+        operation: String? = null,
+        configuredUrl: String? = null,
+        requestUrl: String? = null,
+        suggestion: String? = null,
     ) = DiagnosticLogEntry(
         timestampMs = 0L,
         category = DiagnosticCategory.Api,
@@ -109,6 +114,10 @@ class IssueReportAndDiagnosticsTest {
         detail = detail,
         endpointRole = endpointRole,
         url = url,
+        operation = operation,
+        configuredUrl = configuredUrl,
+        requestUrl = requestUrl,
+        suggestion = suggestion,
     )
 
     @Test
@@ -181,6 +190,65 @@ class IssueReportAndDiagnosticsTest {
     fun connectionModeIsUnknownWithoutRouteOrUrl() {
         val body = DiagnosticIssuePrefill.issueBody(sampleEntry(DiagnosticSeverity.Warning))
         assertTrue(body.contains("- Connection mode: unknown"))
+    }
+
+    @Test
+    fun bodyExplainsConfiguredRouteActualRequestAndNextStep() {
+        val body = DiagnosticIssuePrefill.issueBody(
+            sampleEntry(
+                severity = DiagnosticSeverity.Error,
+                title = "Relay connection refused",
+                operation = "Relay health probe before WebSocket connection",
+                configuredUrl = "ws://10.3.0.5:8767",
+                requestUrl = "http://10.3.0.5:8767/health",
+                suggestion = "Verify Relay is running and listening on the configured host and port.",
+            ),
+        )
+
+        assertTrue(body.contains("- Operation: Relay health probe before WebSocket connection"))
+        assertTrue(body.contains("- Configured URL: ws://[host]"))
+        assertTrue(body.contains("- Request: http://[host]/health"))
+        assertTrue(
+            body.contains(
+                "- Suggested next step: Verify Relay is running and listening on the configured host and port.",
+            ),
+        )
+        assertFalse(body.contains("10.3.0.5"))
+        assertFalse(body.lineSequence().any { it.startsWith("- URL:") })
+    }
+
+    @Test
+    fun connectionModePrefersConfiguredRouteOverConvertedProbeRequest() {
+        val entry = sampleEntry(
+            severity = DiagnosticSeverity.Error,
+            configuredUrl = "wss://100.80.1.2:8767",
+            requestUrl = "https://relay.example.com:8767/health",
+        )
+
+        assertEquals("tailscale", DiagnosticIssuePrefill.connectionMode(entry))
+    }
+
+    @Test
+    fun recordSanitizesStructuredDiagnosticContext() {
+        DiagnosticsLog.clear()
+
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Relay,
+            severity = DiagnosticSeverity.Error,
+            title = "Relay failed",
+            operation = " Relay health probe ",
+            configuredUrl = "ws://token=secret@relay.example.com:8767?token=secret",
+            requestUrl = "http://relay.example.com:8767/health?api_key=secret",
+            suggestion = " Retry with token=secret after checking the service. ",
+            url = "http://legacy.example.com:8767",
+        )
+
+        val entry = DiagnosticsLog.recent(limit = 1).single()
+        assertEquals("Relay health probe", entry.operation)
+        assertEquals("ws://[host]", entry.configuredUrl)
+        assertEquals("http://[host]/health", entry.requestUrl)
+        assertEquals("Retry with token=[hidden] after checking the service.", entry.suggestion)
+        assertNull(entry.url)
     }
 
     @Test
