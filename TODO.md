@@ -24,6 +24,22 @@ multi-session protocol before treating `lifecycle=session` as an isolation claim
 
 ---
 
+## Split fast Android unit tests from resource and screenshot tests
+
+The quick-loop commands now narrow execution to the sideload debug variant and
+support one-class filtering, but all `:app` unit tests still share one Android
+test variant. That variant includes merged Android resources, gives every test
+worker a 2 GiB heap, runs on JDK 21, and enables Roborazzi recording because a
+small subset of Robolectric/screenshot tests requires those settings.
+
+Create a separate resource/screenshot test lane so pure state, parser, routing,
+and formatting tests can run as ordinary JVM tests without Android resource
+packaging. Keep golden-image recording explicit rather than applying it to all
+unit tests, preserve a CI task that runs both lanes, and benchmark cold plus
+warm focused-test latency before adopting the split.
+
+---
+
 ## Verify Android native dashboard sign-in on device
 
 Android now selects Custom Tab + PKCE for HTTPS gateways that advertise

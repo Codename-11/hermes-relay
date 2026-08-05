@@ -267,11 +267,14 @@ Already installed? The same recipe is auto-loaded as a Hermes skill — invoke `
 
 ```bash
 # Android: open the repo root in Android Studio, wait for Gradle sync, Run (Shift+F10).
-scripts/dev.bat build      # Build debug APK
+scripts/dev.bat build      # Build sideload debug APK
+scripts/dev.bat compile    # Compile sideload Kotlin only
+scripts/dev.bat test-one "com.hermesandroid.relay.SomeTest"  # Focused unit test
+scripts/dev.bat install-fast  # arm64 phone build + install + launch
 scripts/dev.bat release    # Build signed release APK
 scripts/dev.bat bundle     # Build release AAB for Google Play
-scripts/dev.bat run        # Build + install + launch + logcat
-scripts/dev.bat test       # Run unit tests
+scripts/dev.bat run        # Build sideload + install + launch + logcat
+scripts/dev.bat test       # Run sideload debug unit tests
 scripts/dev.bat version    # Show current version
 scripts/dev.bat relay      # Start the relay server (dev, no TLS)
 ```
@@ -280,13 +283,13 @@ scripts/dev.bat relay      # Start the relay server (dev, no TLS)
 
 | Component | Stack |
 |-----------|-------|
-| **Android app** | Kotlin 2.0, Jetpack Compose, Material 3, OkHttp |
+| **Android app** | Kotlin 2.4, Jetpack Compose, Material 3, OkHttp |
 | **Hermes-Relay CLI** | TypeScript, Bun-compiled native binary, Node ≥21 (source/dev), zero runtime deps |
 | **Server / plugin** | Python 3.11+, aiohttp |
 | **Serialization** | kotlinx.serialization (Android) |
-| **Build** | AGP 9, Gradle 8.13, JVM toolchain 17 (Android); `tsc` + `bun build --compile` (CLI) |
+| **Build** | AGP 9.3.1, Gradle 9.6.1, JVM toolchain 17 (Android); `tsc` + `bun build --compile` (CLI) |
 | **CI/CD** | GitHub Actions — lint, build, test, APK artifact, CLI binaries per platform |
-| **Min SDK** | 26 (Android 8.0) · Target SDK 35 |
+| **Min SDK** | 26 (Android 8.0) · Target SDK 36 |
 
 <details>
 <summary><b>Repository structure</b></summary>
