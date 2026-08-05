@@ -2650,7 +2650,14 @@
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay が予期せず終了しました</string>
-    <string name="crash_body">最後のセッションがクラッシュしました。このレポートを送信すると、問題をより早く修正できます。</string>
+    <string name="crash_body">予期しない問題の後、Hermes-Relay が再起動しました。アプリは引き続き使用できます。</string>
+    <string name="crash_privacy">何も送信されていません。共有する前に端末内で編集されたレポートを確認してください。</string>
+    <string name="crash_review">レポートを確認</string>
+    <string name="crash_share_title">クラッシュレポートを共有</string>
+    <string name="crash_share_subject">Hermes-Relay クラッシュレポート — %1$s</string>
+    <string name="crash_toast_no_share">レポートをコピーしました — 共有できるアプリがありません</string>
+    <string name="crash_toast_opened">完全なレポートをコピーしました — 送信前に GitHub の内容を確認してください</string>
+    <string name="crash_toast_no_browser">レポートをコピーしました — GitHub を開けるブラウザがありません</string>
     <string name="crash_dismiss">却下する</string>
     <string name="crash_copy">コピー</string>
     <string name="crash_share">共有</string>
@@ -3838,4 +3845,10 @@
     <string name="plugins_keep">保持</string>
     <string name="plugins_remove">削除</string>
     <string name="plugins_remove_confirm">「%1$s」を削除しますか？接続された Android 端末にこのプラグインページは表示されなくなります。</string>
+    <string name="support_bundle_review">サポート情報を確認</string>
+    <string name="support_bundle_title">サポート情報</string>
+    <string name="support_bundle_privacy">自動アップロードはありません。最大 %1$d 件のレポートを含む端末内エクスポートを確認してください。</string>
+    <string name="support_bundle_copied">サポート情報をコピーしました</string>
+    <string name="support_bundle_no_share">サポート情報をコピーしました — 共有できるアプリがありません</string>
+    <string name="support_bundle_share_title">Hermes-Relay サポート情報を共有</string>
 </resources>

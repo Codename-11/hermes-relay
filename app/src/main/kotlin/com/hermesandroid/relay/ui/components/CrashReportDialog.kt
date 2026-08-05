@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.util.CrashReport
+import com.hermesandroid.relay.reliability.ReliabilityReport
 import com.hermesandroid.relay.util.CrashReporter
 import com.hermesandroid.relay.util.IssueReport
 import kotlinx.coroutines.Dispatchers
@@ -57,16 +57,16 @@ import kotlinx.coroutines.withContext
  * crashed). Render it inside the app theme so the dialog picks up Material
  * colors — see RelayApp.
  *
- * Peeks the report on first composition (does NOT delete on read) and clears it
- * only when the user acknowledges it (Dismiss/Report). A report the user merely
+ * Peeks the report on first composition (does not mark it reviewed on read) and
+ * acknowledges it only on Dismiss/Report. A report the user merely
  * glanced at — or never reached because the app was backgrounded — therefore
- * survives relaunches instead of being lost after one view; once acknowledged
- * it's deleted and won't reappear.
+ * survives relaunches instead of being lost after one view. Once acknowledged,
+ * it remains in bounded Diagnostics history but does not interrupt startup again.
  */
 @Composable
 fun CrashReportGate() {
     val context = LocalContext.current
-    var report by remember { mutableStateOf<CrashReport?>(null) }
+    var report by remember { mutableStateOf<ReliabilityReport?>(null) }
     var checked by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -79,19 +79,26 @@ fun CrashReportGate() {
     CrashReportDialog(
         report = pending,
         onDismiss = {
-            // Acknowledged (Dismiss/Report) → delete so it won't reappear.
+            // Acknowledged (Dismiss/Report) → retain as reviewed history without showing again.
             // Copy does NOT route through here, so the report stays available
             // across relaunches until the user actually dismisses or reports it.
-            CrashReporter.clearPending(context)
+            CrashReporter.clearPending(context, pending.reportId)
             report = null
         },
     )
 }
 
 @Composable
-private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
+private fun CrashReportDialog(report: ReliabilityReport, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val reportText = remember(report) { report.toPlainText() }
+    var showDetails by remember(report.reportId) { mutableStateOf(false) }
+    val copiedMessage = stringResource(R.string.crash_toast_copied)
+    val noShareMessage = stringResource(R.string.crash_toast_no_share)
+    val shareTitle = stringResource(R.string.crash_share_title)
+    val reportSubject = stringResource(R.string.crash_share_subject, report.shortTitle())
+    val openedMessage = stringResource(R.string.crash_toast_opened)
+    val noBrowserMessage = stringResource(R.string.crash_toast_no_browser)
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -126,25 +133,34 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                Spacer(Modifier.height(14.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 300.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-                ) {
-                    SelectionContainer {
-                        Text(
-                            text = reportText,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .verticalScroll(rememberScrollState())
-                                .padding(12.dp),
-                        )
+                Text(
+                    text = stringResource(R.string.crash_privacy),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+
+                if (showDetails) {
+                    Spacer(Modifier.height(14.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 120.dp, max = 300.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = reportText,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(12.dp),
+                            )
+                        }
                     }
                 }
 
@@ -157,45 +173,45 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_dismiss)) }
-                    OutlinedButton(
-                        onClick = {
-                            IssueReport.copyToClipboard(context, reportText)
-                            toast(context, "Crash report copied")
-                        },
-                    ) { Text(stringResource(R.string.common_copy)) }
+                    if (!showDetails) {
+                        Button(onClick = { showDetails = true }) {
+                            Text(stringResource(R.string.crash_review))
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                IssueReport.copyToClipboard(context, reportText)
+                                toast(context, copiedMessage)
+                            },
+                        ) { Text(stringResource(R.string.common_copy)) }
                     // Universal, GitHub-free path: hand the full report to the
                     // system share sheet (email, chat apps, notes, Drive…). The
                     // user picks the destination, so nothing leaves the device
                     // until they choose to send it — same privacy posture as Copy.
-                    OutlinedButton(
-                        onClick = {
-                            val shared = IssueReport.share(
-                                context,
-                                "Hermes-Relay crash report — ${report.shortTitle()}",
-                                reportText,
-                                chooserTitle = "Share crash report",
-                            )
-                            if (!shared) {
+                        OutlinedButton(
+                            onClick = {
+                                val shared = IssueReport.share(
+                                    context,
+                                    reportSubject,
+                                    reportText,
+                                    chooserTitle = shareTitle,
+                                )
+                                if (!shared) {
+                                    IssueReport.copyToClipboard(context, reportText)
+                                    toast(context, noShareMessage)
+                                }
+                                onDismiss()
+                            },
+                        ) { Text(stringResource(R.string.common_share)) }
+                        Button(
+                            onClick = {
                                 IssueReport.copyToClipboard(context, reportText)
-                                toast(context, "Report copied — no app found to share to")
-                            }
-                            onDismiss()
-                        },
-                    ) { Text(stringResource(R.string.common_share)) }
-                    Button(
-                        onClick = {
-                            // Copy the FULL report first; the URL only carries the
-                            // head of the trace, so the user can paste the rest.
-                            IssueReport.copyToClipboard(context, reportText)
-                            val opened = IssueReport.openUrl(context, CrashReporter.buildGithubIssueUrl(report))
-                            toast(
-                                context,
-                                if (opened) "Full report copied — paste into the issue if it's truncated"
-                                else "Report copied — no browser found to open GitHub",
-                            )
-                            onDismiss()
-                        },
-                    ) { Text(stringResource(R.string.common_report)) }
+                                val opened = IssueReport.openUrl(context, CrashReporter.buildGithubIssueUrl(report))
+                                toast(context, if (opened) openedMessage else noBrowserMessage)
+                                onDismiss()
+                            },
+                        ) { Text(stringResource(R.string.common_report)) }
+                    }
                 }
             }
         }

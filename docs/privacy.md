@@ -31,6 +31,7 @@ All app data is stored on-device in the app's private sandbox:
 | Relay session token | EncryptedSharedPreferences | Same encryption as API key |
 | Theme and display preferences | DataStore preferences | Tool display mode, reasoning toggle, voice preferences |
 | Stats for Nerds counters | DataStore preferences | Response times, token counts, health stats — local only |
+| Reliability reports | App-private JSON | Up to 20 locally redacted crash/handled-error records, retained for 14 days; no prompts, messages, profile names, hosts, tokens, or media |
 
 Chat messages are **not cached locally**. They are loaded from the Hermes API server on demand and exist only in memory while the app is running.
 
@@ -73,6 +74,9 @@ Notification companion is opt-in. The app only forwards notification metadata af
 ## Data Export & Reset
 
 From Settings, users can:
+
+- **Review support information** in Diagnostics, then explicitly copy or share
+  the exact redacted local text. Nothing is uploaded automatically.
 
 - **Export** a full connection backup. The file includes server URLs,
   preferences, API keys, relay session tokens, device IDs, and dashboard

@@ -494,6 +494,14 @@ the new app version and a higher `appVersionCode`.
   in `app/build.gradle.kts`. Never rename the sideload APK — the
   in-app update checker matches assets by `.apk` + `sideload` in the
   name, and user-docs verify steps cite the filename.
+  The release workflow also retains
+  `app/build/outputs/mapping/{googlePlayRelease,sideloadRelease}/mapping.txt`
+  for 90 days in the `android-r8-mappings-<version>-<sha>` workflow
+  artifact. It is intentionally not a GitHub Release asset. To symbolicate an
+  in-app or sideload report, download the artifact for the exact version/SHA and
+  run Android's retrace tool with the matching flavor mapping:
+  `retrace <mapping.txt> <obfuscated-trace.txt>`. Play reports can additionally
+  use the mapping bundled into the uploaded AAB through Play Console.
 - `app/src/main/assets/whats_new.txt` — in-app "What's New" content
   shown in the settings/about screen. Update with the version number
   and a brief feature summary. Gets stale silently if forgotten

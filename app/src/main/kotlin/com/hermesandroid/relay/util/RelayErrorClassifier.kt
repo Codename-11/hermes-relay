@@ -231,6 +231,7 @@ fun classifyError(t: Throwable?, context: String? = null, ctx: Context? = null):
                 title = human.title,
                 detail = human.body,
                 throwable = t,
+                reliabilityContext = context,
             )
         }
     }

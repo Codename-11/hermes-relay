@@ -3,6 +3,8 @@ package com.hermesandroid.relay.diagnostics
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.hermesandroid.relay.reliability.ReliabilityCenter
+import com.hermesandroid.relay.reliability.ReliabilityRedactor
 
 enum class DiagnosticCategory(val label: String) {
     Api("API"),
@@ -124,6 +126,7 @@ object DiagnosticsLog {
         endpointRole: String? = null,
         url: String? = null,
         elapsedMs: Long? = null,
+        reliabilityContext: String? = null,
     ) {
         record(
             category = category,
@@ -135,6 +138,17 @@ object DiagnosticsLog {
             elapsedMs = elapsedMs,
             stacktrace = throwable?.let { stackTraceText(it) },
         )
+        if (throwable != null) {
+            runCatching {
+                ReliabilityCenter.recordHandled(
+                    title = title,
+                    detail = detail ?: throwable.message,
+                    throwable = throwable,
+                    context = reliabilityContext,
+                    routeRole = endpointRole,
+                )
+            }
+        }
     }
 
     private fun stackTraceText(t: Throwable): String =
@@ -167,10 +181,8 @@ object DiagnosticsLog {
             val prefix = noQuery.substring(0, schemeEnd + 3)
             val rest = noQuery.substring(schemeEnd + 3)
             val slash = rest.indexOf('/').let { if (it < 0) rest.length else it }
-            val authority = rest.substring(0, slash)
             val path = rest.substring(slash)
-            val safeAuthority = authority.substringAfterLast('@')
-            prefix + safeAuthority + path
+            prefix + "[host]" + path
         } else {
             noQuery
         }
@@ -197,7 +209,7 @@ object DiagnosticsLog {
      */
     private fun redactTrace(value: String?): String? {
         val trimmed = value?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        val redacted = redact(trimmed)
+        val redacted = ReliabilityRedactor.redact(trimmed, MAX_TRACE_LENGTH)
         return if (redacted.length > MAX_TRACE_LENGTH) {
             redacted.take(MAX_TRACE_LENGTH) + "\n… (truncated)"
         } else {
@@ -205,8 +217,5 @@ object DiagnosticsLog {
         }
     }
 
-    private fun redact(value: String): String =
-        value.replace(Regex("""(?i)(bearer|token|api[_-]?key|session[_-]?token)\s*[:=]\s*\S+""")) {
-            "${it.groupValues[1]}=[hidden]"
-        }
+    private fun redact(value: String): String = ReliabilityRedactor.redact(value, MAX_TRACE_LENGTH)
 }

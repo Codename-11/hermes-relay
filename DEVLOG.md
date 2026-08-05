@@ -15,6 +15,26 @@ sequences across restore, replay, deltas, thinking, and usage updates. Voice's
 temporary transcript row now occupies an auxiliary key namespace disjoint from
 real message rows.
 
+## 2026-08-04 — Android reliability and support foundation
+
+Android fatal capture and centrally classified handled failures now converge on
+a versioned, allowlisted reliability record. Reports are redacted before local
+persistence, capped at 20 records with 14-day retention, written atomically,
+and correlated only with random app/report identifiers. Expected cancellation
+and permission denial remain non-reportable. The pre-existing one-file crash
+format migrates locally on first launch.
+
+Crash recovery leads with the recovery outcome and no-upload guarantee, then
+requires an explicit review before copy, share, or GitHub actions. Diagnostics
+adds an offline support-information review using the same exact redacted text.
+Android issue prefills now request the Android area while repository-wide issue
+ownership remains maintainer-reviewed, and the release workflow retains both
+variant R8 mappings for deterministic retrace.
+
+The architecture audit defers an ANR watchdog, richer allowlisted breadcrumbs,
+hashed product correlation, and OOM emergency writing until their lifecycle,
+privacy, and false-positive behavior can be validated on devices.
+
 ## 2026-08-02 — Android Russian localization
 
 Android now ships complete Russian catalogs for the main and sideload builds.
