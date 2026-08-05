@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
@@ -93,6 +94,8 @@ private enum class SessionDrawerFilter {
     Pinned,
     Archive,
 }
+
+internal const val SESSION_DRAWER_LIST_TAG = "session-drawer-list"
 
 @Composable
 fun SessionDrawerContent(
@@ -139,7 +142,6 @@ fun SessionDrawerContent(
     var pinnedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var archivedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val listState = rememberLazyListState()
-    var scrollToTopPending by remember { mutableStateOf(false) }
     val trimmedQuery = query.trim()
     // Threads affordance shows when the capability is active OR there's already at least one
     // agent Thread (source=phone) in the list. If the filter is on Threads but they've
@@ -194,27 +196,12 @@ fun SessionDrawerContent(
         .toList()
     val topVisibleSessionId = visibleSessions.firstOrNull()?.sessionId
 
-    LaunchedEffect(isOpen) {
-        scrollToTopPending = isOpen
-        if (isOpen && visibleSessions.isNotEmpty()) {
-            listState.scrollToItem(0)
-            scrollToTopPending = false
-        }
-    }
-
-    LaunchedEffect(filter, trimmedQuery) {
-        if (isOpen && visibleSessions.isNotEmpty()) {
-            listState.scrollToItem(0)
-            scrollToTopPending = false
-        } else if (isOpen) {
-            scrollToTopPending = true
-        }
-    }
-
-    LaunchedEffect(isOpen, topVisibleSessionId, visibleSessions.size) {
-        if (isOpen && scrollToTopPending && visibleSessions.isNotEmpty()) {
-            listState.scrollToItem(0)
-            scrollToTopPending = false
+    LaunchedEffect(isOpen, activeFilter, trimmedQuery, topVisibleSessionId) {
+        if (isOpen && topVisibleSessionId != null) {
+            // A drawer-open refresh can reorder rows after the initial scroll.
+            // Override LazyColumn's normal key anchoring so the new leading
+            // session is visible instead of being retained above the viewport.
+            listState.requestScrollToItem(0)
         }
     }
 
@@ -499,7 +486,10 @@ fun SessionDrawerContent(
                 )
             }
         } else {
-            LazyColumn(state = listState) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.testTag(SESSION_DRAWER_LIST_TAG),
+            ) {
                 items(visibleSessions, key = { it.sessionId }) { session ->
                     SessionItem(
                         session = session,

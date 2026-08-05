@@ -1,5 +1,18 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-05 — Chat drawer and companion terrain ownership
+
+The Chat screen now clears composer focus when the session drawer commits to
+opening, dismissing the IME without continuously clearing focus from drawer
+search or rename fields. Drawer refreshes override keyed list anchoring only
+when the leading session identity changes, keeping the newest row visible after
+activity-based reordering.
+
+Floating companions wait for Chat's measured composer rail before publishing
+their first roaming position. Their collision footprint contains both the
+pointer target and rendered sprite, and the complete scroll-to-bottom control
+envelope is an obstacle rather than a landing perch.
+
 ## 2026-08-05 — Measured pet placement and passive model sync
 
 The floating pet now remains unpublished until the app-level overlay has a

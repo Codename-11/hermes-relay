@@ -250,7 +250,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
-private const val CHAT_SCROLL_TO_BOTTOM_PET_PERCH = "chat-scroll-to-bottom-perch"
 private const val CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE = "chat-scroll-to-bottom-obstacle"
 private val CHAT_PET_ROUTES = setOf("chat")
 
@@ -1514,6 +1513,22 @@ fun ChatScreen(
         }
     }
 
+    // The drawer and composer share this screen's focus owner. Clear the
+    // composer's input focus as soon as an open transition is committed so
+    // menu activation, accessibility activation, and edge swipes all dismiss
+    // the IME without leaving the obscured composer ready for hardware input.
+    // Observe the target rather than isOpen so the keyboard closes alongside
+    // the drawer animation, not after it settles.
+    LaunchedEffect(drawerState, focusManager) {
+        snapshotFlow { drawerState.targetValue }
+            .distinctUntilChanged()
+            .collect { target ->
+                if (target == DrawerValue.Open) {
+                    focusManager.clearFocus(force = true)
+                }
+            }
+    }
+
     // Opening the drawer re-syncs the list — so a session created on another
     // device (or one whose optimistic row was dropped on a profile switch)
     // shows up without a manual reload. Cheap dashboard read; the optimistic
@@ -2757,14 +2772,14 @@ fun ChatScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                // The visible FAB is narrower than the pet's
-                                // footprint. Measure a transparent landing
-                                // ledge around it so the pet can stand above
-                                // the control without covering its touch area.
+                                // The complete control envelope is forbidden
+                                // terrain. Registering it as a perch invited
+                                // the pet onto the button and let sibling
+                                // composer routes treat it as walkable terrain.
                                 .width(72.dp)
                                 .height(48.dp)
-                                .petPerchSurface(
-                                    key = CHAT_SCROLL_TO_BOTTOM_PET_PERCH,
+                                .petObstacleSurface(
+                                    key = CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE,
                                     routes = CHAT_PET_ROUTES,
                                 ),
                             contentAlignment = Alignment.Center,
@@ -2772,14 +2787,6 @@ fun ChatScreen(
                         SmallFloatingActionButton(
                             modifier = Modifier
                                 .size(48.dp)
-                                // The surrounding box is a landing ledge, but
-                                // the real control remains forbidden space so
-                                // composer and bubble routes cannot pass the
-                                // pet's complete scaled footprint over it.
-                                .petObstacleSurface(
-                                    key = CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE,
-                                    routes = CHAT_PET_ROUTES,
-                                )
                                 .semantics {
                                     contentDescription = if (unreadMessageCount > 0) {
                                         "Scroll to bottom, $unreadMessageCount unread " +

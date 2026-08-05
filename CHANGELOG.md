@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android chat chrome follows its active interaction state.** Opening the session drawer dismisses the composer keyboard, refreshed sessions keep their newest row visible, and floating pets wait for measured chat terrain while treating the complete scroll-to-bottom control as forbidden space.
 - **Android pets and optional model discovery initialize quietly.** Floating companions wait for a measured overlay before taking their home position, and background API model-inventory failures retain actionable local diagnostics without interrupting chat with a generic notice.
 - **Android chat and Voice stay precisely bottom-pinned through replies and keyboard changes.** The active tail keeps its stable live renderer until another row takes ownership, its timestamp space is reserved from the first frame, and opening the keyboard carries a bottom-following transcript upward instead of covering its latest content.
 - **Android Focus voice controls remain responsive.** The modal click-through guard now sits behind the voice UI instead of consuming pointer events from the mic, close, expansion, and panel controls.
