@@ -868,6 +868,9 @@
     <string name="drawer_refresh_sessions">セッションを更新する</string>
     <string name="drawer_new_chat">新しいチャット</string>
     <string name="drawer_search_placeholder">セッションまたは ID を検索...</string>
+    <string name="drawer_search_sessions">セッションを検索</string>
+    <string name="drawer_activity_working">処理中</string>
+    <string name="drawer_activity_needs_input">入力が必要</string>
     <string name="drawer_new_thread">新しいスレッド</string>
     <string name="drawer_chats_not_named">この接続ではチャットの名前は自動的に付けられません。「⋮」→「名前の変更」を使用してください。</string>
     <string name="drawer_loading_sessions">セッションを読み込み中…</string>

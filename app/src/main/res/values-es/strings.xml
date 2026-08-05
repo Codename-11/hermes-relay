@@ -770,6 +770,9 @@
     <string name="drawer_refresh_sessions">Actualizar sesiones</string>
     <string name="drawer_new_chat">Nuevo chat</string>
     <string name="drawer_search_placeholder">Buscar sesiones o id...</string>
+    <string name="drawer_search_sessions">Buscar sesiones</string>
+    <string name="drawer_activity_working">En curso</string>
+    <string name="drawer_activity_needs_input">Requiere intervención</string>
     <string name="drawer_new_thread">Nuevo hilo</string>
     <string name="drawer_chats_not_named">Los chats no tienen nombre automático en esta conexión. Utiliza «→Renombrar».</string>
     <string name="drawer_loading_sessions">Cargando sesiones…</string>

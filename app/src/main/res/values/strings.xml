@@ -951,6 +951,9 @@
     <string name="drawer_refresh_sessions">Refresh sessions</string>
     <string name="drawer_new_chat">New Chat</string>
     <string name="drawer_search_placeholder">Search sessions or id...</string>
+    <string name="drawer_search_sessions">Search sessions</string>
+    <string name="drawer_activity_working">Working</string>
+    <string name="drawer_activity_needs_input">Needs input</string>
     <string name="drawer_new_thread">New Thread</string>
     <string name="drawer_chats_not_named">Chats aren\'t auto-named on this connection — use ⋮ → Rename.</string>
     <string name="drawer_loading_sessions">Loading sessions…</string>

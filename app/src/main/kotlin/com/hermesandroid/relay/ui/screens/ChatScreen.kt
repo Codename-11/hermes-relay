@@ -163,6 +163,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
@@ -252,6 +253,21 @@ private const val DEFAULT_CHAR_LIMIT = 4096
 private const val CHAT_SCROLL_TO_BOTTOM_PET_PERCH = "chat-scroll-to-bottom-perch"
 private const val CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE = "chat-scroll-to-bottom-obstacle"
 private val CHAT_PET_ROUTES = setOf("chat")
+
+internal fun resolveSessionActivityStates(
+    background: Map<String, SessionActivityState>,
+    currentSessionId: String?,
+    isStreaming: Boolean,
+    needsInput: Boolean,
+): Map<String, SessionActivityState> = background.toMutableMap().apply {
+    currentSessionId?.let { sessionId ->
+        when {
+            needsInput -> put(sessionId, SessionActivityState.NeedsInput)
+            isStreaming -> put(sessionId, SessionActivityState.Working)
+            else -> remove(sessionId)
+        }
+    }
+}
 
 internal fun resolveChatHeaderSubtitle(
     isStreaming: Boolean,
@@ -619,8 +635,24 @@ fun ChatScreen(
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
     val sessions by chatViewModel.sessions.collectAsState()
+    val backgroundSessionActivityStates by
+        chatViewModel.backgroundSessionActivityStates.collectAsState()
     val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
+    val pendingAsk by chatViewModel.pendingAsk.collectAsState()
+    val sessionActivityStates = remember(
+        backgroundSessionActivityStates,
+        currentSessionId,
+        isStreaming,
+        pendingAsk,
+    ) {
+        resolveSessionActivityStates(
+            background = backgroundSessionActivityStates,
+            currentSessionId = currentSessionId,
+            isStreaming = isStreaming,
+            needsInput = pendingAsk != null,
+        )
+    }
     val backgroundProcesses by chatViewModel.backgroundProcesses.collectAsState()
     val backgroundProcessesLoading by chatViewModel.backgroundProcessesLoading.collectAsState()
     val stoppingProcessIds by chatViewModel.stoppingProcessIds.collectAsState()
@@ -1730,6 +1762,8 @@ fun ChatScreen(
                 scopeSubtitle = drawerSubtitle,
                 isLoading = isLoadingSessions,
                 isOpen = drawerState.isOpen,
+                activityStates = sessionActivityStates,
+                animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
                 onRefresh = { chatViewModel.refreshSessions() },
                 onNewChat = {

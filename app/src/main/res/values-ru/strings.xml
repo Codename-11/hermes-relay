@@ -878,6 +878,9 @@
     <string name="drawer_refresh_sessions">Обновить сессии</string>
     <string name="drawer_new_chat">Новый чат</string>
     <string name="drawer_search_placeholder">Поиск сессий или id...</string>
+    <string name="drawer_search_sessions">Поиск сессий</string>
+    <string name="drawer_activity_working">Выполняется</string>
+    <string name="drawer_activity_needs_input">Требуется ввод</string>
     <string name="drawer_new_thread">Новая ветка</string>
     <string name="drawer_chats_not_named">Чаты не автоматически именуются на этом соединении — используйте ⋮ → Переименовать.</string>
     <string name="drawer_loading_sessions">Загрузка сессий…</string>

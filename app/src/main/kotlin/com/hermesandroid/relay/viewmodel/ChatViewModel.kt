@@ -31,6 +31,7 @@ import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
+import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.data.HermesCard
@@ -199,6 +200,32 @@ class ChatViewModel : ViewModel() {
     private data class TurnCheckpointKey(val contextKey: String, val sessionId: String)
     private val backgroundTurnCheckpoints =
         ConcurrentHashMap<TurnCheckpointKey, ChatTurnCheckpoint>()
+    private val backgroundNeedsInputKeys = ConcurrentHashMap.newKeySet<TurnCheckpointKey>()
+    private val _backgroundSessionActivityStates =
+        MutableStateFlow<Map<String, SessionActivityState>>(emptyMap())
+    val backgroundSessionActivityStates: StateFlow<Map<String, SessionActivityState>> =
+        _backgroundSessionActivityStates.asStateFlow()
+
+    private fun publishBackgroundSessionActivity() {
+        val contextKey = activeProfileContextKey
+        _backgroundSessionActivityStates.value = if (contextKey == null) {
+            emptyMap()
+        } else {
+            backgroundTurnCheckpoints.keys
+                .asSequence()
+                .filter { it.contextKey == contextKey }
+                .associate { key ->
+                    key.sessionId to if (
+                        key in backgroundNeedsInputKeys ||
+                        backgroundPendingInteractions.containsKey(key)
+                    ) {
+                        SessionActivityState.NeedsInput
+                    } else {
+                        SessionActivityState.Working
+                    }
+                }
+        }
+    }
 
     private fun TurnCheckpointKey.keepAliveKey(): String = "$contextKey::$sessionId"
 
@@ -1411,15 +1438,17 @@ class ChatViewModel : ViewModel() {
                     if (key != null) {
                         backgroundPendingInteractions[key] =
                             BackgroundPendingInteraction(event.profile, event.ask)
+                        backgroundNeedsInputKeys += key
                         ActiveTurnKeepAliveRegistry.setWaiting(key.keepAliveKey(), true)
+                        publishBackgroundSessionActivity()
                     }
                     maybeNotifyInteraction(event.storedSessionId, event.ask, event.profile)
                 }
                 is GatewayBackgroundInteractionEvent.Resolved -> {
                     if (key != null) {
+                        backgroundNeedsInputKeys -= key
                         backgroundPendingInteractions.computeIfPresent(key) { _, current ->
-                            if (current.profile == event.profile &&
-                                current.ask.kind == event.ask.kind &&
+                            if (current.ask.kind == event.ask.kind &&
                                 current.ask.requestId == event.ask.requestId
                             ) {
                                 null
@@ -1428,6 +1457,7 @@ class ChatViewModel : ViewModel() {
                             }
                         }
                         ActiveTurnKeepAliveRegistry.setWaiting(key.keepAliveKey(), false)
+                        publishBackgroundSessionActivity()
                     }
                     cancelInteractionNotification(event.storedSessionId, event.ask, event.profile)
                 }
@@ -1492,9 +1522,11 @@ class ChatViewModel : ViewModel() {
         if (matching.isEmpty()) return
         matching.forEach(backgroundTurnCheckpoints::remove)
         matching.forEach { key ->
+            backgroundNeedsInputKeys -= key
             backgroundPendingInteractions.remove(key)
             ActiveTurnKeepAliveRegistry.release(key.keepAliveKey())
         }
+        publishBackgroundSessionActivity()
         chatTurnCheckpointStore?.let { store ->
             viewModelScope.launch {
                 checkpointMutex.withLock {
@@ -2784,6 +2816,7 @@ class ChatViewModel : ViewModel() {
                 sessionRefreshJob?.cancel()
                 _isLoadingSessions.value = false
                 activeProfileContextKey = null
+                publishBackgroundSessionActivity()
                 _queuedMessages.value = emptyList()
                 _pendingAttachments.value = emptyList()
                 _steerableTurn.value = false
@@ -2835,6 +2868,7 @@ class ChatViewModel : ViewModel() {
         ) {
             activateModelOptionsProfile(contextKey)
             activeProfileContextKey = contextKey
+            publishBackgroundSessionActivity()
             activeTurnCheckpointSeed?.contextKey = contextKey
             scheduleCheckpointWrite(immediate = true)
             selectBackgroundProcessSession(sessionId, contextKey)
@@ -2852,6 +2886,7 @@ class ChatViewModel : ViewModel() {
         _isLoadingSessions.value = false
         activateModelOptionsProfile(contextKey)
         activeProfileContextKey = contextKey
+        publishBackgroundSessionActivity()
         _queuedMessages.value = emptyList()
         _pendingAttachments.value = emptyList()
         _steerableTurn.value = false
@@ -3650,7 +3685,11 @@ class ChatViewModel : ViewModel() {
             sessionId?.let { cancelInteractionNotification(it, pending.ask) }
         }
         val activeKey = activeTurnCheckpointKey()
-        if (activeKey != null) backgroundPendingInteractions.remove(activeKey)
+        if (activeKey != null) {
+            backgroundNeedsInputKeys -= activeKey
+            backgroundPendingInteractions.remove(activeKey)
+            publishBackgroundSessionActivity()
+        }
         val now = restored?.receivedAt ?: System.currentTimeMillis()
         val cardKey = restored?.cardKey ?: ask.requestId
             ?: "approval-${handler.currentSessionId.value ?: "session"}-$now"
@@ -4553,8 +4592,10 @@ class ChatViewModel : ViewModel() {
         checkpointWriteJob = null
         if (key != null) {
             backgroundTurnCheckpoints.remove(key)
+            backgroundNeedsInputKeys -= key
             backgroundPendingInteractions.remove(key)
             ActiveTurnKeepAliveRegistry.release(key.keepAliveKey())
+            publishBackgroundSessionActivity()
         }
         val store = chatTurnCheckpointStore ?: return
         viewModelScope.launch {
@@ -4589,6 +4630,8 @@ class ChatViewModel : ViewModel() {
             if (checkpoint != null) {
                 val key = TurnCheckpointKey(checkpoint.contextKey, checkpoint.sessionId)
                 backgroundTurnCheckpoints[key] = checkpoint
+                if (checkpoint.pendingAsk != null) backgroundNeedsInputKeys += key
+                publishBackgroundSessionActivity()
                 chatTurnCheckpointStore?.let { store ->
                     viewModelScope.launch {
                         checkpointMutex.withLock { runCatching { store.write(checkpoint) } }
@@ -4669,6 +4712,8 @@ class ChatViewModel : ViewModel() {
                 runCatching { store.read(contextKey, sessionId) }.getOrNull()
             }
             ?: return false
+        backgroundNeedsInputKeys -= key
+        publishBackgroundSessionActivity()
         if (checkpoint.transport !in setOf("gateway", "sessions")) return false
         if (activeStream != null) return true
         if (streamRecovery != null) {
@@ -7813,6 +7858,8 @@ class ChatViewModel : ViewModel() {
         gatewayClient?.setUnmatchedTurnCompleteListener(null)
         gatewayClient?.setBackgroundInteractionListener(null)
         backgroundPendingInteractions.clear()
+        backgroundNeedsInputKeys.clear()
+        publishBackgroundSessionActivity()
         gatewayHistoryReconcileJob?.cancel()
         gatewayHistoryReconcileJob = null
         backgroundProcessSessionJob?.cancel()
