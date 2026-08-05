@@ -254,7 +254,8 @@ enum class ApiModelRoutingErrorCode {
 class ApiModelRoutingException(
     val code: ApiModelRoutingErrorCode,
     message: String,
-) : IOException(message)
+    cause: Throwable? = null,
+) : IOException(message, cause)
 
 sealed interface ApiModelSelectionAck {
     data object ServerDefault : ApiModelSelectionAck
@@ -815,6 +816,7 @@ class HermesApiClient(
                     ApiModelRoutingException(
                         ApiModelRoutingErrorCode.INVENTORY_UNAVAILABLE,
                         "Model inventory could not be loaded.",
+                        e,
                     )
                 },
             )

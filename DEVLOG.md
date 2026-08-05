@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-05 — Measured pet placement and passive model sync
+
+The floating pet now remains unpublished until the app-level overlay has a
+positive measured viewport. Its initial home coordinate is therefore derived
+from the real safe bounds instead of the zero-size pre-measure bounds that
+collapsed to the top-left corner.
+
+API provider inventory remains an optional background catalog on Gateway-led
+connections. A timeout, refusal, or unavailable optional route no longer emits
+a global chat notice during initialization, reconnection, or connection-sheet
+refresh. The failure is retained as a contextual warning in local Diagnostics,
+including the operation, endpoint role, redacted stack trace, preserved network
+cause, and targeted troubleshooting guidance. Cached and Gateway-owned model
+options remain unchanged.
+
 ## 2026-08-05 — Stable chat-tail completion
 
 Chat and Voice now treat the active streamed reply as the owner of its live

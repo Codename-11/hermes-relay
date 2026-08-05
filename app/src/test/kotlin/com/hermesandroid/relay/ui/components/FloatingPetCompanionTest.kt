@@ -110,6 +110,15 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `pet waits for a measured viewport before publishing its position`() {
+        assertFalse(shouldInitializeFloatingPet(false, viewportWidth = 0, viewportHeight = 0))
+        assertFalse(shouldInitializeFloatingPet(false, viewportWidth = 400, viewportHeight = 0))
+        assertFalse(shouldInitializeFloatingPet(false, viewportWidth = 0, viewportHeight = 800))
+        assertTrue(shouldInitializeFloatingPet(false, viewportWidth = 400, viewportHeight = 800))
+        assertFalse(shouldInitializeFloatingPet(true, viewportWidth = 400, viewportHeight = 800))
+    }
+
+    @Test
     fun `roaming starts immediately then uses the normal repeat delay`() {
         assertEquals(0L, floatingPetRoamDelayMs(hasMoved = false))
         assertEquals(4_800L, floatingPetRoamDelayMs(hasMoved = true))

@@ -220,6 +220,13 @@ internal fun floatingPetAcceptsPointerInput(
     surfaceScrolling: Boolean,
 ): Boolean = positioned && !surfaceScrolling
 
+/** The overlay's pre-measure zero size is not a valid coordinate space. */
+internal fun shouldInitializeFloatingPet(
+    positioned: Boolean,
+    viewportWidth: Int,
+    viewportHeight: Int,
+): Boolean = !positioned && viewportWidth > 0 && viewportHeight > 0
+
 internal fun floatingPetRoamDelayMs(
     hasMoved: Boolean,
     roamIntervalMs: Long = PET_ROAM_REPEAT_DELAY_MS,
@@ -1583,8 +1590,8 @@ fun FloatingPetCompanion(
         return true
     }
 
-    LaunchedEffect(pet.id, homePoint) {
-        if (!positioned) {
+    LaunchedEffect(pet.id, homePoint, viewportWidth, viewportHeight) {
+        if (shouldInitializeFloatingPet(positioned, viewportWidth, viewportHeight)) {
             x.snapTo(homePoint.x)
             y.snapTo(homePoint.y)
             positioned = true
