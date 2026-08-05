@@ -1,6 +1,10 @@
 package com.hermesandroid.relay.ui.components
 
 import android.content.Context
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.SweepGradient
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -61,12 +65,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.stringResource
@@ -894,40 +898,102 @@ private fun Modifier.sessionActivityBorder(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 2_800, easing = LinearEasing),
+                animation = tween(durationMillis = 2_230, easing = LinearEasing),
             ),
-            label = "session-activity-rotation",
-        ).value
-    } else {
-        0f
-    }
-    return drawWithContent {
-        drawContent()
-        val strokeWidth = 1.5.dp.toPx()
-        val inset = strokeWidth / 2f
-        val perimeter = 2f * (size.width + size.height)
-        val pathEffect = if (shouldRotate) {
-            PathEffect.dashPathEffect(
-                intervals = floatArrayOf(perimeter * 0.34f, perimeter),
-                phase = perimeter * phase,
-            )
-        } else {
-            null
-        }
-        drawRoundRect(
-            brush = if (shouldRotate) {
-                SolidColor(color)
-            } else {
-                Brush.linearGradient(listOf(color.copy(alpha = 0.72f), color.copy(alpha = 0.28f)))
-            },
-            topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
-            size = androidx.compose.ui.geometry.Size(
-                width = size.width - strokeWidth,
-                height = size.height - strokeWidth,
-            ),
-            cornerRadius = CornerRadius(12.dp.toPx()),
-            style = Stroke(width = strokeWidth, pathEffect = pathEffect),
+            label = "session-activity-glow",
         )
+    } else {
+        null
+    }
+    return drawWithCache {
+        val coreWidth = 1.25.dp.toPx()
+        val coreInset = coreWidth / 2f
+        val haloWidth = 5.dp.toPx()
+        val haloInset = haloWidth / 2f
+        val radius = 12.dp.toPx()
+        // Matching transparent endpoints make phase 0 and 1 identical, so the
+        // full shader rotation loops without the dash-pattern reset of the old ring.
+        val animatedShader = SweepGradient(
+            size.width / 2f,
+            size.height / 2f,
+            intArrayOf(
+                color.copy(alpha = 0f).toArgb(),
+                color.copy(alpha = 0f).toArgb(),
+                color.copy(alpha = 0.16f).toArgb(),
+                color.copy(alpha = 0.72f).toArgb(),
+                color.toArgb(),
+                color.copy(alpha = 0.34f).toArgb(),
+                color.copy(alpha = 0f).toArgb(),
+            ),
+            floatArrayOf(0f, 0.52f, 0.66f, 0.78f, 0.84f, 0.92f, 1f),
+        )
+        val shaderMatrix = Matrix()
+        val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = haloWidth
+            alpha = 88
+            shader = animatedShader
+        }
+        val middlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 2.75.dp.toPx()
+            alpha = 150
+            shader = animatedShader
+        }
+        val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = coreWidth
+            shader = animatedShader
+        }
+        val haloRect = RectF(
+            haloInset,
+            haloInset,
+            size.width - haloInset,
+            size.height - haloInset,
+        )
+        val middleInset = middlePaint.strokeWidth / 2f
+        val middleRect = RectF(
+            middleInset,
+            middleInset,
+            size.width - middleInset,
+            size.height - middleInset,
+        )
+        val coreRect = RectF(
+            coreInset,
+            coreInset,
+            size.width - coreInset,
+            size.height - coreInset,
+        )
+
+        onDrawWithContent {
+            drawContent()
+            if (phase != null) {
+                shaderMatrix.setRotate(
+                    phase.value * 360f - 90f,
+                    size.width / 2f,
+                    size.height / 2f,
+                )
+                animatedShader.setLocalMatrix(shaderMatrix)
+                drawContext.canvas.nativeCanvas.apply {
+                    drawRoundRect(haloRect, radius, radius, haloPaint)
+                    drawRoundRect(middleRect, radius, radius, middlePaint)
+                    drawRoundRect(coreRect, radius, radius, corePaint)
+                }
+            } else {
+                drawRoundRect(
+                    brush = Brush.linearGradient(
+                        listOf(color.copy(alpha = 0.72f), color.copy(alpha = 0.28f))
+                    ),
+                    topLeft = androidx.compose.ui.geometry.Offset(coreInset, coreInset),
+                    size = androidx.compose.ui.geometry.Size(
+                        width = size.width - coreWidth,
+                        height = size.height - coreWidth,
+                    ),
+                    cornerRadius = CornerRadius(radius),
+                    style = Stroke(width = coreWidth),
+                )
+            }
+        }
     }
 }
 
