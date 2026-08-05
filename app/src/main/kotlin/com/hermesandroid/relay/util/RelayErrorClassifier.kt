@@ -4,6 +4,7 @@ import android.content.Context
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -226,17 +227,30 @@ fun classifyError(t: Throwable?, context: String? = null, ctx: Context? = null):
         // Record after classification so the clean title and the raw trace both
         // reach the log. Defensive: never let logging turn a handled error fatal.
         runCatching {
+            val category = categoryForContext(context)
             DiagnosticsLog.recordError(
-                category = categoryForContext(context),
+                category = category,
                 title = human.title,
                 detail = human.body,
                 throwable = t,
+                operation = context?.diagnosticOperation(),
+                suggestion = NetworkDiagnosticGuidance.forThrowable(t, category.label),
                 reliabilityContext = context,
             )
         }
     }
     return human
 }
+
+private fun String.diagnosticOperation(): String =
+    trim()
+        .split('_', '-', ' ')
+        .filter { it.isNotBlank() }
+        .joinToString(" ") { word ->
+            word.replaceFirstChar { character ->
+                if (character.isLowerCase()) character.titlecase() else character.toString()
+            }
+        }
 
 private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?): HumanError {
     if (t == null) return nullFallback(context, ctx)

@@ -7,6 +7,7 @@ import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -1139,6 +1140,7 @@ class RelayHttpClient(
         logSuccess: Boolean = true,
     ): Result<RelayHealth> = withContext(Dispatchers.IO) {
         val trimmed = relayUrl.trim()
+        val operation = "Relay health probe before WebSocket connection"
         if (trimmed.isEmpty()) {
             return@withContext Result.failure(
                 IllegalArgumentException("Relay URL is empty")
@@ -1159,7 +1161,9 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Error,
                 title = context?.getString(R.string.http_diag_url_invalid) ?: "Relay URL invalid",
                 detail = e.message,
-                url = relayUrl,
+                operation = operation,
+                configuredUrl = relayUrl,
+                suggestion = "Enter a Relay URL beginning with ws:// or wss://.",
             )
             return@withContext Result.failure(
                 IOException("Invalid relay URL: ${e.message}")
@@ -1180,6 +1184,7 @@ class RelayHttpClient(
             .get()
             .header("Accept", "application/json")
             .build()
+        val requestUrl = request.url.toString()
 
         try {
             fastClient.newCall(request).execute().use { response ->
@@ -1189,8 +1194,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "HTTP ${response.code}",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = NetworkDiagnosticGuidance.forHttpStatus(response.code, "Relay"),
                     )
                     return@withContext Result.failure(
                         IOException("Relay responded HTTP ${response.code}")
@@ -1203,8 +1211,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "Empty response",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = "Verify this route points to a Hermes-Relay server and inspect its logs.",
                     )
                     return@withContext Result.failure(
                         IOException("Relay returned an empty response")
@@ -1220,8 +1231,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "Non-JSON response",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = "Verify this route points to a Hermes-Relay server rather than another HTTP service.",
                     )
                     return@withContext Result.failure(
                         IOException("Relay returned non-JSON: ${e.message ?: "parse error"}")
@@ -1234,8 +1248,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "status=${status ?: "missing"}",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = "Check the Relay service health and server logs.",
                     )
                     return@withContext Result.failure(
                         IOException("Relay reports status=${status ?: "missing"} (expected 'ok')")
@@ -1248,8 +1265,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "Missing version field",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = "Verify this route points to a current Hermes-Relay server.",
                     )
                     return@withContext Result.failure(
                         IOException("Response doesn't look like a hermes-relay — missing 'version' field")
@@ -1265,7 +1285,9 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Info,
                         title = context?.getString(R.string.http_diag_health_ok) ?: "Relay health ok",
                         detail = "version=$version clients=$clients sessions=$sessions",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
                     )
                 }
@@ -1278,8 +1300,11 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Warning,
                 title = context?.getString(R.string.http_diag_health_timeout) ?: "Relay health timeout",
                 detail = "No HTTP response in 3s",
-                url = httpBase,
+                operation = operation,
+                configuredUrl = trimmed,
+                requestUrl = requestUrl,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
+                suggestion = NetworkDiagnosticGuidance.forThrowable(e, "Relay"),
             )
             Result.failure(IOException("Relay is not responding (3s timeout)"))
         } catch (e: java.net.ConnectException) {
@@ -1289,8 +1314,11 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Error,
                 title = context?.getString(R.string.http_diag_conn_refused) ?: "Relay connection refused",
                 detail = e.message,
-                url = httpBase,
+                operation = operation,
+                configuredUrl = trimmed,
+                requestUrl = requestUrl,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
+                suggestion = NetworkDiagnosticGuidance.forThrowable(e, "Relay"),
             )
             Result.failure(IOException("Connection refused — is the relay running on this URL?"))
         } catch (e: IOException) {
@@ -1300,8 +1328,11 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Warning,
                 title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                 detail = e.message ?: "Network error",
-                url = httpBase,
+                operation = operation,
+                configuredUrl = trimmed,
+                requestUrl = requestUrl,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
+                suggestion = NetworkDiagnosticGuidance.forThrowable(e, "Relay"),
             )
             Result.failure(IOException("Network error: ${e.message ?: "unreachable"}"))
         } catch (e: Exception) {
@@ -1311,8 +1342,11 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Error,
                 title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                 detail = e.message ?: e.javaClass.simpleName,
-                url = httpBase,
+                operation = operation,
+                configuredUrl = trimmed,
+                requestUrl = requestUrl,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
+                suggestion = NetworkDiagnosticGuidance.forThrowable(e, "Relay"),
             )
             Result.failure(e)
         }

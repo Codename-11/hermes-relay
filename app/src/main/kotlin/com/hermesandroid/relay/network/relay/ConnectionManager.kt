@@ -15,6 +15,7 @@ import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import com.hermesandroid.relay.network.relay.models.Envelope
 import com.hermesandroid.relay.network.shared.EndpointResolver
 import com.hermesandroid.relay.network.shared.EndpointSurface
@@ -441,7 +442,9 @@ class ConnectionManager(
                 severity = DiagnosticSeverity.Error,
                 title = context?.getString(R.string.conn_diag_socket_blocked) ?: "Relay socket blocked",
                 detail = "ws:// is disabled",
-                url = url,
+                operation = "Open Relay WebSocket",
+                configuredUrl = url,
+                suggestion = "Use wss:// or explicitly allow plain ws:// for a trusted LAN or VPN.",
             )
             return
         }
@@ -452,7 +455,9 @@ class ConnectionManager(
                 severity = DiagnosticSeverity.Error,
                 title = context?.getString(R.string.conn_diag_url_invalid) ?: "Relay socket URL invalid",
                 detail = "URL must start with ws:// or wss://",
-                url = url,
+                operation = "Open Relay WebSocket",
+                configuredUrl = url,
+                suggestion = "Edit or re-pair the Relay route with a ws:// or wss:// URL.",
             )
             return
         }
@@ -488,14 +493,18 @@ class ConnectionManager(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Warning,
                 title = context?.getString(R.string.conn_diag_opening_insecure) ?: "Opening insecure relay socket",
-                url = normalized,
+                operation = "Open Relay WebSocket",
+                configuredUrl = url,
+                requestUrl = normalized,
             )
         } else {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Info,
                 title = context?.getString(R.string.conn_diag_opening_socket) ?: "Opening relay socket",
-                url = normalized,
+                operation = "Open Relay WebSocket",
+                configuredUrl = url,
+                requestUrl = normalized,
             )
         }
 
@@ -985,7 +994,9 @@ class ConnectionManager(
                 severity = DiagnosticSeverity.Error,
                 title = "Invalid relay URL",
                 detail = "The relay address could not be parsed; re-pair to refresh it.",
-                url = url,
+                operation = "Build Relay WebSocket request",
+                configuredUrl = url,
+                suggestion = "Edit or re-pair the Relay route to replace the invalid address.",
             )
             authenticated = false
             _connectionState.value = ConnectionState.Disconnected
@@ -1018,7 +1029,8 @@ class ConnectionManager(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Info,
                     title = context?.getString(R.string.conn_diag_connected) ?: "Relay socket connected",
-                    url = url,
+                    operation = "Relay WebSocket handshake",
+                    requestUrl = url,
                 )
 
                 // TOFU: record the peer cert fingerprint if we don't have one
@@ -1079,7 +1091,9 @@ class ConnectionManager(
                     severity = DiagnosticSeverity.Warning,
                     title = context?.getString(R.string.conn_diag_closed) ?: "Relay socket closed",
                     detail = "code=$code reason=$reason",
-                    url = url,
+                    operation = "Relay WebSocket session",
+                    requestUrl = url,
+                    suggestion = if (code == 1000) null else "Check the Relay server logs for the matching close code and reason.",
                 )
                 authenticated = false
                 _connectionState.value = ConnectionState.Disconnected
@@ -1102,7 +1116,11 @@ class ConnectionManager(
                         t.message,
                         code?.let { "HTTP $it" },
                     ).joinToString(": "),
-                    url = url,
+                    operation = "Relay WebSocket handshake",
+                    requestUrl = url,
+                    suggestion = code?.let {
+                        NetworkDiagnosticGuidance.forHttpStatus(it, "Relay")
+                    } ?: NetworkDiagnosticGuidance.forThrowable(t, "Relay"),
                 )
                 lastUpgradeResponseCode = code
                 if (response == null) {

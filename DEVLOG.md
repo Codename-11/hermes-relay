@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-05 — Actionable Android connection diagnostics
+
+Android diagnostic entries now separate the configured route from the exact
+request operation and path used to test it. Relay health checks identify the
+HTTP `/health` probe that precedes a WebSocket connection, route selection
+records its Dashboard, API, or Relay probe, and WebSocket and API checks name
+their handshake or authentication stage.
+
+Known network and HTTP failure classes attach a bounded next step for refused
+listeners, DNS, routing, timeouts, TLS, credentials, rate limits, missing
+routes, and server failures. The activity list, status timeline, detail dialog,
+copy text, and GitHub issue prefill all carry the same context. Public issue
+text preserves protocol and request paths while redacting hosts, credentials,
+queries, and user information.
+
 ## 2026-08-04 — Android transcript identity ownership
 
 ChatHandler now owns one render identity for every published transcript row.
