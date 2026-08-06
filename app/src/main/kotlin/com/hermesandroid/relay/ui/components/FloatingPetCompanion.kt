@@ -220,6 +220,18 @@ internal fun floatingPetAcceptsPointerInput(
     surfaceScrolling: Boolean,
 ): Boolean = positioned && !surfaceScrolling
 
+/** The overlay's pre-measure zero size is not a valid coordinate space. */
+internal fun shouldInitializeFloatingPet(
+    positioned: Boolean,
+    viewportWidth: Int,
+    viewportHeight: Int,
+    terrainReady: Boolean = true,
+): Boolean = !positioned && viewportWidth > 0 && viewportHeight > 0 && terrainReady
+
+/** Collision geometry must contain both the pointer target and rendered art. */
+internal fun floatingPetCollisionSizePx(targetSizePx: Float, visualSizePx: Float): Float =
+    maxOf(targetSizePx, visualSizePx)
+
 internal fun floatingPetRoamDelayMs(
     hasMoved: Boolean,
     roamIntervalMs: Long = PET_ROAM_REPEAT_DELAY_MS,
@@ -514,8 +526,9 @@ fun FloatingPetCompanion(
         PetSafeBounds(left, top, right, bottom)
     }
     val registry = LocalPetSafeAreaRegistry.current
-    val footprint = remember(targetSizePx, safeMarginPx) {
-        PetFootprint(targetSizePx, targetSizePx, safeMarginPx / 2f)
+    val collisionSizePx = floatingPetCollisionSizePx(targetSizePx, visualSizePx)
+    val footprint = remember(collisionSizePx, safeMarginPx) {
+        PetFootprint(collisionSizePx, collisionSizePx, safeMarginPx / 2f)
     }
     // Bubble-edge hops are visual traversal, not persistent placement. Keep
     // the larger accessible target for controls and viewport containment while
@@ -1583,8 +1596,26 @@ fun FloatingPetCompanion(
         return true
     }
 
-    LaunchedEffect(pet.id, homePoint) {
-        if (!positioned) {
+    // Chat roaming owns a measured composer rail. Publishing before that rail
+    // exists lets initialization race route registration and can strand the
+    // pet on transient fallback geometry until direct manipulation.
+    val initialTerrainReady = route != "chat" || !roamingEnabled || !roamingAllowed ||
+        composerRails.isNotEmpty()
+    LaunchedEffect(
+        pet.id,
+        homePoint,
+        viewportWidth,
+        viewportHeight,
+        initialTerrainReady,
+    ) {
+        if (
+            shouldInitializeFloatingPet(
+                positioned = positioned,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight,
+                terrainReady = initialTerrainReady,
+            )
+        ) {
             x.snapTo(homePoint.x)
             y.snapTo(homePoint.y)
             positioned = true

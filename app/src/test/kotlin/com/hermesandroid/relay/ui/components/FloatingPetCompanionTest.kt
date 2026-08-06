@@ -110,6 +110,35 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `pet waits for a measured viewport before publishing its position`() {
+        assertFalse(shouldInitializeFloatingPet(false, viewportWidth = 0, viewportHeight = 0))
+        assertFalse(shouldInitializeFloatingPet(false, viewportWidth = 400, viewportHeight = 0))
+        assertFalse(shouldInitializeFloatingPet(false, viewportWidth = 0, viewportHeight = 800))
+        assertTrue(shouldInitializeFloatingPet(false, viewportWidth = 400, viewportHeight = 800))
+        assertFalse(shouldInitializeFloatingPet(true, viewportWidth = 400, viewportHeight = 800))
+    }
+
+    @Test
+    fun `chat pet waits for owner terrain before publishing its first position`() {
+        assertFalse(
+            shouldInitializeFloatingPet(
+                positioned = false,
+                viewportWidth = 400,
+                viewportHeight = 800,
+                terrainReady = false,
+            ),
+        )
+        assertTrue(
+            shouldInitializeFloatingPet(
+                positioned = false,
+                viewportWidth = 400,
+                viewportHeight = 800,
+                terrainReady = true,
+            ),
+        )
+    }
+
+    @Test
     fun `roaming starts immediately then uses the normal repeat delay`() {
         assertEquals(0L, floatingPetRoamDelayMs(hasMoved = false))
         assertEquals(4_800L, floatingPetRoamDelayMs(hasMoved = true))
@@ -429,6 +458,16 @@ class FloatingPetCompanionTest {
         assertEquals(60f, compactMaximum.visualSizeDp, 0.001f)
         assertEquals(72f, compactMaximum.targetSizeDp, 0.001f)
         assertEquals(FloatingPetDimensions(60f, 70f), floatingPetDimensions(false, Float.NaN))
+
+        listOf(
+            70f to 60f,
+            48f to 72f,
+            84f to 84f,
+        ).forEach { (target, visual) ->
+            val collision = floatingPetCollisionSizePx(target, visual)
+            assertTrue(collision >= target)
+            assertTrue(collision >= visual)
+        }
     }
 
     @Test

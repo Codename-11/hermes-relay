@@ -42,6 +42,7 @@ import com.hermesandroid.relay.data.HermesCardInput
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
 import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.network.upstream.GatewayAsk
@@ -130,6 +131,15 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+
+internal fun modelInventoryFailureNotice(
+    failure: Throwable,
+    userInitiated: Boolean,
+): String? = if (userInitiated) {
+    "Couldn't refresh API model inventory: ${failure.message ?: "unknown error"}"
+} else {
+    null
+}
 
 /**
  * Absolute per-session context-window usage in tokens — the data behind the
@@ -945,7 +955,7 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun fetchModels() {
+    fun fetchModels(userInitiated: Boolean = false) {
         val client = apiClient ?: return
         val generation = modelOptionsGeneration.incrementAndGet()
         val profileKey = modelOptionsProfileKey()
@@ -985,9 +995,26 @@ class ChatViewModel : ViewModel() {
                     failure !is ApiModelRoutingException ||
                     failure.code != ApiModelRoutingErrorCode.INVENTORY_UNSUPPORTED
                 ) {
-                    _transientNotice.tryEmit(
-                        failure?.message ?: "Model inventory could not be loaded.",
+                    val inventoryFailure = failure
+                        ?: ApiModelRoutingException(
+                            ApiModelRoutingErrorCode.INVENTORY_UNAVAILABLE,
+                            "Model inventory could not be loaded.",
+                        )
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Api,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Optional model inventory unavailable",
+                        detail = inventoryFailure.message,
+                        operation = "Load API model inventory",
+                        endpointRole = "Optional API server",
+                        suggestion = NetworkDiagnosticGuidance.forThrowable(
+                            inventoryFailure,
+                            "API server",
+                        ),
+                        stacktrace = inventoryFailure.stackTraceToString(),
                     )
+                    modelInventoryFailureNotice(inventoryFailure, userInitiated)
+                        ?.let(_transientNotice::tryEmit)
                     return@launch
                 }
                 // Confirmed older API servers expose only OpenAI-compatible aliases.
@@ -3212,8 +3239,8 @@ class ChatViewModel : ViewModel() {
      * groups refresh via [refreshModelOptions]; this covers [availableModels] used
      * when no gateway model.options groups exist. Fetched once otherwise.
      */
-    fun refreshModels() {
-        fetchModels()
+    fun refreshModels(userInitiated: Boolean = false) {
+        fetchModels(userInitiated)
     }
 
     /** Clear server-owned catalogs before a different connection starts loading. */

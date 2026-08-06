@@ -17,16 +17,40 @@ That's it — no extra setup or credentials required for a debug build.
 Helper scripts for common development tasks:
 
 ```bash
-scripts/dev.bat build      # Build debug APK
+scripts/dev.bat build      # Build the sideload debug APK
+scripts/dev.bat compile    # Compile sideload Kotlin only
+scripts/dev.bat test-one "com.hermesandroid.relay.SomeTest"  # Run one test class
+scripts/dev.bat install-fast  # Build arm64 only + install + launch
 scripts/dev.bat release    # Build signed release APK
 scripts/dev.bat bundle     # Build release AAB for Google Play
-scripts/dev.bat run        # Build + install + launch + logcat
-scripts/dev.bat test       # Run unit tests
+scripts/dev.bat run        # Build sideload + install + launch + logcat
+scripts/dev.bat test       # Run sideload debug unit tests
 scripts/dev.bat version    # Show current version
 scripts/dev.bat relay      # Start relay server (dev, no TLS)
 ```
 
 Linux/macOS equivalent lives at `scripts/dev.sh`.
+
+### Fast Android iteration
+
+Gradle's daemon, local build cache, configuration cache, and parallel task
+execution are enabled for repeat local builds. Keep the same Gradle JVM
+configuration between invocations and do not add `--no-daemon` to normal dev
+commands; a different heap or Java home starts a separate daemon and discards
+the warm-process benefit.
+
+Use the narrowest command that proves the change:
+
+1. `scripts/dev.bat compile` for a Kotlin compile check.
+2. `scripts/dev.bat test-one "<fully-qualified-class-or-pattern>"` for a focused regression.
+3. `scripts/dev.bat install-fast` when the result must run on the connected
+   arm64 phone. This passes `-Phermes.devAbi=arm64-v8a`, avoiding the x86,
+   x86_64, and armeabi-v7a native libraries in the local APK.
+4. `scripts/dev.bat prepush` before pushing Android work.
+
+`install-fast` is intentionally phone-specific. Use `install` for a universal
+sideload debug APK or when the target ABI is not arm64. Release builds remain
+universal and are unaffected unless `-Phermes.devAbi` is explicitly supplied.
 
 ## Repository Structure
 
@@ -51,12 +75,12 @@ The legacy `relay_server/` directory is a thin compatibility shim around `plugin
 
 | Component | Stack |
 |-----------|-------|
-| **Android App** | Kotlin 2.0, Jetpack Compose, Material 3, OkHttp |
+| **Android App** | Kotlin 2.4, Jetpack Compose, Material 3, OkHttp |
 | **Relay Server** | Python 3.11+, aiohttp |
 | **Serialization** | kotlinx.serialization |
-| **Build** | AGP 9, Gradle 8.13, JVM toolchain 17 |
+| **Build** | AGP 9.3.1, Gradle 9.6.1, JVM toolchain 17 |
 | **CI/CD** | GitHub Actions (lint, build, test, signed APK artifacts) |
-| **Min SDK** | 26 (Android 8.0) / Target SDK 35 |
+| **Min SDK** | 26 (Android 8.0) / Target SDK 36 |
 
 ## Running the Relay Locally
 
@@ -174,7 +198,8 @@ Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/pl
   CI in one cached Gradle invocation. Run it before pushing Android PR updates
   to catch common hosted failures without waiting for another full Actions
   cycle; hosted CI remains the exhaustive all-variant gate.
-- **Android unit tests:** `scripts/dev.bat test` (runs JUnit + MockK + Compose testing)
+- **Focused Android unit test:** `scripts/dev.bat test-one "<fully-qualified-class-or-pattern>"`
+- **Android unit tests:** `scripts/dev.bat test` (runs the sideload debug JUnit + MockK + Compose suite)
 - **Python tests:** `python -m unittest plugin.tests.test_<name>` from the repo root with the hermes-agent venv active. `pytest` works too but the pre-existing `conftest.py` imports a module that isn't always installed — `unittest` avoids that entirely.
 
 CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched.

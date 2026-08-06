@@ -675,6 +675,36 @@ class PetRoamingGeometryTest {
     }
 
     @Test
+    fun `scroll control envelope is excluded from every composer rail segment`() {
+        val outer = PetSafeBounds(0f, 0f, 400f, 400f)
+        val footprint = PetFootprint(width = 70f, height = 70f, clearance = 6f)
+        val composer = PetMeasuredPerch(
+            key = "chat-composer",
+            bounds = PetObstacle(0f, 260f, 400f, 340f),
+        )
+        val controlEnvelope = PetMeasuredObstacle(
+            key = "chat-scroll-to-bottom-obstacle",
+            bounds = PetObstacle(292f, 200f, 364f, 248f),
+        )
+
+        val segments = petPerchSegments(
+            perch = composer,
+            obstacles = listOf(controlEnvelope),
+            footprint = footprint,
+            outer = outer,
+        )
+        val expandedControl = controlEnvelope.bounds.expanded(
+            footprint.horizontalRadius,
+            footprint.verticalRadius,
+        )
+
+        assertTrue(segments.isNotEmpty())
+        segments.forEach { segment ->
+            assertFalse(segment.left < expandedControl.right && segment.right > expandedControl.left)
+        }
+    }
+
+    @Test
     fun `sibling perch segments choose an above-control hop`() {
         val safe = PetSafeBounds(20f, 20f, 280f, 220f)
         val footprint = PetFootprint(width = 40f, height = 40f)

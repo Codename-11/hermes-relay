@@ -7,35 +7,53 @@ cd "$(dirname "$0")/.."
 
 case "${1:-help}" in
   build)
-    echo "Building debug APK..."
-    ./gradlew assembleDebug
-    echo "APK: app/build/outputs/apk/debug/app-debug.apk"
+    echo "Building sideload debug APK..."
+    ./gradlew :app:assembleSideloadDebug --console=plain
+    echo "APK: app/build/outputs/apk/sideload/debug/"
     ;;
   install)
-    echo "Building and installing to connected device..."
-    ./gradlew installDebug
+    echo "Building and installing sideload debug to connected device..."
+    ./gradlew :app:installSideloadDebug --console=plain
     echo "Launching app..."
-    # Explicit FQCN: applicationId is com.axiomlabs.hermesrelay but the
+    # Explicit FQCN: the sideload applicationId includes the flavor suffix but the
     # namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
     # so the `.MainActivity` shorthand no longer resolves correctly.
-    adb shell am start -n com.axiomlabs.hermesrelay/com.hermesandroid.relay.MainActivity
+    adb shell am start -n com.axiomlabs.hermesrelay.sideload/com.hermesandroid.relay.MainActivity
     ;;
   run)
-    echo "Building, installing, and launching..."
-    ./gradlew installDebug
-    # Explicit FQCN: applicationId is com.axiomlabs.hermesrelay but the
+    echo "Building, installing, and launching sideload debug..."
+    ./gradlew :app:installSideloadDebug --console=plain
+    # Explicit FQCN: the sideload applicationId includes the flavor suffix but the
     # namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
     # so the `.MainActivity` shorthand no longer resolves correctly.
-    adb shell am start -n com.axiomlabs.hermesrelay/com.hermesandroid.relay.MainActivity
+    adb shell am start -n com.axiomlabs.hermesrelay.sideload/com.hermesandroid.relay.MainActivity
     adb logcat -s HermesRelay:* --format=brief
     ;;
+  compile)
+    echo "Compiling sideload debug Kotlin..."
+    ./gradlew :app:compileSideloadDebugKotlin --console=plain
+    ;;
+  test-one)
+    if [ -z "${2:-}" ]; then
+      echo "Usage: ./scripts/dev.sh test-one <fully-qualified-test-class-or-pattern>"
+      exit 2
+    fi
+    echo "Running focused sideload test: $2"
+    ./gradlew :app:testSideloadDebugUnitTest --tests "$2" --console=plain
+    ;;
+  install-fast)
+    echo "Building arm64 sideload debug and installing to connected phone..."
+    ./gradlew :app:installSideloadDebug -Phermes.devAbi=arm64-v8a --console=plain
+    echo "Launching app..."
+    adb shell am start -n com.axiomlabs.hermesrelay.sideload/com.hermesandroid.relay.MainActivity
+    ;;
   test)
-    echo "Running unit tests..."
-    ./gradlew test
+    echo "Running sideload debug unit tests..."
+    ./gradlew :app:testSideloadDebugUnitTest --console=plain
     ;;
   lint)
-    echo "Running lint..."
-    ./gradlew lint
+    echo "Running sideload debug lint..."
+    ./gradlew :app:lintSideloadDebug --console=plain
     ;;
   prepush)
     echo "Running Android pre-push checks..."
@@ -77,10 +95,13 @@ case "${1:-help}" in
   help|*)
     echo "Hermes-Relay Dev Scripts"
     echo ""
-    echo "  build      Build debug APK"
-    echo "  install    Build + install to connected device"
+    echo "  build      Build sideload debug APK"
+    echo "  install    Build universal sideload + install"
     echo "  run        Build + install + launch + logcat"
-    echo "  test       Run unit tests"
+    echo "  compile    Compile sideload debug Kotlin only"
+    echo "  test-one   Run one test class or wildcard pattern"
+    echo "  install-fast  Build arm64 only + install + launch"
+    echo "  test       Run sideload debug unit tests"
     echo "  lint       Run lint checks"
     echo "  prepush    Run Android repository checks, lint, and focused CI tests"
     echo "  clean      Clean build outputs"

@@ -15,6 +15,56 @@ scope are returned to clients. Composer controls, Agent Passport, session
 creation, and asynchronous server reconciliation share the same capability
 resolver so a displayed effort cannot silently differ from the value sent.
 
+## 2026-08-05 — Chat drawer and companion terrain ownership
+
+The Chat screen now clears composer focus when the session drawer commits to
+opening, dismissing the IME without continuously clearing focus from drawer
+search or rename fields. Drawer refreshes override keyed list anchoring only
+when the leading session identity changes, keeping the newest row visible after
+activity-based reordering.
+
+Floating companions wait for Chat's measured composer rail before publishing
+their first roaming position. Their collision footprint contains both the
+pointer target and rendered sprite, and the complete scroll-to-bottom control
+envelope is an obstacle rather than a landing perch.
+
+## 2026-08-05 — Measured pet placement and passive model sync
+
+The floating pet now remains unpublished until the app-level overlay has a
+positive measured viewport. Its initial home coordinate is therefore derived
+from the real safe bounds instead of the zero-size pre-measure bounds that
+collapsed to the top-left corner.
+
+API provider inventory remains an optional background catalog on Gateway-led
+connections. A timeout, refusal, or unavailable optional route no longer emits
+a global chat notice during initialization, reconnection, or connection-sheet
+refresh. The failure is retained as a contextual warning in local Diagnostics,
+including the operation, endpoint role, redacted stack trace, preserved network
+cause, and targeted troubleshooting guidance. Cached and Gateway-owned model
+options remain unchanged.
+
+## 2026-08-05 — Stable chat-tail completion
+
+Chat and Voice now treat the active streamed reply as the owner of its live
+renderer until a different row becomes the conversation tail. Stream
+completion retains the existing Compose subtree and list anchor; the full
+Markdown renderer is deferred until the row is no longer active or the session
+is revisited.
+
+The last-in-group timestamp occupies its final geometry from the first
+streaming frame and is only revealed at completion. The former repeated
+completion-time `scrollToItem` correction is removed, while measured positive
+growth during an active stream continues to follow the bottom without replacing
+the logical anchor. The visible footer supplies the exact remaining distance so
+rounding or adjacent layout changes cannot leave a residual forward range.
+
+IME expansion participates in that same viewport owner. A transcript already
+at the bottom advances by the measured viewport-height loss throughout the
+keyboard animation; a transcript being read above the bottom preserves its
+existing anchor, and a real drag cancels keyboard follow immediately. Host-side
+coverage verifies renderer ownership, unchanged bubble height, exact footer
+settling, keyboard arming, viewport loss, and history-reading behavior.
+
 ## 2026-08-05 — Focus voice input boundary repair
 
 The Focus voice presentation remains modal without installing a consuming

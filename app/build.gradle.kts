@@ -7,6 +7,15 @@ plugins {
     alias(libs.plugins.play.publisher)
 }
 
+val supportedHermesDevAbis = setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+val hermesDevAbi = providers.gradleProperty("hermes.devAbi").orNull
+hermesDevAbi?.let { requestedAbi ->
+    require(requestedAbi in supportedHermesDevAbis) {
+        "Unsupported hermes.devAbi '$requestedAbi'. Expected one of: " +
+            supportedHermesDevAbis.sorted().joinToString()
+    }
+}
+
 // Rename output artifacts to include the app version. AGP respects
 // `archivesName` for both APK (assemble*) and AAB (bundle*) outputs, so
 // this single line produces `hermes-relay-<version>-<flavor>-<buildType>`
@@ -42,6 +51,17 @@ android {
         versionName = libs.versions.appVersionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Optional local-only fast path for device iteration. Native voice/VAD
+        // dependencies make the universal sideload APK very large, while a
+        // connected phone needs only its own ABI. Release and normal debug
+        // builds remain universal unless the developer explicitly supplies
+        // -Phermes.devAbi=<abi>.
+        hermesDevAbi?.let { requestedAbi ->
+            ndk {
+                abiFilters += requestedAbi
+            }
+        }
 
         // Feature flags — DEV_MODE enables all experimental features in debug builds
         buildConfigField("boolean", "DEV_MODE", "false")
