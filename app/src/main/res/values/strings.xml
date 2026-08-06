@@ -118,7 +118,7 @@
     <string name="chat_placeholder_message">Message…</string>
     <string name="chat_edit_busy_snackbar">Can\'t edit right now — wait for the current turn to finish</string>
     <string name="chat_select_reasoning_effort">Select reasoning effort</string>
-    <string name="reasoning_effort_standard_levels_notice">Standard levels are shown because this model hasn\'t reported a supported list. The provider may use fewer levels.</string>
+    <string name="reasoning_effort_standard_levels_notice">Hermes doesn\'t advertise exact effort levels for this model, so standard options are shown.</string>
     <string name="reasoning_effort_current_outside_supported">Current session: %1$s (reported by Hermes). New selections for this model are limited to %2$s.</string>
 
     <!-- Voice toasts -->

@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-05 — Restored chat bottom ownership and effort fallback clarity
+
+Opening an existing Android session now retains exact bottom ownership through
+late, non-streaming layout changes. Composer capability controls, status rows,
+and restored message content can finish measuring after history first reaches
+the footer; a session-scoped geometry observer corrects those changes without
+using a fixed delay. New-message following remains governed by the smooth
+auto-scroll setting, while a real drag, IME ownership, and the Voice dock keep
+their existing anchors.
+
+The advisory effort drawer now states that Hermes does not advertise exact
+levels for the selected model before explaining why standard options are shown.
+The wording is consistent across all shipped Android locales.
+
 ## 2026-08-05 — Provider-aware reasoning effort discovery
 
 The optional Relay plugin now exposes a bearer-protected, profile-aware model

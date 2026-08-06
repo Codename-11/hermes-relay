@@ -118,7 +118,7 @@
     <string name="chat_placeholder_message">メッセージ…</string>
     <string name="chat_edit_busy_snackbar">現在編集できません - 現在のターンが終了するまで待ちます</string>
     <string name="chat_select_reasoning_effort">推論努力を選択する</string>
-    <string name="reasoning_effort_standard_levels_notice">このモデルから対応レベルの一覧が報告されていないため、標準レベルを表示しています。プロバイダーが使用できるレベルはこれより少ない場合があります。</string>
+    <string name="reasoning_effort_standard_levels_notice">Hermes はこのモデルの正確な推論レベルを公開していないため、標準オプションを表示しています。</string>
     <string name="reasoning_effort_current_outside_supported">現在のセッション：%1$s（Hermes から報告）。このモデルで新たに選択できるのは %2$s です。</string>
 
     <!-- Voice toasts -->

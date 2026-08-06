@@ -87,6 +87,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -332,6 +333,7 @@ private class ChatTailTransitionRef(
 )
 
 internal data class ChatViewportFollowSnapshot(
+    val totalItemsCount: Int,
     val tailUiKey: String?,
     val tailSizePx: Int?,
     val viewportHeightPx: Int,
@@ -339,6 +341,35 @@ internal data class ChatViewportFollowSnapshot(
     val followTailGrowth: Boolean,
     val followViewportResize: Boolean,
 )
+
+internal fun shouldCorrectConversationBottomAfterLayout(
+    previous: ChatViewportFollowSnapshot?,
+    current: ChatViewportFollowSnapshot,
+    atExactBottom: Boolean,
+    userScrolledAway: Boolean,
+    userDragging: Boolean,
+    isStreaming: Boolean,
+    smoothAutoScroll: Boolean,
+    viewportFollowAllowed: Boolean,
+): Boolean {
+    val old = previous ?: return false
+    if (
+        atExactBottom || userScrolledAway || userDragging || !viewportFollowAllowed ||
+        (isStreaming && !smoothAutoScroll)
+    ) {
+        return false
+    }
+    if (
+        old.totalItemsCount != current.totalItemsCount ||
+        old.tailUiKey == null ||
+        old.tailUiKey != current.tailUiKey
+    ) {
+        return false
+    }
+    return old.tailSizePx != current.tailSizePx ||
+        old.viewportHeightPx != current.viewportHeightPx ||
+        old.visibleBottomDistancePx != current.visibleBottomDistancePx
+}
 
 internal fun requiredBottomFollowScroll(
     previous: ChatViewportFollowSnapshot?,
@@ -368,6 +399,20 @@ internal fun requiredBottomFollowScroll(
     return maxOf(tailGrowthPx, viewportLossPx)
 }
 
+internal fun ownedBottomFollowScroll(
+    previous: ChatViewportFollowSnapshot?,
+    current: ChatViewportFollowSnapshot,
+): Int {
+    val sameTranscript = previous != null &&
+        previous.totalItemsCount == current.totalItemsCount &&
+        previous.tailUiKey == current.tailUiKey
+    // A structural/new-tail transition belongs to the existing streaming
+    // owner. Ordinary restore-layout following must never opt a reader into
+    // new-message auto-follow when smooth auto-scroll is disabled.
+    if (!sameTranscript && !current.followTailGrowth) return 0
+    return requiredBottomFollowScroll(previous, current)
+}
+
 internal fun shouldFollowImeAfterInsetChange(
     wasFollowing: Boolean,
     previousImeBottomPx: Int,
@@ -386,6 +431,17 @@ internal fun shouldExactlySettleConversation(
     userDragging: Boolean,
     hasMessages: Boolean,
 ): Boolean = autoFollowEnabled && hasMessages && !userScrolledAway && !userDragging
+
+internal fun shouldFollowConversationViewportResize(
+    userScrolledAway: Boolean,
+    userDragging: Boolean,
+    imeBottomPx: Int,
+    followImeResize: Boolean,
+    voiceDockAnchorTransitionActive: Boolean,
+): Boolean = !userScrolledAway &&
+    !userDragging &&
+    !voiceDockAnchorTransitionActive &&
+    (followImeResize || imeBottomPx == 0)
 
 private fun LazyListState.isAtConversationBottom(slopPx: Int): Boolean {
     val layout = layoutInfo
@@ -1260,6 +1316,7 @@ fun ChatScreen(
     var retainedLiveTailUiKey by remember(currentSessionId) { mutableStateOf<String?>(null) }
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
+    val latestImeBottomPx by rememberUpdatedState(imeBottomPx)
     var previousImeBottomPx by remember(currentSessionId) { mutableStateOf(imeBottomPx) }
     var followImeResize by remember(currentSessionId) { mutableStateOf(false) }
     SideEffect {
@@ -1334,6 +1391,7 @@ fun ChatScreen(
         }
     }
     var voiceDockAnchorGuardReady by remember { mutableStateOf(false) }
+    var voiceDockAnchorTransitionActive by remember { mutableStateOf(false) }
     LaunchedEffect(conversationVoiceDockVisible) {
         if (!voiceDockAnchorGuardReady) {
             voiceDockAnchorGuardReady = true
@@ -1347,14 +1405,19 @@ fun ChatScreen(
         // every animation frame and appears to scroll when voice mode opens.
         val anchorIndex = listState.firstVisibleItemIndex
         val anchorOffset = listState.firstVisibleItemScrollOffset
-        var firstFrameNanos = 0L
-        var frameNanos: Long
-        do {
-            if (isUserDragging) return@LaunchedEffect
-            listState.requestScrollToItem(anchorIndex, anchorOffset)
-            frameNanos = withFrameNanos { it }
-            if (firstFrameNanos == 0L) firstFrameNanos = frameNanos
-        } while (frameNanos - firstFrameNanos < 300_000_000L)
+        voiceDockAnchorTransitionActive = true
+        try {
+            var firstFrameNanos = 0L
+            var frameNanos: Long
+            do {
+                if (isUserDragging) return@LaunchedEffect
+                listState.requestScrollToItem(anchorIndex, anchorOffset)
+                frameNanos = withFrameNanos { it }
+                if (firstFrameNanos == 0L) firstFrameNanos = frameNanos
+            } while (frameNanos - firstFrameNanos < 300_000_000L)
+        } finally {
+            voiceDockAnchorTransitionActive = false
+        }
     }
     // Reaching the bottom by any means (user, follow-pin, content shrank)
     // always re-arms auto-follow.
@@ -1629,9 +1692,14 @@ fun ChatScreen(
     }
 
     // One owner follows every bottom-preserving viewport transition. Streaming
-    // growth advances by its measured delta, IME expansion advances by the
-    // lost viewport height, and a visible footer supplies the authoritative
-    // final distance. No transition replaces the logical item anchor.
+    // growth advances by its measured delta, while any ordinary viewport loss
+    // (IME, late composer controls, status text, or top chrome hydration)
+    // advances by the lost height. This matters on restore: model and effort
+    // controls can finish resolving after history has already reached the
+    // footer. The voice dock's measured 300 ms anchor transition temporarily
+    // owns both follow paths; ordinary late layout correction resumes after it
+    // settles. A visible footer supplies the authoritative final distance. No
+    // transition replaces the logical item anchor.
     LaunchedEffect(listState, currentSessionId, smoothAutoScroll) {
         var previousLayout: ChatViewportFollowSnapshot? = null
         snapshotFlow {
@@ -1642,27 +1710,55 @@ fun ChatScreen(
                     ?.size
             }
             ChatViewportFollowSnapshot(
+                totalItemsCount = listState.layoutInfo.totalItemsCount,
                 tailUiKey = tail?.uiKey,
                 tailSizePx = tailSize,
                 viewportHeightPx = listState.layoutInfo.viewportSize.height,
                 visibleBottomDistancePx = listState.visibleConversationBottomDistancePx(),
-                followTailGrowth = !isUserDragging &&
+                followTailGrowth = !voiceDockAnchorTransitionActive &&
+                    !isUserDragging &&
                     smoothAutoScroll &&
                     !userScrolledAway &&
                     (tail?.isStreaming == true ||
                         (retainedLiveTailUiKey != null && tail?.uiKey == retainedLiveTailUiKey)),
-                followViewportResize = !isUserDragging &&
-                    !userScrolledAway &&
-                    followImeResize,
+                followViewportResize = shouldFollowConversationViewportResize(
+                    userScrolledAway = userScrolledAway,
+                    userDragging = isUserDragging,
+                    imeBottomPx = latestImeBottomPx,
+                    followImeResize = followImeResize,
+                    voiceDockAnchorTransitionActive = voiceDockAnchorTransitionActive,
+                ),
             )
         }
             .distinctUntilChanged()
             .collect { current ->
-                val scrollPx = requiredBottomFollowScroll(previousLayout, current)
+                val previous = previousLayout
+                val scrollPx = ownedBottomFollowScroll(previous, current)
+                val correctLateLayout = shouldCorrectConversationBottomAfterLayout(
+                    previous = previous,
+                    current = current,
+                    atExactBottom = listState.isAtConversationBottom(0),
+                    userScrolledAway = userScrolledAway,
+                    userDragging = isUserDragging,
+                    isStreaming = messages.lastOrNull()?.isStreaming == true,
+                    smoothAutoScroll = smoothAutoScroll,
+                    viewportFollowAllowed = current.followViewportResize,
+                )
                 previousLayout = current
                 if (scrollPx > 0) {
                     listState.scroll(MutatePriority.Default) {
                         scrollBy(scrollPx.toFloat())
+                    }
+                } else if (correctLateLayout) {
+                    val lastIndex = listState.layoutInfo.totalItemsCount - 1
+                    if (lastIndex >= 0) {
+                        programmaticBottomScroll = true
+                        try {
+                            listState.scrollToItem(lastIndex)
+                            userScrolledAway = false
+                        } finally {
+                            programmaticBottomScroll = false
+                        }
                     }
                 }
             }

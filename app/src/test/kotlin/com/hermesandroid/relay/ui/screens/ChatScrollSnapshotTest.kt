@@ -7,6 +7,128 @@ import org.junit.Test
 
 class ChatScrollSnapshotTest {
     @Test
+    fun `ordinary viewport resize follows an owned restored conversation`() {
+        assertEquals(
+            true,
+            shouldFollowConversationViewportResize(
+                userScrolledAway = false,
+                userDragging = false,
+                imeBottomPx = 0,
+                followImeResize = false,
+                voiceDockAnchorTransitionActive = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `voice dock transition preserves its leading row anchor`() {
+        assertEquals(
+            false,
+            shouldFollowConversationViewportResize(
+                userScrolledAway = false,
+                userDragging = false,
+                imeBottomPx = 0,
+                followImeResize = false,
+                voiceDockAnchorTransitionActive = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `ime resize follows only after bottom ownership was captured`() {
+        assertEquals(
+            false,
+            shouldFollowConversationViewportResize(
+                userScrolledAway = false,
+                userDragging = false,
+                imeBottomPx = 320,
+                followImeResize = false,
+                voiceDockAnchorTransitionActive = false,
+            ),
+        )
+        assertEquals(
+            true,
+            shouldFollowConversationViewportResize(
+                userScrolledAway = false,
+                userDragging = false,
+                imeBottomPx = 320,
+                followImeResize = true,
+                voiceDockAnchorTransitionActive = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `same transcript late viewport or tail layout is corrected`() {
+        val previous = viewportSnapshot(
+            tailSizePx = 400,
+            viewportHeightPx = 1_000,
+            visibleBottomDistancePx = 0,
+        )
+
+        assertEquals(
+            true,
+            shouldCorrectConversationBottomAfterLayout(
+                previous = previous,
+                current = previous.copy(viewportHeightPx = 960, visibleBottomDistancePx = 40),
+                atExactBottom = false,
+                userScrolledAway = false,
+                userDragging = false,
+                isStreaming = false,
+                smoothAutoScroll = false,
+                viewportFollowAllowed = true,
+            ),
+        )
+        assertEquals(
+            true,
+            shouldCorrectConversationBottomAfterLayout(
+                previous = previous,
+                current = previous.copy(tailSizePx = 460, visibleBottomDistancePx = null),
+                atExactBottom = false,
+                userScrolledAway = false,
+                userDragging = false,
+                isStreaming = false,
+                smoothAutoScroll = false,
+                viewportFollowAllowed = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `late layout correction preserves reader and new message ownership`() {
+        val previous = viewportSnapshot(visibleBottomDistancePx = 0)
+        val remeasured = previous.copy(viewportHeightPx = 960, visibleBottomDistancePx = 40)
+        fun correction(
+            current: ChatViewportFollowSnapshot = remeasured,
+            exact: Boolean = false,
+            away: Boolean = false,
+            dragging: Boolean = false,
+        ) = shouldCorrectConversationBottomAfterLayout(
+            previous = previous,
+            current = current,
+            atExactBottom = exact,
+            userScrolledAway = away,
+            userDragging = dragging,
+            isStreaming = false,
+            smoothAutoScroll = true,
+            viewportFollowAllowed = true,
+        )
+
+        assertEquals(false, correction(exact = true))
+        assertEquals(false, correction(away = true))
+        assertEquals(false, correction(dragging = true))
+        assertEquals(
+            false,
+            correction(
+                current = remeasured.copy(
+                    totalItemsCount = remeasured.totalItemsCount + 1,
+                    tailUiKey = "new-tail",
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `visible footer distance is the exact follow amount`() {
         val previous = viewportSnapshot(tailSizePx = 400, visibleBottomDistancePx = 0)
         val current = viewportSnapshot(tailSizePx = 432, visibleBottomDistancePx = 7)
@@ -39,6 +161,66 @@ class ChatScrollSnapshotTest {
         )
 
         assertEquals(0, requiredBottomFollowScroll(previous, current))
+    }
+
+    @Test
+    fun `ordinary viewport ownership does not follow a new tail`() {
+        val previous = viewportSnapshot(visibleBottomDistancePx = 0)
+        val newTail = previous.copy(
+            totalItemsCount = previous.totalItemsCount + 1,
+            tailUiKey = "assistant-new",
+            visibleBottomDistancePx = 48,
+            followTailGrowth = false,
+            followViewportResize = true,
+        )
+
+        assertEquals(0, ownedBottomFollowScroll(previous, newTail))
+        assertEquals(
+            48,
+            ownedBottomFollowScroll(
+                previous,
+                newTail.copy(followTailGrowth = true),
+            ),
+        )
+    }
+
+    @Test
+    fun `voice anchor transition suppresses retained tail following`() {
+        val previous = viewportSnapshot(visibleBottomDistancePx = 0)
+        val duringTransition = previous.copy(
+            visibleBottomDistancePx = 52,
+            followTailGrowth = false,
+            followViewportResize = false,
+        )
+
+        assertEquals(0, ownedBottomFollowScroll(previous, duringTransition))
+        assertEquals(
+            false,
+            shouldCorrectConversationBottomAfterLayout(
+                previous = previous,
+                current = duringTransition,
+                atExactBottom = false,
+                userScrolledAway = false,
+                userDragging = false,
+                isStreaming = false,
+                smoothAutoScroll = true,
+                viewportFollowAllowed = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `voice transcript can correct late layout after anchor transition`() {
+        assertEquals(
+            true,
+            shouldFollowConversationViewportResize(
+                userScrolledAway = false,
+                userDragging = false,
+                imeBottomPx = 0,
+                followImeResize = false,
+                voiceDockAnchorTransitionActive = false,
+            ),
+        )
     }
 
     @Test
@@ -213,12 +395,14 @@ class ChatScrollSnapshotTest {
     )
 
     private fun viewportSnapshot(
+        totalItemsCount: Int = 10,
         tailSizePx: Int? = 400,
         viewportHeightPx: Int = 1_000,
         visibleBottomDistancePx: Int? = null,
         followTailGrowth: Boolean = true,
         followViewportResize: Boolean = false,
     ) = ChatViewportFollowSnapshot(
+        totalItemsCount = totalItemsCount,
         tailUiKey = "assistant-live",
         tailSizePx = tailSizePx,
         viewportHeightPx = viewportHeightPx,

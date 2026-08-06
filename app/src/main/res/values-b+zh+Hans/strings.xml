@@ -118,7 +118,7 @@
     <string name="chat_placeholder_message">输入消息…</string>
     <string name="chat_edit_busy_snackbar">暂时无法编辑——请等当前这一轮结束</string>
     <string name="chat_select_reasoning_effort">选择推理强度</string>
-    <string name="reasoning_effort_standard_levels_notice">由于此模型尚未报告支持的级别列表，因此显示标准级别。提供商可能只支持其中部分级别。</string>
+    <string name="reasoning_effort_standard_levels_notice">Hermes 未公布此模型的确切推理强度级别，因此显示标准选项。</string>
     <string name="reasoning_effort_current_outside_supported">当前会话：%1$s（由 Hermes 报告）。此模型的新选择仅限于 %2$s。</string>
 
     <!-- 语音提示 -->

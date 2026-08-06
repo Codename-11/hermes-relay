@@ -101,7 +101,7 @@
     <string name="chat_placeholder_message">Mensaje…</string>
     <string name="chat_edit_busy_snackbar">No se puede editar en este momento: espera a que termine el turno actual</string>
     <string name="chat_select_reasoning_effort">Seleccionar esfuerzo de razonamiento</string>
-    <string name="reasoning_effort_standard_levels_notice">Se muestran los niveles estándar porque este modelo no ha informado una lista compatible. Es posible que el proveedor use menos niveles.</string>
+    <string name="reasoning_effort_standard_levels_notice">Hermes no anuncia niveles de esfuerzo exactos para este modelo, por lo que se muestran las opciones estándar.</string>
     <string name="reasoning_effort_current_outside_supported">Sesión actual: %1$s (informado por Hermes). Las nuevas selecciones para este modelo se limitan a %2$s.</string>
     <string name="voice_toast_signin_route">Voice necesita un inicio de sesión único en la ruta %1$s: abra Administrar</string>
     <string name="voice_toast_signin_default">Voice necesita iniciar sesión en el panel: abra Administrar para iniciar sesión</string>
