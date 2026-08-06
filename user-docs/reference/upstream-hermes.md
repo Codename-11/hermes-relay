@@ -102,6 +102,25 @@ unsupported capability rather than silently substituting a Relay write.
 | `/api/cron/*` | Jobs, runs, delivery targets and controls |
 | `/api/sessions/*` | Dashboard/profile-aware session history, export and cleanup |
 
+### Model identity and reasoning metadata
+
+Gateway `model.options` and Dashboard `/api/model/*` are the source of truth for
+provider/model inventory and selection. Clients keep provider and model as one
+coherent identity; they do not infer a provider from a model-name prefix when
+multiple providers could own that alias.
+
+When upstream reports an exact ordered reasoning-effort list for the selected
+identity, that list wins. An explicit upstream `reasoning: false` suppresses the
+reasoning control unless a higher-precedence exact list is available. When
+upstream reports neither, Android uses the standard advisory values `none`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
+
+The optional Relay [model capability overlay](./relay-api.html#optional-model-capability-overlay)
+can refine the list for exact identities. Relay does not supply the inventory,
+and installing or pairing it is never required for model selection, reasoning
+controls, or chat. A missing route, old Relay, auth failure, unsupported schema,
+or network failure simply preserves the advisory behavior.
+
 ### Vanilla Hermes voice
 
 | Method | Route | Purpose |

@@ -2548,3 +2548,44 @@ top of a response bubble without ever covering its text or jumping through it.
   provably safe, no visit is preferable to a partially obscured message.
 - Position, activity truth, accessibility behavior, and Petdex fallback semantics
   share one source of runtime truth instead of drifting across route-local effects.
+
+## ADR 45 — Provider/model reasoning levels use an optional capability overlay
+
+**Context.** Upstream Hermes owns model discovery and selection. Its
+`model.options` contract supplies provider/model identities and may report a
+reasoning boolean, but not every provider exposes an authoritative list of
+selectable effort values. A client-side provider table would drift, while making
+Relay mandatory would break the Vanilla Hermes path.
+
+**Decision.**
+
+- Upstream `model.options` remains the source of provider/model identity. Relay
+  never invents models or gates model selection or chat.
+- When available, the optional Relay `POST /relay/model-capabilities` overlay
+  resolves capability metadata for the exact, profile-scoped `{provider, model}`
+  pairs supplied by the client. A remote caller needs a paired session with an
+  active `chat` grant; loopback operator calls may omit it.
+- Resolution uses this precedence: an exact upstream effort list, then an exact
+  Relay effort list, then an explicit upstream `reasoning: false`, then the
+  canonical advisory set `none`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+  `max`, `ultra`.
+- Only a coherent provider/model identity may produce an exact result. API model
+  aliases may contribute only when their provider resolves uniquely. Missing,
+  malformed, unsupported, unauthenticated, or failed overlay calls keep the
+  advisory set instead of disabling the control.
+- Exact lists are selectable truth for the next request. Advisory lists are
+  compatibility choices, not a claim that every value is provider-supported.
+  An effort confirmed by the active session may remain visible as current state
+  even when it is no longer selectable for a new request.
+- Requests are schema-versioned and bounded to 64 exact pairs. Relay may perform
+  bounded provider discovery using host-owned credentials, but returns only
+  capability metadata. Credentials, credential fingerprints, probe details, and
+  internal cache keys never cross the route.
+- Primary UI copy describes **available levels** for exact results and
+  **standard levels** for advisory results. Provider source and overlay details
+  belong in diagnostics, not in the normal composer.
+
+**Consequences.** Vanilla Hermes remains complete without Relay. A connected
+Relay can narrow choices after capability discovery without changing the model
+inventory. Old Relay versions, a missing `chat` grant, network failures, and
+unsupported providers fail soft to the same stable advisory behavior.

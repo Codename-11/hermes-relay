@@ -1252,9 +1252,8 @@ fun AgentInfoSheet(
             },
             onDismiss = { activePicker = null },
         )
-        AgentPassportPicker.Reasoning -> OptionPickerSheet(
-            title = stringResource(R.string.chat_select_reasoning_effort),
-            options = reasoningAvailability.choices.map { value ->
+        AgentPassportPicker.Reasoning -> {
+            val reasoningOptions = reasoningAvailability.choices.map { value ->
                 ChatInputPickerOption(
                     label = reasoningEffortLabel(value),
                     value = value,
@@ -1262,13 +1261,29 @@ fun AgentInfoSheet(
                     enabled = reasoningAvailability.supported != false &&
                         gatewayControlsAvailable && !isStreaming,
                 )
-            },
-            onSelect = { option ->
-                option.value?.let(chatViewModel::selectReasoningEffort)
-                activePicker = null
-            },
-            onDismiss = { activePicker = null },
-        )
+            }
+            OptionPickerSheet(
+                title = stringResource(R.string.chat_select_reasoning_effort),
+                subtitle = when {
+                    reasoningAvailability.exact &&
+                        selectedReasoning != null &&
+                        selectedReasoning !in reasoningAvailability.choices -> stringResource(
+                            R.string.reasoning_effort_current_outside_supported,
+                            reasoningEffortLabel(selectedReasoning),
+                            reasoningOptions.joinToString { it.label },
+                        )
+                    !reasoningAvailability.exact ->
+                        stringResource(R.string.reasoning_effort_standard_levels_notice)
+                    else -> null
+                },
+                options = reasoningOptions,
+                onSelect = { option ->
+                    option.value?.let(chatViewModel::selectReasoningEffort)
+                    activePicker = null
+                },
+                onDismiss = { activePicker = null },
+            )
+        }
         null -> Unit
     }
 
