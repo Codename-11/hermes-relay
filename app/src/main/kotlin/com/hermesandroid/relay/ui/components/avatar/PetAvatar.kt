@@ -214,10 +214,10 @@ class PetAvatar(
     private val decodedSheets = LinkedHashMap<String, DecodedSheet>(4, 0.75f, true)
     private val decodedClips = LinkedHashMap<PetDecodeKey, PetFrames>(8, 0.75f, true)
 
-    private fun decode(clip: PetClip, stabilize: Boolean): PetFrames? {
-        val key = PetDecodeKey(clip, stabilize)
+    private fun decode(clip: PetClip, stabilize: Boolean, groundOpaqueBottom: Boolean): PetFrames? {
+        val key = PetDecodeKey(clip, stabilize, groundOpaqueBottom)
         synchronized(decodedClips) { decodedClips[key] }?.let { return it }
-        val decoded = decodeClip(clip, stabilize, decodedSheets) ?: return null
+        val decoded = decodeClip(clip, stabilize, groundOpaqueBottom, decodedSheets) ?: return null
         synchronized(decodedClips) {
             decodedClips[key] = decoded
             while (decodedClips.size > PET_DECODED_CLIP_CACHE_ENTRIES) {
@@ -363,18 +363,21 @@ class PetAvatar(
         // character that floats/jumps cell-to-cell). Global Appearance toggle;
         // flipping it selects a separately cached decode.
         val stabilize = LocalPetStabilize.current
+        val groundOpaqueBottom = LocalPetGroundOpaqueBottom.current
 
         // Decode the active clip off the main thread. Keep the last complete
         // visual while a new state is loading so greet/done/locomotion swaps do
         // not expose the Canvas as a blank frame.
-        var displayedClip by remember(id, stabilize) {
+        var displayedClip by remember(id, stabilize, groundOpaqueBottom) {
             mutableStateOf<DisplayedPetClip?>(null)
         }
-        LaunchedEffect(id, clip, stabilize, mirrorHorizontally) {
+        LaunchedEffect(id, clip, stabilize, groundOpaqueBottom, mirrorHorizontally) {
             val decoded = if (clip == null) {
                 null
             } else {
-                withContext(Dispatchers.IO) { runCatching { decode(clip, stabilize) }.getOrNull() }
+                withContext(Dispatchers.IO) {
+                    runCatching { decode(clip, stabilize, groundOpaqueBottom) }.getOrNull()
+                }
                     ?.let { DisplayedPetClip(it, mirrorHorizontally) }
             }
             displayedClip = retainPetFrameDuringDecode(
@@ -484,6 +487,7 @@ private data class DisplayedPetClip(
 private data class PetDecodeKey(
     val clip: PetClip,
     val stabilize: Boolean,
+    val groundOpaqueBottom: Boolean,
 )
 
 /** One decoded atlas per selected pet; all of its row clips share these pixels. */
@@ -492,6 +496,7 @@ private data class DecodedSheet(val bitmap: Bitmap, val image: ImageBitmap)
 private fun decodeClip(
     clip: PetClip,
     stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
     decodedSheets: MutableMap<String, DecodedSheet>,
 ): PetFrames? = when (clip) {
     is FrameSequenceClip -> {
@@ -530,7 +535,13 @@ private fun decodeClip(
                 frameHeight = bitmaps.first().height,
                 frameCount = bitmaps.size,
                 fps = clip.fps,
-                centerOffsets = if (stabilize) bitmaps.map { bitmapRecenter(it) } else null,
+                centerOffsets = if (stabilize || groundOpaqueBottom) {
+                    bitmaps.map { bitmap ->
+                        bitmapContentAlignment(bitmap, stabilize, groundOpaqueBottom)
+                    }
+                } else {
+                    null
+                },
             )
         }
     }
@@ -583,8 +594,17 @@ private fun decodeClip(
                 frameCount = count,
                 fps = clip.fps,
                 startFrame = clip.startFrame,
-                centerOffsets = if (stabilize) {
-                    sheetRecenter(bmp, cols, clip.frameWidth, clip.frameHeight, clip.startFrame, count)
+                centerOffsets = if (stabilize || groundOpaqueBottom) {
+                    sheetContentAlignment(
+                        bmp,
+                        cols,
+                        clip.frameWidth,
+                        clip.frameHeight,
+                        clip.startFrame,
+                        count,
+                        stabilize,
+                        groundOpaqueBottom,
+                    )
                 } else {
                     null
                 },
@@ -593,33 +613,65 @@ private fun decodeClip(
     }
 }
 
-/** Per-cell recenter offsets for a sprite sheet (see [contentRecenter]). */
-private fun sheetRecenter(
+/** Per-cell alignment offsets for a sprite sheet (see [contentAlignment]). */
+private fun sheetContentAlignment(
     bmp: Bitmap,
     cols: Int,
     fw: Int,
     fh: Int,
     startFrame: Int,
     count: Int,
+    stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
 ): List<IntOffset> {
     val buf = IntArray(fw * fh)
     return (0 until count).map { i ->
         val cell = startFrame + i
-        contentRecenter(bmp, (cell % cols) * fw, (cell / cols) * fh, fw, fh, buf)
+        contentAlignment(
+            bmp,
+            (cell % cols) * fw,
+            (cell / cols) * fh,
+            fw,
+            fh,
+            buf,
+            stabilize,
+            groundOpaqueBottom,
+        )
     }
 }
 
-/** Recenter offset for one standalone frame bitmap. */
-private fun bitmapRecenter(bmp: Bitmap): IntOffset =
-    contentRecenter(bmp, 0, 0, bmp.width, bmp.height, IntArray(bmp.width * bmp.height))
+/** Content alignment offset for one standalone frame bitmap. */
+private fun bitmapContentAlignment(
+    bmp: Bitmap,
+    stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
+): IntOffset = contentAlignment(
+    bmp,
+    0,
+    0,
+    bmp.width,
+    bmp.height,
+    IntArray(bmp.width * bmp.height),
+    stabilize,
+    groundOpaqueBottom,
+)
 
 /**
  * Scan the [w]×[h] region at ([x0],[y0]) of [bmp] for opaque pixels and return the
- * offset (source px) that moves their bounding-box center to the region center —
- * cancelling per-frame positional drift. [buf] (size ≥ [w]×[h]) is reused scratch.
- * Returns [IntOffset.Zero] for a fully-transparent region.
+ * offset (source px) that horizontally stabilizes the content and, when asked,
+ * grounds its opaque bottom. [buf] (size ≥ [w]×[h]) is reused scratch. Returns
+ * [IntOffset.Zero] for a fully-transparent region.
  */
-private fun contentRecenter(bmp: Bitmap, x0: Int, y0: Int, w: Int, h: Int, buf: IntArray): IntOffset {
+private fun contentAlignment(
+    bmp: Bitmap,
+    x0: Int,
+    y0: Int,
+    w: Int,
+    h: Int,
+    buf: IntArray,
+    stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
+): IntOffset {
     bmp.getPixels(buf, 0, w, x0, y0, w, h)
     var minX = w
     var minY = h
@@ -638,7 +690,44 @@ private fun contentRecenter(bmp: Bitmap, x0: Int, y0: Int, w: Int, h: Int, buf: 
         }
     }
     if (maxX < 0) return IntOffset.Zero
-    return IntOffset(w / 2 - (minX + maxX) / 2, h / 2 - (minY + maxY) / 2)
+    return petContentAlignmentOffset(
+        width = w,
+        height = h,
+        minX = minX,
+        minY = minY,
+        maxX = maxX,
+        maxY = maxY,
+        stabilize = stabilize,
+        groundOpaqueBottom = groundOpaqueBottom,
+    )
+}
+
+/** Pure alignment policy shared by atlas and standalone frames. */
+internal fun petContentAlignmentOffset(
+    width: Int,
+    height: Int,
+    minX: Int,
+    minY: Int,
+    maxX: Int,
+    maxY: Int,
+    stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
+): IntOffset {
+    if (
+        width <= 0 || height <= 0 || minX < 0 || minY < 0 ||
+        maxX < minX || maxY < minY || maxX >= width || maxY >= height
+    ) {
+        return IntOffset.Zero
+    }
+    val x = if (stabilize) width / 2 - (minX + maxX) / 2 else 0
+    val y = if (groundOpaqueBottom) {
+        height - 1 - maxY
+    } else if (stabilize) {
+        height / 2 - (minY + maxY) / 2
+    } else {
+        0
+    }
+    return IntOffset(x, y)
 }
 
 /** Draw frame [index] of [f], contain-fit + centered, scaled by [bounce]. */

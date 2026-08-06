@@ -143,3 +143,11 @@ val LocalPetPlaybackSpeed = staticCompositionLocalOf { 1f }
  * on; the sphere ignores it.
  */
 val LocalPetStabilize = staticCompositionLocalOf { true }
+
+/**
+ * Grounds decoded pet art on the bottom of its render canvas. The floating
+ * companion enables this at its host boundary so transparent atlas padding
+ * cannot make a supported pet appear to hover. Pickers, previews, and message
+ * avatars retain their centered rendering.
+ */
+val LocalPetGroundOpaqueBottom = staticCompositionLocalOf { false }

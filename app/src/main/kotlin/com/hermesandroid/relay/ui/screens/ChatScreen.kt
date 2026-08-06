@@ -377,6 +377,13 @@ internal fun shouldFollowImeAfterInsetChange(
     else -> wasFollowing
 }
 
+internal fun shouldExactlySettleConversation(
+    autoFollowEnabled: Boolean,
+    userScrolledAway: Boolean,
+    userDragging: Boolean,
+    hasMessages: Boolean,
+): Boolean = autoFollowEnabled && hasMessages && !userScrolledAway && !userDragging
+
 private fun LazyListState.isAtConversationBottom(slopPx: Int): Boolean {
     val layout = layoutInfo
     if (layout.totalItemsCount == 0) return true
@@ -1286,7 +1293,9 @@ fun ChatScreen(
         try {
             listState.scrollToConversationBottom(
                 animated = animated,
-                slopPx = atBottomSlopPx,
+                // Slop preserves follow ownership during motion; an explicit
+                // settlement must reach the real LazyColumn boundary.
+                slopPx = 0,
             )
             userScrolledAway = false
         } finally {
@@ -1344,6 +1353,27 @@ fun ChatScreen(
     // always re-arms auto-follow.
     LaunchedEffect(isAtBottom) {
         if (isAtBottom) userScrolledAway = false
+    }
+
+    // IME insets arrive as an animation, not one layout. Wait until inset
+    // updates pause, then remove any rounding/late-measurement residue if the
+    // conversation still owns bottom-follow. This runs for both opening and
+    // closing without moving a transcript whose reader scrolled away.
+    var lastImeSettleTargetPx by remember(currentSessionId) { mutableStateOf(imeBottomPx) }
+    LaunchedEffect(imeBottomPx) {
+        if (imeBottomPx == lastImeSettleTargetPx) return@LaunchedEffect
+        lastImeSettleTargetPx = imeBottomPx
+        delay(96)
+        if (
+            shouldExactlySettleConversation(
+                autoFollowEnabled = true,
+                userScrolledAway = userScrolledAway,
+                userDragging = isUserDragging,
+                hasMessages = messages.isNotEmpty(),
+            )
+        ) {
+            scrollConversationToBottom(animated = false)
+        }
     }
 
     // Scroll-to-bottom FAB visibility. The button means "you've scrolled up —
@@ -1631,14 +1661,25 @@ fun ChatScreen(
             }
     }
 
-    // Completion haptic only; completion never mutates the list anchor.
-    var observedActiveStream by remember { mutableStateOf(false) }
+    // Completion keeps the stable live renderer, then settles the owned
+    // transcript to the exact boundary after its final layout pass.
+    var observedActiveStream by remember(currentSessionId) { mutableStateOf(false) }
     LaunchedEffect(isStreaming) {
         if (isStreaming) {
             observedActiveStream = true
         } else if (observedActiveStream) {
             observedActiveStream = false
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            if (
+                shouldExactlySettleConversation(
+                    autoFollowEnabled = smoothAutoScroll,
+                    userScrolledAway = userScrolledAway,
+                    userDragging = isUserDragging,
+                    hasMessages = messages.isNotEmpty(),
+                )
+            ) {
+                scrollConversationToBottom(animated = false)
+            }
         }
     }
 
@@ -3378,10 +3419,10 @@ fun ChatScreen(
                 },
                 topContentVisible = conversationVoiceDockVisible,
                 suppressVoiceTrailing = conversationVoiceDockVisible,
-                // Measure the existing composer as a Desktop-style ledge. The
-                // floating host stands on its top edge; no transcript space is
-                // reserved and the composer controls remain unobstructed.
-                modifier = Modifier.petPerchSurface(
+                // Measure the visible composer Surface as a Desktop-style
+                // ledge. Registering the outer input column includes its 6dp
+                // visual margin and makes a correctly grounded pet look raised.
+                surfaceModifier = Modifier.petPerchSurface(
                     key = CHAT_PET_WALK_REGION,
                     routes = CHAT_PET_ROUTES,
                 ),

@@ -18,6 +18,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -54,6 +55,7 @@ import com.hermesandroid.relay.data.PetBehaviorPreferences
 import com.hermesandroid.relay.data.PetTemperament
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.LocalPetGroundOpaqueBottom
 import com.hermesandroid.relay.ui.components.avatar.PetLocomotion
 import com.hermesandroid.relay.ui.components.pet.LocalPetSafeAreaRegistry
 import com.hermesandroid.relay.ui.components.pet.PetLayoutDirection
@@ -106,6 +108,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 internal const val FLOATING_PET_COMPACT_HEIGHT_DP = 700
+internal const val FLOATING_PET_SUPPORTED_RAIL_CLEARANCE_DP = 0f
 internal const val CHAT_PET_WALK_REGION = "chat-composer-perch"
 internal const val CHAT_PET_MESSAGE_PERCH_PREFIX = "chat-message-perch:"
 internal const val CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX = "${CHAT_PET_MESSAGE_PERCH_PREFIX}assistant:"
@@ -502,12 +505,17 @@ fun FloatingPetCompanion(
     val visualSize = dimensions.visualSizeDp.dp
     val targetSizePx = with(density) { targetSize.toPx() }
     val visualSizePx = with(density) { visualSize.toPx() }
+    val collisionSizePx = floatingPetCollisionSizePx(targetSizePx, visualSizePx)
+    val collisionSize = with(density) { collisionSizePx.toDp() }
     val heldLiftPx = with(density) { 6.dp.toPx() }
     val scrollReactionLiftPx = with(density) { PET_SCROLL_REACTION_LIFT_DP.dp.toPx() }
     val maximumDirectHopPx = with(density) { PET_MAX_DIRECT_HOP_DP.dp.toPx() }
     val maximumMessageHopPx = with(density) { PET_MAX_CLEAR_MESSAGE_HOP_DP.dp.toPx() }
     val safeMarginPx = with(density) { 12.dp.toPx() }
-    val perchClearancePx = with(density) { 6.dp.toPx() }
+    // A supported collision box sits directly on its measured rail. Obstacle
+    // clearance remains part of [footprint]; adding it again here makes the
+    // visible pet hover above the surface.
+    val perchClearancePx = with(density) { FLOATING_PET_SUPPORTED_RAIL_CLEARANCE_DP.dp.toPx() }
     val topClearancePx = with(density) { 76.dp.toPx() }
     val bottomClearancePx = with(density) { (if (compact) 84.dp else 104.dp).toPx() }
     val radius = targetSizePx / 2f
@@ -526,7 +534,6 @@ fun FloatingPetCompanion(
         PetSafeBounds(left, top, right, bottom)
     }
     val registry = LocalPetSafeAreaRegistry.current
-    val collisionSizePx = floatingPetCollisionSizePx(targetSizePx, visualSizePx)
     val footprint = remember(collisionSizePx, safeMarginPx) {
         PetFootprint(collisionSizePx, collisionSizePx, safeMarginPx / 2f)
     }
@@ -2242,11 +2249,14 @@ fun FloatingPetCompanion(
                 .offset {
                     val displayed = draggedPoint ?: PetPoint(x.value, y.value)
                     IntOffset(
-                        (displayed.x - targetSizePx / 2f).roundToInt(),
-                        (displayed.y - targetSizePx / 2f).roundToInt(),
+                        (displayed.x - collisionSizePx / 2f).roundToInt(),
+                        (displayed.y - collisionSizePx / 2f).roundToInt(),
                     )
                 }
-                .size(targetSize)
+                // The host, route footprint, and visible art share one center.
+                // A smaller pointer-only host shifts bottom-aligned art upward
+                // whenever the authored visual is larger than its touch target.
+                .size(collisionSize)
                 .alpha(if (positioned) 1f else 0f)
                 .graphicsLayer {
                     val scale = 1f + heldProgress * 0.10f
@@ -2385,22 +2395,26 @@ fun FloatingPetCompanion(
                     ),
             )
             key(pet.id) {
-                pet.Render(
-                    state = state.copy(
-                        petLocomotion = presentedPetLocomotion(
-                            dragging = dragging,
-                            dropping = pendingDrop != null,
-                            agentState = state.state,
-                            movement = locomotion,
+                CompositionLocalProvider(LocalPetGroundOpaqueBottom provides true) {
+                    pet.Render(
+                        state = state.copy(
+                            petLocomotion = presentedPetLocomotion(
+                                dragging = dragging,
+                                dropping = pendingDrop != null,
+                                agentState = state.state,
+                                movement = locomotion,
+                            ),
+                            paused = shouldPauseFloatingPet(
+                                alreadyPaused = state.paused || !accessibleMotion.osAnimations ||
+                                    accessibleMotion.touchExploration,
+                                animationEnabled = animationEnabled,
+                            ),
                         ),
-                        paused = shouldPauseFloatingPet(
-                            alreadyPaused = state.paused || !accessibleMotion.osAnimations ||
-                                accessibleMotion.touchExploration,
-                            animationEnabled = animationEnabled,
-                        ),
-                    ),
-                    modifier = Modifier.size(visualSize),
-                )
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .size(visualSize),
+                    )
+                }
             }
 
             DropdownMenu(

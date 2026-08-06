@@ -20,6 +20,11 @@ import org.junit.Test
 
 class FloatingPetCompanionTest {
     @Test
+    fun `supported floating pet rails add no visible vertical clearance`() {
+        assertEquals(0f, FLOATING_PET_SUPPORTED_RAIL_CLEARANCE_DP, 0f)
+    }
+
+    @Test
     fun `terrain lookahead plans multiple levels before movement starts`() {
         val composer = PetRoamingRail(
             key = "composer:0",

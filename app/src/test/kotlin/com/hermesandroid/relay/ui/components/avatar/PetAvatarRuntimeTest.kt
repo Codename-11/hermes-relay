@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components.avatar
 
+import androidx.compose.ui.unit.IntOffset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -7,6 +8,53 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PetAvatarRuntimeTest {
+    @Test
+    fun `floating alignment removes transparent bottom padding while preserving horizontal stabilization`() {
+        assertEquals(
+            IntOffset(4, 11),
+            petContentAlignmentOffset(
+                width = 64,
+                height = 64,
+                minX = 13,
+                minY = 9,
+                maxX = 44,
+                maxY = 52,
+                stabilize = true,
+                groundOpaqueBottom = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `non-floating alignment retains centered preview behavior`() {
+        assertEquals(
+            IntOffset(4, 2),
+            petContentAlignmentOffset(
+                width = 64,
+                height = 64,
+                minX = 13,
+                minY = 9,
+                maxX = 44,
+                maxY = 52,
+                stabilize = true,
+                groundOpaqueBottom = false,
+            ),
+        )
+        assertEquals(
+            IntOffset.Zero,
+            petContentAlignmentOffset(
+                width = 64,
+                height = 64,
+                minX = 13,
+                minY = 9,
+                maxX = 44,
+                maxY = 52,
+                stabilize = false,
+                groundOpaqueBottom = false,
+            ),
+        )
+    }
+
     @Test
     fun `clip transition retains the previous complete visual until decode finishes`() {
         assertEquals(

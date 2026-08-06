@@ -100,6 +100,59 @@ class ChatScrollSnapshotTest {
     }
 
     @Test
+    fun `completion and keyboard settle exactly only while bottom follow is owned`() {
+        assertEquals(
+            true,
+            shouldExactlySettleConversation(
+                autoFollowEnabled = true,
+                userScrolledAway = false,
+                userDragging = false,
+                hasMessages = true,
+            ),
+        )
+        assertEquals(
+            false,
+            shouldExactlySettleConversation(
+                autoFollowEnabled = true,
+                userScrolledAway = true,
+                userDragging = false,
+                hasMessages = true,
+            ),
+        )
+        assertEquals(
+            false,
+            shouldExactlySettleConversation(
+                autoFollowEnabled = true,
+                userScrolledAway = false,
+                userDragging = true,
+                hasMessages = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `disabled auto follow and empty conversations do not request exact settlement`() {
+        assertEquals(
+            false,
+            shouldExactlySettleConversation(
+                autoFollowEnabled = false,
+                userScrolledAway = false,
+                userDragging = false,
+                hasMessages = true,
+            ),
+        )
+        assertEquals(
+            false,
+            shouldExactlySettleConversation(
+                autoFollowEnabled = true,
+                userScrolledAway = false,
+                userDragging = false,
+                hasMessages = false,
+            ),
+        )
+    }
+
+    @Test
     fun `stream start captures the live tail renderer`() {
         assertEquals(
             "assistant-live",

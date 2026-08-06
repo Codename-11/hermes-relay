@@ -11,7 +11,10 @@ activity-based reordering.
 Floating companions wait for Chat's measured composer rail before publishing
 their first roaming position. Their collision footprint contains both the
 pointer target and rendered sprite, and the complete scroll-to-bottom control
-envelope is an obstacle rather than a landing perch.
+envelope is an obstacle rather than a landing perch. Supported rails add no
+visual lift, and the floating-only renderer aligns each frame's opaque bottom
+edge to its canvas baseline so transparent atlas padding cannot make pets hover;
+centered previews and message avatars remain unchanged.
 
 ## 2026-08-05 — Measured pet placement and passive model sync
 
@@ -37,18 +40,22 @@ Markdown renderer is deferred until the row is no longer active or the session
 is revisited.
 
 The last-in-group timestamp occupies its final geometry from the first
-streaming frame and is only revealed at completion. The former repeated
-completion-time `scrollToItem` correction is removed, while measured positive
-growth during an active stream continues to follow the bottom without replacing
-the logical anchor. The visible footer supplies the exact remaining distance so
-rounding or adjacent layout changes cannot leave a residual forward range.
+streaming frame and is only revealed at completion. Measured positive growth
+during an active stream continues to follow the bottom without replacing the
+logical anchor. Once completion layout stabilizes, a bottom-owned transcript
+settles to the exact LazyColumn boundary; proximity slop is reserved for
+retaining follow intent during motion and cannot define the final position. The
+visible footer supplies the exact remaining distance so rounding or adjacent
+layout changes cannot leave a residual forward range.
 
 IME expansion participates in that same viewport owner. A transcript already
 at the bottom advances by the measured viewport-height loss throughout the
-keyboard animation; a transcript being read above the bottom preserves its
-existing anchor, and a real drag cancels keyboard follow immediately. Host-side
-coverage verifies renderer ownership, unchanged bubble height, exact footer
-settling, keyboard arming, viewport loss, and history-reading behavior.
+keyboard animation, then settles exactly after inset updates stop on both open
+and close. A transcript being read above the bottom preserves its existing
+anchor, and a real drag cancels keyboard follow immediately. Host-side coverage
+verifies renderer ownership, unchanged bubble height, exact footer settling,
+keyboard arming, viewport loss, completion/IME settlement ownership, and
+history-reading behavior.
 
 ## 2026-08-05 — Focus voice input boundary repair
 
