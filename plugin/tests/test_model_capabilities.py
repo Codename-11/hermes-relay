@@ -210,6 +210,68 @@ class DynamicCapabilityResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(peak, 4)
         self.assertFalse(rows[-1]["reasoning_efforts_exact"])
 
+    async def test_codex_catalog_reasoning_levels_are_exact(self) -> None:
+        async def models(request: web.Request) -> web.Response:
+            self.assertEqual(request.headers.get("Authorization"), "Bearer codex-token")
+            return web.json_response(
+                {
+                    "models": [
+                        {
+                            "slug": "gpt-5.6-sol",
+                            "supported_reasoning_levels": [
+                                {"effort": "low"},
+                                {"effort": "medium"},
+                                {"effort": "high"},
+                                {"effort": "xhigh"},
+                                {"effort": "max"},
+                                {"effort": "ultra"},
+                            ],
+                        }
+                    ]
+                }
+            )
+
+        provider_app = web.Application()
+        provider_app.router.add_get("/models", models)
+        client, base = await self._start_provider(provider_app)
+        self.addAsyncCleanup(client.close)
+
+        home = self.profiles / "codex"
+        home.mkdir()
+        (home / "config.yaml").write_text("model: {}\n", encoding="utf-8")
+        (home / ".env").write_text(
+            f"OPENAI_CODEX_BASE_URL={base}\n", encoding="utf-8"
+        )
+        (home / "auth.json").write_text(
+            json.dumps(
+                {
+                    "credential_pool": {
+                        "openai-codex": [{"access_token": "codex-token"}]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        resolver = ModelCapabilityResolver(
+            RelayConfig(hermes_config_path=str(self.home / "config.yaml"))
+        )
+
+        rows = await resolver.resolve_many(
+            [
+                ("openai-codex", "gpt-5.6-sol"),
+                ("openai-codex", "future-model"),
+            ],
+            profile="codex",
+        )
+
+        self.assertEqual(
+            rows[0]["reasoning_efforts"],
+            ["low", "medium", "high", "xhigh", "max", "ultra"],
+        )
+        self.assertTrue(rows[0]["reasoning_efforts_exact"])
+        self.assertEqual(rows[0]["source"], "provider-catalog")
+        self.assertFalse(rows[1]["reasoning_efforts_exact"])
+
     async def test_copilot_catalog_cache_is_profile_and_account_isolated(self) -> None:
         calls = {"account-a=1;kind=api": 0, "account-b=1;kind=api": 0}
 

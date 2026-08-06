@@ -181,6 +181,7 @@ import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.CommandPalette
 import com.hermesandroid.relay.ui.components.KeepScreenOnWhile
 import com.hermesandroid.relay.ui.components.ModelPickerSheet
+import com.hermesandroid.relay.ui.components.OptionPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
@@ -883,6 +884,7 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf("") }
     var showCommandPalette by remember { mutableStateOf(false) }
     var showModelSheet by remember { mutableStateOf(false) }
+    var showEffortSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
     var showBackgroundProcesses by remember { mutableStateOf(false) }
 
@@ -3312,7 +3314,6 @@ fun ChatScreen(
                         ?: stringResource(R.string.conn_info_server_default),
                     contentDescription = stringResource(R.string.chat_select_reasoning_effort),
                     options = effortPickerOptions,
-                    subtitle = effortPickerSubtitle,
                     enabled = isGatewayTransport && chatReady && !isStreaming,
                 )
             } else {
@@ -3418,9 +3419,7 @@ fun ChatScreen(
                     }
                 },
                 effortControl = effortControl,
-                onEffortOptionSelected = { option ->
-                    option.value?.let { chatViewModel.selectReasoningEffort(it) }
-                },
+                onEffortPickerClick = { showEffortSheet = true },
                 topContent = {
                     ConversationVoiceDock(
                         uiState = voiceUiState,
@@ -3470,6 +3469,20 @@ fun ChatScreen(
                         }
                     },
                     onDismiss = { showModelSheet = false },
+                )
+            }
+            if (showEffortSheet) {
+                OptionPickerSheet(
+                    title = stringResource(R.string.chat_select_reasoning_effort),
+                    subtitle = effortPickerSubtitle,
+                    options = effortPickerOptions.map { option ->
+                        option.copy(enabled = effortControl?.enabled == true)
+                    },
+                    onSelect = { option ->
+                        showEffortSheet = false
+                        option.value?.let(chatViewModel::selectReasoningEffort)
+                    },
+                    onDismiss = { showEffortSheet = false },
                 )
             }
         } // end Column

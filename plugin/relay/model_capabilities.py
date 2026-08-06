@@ -10,6 +10,7 @@ returned on the wire.
 from __future__ import annotations
 
 import asyncio
+import base64
 from dataclasses import dataclass
 import hashlib
 import json
@@ -183,6 +184,20 @@ def _fingerprint(secret: str) -> str:
     return hashlib.blake2b(secret.encode("utf-8"), digest_size=12).hexdigest()
 
 
+def _chatgpt_account_id(access_token: str) -> str:
+    """Extract the non-secret account routing claim from a Codex OAuth JWT."""
+    try:
+        payload = access_token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        account_id = _mapping(claims.get("https://api.openai.com/auth")).get(
+            "chatgpt_account_id"
+        )
+        return account_id if isinstance(account_id, str) else ""
+    except (IndexError, ValueError, TypeError, json.JSONDecodeError):
+        return ""
+
+
 def _mapping(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -263,6 +278,12 @@ def _profile_secret(context: _ProfileContext, provider: str) -> str:
 def _provider_base_url(context: _ProfileContext, provider: str) -> str:
     model = _profile_model_config(context)
     configured = _provider_config(context, provider)
+    if provider == "openai-codex":
+        return _first_string(
+            context.env.get("OPENAI_CODEX_BASE_URL"),
+            configured.get("base_url"),
+            "https://chatgpt.com/backend-api/codex",
+        ).rstrip("/")
     if provider == "lmstudio":
         env_name, default = "LM_BASE_URL", "http://127.0.0.1:1234/v1"
     elif provider == "ollama-cloud":
@@ -353,7 +374,12 @@ class ModelCapabilityResolver:
         except Exception:
             # Compatibility fallback mirrors upstream's per-provider root
             # fallback without executing subprocesses or changing env state.
-            for provider in ("copilot", "lmstudio", "ollama-cloud"):
+            for provider in (
+                "copilot",
+                "lmstudio",
+                "ollama-cloud",
+                "openai-codex",
+            ):
                 entries = _credential_pool_entries(home / "auth.json", provider)
                 if not entries and root_home != home:
                     entries = _credential_pool_entries(
@@ -443,6 +469,11 @@ class ModelCapabilityResolver:
             copilot_indexes = [
                 i for i, pair in enumerate(pairs) if _provider_key(pair[0]) == "copilot"
             ]
+            codex_indexes = [
+                i
+                for i, pair in enumerate(pairs)
+                if _provider_key(pair[0]) == "openai-codex"
+            ]
 
             await asyncio.gather(
                 self._resolve_lmstudio(context, pairs, lm_indexes, results, generation),
@@ -451,6 +482,9 @@ class ModelCapabilityResolver:
                 ),
                 self._resolve_copilot(
                     context, pairs, copilot_indexes, results, generation
+                ),
+                self._resolve_codex(
+                    context, pairs, codex_indexes, results, generation
                 ),
             )
             return results
@@ -684,6 +718,93 @@ class ModelCapabilityResolver:
                     "copilot",
                     model.lower(),
                     cache_endpoint.lower(),
+                    account_scope,
+                ),
+                capability,
+                generation,
+            )
+
+    async def _resolve_codex(
+        self,
+        context: _ProfileContext,
+        pairs: list[tuple[str, str]],
+        indexes: list[int],
+        results: list[ReasoningCapability],
+        generation: int,
+    ) -> None:
+        if not indexes:
+            return
+        access_token = _profile_secret(context, "openai-codex")
+        if not access_token:
+            return
+        endpoint = _provider_base_url(context, "openai-codex")
+        account_scope = _fingerprint(access_token)
+        pending: list[int] = []
+        for index in indexes:
+            key = (
+                context.name,
+                "openai-codex",
+                pairs[index][1].lower(),
+                endpoint.lower(),
+                account_scope,
+            )
+            cached = await self._cached(key)
+            if cached is not None:
+                results[index] = cached
+            else:
+                pending.append(index)
+        if not pending:
+            return
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        account_id = _chatgpt_account_id(access_token)
+        if account_id:
+            headers["ChatGPT-Account-Id"] = account_id
+        try:
+            async with self._probe_semaphore:
+                timeout = aiohttp.ClientTimeout(total=_PROBE_TIMEOUT_SECONDS)
+                async with aiohttp.ClientSession(
+                    timeout=timeout, headers=headers
+                ) as session:
+                    async with session.get(
+                        f"{endpoint}/models?client_version=1.0.0"
+                    ) as response:
+                        if response.status != 200:
+                            return
+                        payload = await response.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            return
+
+        items = payload.get("models") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            return
+        by_id: dict[str, dict[str, Any]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            identifier = _first_string(item.get("slug"), item.get("id")).lower()
+            if identifier:
+                by_id[identifier] = item
+        for index in pending:
+            model = pairs[index][1]
+            item = by_id.get(_model_key(model))
+            if item is None:
+                continue
+            raw_levels = item.get("supported_reasoning_levels")
+            if not isinstance(raw_levels, list):
+                continue
+            efforts = _ordered_efforts(
+                level.get("effort") if isinstance(level, dict) else level
+                for level in raw_levels
+            )
+            capability = ReasoningCapability(efforts, True, "provider-catalog")
+            results[index] = capability
+            await self._store(
+                (
+                    context.name,
+                    "openai-codex",
+                    model.lower(),
+                    endpoint.lower(),
                     account_scope,
                 ),
                 capability,
