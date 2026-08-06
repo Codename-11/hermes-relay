@@ -273,6 +273,13 @@ class HermesApiClientTest {
                   "authenticated": true,
                   "is_current": true,
                   "models": ["grok-4.3", "grok-4.2"],
+                  "capabilities": {
+                    "grok-4.3": {
+                      "reasoning": true,
+                      "reasoning_efforts": ["low", "high", "max"],
+                      "reasoning_efforts_exact": true
+                    }
+                  },
                   "unavailable_models": ["grok-4.2"],
                   "free_tier": true,
                   "total_models": 2
@@ -294,6 +301,14 @@ class HermesApiClientTest {
         assertEquals(listOf("grok-4.2"), parsed?.providers?.first()?.unavailableModels)
         assertTrue(parsed?.providers?.first()?.authenticated == true)
         assertFalse(parsed?.providers?.last()?.authenticated == true)
+        assertEquals(
+            listOf("low", "high", "max"),
+            parsed?.providers?.first()?.capabilities?.get("grok-4.3")?.reasoningEfforts,
+        )
+        assertEquals(
+            true,
+            parsed?.providers?.first()?.capabilities?.get("grok-4.3")?.reasoningEffortsExact,
+        )
     }
 
     @Test

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Android discovers the reasoning levels supported by each provider and model.** The optional Relay plugin supplies bounded, profile-aware capability metadata for current Hermes installations, while unmodified or older servers retain a fail-soft canonical fallback including `max` and `ultra`.
 - **Android support information is local, redacted, and reviewable.** Fatal crashes and handled failures share a bounded on-device record, Diagnostics can copy or share the exact reviewed text, and nothing is uploaded automatically.
 
 ### Fixed

@@ -2802,6 +2802,9 @@
     <string name="chat_reasoning_low">Низкий</string>
     <string name="chat_reasoning_medium">Средний</string>
     <string name="chat_reasoning_high">Высокий</string>
+    <string name="chat_reasoning_xhigh">Очень высокий</string>
+    <string name="chat_reasoning_max">Максимальный</string>
+    <string name="chat_reasoning_ultra">Ультра</string>
     <string name="chat_date_today">Сегодня</string>
     <string name="chat_date_yesterday">Вчера</string>
     <string name="chat_share_subject">Разговор с Гермес</string>

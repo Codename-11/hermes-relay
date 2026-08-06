@@ -61,6 +61,12 @@ from .channels.tui import TuiHandler
 from .config import RelayConfig
 from .image_activity import read_image_activity
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
+from .model_capabilities import (
+    CONTRACT_VERSION as MODEL_CAPABILITIES_CONTRACT_VERSION,
+    MAX_MODEL_PAIRS,
+    ModelCapabilityResolver,
+    SCHEMA_VERSION as MODEL_CAPABILITIES_SCHEMA_VERSION,
+)
 from .session_store import read_phone_threads
 from .voice import VoiceHandler
 from .voice_output import VoiceOutputHandler
@@ -107,6 +113,7 @@ class RelayServer:
         self.voice_output = VoiceOutputHandler(config)
         self.realtime_voice = RealtimeVoiceHandler(config)
         self.realtime_agent = RealtimeAgentHandler(config)
+        self.model_capabilities = ModelCapabilityResolver(config)
 
         # Channel handlers
         self.chat = ChatHandler(webapi_url=config.webapi_url)
@@ -2188,6 +2195,7 @@ async def handle_relay_info(request: web.Request) -> web.Response:
             "capabilities": [
                 "bridge",
                 "media",
+                "model_reasoning_capabilities_v1",
                 "notifications",
                 "profiles",
                 "proactive",
@@ -2205,6 +2213,111 @@ async def handle_relay_info(request: web.Request) -> web.Response:
             # Read-only upstream signal. It is intentionally separate from
             # Relay's own health and never drives restart/fallback behavior.
             "gateway_heartbeat": assess_gateway_heartbeat(),
+        }
+    )
+
+
+async def handle_model_capabilities(request: web.Request) -> web.Response:
+    """Resolve reasoning-effort capabilities for capped exact model pairs.
+
+    POST /relay/model-capabilities
+      {schema_version: 1, profile?, refresh?, models: [{provider, model}]}
+
+    Loopback callers may omit auth, matching ``GET /relay/info``. Remote
+    callers must present a valid paired-device bearer. Provider credentials
+    remain host-local and are never serialized.
+    """
+    if request.remote in ("127.0.0.1", "::1") and not request.headers.get(
+        "Authorization"
+    ):
+        server: RelayServer = request.app["server"]
+    else:
+        server, session = _require_bearer_session(request)
+        if session.channel_is_expired("chat"):
+            raise web.HTTPForbidden(text="chat grant required")
+
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return web.json_response(
+            {"error": "invalid_json", "schema_version": MODEL_CAPABILITIES_SCHEMA_VERSION},
+            status=400,
+        )
+    if not isinstance(payload, dict):
+        return web.json_response(
+            {"error": "invalid_request", "schema_version": MODEL_CAPABILITIES_SCHEMA_VERSION},
+            status=400,
+        )
+    schema_version = payload.get("schema_version", MODEL_CAPABILITIES_SCHEMA_VERSION)
+    if schema_version != MODEL_CAPABILITIES_SCHEMA_VERSION:
+        return web.json_response(
+            {
+                "error": "unsupported_schema_version",
+                "schema_version": MODEL_CAPABILITIES_SCHEMA_VERSION,
+            },
+            status=400,
+        )
+    profile = str(payload.get("profile") or "default").strip() or "default"
+    if len(profile) > 128:
+        return web.json_response(
+            {"error": "invalid_profile", "schema_version": MODEL_CAPABILITIES_SCHEMA_VERSION},
+            status=400,
+        )
+    refresh = payload.get("refresh", False)
+    if not isinstance(refresh, bool):
+        return web.json_response(
+            {"error": "invalid_refresh", "schema_version": MODEL_CAPABILITIES_SCHEMA_VERSION},
+            status=400,
+        )
+    raw_models = payload.get("models")
+    if not isinstance(raw_models, list) or not 1 <= len(raw_models) <= MAX_MODEL_PAIRS:
+        return web.json_response(
+            {
+                "error": "invalid_models",
+                "schema_version": MODEL_CAPABILITIES_SCHEMA_VERSION,
+                "max_models": MAX_MODEL_PAIRS,
+            },
+            status=400,
+        )
+    pairs: list[tuple[str, str]] = []
+    for item in raw_models:
+        if not isinstance(item, dict):
+            pairs = []
+            break
+        provider = item.get("provider")
+        model = item.get("model")
+        if not isinstance(provider, str) or not isinstance(model, str):
+            pairs = []
+            break
+        provider = provider.strip()
+        model = model.strip()
+        if not provider or not model or len(provider) > 128 or len(model) > 512:
+            pairs = []
+            break
+        pairs.append((provider, model))
+    if len(pairs) != len(raw_models):
+        return web.json_response(
+            {"error": "invalid_model_pair", "schema_version": MODEL_CAPABILITIES_SCHEMA_VERSION},
+            status=400,
+        )
+    try:
+        capabilities = await server.model_capabilities.resolve_many(
+            pairs, profile=profile, refresh=refresh
+        )
+    except KeyError:
+        return web.json_response(
+            {
+                "error": "profile_not_found",
+                "profile": profile,
+                "schema_version": MODEL_CAPABILITIES_SCHEMA_VERSION,
+            },
+            status=404,
+        )
+    return web.json_response(
+        {
+            "schema_version": MODEL_CAPABILITIES_SCHEMA_VERSION,
+            "contract_version": MODEL_CAPABILITIES_CONTRACT_VERSION,
+            "capabilities": capabilities,
         }
     )
 
@@ -4420,6 +4533,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/bridge/activity", handle_bridge_activity)
     app.router.add_get("/media/inspect", handle_media_inspect)
     app.router.add_get("/relay/info", handle_relay_info)
+    app.router.add_post("/relay/model-capabilities", handle_model_capabilities)
     app.router.add_get("/relay/security", handle_relay_security_get)
     app.router.add_patch("/relay/security", handle_relay_security_patch)
 

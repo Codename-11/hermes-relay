@@ -707,12 +707,14 @@ fun AgentInfoSheet(
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
     val selectedModel by chatViewModel.selectedModelOverride.collectAsState()
+    val selectedProvider by chatViewModel.selectedProviderOverride.collectAsState()
     val serverModel by chatViewModel.serverModelName.collectAsState()
     val gatewayModel by chatViewModel.gatewayCurrentModel.collectAsState()
     val gatewayProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val apiModelOptions by chatViewModel.apiModelOptions.collectAsState()
     val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
+    val reasoningCapabilityRevision by chatViewModel.reasoningCapabilityRevision.collectAsState()
     val selectedReasoning by chatViewModel.selectedReasoningEffort.collectAsState()
     val approvalMode by chatViewModel.approvalMode.collectAsState()
     val approvalCapability by chatViewModel.approvalModeCapability.collectAsState()
@@ -741,6 +743,18 @@ fun AgentInfoSheet(
     val activeConnectionId by
         connectionViewModel.connectionStore.activeConnectionId.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
+
+    val reasoningAvailability = remember(
+        selectedModel,
+        selectedProvider,
+        gatewayModel,
+        gatewayProvider,
+        modelProviders,
+        apiModelOptions,
+        reasoningCapabilityRevision,
+    ) {
+        chatViewModel.reasoningEffortAvailability()
+    }
 
     var selectedTab by remember { mutableStateOf(0) }
     var activePicker by remember { mutableStateOf<AgentPassportPicker?>(null) }
@@ -1014,15 +1028,21 @@ fun AgentInfoSheet(
                             enabled = !isStreaming,
                             onClick = { activePicker = AgentPassportPicker.Model },
                         )
-                        PassportDivider()
-                        PassportConfigRow(
-                            icon = Icons.Filled.Psychology,
-                            title = stringResource(R.string.chat_select_reasoning_effort),
-                            value = reasoningLabel(selectedReasoning),
-                            expanded = false,
-                            enabled = gatewayControlsAvailable && !isStreaming,
-                            onClick = { activePicker = AgentPassportPicker.Reasoning },
-                        )
+                        if (
+                            reasoningAvailability.supported != false &&
+                            reasoningAvailability.choices.isNotEmpty()
+                        ) {
+                            PassportDivider()
+                            PassportConfigRow(
+                                icon = Icons.Filled.Psychology,
+                                title = stringResource(R.string.chat_select_reasoning_effort),
+                                value = selectedReasoning?.let { reasoningEffortLabel(it) }
+                                    ?: serverDefaultLabel,
+                                expanded = false,
+                                enabled = gatewayControlsAvailable && !isStreaming,
+                                onClick = { activePicker = AgentPassportPicker.Reasoning },
+                            )
+                        }
                     }
                 }
 
@@ -1120,7 +1140,7 @@ fun AgentInfoSheet(
                     sessionProfileName = effectiveSessionProfileName,
                     modelLabel = sessionModelLabel,
                     providerLabel = sessionProviderLabel,
-                    reasoningLabel = selectedReasoning?.let(::reasoningLabel)
+                    reasoningLabel = selectedReasoning?.let { reasoningEffortLabel(it) }
                         ?: stringResource(R.string.conn_info_server_default),
                     approvalMode = approvalMode,
                     approvalCapability = approvalCapability,
@@ -1234,19 +1254,13 @@ fun AgentInfoSheet(
         )
         AgentPassportPicker.Reasoning -> OptionPickerSheet(
             title = stringResource(R.string.chat_select_reasoning_effort),
-            options = listOf(
-                "none" to stringResource(R.string.chat_reasoning_none),
-                "minimal" to stringResource(R.string.chat_reasoning_minimal),
-                "low" to stringResource(R.string.chat_reasoning_low),
-                "medium" to stringResource(R.string.chat_reasoning_medium),
-                "high" to stringResource(R.string.chat_reasoning_high),
-                "xhigh" to "XHigh",
-            ).map { (value, label) ->
+            options = reasoningAvailability.choices.map { value ->
                 ChatInputPickerOption(
-                    label = label,
+                    label = reasoningEffortLabel(value),
                     value = value,
                     selected = selectedReasoning == value,
-                    enabled = gatewayControlsAvailable && !isStreaming,
+                    enabled = reasoningAvailability.supported != false &&
+                        gatewayControlsAvailable && !isStreaming,
                 )
             },
             onSelect = { option ->
@@ -2093,9 +2107,6 @@ private fun compactTokenCount(value: Int): String = when {
     value >= 1_000 -> "${value / 1_000}k"
     else -> value.toString()
 }
-
-private fun reasoningLabel(value: String?): String =
-    value?.replaceFirstChar { it.uppercase() } ?: "Medium"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

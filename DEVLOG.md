@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-05 — Provider-aware reasoning effort discovery
+
+The optional Relay plugin now exposes a bearer-protected, profile-aware model
+capability overlay without requiring changes to upstream Hermes. Android merges
+that overlay with the standard `model.options` inventory using exact provider
+and model identities, while older or unpaired Relay installations continue with
+the canonical advisory fallback.
+
+Dynamic LM Studio, Ollama Cloud, and Copilot discovery is bounded by a shared
+network limiter, cached by profile, endpoint, model, and credential fingerprint,
+and fenced across refresh generations. Neither credentials nor internal cache
+scope are returned to clients. Composer controls, Agent Passport, session
+creation, and asynchronous server reconciliation share the same capability
+resolver so a displayed effort cannot silently differ from the value sent.
+
 ## 2026-08-05 — Focus voice input boundary repair
 
 The Focus voice presentation remains modal without installing a consuming

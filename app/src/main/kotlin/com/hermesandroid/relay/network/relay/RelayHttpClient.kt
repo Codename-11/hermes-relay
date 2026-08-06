@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -60,6 +61,10 @@ class RelayHttpClient(
 
     companion object {
         private const val TAG = "RelayHttpClient"
+        const val MAX_MODEL_CAPABILITY_ROWS = 64
+        private const val MAX_MODEL_CAPABILITY_PROVIDER_CHARS = 128
+        private const val MAX_MODEL_CAPABILITY_MODEL_CHARS = 512
+        private const val MAX_MODEL_CAPABILITY_PROFILE_CHARS = 128
         private val sessionsJson = Json {
             ignoreUnknownKeys = true
             isLenient = true
@@ -711,6 +716,37 @@ class RelayHttpClient(
         @SerialName("age_seconds") val ageSeconds: Int? = null,
     )
 
+    @Serializable
+    data class ModelCapabilityRequestRow(
+        val provider: String,
+        val model: String,
+    )
+
+    @Serializable
+    data class ModelCapabilitiesRequest(
+        @SerialName("schema_version") val schemaVersion: Int = 1,
+        val profile: String? = null,
+        val refresh: Boolean = false,
+        val models: List<ModelCapabilityRequestRow>,
+    )
+
+    @Serializable
+    data class ModelCapabilityRow(
+        val provider: String,
+        val model: String,
+        val reasoning: Boolean? = null,
+        @SerialName("reasoning_efforts") val reasoningEfforts: List<String> = emptyList(),
+        @SerialName("reasoning_efforts_exact") val reasoningEffortsExact: Boolean = false,
+        val source: String = "",
+    )
+
+    @Serializable
+    data class ModelCapabilitiesResponse(
+        @SerialName("schema_version") val schemaVersion: Int = 1,
+        @SerialName("contract_version") val contractVersion: String = "",
+        val capabilities: List<ModelCapabilityRow> = emptyList(),
+    )
+
     /** Fetch the installed plugin/protocol/profile capability contract. */
     suspend fun fetchRelayInfo(): Result<RelayInfo?> = withContext(Dispatchers.IO) {
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
@@ -740,6 +776,64 @@ class RelayHttpClient(
                 }
         } catch (e: Exception) {
             Log.w(TAG, "fetchRelayInfo failed: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /** Optional provider/model reasoning overlay; 404 and no pairing are fail-soft. */
+    suspend fun fetchModelCapabilities(
+        models: List<ModelCapabilityRequestRow>,
+        profile: String? = null,
+        refresh: Boolean = false,
+    ): Result<ModelCapabilitiesResponse?> = withContext(Dispatchers.IO) {
+        val boundedModels = models
+            .asSequence()
+            .map {
+                ModelCapabilityRequestRow(
+                    it.provider.trim().take(MAX_MODEL_CAPABILITY_PROVIDER_CHARS),
+                    it.model.trim().take(MAX_MODEL_CAPABILITY_MODEL_CHARS),
+                )
+            }
+            .filter { it.provider.isNotEmpty() && it.model.isNotEmpty() }
+            .distinct()
+            .take(MAX_MODEL_CAPABILITY_ROWS)
+            .toList()
+        if (boundedModels.isEmpty()) return@withContext Result.success(null)
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        val token = sessionTokenProvider()
+        if (relayUrl.isEmpty() || token.isNullOrBlank()) return@withContext Result.success(null)
+        val base = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+        val url = runCatching { "$base/relay/model-capabilities".toHttpUrl() }.getOrElse {
+            return@withContext Result.success(null)
+        }
+        val payload = ModelCapabilitiesRequest(
+            profile = profile?.trim()?.take(MAX_MODEL_CAPABILITY_PROFILE_CHARS)
+                ?.takeIf { it.isNotEmpty() },
+            refresh = refresh,
+            models = boundedModels,
+        )
+        val request = Request.Builder()
+            .url(url)
+            .post(sessionsJson.encodeToString(payload).toRequestBody("application/json".toMediaType()))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        try {
+            okHttpClient.newBuilder().callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
+                .newCall(request).execute().use { response ->
+                    if (response.code == 404) return@withContext Result.success(null)
+                    if (!response.isSuccessful) return@withContext Result.failure(IOException("HTTP ${response.code}"))
+                    val body = response.body?.string().orEmpty()
+                    val parsed = body.takeIf { it.isNotBlank() }?.let {
+                        sessionsJson.decodeFromString(ModelCapabilitiesResponse.serializer(), it)
+                    }
+                    if (parsed?.schemaVersion != 1) Result.success(null) else Result.success(parsed)
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchModelCapabilities failed: ${e.message}")
             Result.failure(e)
         }
     }

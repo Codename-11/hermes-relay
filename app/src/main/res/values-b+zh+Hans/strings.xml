@@ -2863,6 +2863,9 @@
     <string name="chat_reasoning_low">低</string>
     <string name="chat_reasoning_medium">中</string>
     <string name="chat_reasoning_high">高</string>
+    <string name="chat_reasoning_xhigh">特高</string>
+    <string name="chat_reasoning_max">最高</string>
+    <string name="chat_reasoning_ultra">超高</string>
     <string name="chat_date_today">今天</string>
     <string name="chat_date_yesterday">昨天</string>
     <string name="chat_share_subject">Hermes 对话</string>

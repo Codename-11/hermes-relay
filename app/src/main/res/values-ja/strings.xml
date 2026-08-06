@@ -2877,6 +2877,9 @@
     <string name="chat_reasoning_low">低い</string>
     <string name="chat_reasoning_medium">中くらい</string>
     <string name="chat_reasoning_high">高い</string>
+    <string name="chat_reasoning_xhigh">非常に高い</string>
+    <string name="chat_reasoning_max">最大</string>
+    <string name="chat_reasoning_ultra">ウルトラ</string>
     <string name="chat_date_today">今日</string>
     <string name="chat_date_yesterday">昨日</string>
     <string name="chat_share_subject">Hermes の会話</string>

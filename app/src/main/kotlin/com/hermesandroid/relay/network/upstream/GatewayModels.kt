@@ -1,6 +1,11 @@
 package com.hermesandroid.relay.network.upstream
 
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Shared types for the Gateway chat transport — upstream hermes-agent's
@@ -347,7 +352,44 @@ data class GatewayModelProvider(
     val unavailableModels: List<String> = emptyList(),
     val freeTier: Boolean = false,
     val totalModels: Int = 0,
+    /** Per-model capability rows keyed by the exact model id. */
+    val capabilities: Map<String, GatewayModelCapabilities> = emptyMap(),
 )
+
+/** Shared tolerant parser for the gateway RPC and API-server REST twins. */
+internal fun parseGatewayModelProvider(obj: JsonObject): GatewayModelProvider? {
+    val slug = (obj["slug"] as? JsonPrimitive)?.contentOrNull
+        ?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val capabilities = (obj["capabilities"] as? JsonObject).orEmpty().mapNotNull { (model, raw) ->
+        val row = raw as? JsonObject ?: return@mapNotNull null
+        val effortsElement = row["reasoning_efforts"]
+        val efforts = if (effortsElement is JsonArray) {
+            effortsElement.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        } else {
+            null
+        }
+        model to GatewayModelCapabilities(
+            reasoning = (row["reasoning"] as? JsonPrimitive)?.booleanOrNull,
+            reasoningEfforts = efforts,
+            reasoningEffortsExact =
+                (row["reasoning_efforts_exact"] as? JsonPrimitive)?.booleanOrNull,
+        )
+    }.toMap()
+    return GatewayModelProvider(
+        name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: slug,
+        slug = slug,
+        models = (obj["models"] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+        isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        warning = (obj["warning"] as? JsonPrimitive)?.contentOrNull,
+        authenticated = (obj["authenticated"] as? JsonPrimitive)?.booleanOrNull ?: true,
+        unavailableModels = (obj["unavailable_models"] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+        freeTier = (obj["free_tier"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        totalModels = (obj["total_models"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0,
+        capabilities = capabilities,
+    )
+}
 
 data class GatewayMoaReference(
     val index: Int?,
@@ -362,6 +404,15 @@ data class GatewayModelOptions(
     val providers: List<GatewayModelProvider>,
     val currentModel: String,
     val currentProvider: String,
+)
+
+/** Coherent model identity from a single `session.info` payload. */
+data class GatewayModelIdentity(val model: String, val provider: String)
+
+/** Model identity and effort observed together in one `session.info` payload. */
+data class GatewayReasoningIdentity(
+    val identity: GatewayModelIdentity,
+    val effort: String,
 )
 
 /** Reject provider catalogs that completed after a profile/context switch. */
