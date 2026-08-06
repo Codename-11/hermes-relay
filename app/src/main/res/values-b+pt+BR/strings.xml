@@ -107,6 +107,8 @@
     <string name="chat_placeholder_message">Mensagem…</string>
     <string name="chat_edit_busy_snackbar">Não é possível editar agora — aguarde o turno atual terminar</string>
     <string name="chat_select_reasoning_effort">Selecionar nível de raciocínio</string>
+    <string name="reasoning_effort_standard_levels_notice">Os níveis padrão são exibidos porque este modelo não informou uma lista compatível. O provedor pode usar menos níveis.</string>
+    <string name="reasoning_effort_current_outside_supported">Sessão atual: %1$s (informado pelo Hermes). Novas seleções para este modelo estão limitadas a %2$s.</string>
     <!-- Voice toasts -->
     <string name="voice_toast_signin_route">A voz exige um login único pela rota %1$s — abra Gerenciar</string>
     <string name="voice_toast_signin_default">A voz exige login no painel — abra Gerenciar para entrar</string>

@@ -7,7 +7,9 @@ Hermes-Relay is a companion app for the Hermes agent. It connects only to server
 - The app makes **no connections** to Anthropic, Google, or any third party by default
 - **No telemetry**, analytics, crash reports, or tracking data are sent externally
 - **No advertising SDKs** or third-party SDKs that phone home are included
-- Your Hermes server may connect to AI providers such as OpenAI or Anthropic; that is server-side and outside this app's scope
+- Your Hermes server may connect to configured AI providers for inference and
+  bounded capability discovery; that traffic is server-side and uses the
+  credentials already owned by the selected Hermes profile
 
 ## Build Tracks
 
@@ -42,8 +44,20 @@ The app connects only to user-configured endpoints:
 - **HTTP/SSE** to your Hermes API server for chat streaming
 - **WSS** to your relay server for terminal/TUI relay, Bridge Core status, media handoff, notification companion, and paired-session management
 - **HTTP(S)/WSS** to your relay server's `/voice/*` routes for voice settings, speech-to-text uploads, realtime voice websocket sessions, and text-to-speech audio when you use Voice mode
+- **HTTP(S)** to your optional Relay server's `/relay/model-capabilities` route
+  when Android refines reasoning-effort choices for models already reported by
+  upstream Hermes. The phone sends provider/model identifiers and the selected
+  profile name, not provider credentials.
 - Cleartext HTTP is permitted for local/private network connections to user-configured servers; the app warns when using insecure remote connections
 - No DNS prefetching and no background pings to external services
+
+The Relay capability resolver may make short, bounded requests from the Hermes
+host to a configured provider endpoint. Results are cached for five minutes by
+profile, endpoint, model, and a one-way credential fingerprint to limit repeated
+provider traffic. Credentials and fingerprints remain on the host; Android
+receives only reasoning support, ordered effort values, whether the values are
+exact, and diagnostic provenance. A manual refresh requests a new server-side
+resolution but does not expose or copy the selected profile's secrets.
 
 ## Permissions
 

@@ -99,6 +99,7 @@ data class ChatInputPickerControl(
     val value: String,
     val contentDescription: String,
     val options: List<ChatInputPickerOption>,
+    val subtitle: String? = null,
     val enabled: Boolean = true,
 )
 
@@ -580,6 +581,17 @@ private fun ChatInputPickerChip(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
+            if (!control.subtitle.isNullOrBlank()) {
+                Text(
+                    text = control.subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .widthIn(max = 280.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                HorizontalDivider()
+            }
             var lastGroup: String? = null
             control.options.forEachIndexed { index, option ->
                 val group = option.group?.takeIf { it.isNotBlank() }

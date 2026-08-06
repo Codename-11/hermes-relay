@@ -16,6 +16,9 @@ AccessibilityService-backed Device Control (screen reading, taps, typing, screen
 - Codes use the full `A-Z / 0-9` alphabet (36 chars). The earlier "no ambiguous 0/O/1/I" restriction was dropped when the pairing flow moved from "human retypes code from display" to "code flows phone ↔ server via QR + HTTP" (see `docs/decisions.md` §6a).
 - `POST /pairing/register` is gated to loopback callers only (`127.0.0.1` / `::1`) — only a process with host shell access on the relay machine can inject pairing codes. A LAN attacker cannot.
 - Relay session tokens carry per-channel grants. Voice routes require explicit `voice:config`, `voice:stt`, `voice:tts`, or `voice:realtime` grants when called with a Relay session token.
+- Remote `POST /relay/model-capabilities` calls require a valid Relay session
+  bearer with an active `chat` grant. Loopback host-operator calls may omit the
+  bearer. Hermes API bearer tokens are not accepted on this route.
 - `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, `/voice/output/*`, and `/voice/realtime/*` may also accept the Hermes API bearer token used by API-server clients. The Android app uses this fallback for chat+voice-only setups when no Relay session is paired. This is a narrow exception for chat/media-adjacent voice features only; the API bearer token is not accepted for sessions, media, clipboard, terminal, TUI, bridge, profile writes, or Android control routes.
 - Hermes API bearer use on voice routes requires HTTPS for non-loopback callers by default. Loopback plaintext is allowed for local clients; reverse-proxy TLS is accepted only when `RELAY_TRUST_PROXY_HEADERS=1`, and plaintext LAN testing requires an explicit opt-in. Use `hermes relay insecure-api-key on` for a running relay, or `RELAY_ALLOW_INSECURE_API_BEARER=1` at startup.
 
@@ -28,6 +31,21 @@ AccessibilityService-backed Device Control (screen reading, taps, typing, screen
 - The phone connects **out** to the server (NAT-friendly)
 - The server relay only accepts one phone at a time
 - All tool commands are proxied through the relay — the phone is never directly exposed
+
+### Model capability discovery
+
+The optional model-capability route accepts 1–64 validated provider/model pairs
+and a bounded profile name. Resolution is isolated to that profile's config and
+credential scope. Dynamic provider checks use short timeouts and a shared
+four-request concurrency ceiling; results are cached for five minutes. An
+explicit refresh advances a profile generation so an older in-flight request
+cannot restore stale cache entries.
+
+Provider credentials are loaded and used only on the Hermes host. The response
+contains capability metadata and diagnostic source labels, never credentials,
+credential fingerprints, provider response bodies, or internal cache keys.
+Unsupported providers and probe failures return non-exact advisory metadata
+instead of expanding authority or preventing chat.
 
 ## Known Limitations
 

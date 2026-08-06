@@ -118,6 +118,8 @@
     <string name="chat_placeholder_message">Nachricht…</string>
     <string name="chat_edit_busy_snackbar">Bearbeiten derzeit nicht möglich — warte, bis der aktuelle Durchlauf beendet ist</string>
     <string name="chat_select_reasoning_effort">Denkaufwand auswählen</string>
+    <string name="reasoning_effort_standard_levels_notice">Standardstufen werden angezeigt, weil dieses Modell keine Liste unterstützter Stufen gemeldet hat. Der Anbieter verwendet möglicherweise weniger Stufen.</string>
+    <string name="reasoning_effort_current_outside_supported">Aktuelle Sitzung: %1$s (von Hermes gemeldet). Neue Auswahlen für dieses Modell sind auf %2$s beschränkt.</string>
 
     <!-- Voice toasts -->
     <string name="voice_toast_signin_route">Sprache erfordert eine einmalige Anmeldung über die Route %1$s — öffne Verwalten</string>

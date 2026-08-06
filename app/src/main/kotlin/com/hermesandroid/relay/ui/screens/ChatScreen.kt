@@ -3281,6 +3281,18 @@ fun ChatScreen(
                         selected = selectedReasoningEffort != null && effort == normalizedEffort,
                     )
             }
+            val effortPickerSubtitle = when {
+                effortAvailability.exact &&
+                    selectedReasoningEffort != null &&
+                    normalizedEffort !in effortAvailability.choices -> stringResource(
+                        R.string.reasoning_effort_current_outside_supported,
+                        reasoningEffortLabel(normalizedEffort),
+                        effortPickerOptions.joinToString { it.label },
+                    )
+                !effortAvailability.exact ->
+                    stringResource(R.string.reasoning_effort_standard_levels_notice)
+                else -> null
+            }
             // Show the effort chip as soon as the gateway IS the transport or is
             // still being probed (Unknown) — so it appears alongside the model
             // pill instead of popping in seconds later when the dashboard
@@ -3300,6 +3312,7 @@ fun ChatScreen(
                         ?: stringResource(R.string.conn_info_server_default),
                     contentDescription = stringResource(R.string.chat_select_reasoning_effort),
                     options = effortPickerOptions,
+                    subtitle = effortPickerSubtitle,
                     enabled = isGatewayTransport && chatReady && !isStreaming,
                 )
             } else {

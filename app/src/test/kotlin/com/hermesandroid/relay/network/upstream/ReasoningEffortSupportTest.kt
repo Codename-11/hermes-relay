@@ -141,6 +141,7 @@ class ReasoningEffortSupportTest {
             capabilities = GatewayModelCapabilities(
                 reasoning = true,
                 reasoningEfforts = listOf("low", "max"),
+                reasoningEffortsExact = true,
             ),
         )
         val openRouter = provider(
@@ -149,6 +150,7 @@ class ReasoningEffortSupportTest {
             capabilities = GatewayModelCapabilities(
                 reasoning = true,
                 reasoningEfforts = listOf("low", "ultra"),
+                reasoningEffortsExact = true,
             ),
         )
 

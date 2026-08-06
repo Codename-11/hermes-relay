@@ -138,6 +138,53 @@ degrading.
 
 ## Operator routes
 
+### Optional model capability overlay
+
+`POST /relay/model-capabilities` refines reasoning-effort choices for exact
+provider/model pairs that the client already received from upstream Hermes. It
+does not list models, proxy chat, or replace upstream `model.options`.
+
+```json
+{
+  "schema_version": 1,
+  "profile": "default",
+  "refresh": false,
+  "models": [
+    {"provider": "example-provider", "model": "reasoner-v1"}
+  ]
+}
+```
+
+The response uses contract version `1.0` and returns one capability row per
+pair:
+
+```json
+{
+  "schema_version": 1,
+  "contract_version": "1.0",
+  "capabilities": [
+    {
+      "provider": "example-provider",
+      "model": "reasoner-v1",
+      "reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high"],
+      "reasoning_efforts_exact": true,
+      "source": "provider-adapter"
+    }
+  ]
+}
+```
+
+An exact row is model-specific selectable truth. A non-exact row is advisory;
+clients should present standard choices without promising that every value is
+supported. Requests accept 1–64 pairs. Loopback callers may omit auth; remote
+callers need a paired bearer with an active `chat` grant. Credentials stay on
+the Hermes host, and cached/probed implementation details are not returned.
+
+This route fails soft from the Android user's perspective: an absent or old
+Relay, missing pairing/grant, network error, or unsupported schema leaves the
+standard advisory choices available and never blocks model selection or chat.
+
 | Method | Route | Auth | Purpose |
 |---|---|---|---|
 | `GET` | `/relay/info` | Loopback | Relay build and capability summary |

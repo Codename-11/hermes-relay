@@ -118,6 +118,8 @@
     <string name="chat_placeholder_message">Сообщение…</string>
     <string name="chat_edit_busy_snackbar">Нельзя редактировать сейчас — подождите, пока завершится текущий ход</string>
     <string name="chat_select_reasoning_effort">Выберите усилия по рассуждению</string>
+    <string name="reasoning_effort_standard_levels_notice">Показаны стандартные уровни, поскольку эта модель не сообщила список поддерживаемых уровней. Провайдер может использовать меньше уровней.</string>
+    <string name="reasoning_effort_current_outside_supported">Текущий сеанс: %1$s (по данным Hermes). Для этой модели новые варианты ограничены: %2$s.</string>
     <string name="voice_toast_signin_route">Голосу требуется одноразовый вход на маршруте %1$s — откройте Управление</string>
     <string name="voice_toast_signin_default">Голосу требуется вход в панель управления — откройте Управление для входа</string>
     <string name="voice_toast_unsupported">Эта сборка Гермеса не имеет голосовых маршрутов — обновите Агента Гермеса или сопрягите плагин Relay</string>
