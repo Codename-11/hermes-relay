@@ -2732,6 +2732,9 @@
     <string name="chat_reasoning_low">Baixo</string>
     <string name="chat_reasoning_medium">Médio</string>
     <string name="chat_reasoning_high">Alto</string>
+    <string name="chat_reasoning_xhigh">Extra alto</string>
+    <string name="chat_reasoning_max">Máximo</string>
+    <string name="chat_reasoning_ultra">Ultra</string>
     <string name="chat_date_today">Hoje</string>
     <string name="chat_date_yesterday">Ontem</string>
     <string name="chat_share_subject">Conversa do Hermes</string>

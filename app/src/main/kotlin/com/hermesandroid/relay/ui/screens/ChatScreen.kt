@@ -122,9 +122,11 @@ import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.ReasoningEfforts
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
+import com.hermesandroid.relay.ui.components.reasoningEffortLabel
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -727,8 +729,11 @@ fun ChatScreen(
     val apiModelOptions by chatViewModel.apiModelOptions.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
+    val reasoningCapabilityRevision by chatViewModel.reasoningCapabilityRevision.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
+    val selectedProviderOverride by chatViewModel.selectedProviderOverride.collectAsState()
     val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
+    val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
     val gatewayProjectName by chatViewModel.gatewayProjectName.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
@@ -3256,22 +3261,25 @@ fun ChatScreen(
                 )
             }
             val normalizedEffort = normalizeReasoningEffortForInput(selectedReasoningEffort)
-            val effortLabels = mapOf(
-                "none" to stringResource(R.string.chat_reasoning_none),
-                "minimal" to stringResource(R.string.chat_reasoning_minimal),
-                "low" to stringResource(R.string.chat_reasoning_low),
-                "medium" to stringResource(R.string.chat_reasoning_medium),
-                "high" to stringResource(R.string.chat_reasoning_high),
-                "xhigh" to stringResource(R.string.chat_reasoning_high),
-            )
-            val effortPickerOptions = remember(normalizedEffort) {
-                CHAT_INPUT_REASONING_EFFORTS.map { effort ->
+            // Reads the same provider/model resolver used by session.create.
+            // Collected identity flows above keep this synchronous view reactive.
+            val effortAvailability = remember(
+                selectedModelOverride,
+                selectedProviderOverride,
+                gatewayCurrentModel,
+                gatewayCurrentProvider,
+                modelProviders,
+                apiModelOptions,
+                reasoningCapabilityRevision,
+            ) {
+                chatViewModel.reasoningEffortAvailability()
+            }
+            val effortPickerOptions = effortAvailability.choices.map { effort ->
                     ChatInputPickerOption(
-                        label = reasoningEffortChipLabel(effort, effortLabels),
+                        label = reasoningEffortLabel(effort),
                         value = effort,
-                        selected = effort == normalizedEffort,
+                        selected = selectedReasoningEffort != null && effort == normalizedEffort,
                     )
-                }
             }
             // Show the effort chip as soon as the gateway IS the transport or is
             // still being probed (Unknown) — so it appears alongside the model
@@ -3282,9 +3290,14 @@ fun ChatScreen(
             // shows the current effort but disabled. Hidden only when the gateway
             // is definitively unreachable (SSE-only) — the agent sheet carries the
             // disabled-with-reason version there.
-            val effortControl = if (chatGatewayAvailability != GatewayAvailability.Unreachable) {
+            val effortControl = if (
+                chatGatewayAvailability != GatewayAvailability.Unreachable &&
+                effortAvailability.supported != false &&
+                effortPickerOptions.isNotEmpty()
+            ) {
                 ChatInputPickerControl(
-                    value = reasoningEffortChipLabel(normalizedEffort, effortLabels),
+                    value = selectedReasoningEffort?.let { reasoningEffortLabel(it) }
+                        ?: stringResource(R.string.conn_info_server_default),
                     contentDescription = stringResource(R.string.chat_select_reasoning_effort),
                     options = effortPickerOptions,
                     enabled = isGatewayTransport && chatReady && !isStreaming,
@@ -4207,8 +4220,6 @@ private fun createCameraCaptureUri(context: android.content.Context): Uri {
     )
 }
 
-private val CHAT_INPUT_REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")
-
 internal fun shouldShowCleanViewHint(
     hasMessages: Boolean,
     ambientMode: Boolean,
@@ -4223,12 +4234,8 @@ private fun compactModelChipLabel(model: String?, defaultLabel: String): String 
 }
 
 private fun normalizeReasoningEffortForInput(value: String?): String {
-    val normalized = value?.trim()?.lowercase().orEmpty()
-    return normalized.takeIf { it in CHAT_INPUT_REASONING_EFFORTS } ?: "medium"
+    return ReasoningEfforts.normalize(value)
 }
-
-private fun reasoningEffortChipLabel(value: String, labels: Map<String, String>): String =
-    labels[value] ?: labels["medium"] ?: value
 
 private fun isSameDay(ts1: Long, ts2: Long): Boolean {
     val d1 = java.time.Instant.ofEpochMilli(ts1).atZone(java.time.ZoneId.systemDefault()).toLocalDate()

@@ -289,6 +289,12 @@ class GatewayClientHarness(
                                 "slug": "openai",
                                 "name": "OpenAI",
                                 "models": ["gpt-5.5"],
+                                "capabilities": {
+                                  "gpt-5.5": {
+                                    "reasoning": true,
+                                    "reasoning_efforts": ["minimal", "medium", "ultra"]
+                                  }
+                                },
                                 "is_current": true,
                                 "authenticated": true
                               }
@@ -858,6 +864,10 @@ class GatewayChatClientTest {
         val normal = client.modelOptions().getOrThrow()
         val normalParams = harness.awaitRpc("model.options")
         assertEquals("gpt-5.5", normal.currentModel)
+        assertEquals(
+            listOf("minimal", "medium", "ultra"),
+            normal.providers.single().capabilities.getValue("gpt-5.5").reasoningEfforts,
+        )
         assertFalse((normalParams["refresh"] as? JsonPrimitive)?.booleanOrNull == true)
 
         val refreshed = client.modelOptions(refresh = true).getOrThrow()
@@ -1824,16 +1834,52 @@ class GatewayChatClientTest {
 
     @Test
     fun `reasoning settings fetch uses config get`() {
-        harness.reasoningEffort = "high"
+        harness.reasoningEffort = "ultra"
         harness.reasoningDisplay = "show"
 
         val result = runBlocking { client.getReasoningSettings() }
 
         assertTrue(result.isSuccess)
-        assertEquals("high", result.getOrThrow().effort)
+        assertEquals("ultra", result.getOrThrow().effort)
         assertEquals("show", result.getOrThrow().display)
         val rpc = harness.awaitRpc("config.get")
         assertEquals("reasoning", (rpc["key"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `session info preserves coherent provider model and max effort`() {
+        val recorder = Recorder()
+        client.sendTurn("stored-1", "hi", null, recorder.callbacks) {
+            recorder.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        serverWs.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject {
+                    put("model", "deepseek-v3")
+                    put("provider", "opencode")
+                    put("reasoning_effort", "max")
+                },
+                "live-resumed",
+            ),
+        )
+
+        waitUntil { client.serverReasoningEffort.value == "max" }
+        assertEquals(
+            GatewayModelIdentity(model = "deepseek-v3", provider = "opencode"),
+            client.serverModelIdentity.value,
+        )
+        assertEquals(
+            GatewayReasoningIdentity(
+                identity = GatewayModelIdentity(model = "deepseek-v3", provider = "opencode"),
+                effort = "max",
+            ),
+            client.serverReasoningIdentity.value,
+        )
     }
 
     @Test

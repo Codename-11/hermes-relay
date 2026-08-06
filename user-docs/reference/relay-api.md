@@ -141,6 +141,7 @@ degrading.
 | Method | Route | Auth | Purpose |
 |---|---|---|---|
 | `GET` | `/relay/info` | Loopback | Relay build and capability summary |
+| `POST` | `/relay/model-capabilities` | Loopback or paired bearer with `chat` grant | Profile-aware reasoning-effort metadata for up to 64 provider/model pairs; credentials remain server-side |
 | `GET/PATCH` | `/relay/security` | Loopback | Runtime security toggles |
 | `GET` | `/bridge/status` | Loopback | Device, bridge and safety state |
 | `GET` | `/bridge/activity` | Loopback | Recent bridge activity |

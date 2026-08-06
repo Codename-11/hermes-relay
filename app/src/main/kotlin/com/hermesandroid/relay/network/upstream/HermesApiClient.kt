@@ -215,22 +215,7 @@ internal fun parseApiProviderModelOptionsBody(
     val rows = root["providers"] as? JsonArray ?: return null
     val providers = rows.mapNotNull { element ->
         val obj = element as? JsonObject ?: return@mapNotNull null
-        val slug = (obj["slug"] as? JsonPrimitive)?.contentOrNull
-            ?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-        GatewayModelProvider(
-            name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: slug,
-            slug = slug,
-            models = (obj["models"] as? JsonArray).orEmpty()
-                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-            isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
-            warning = (obj["warning"] as? JsonPrimitive)?.contentOrNull,
-            authenticated = (obj["authenticated"] as? JsonPrimitive)?.booleanOrNull ?: true,
-            unavailableModels = (obj["unavailable_models"] as? JsonArray).orEmpty()
-                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-            freeTier = (obj["free_tier"] as? JsonPrimitive)?.booleanOrNull ?: false,
-            totalModels = (obj["total_models"] as? JsonPrimitive)?.contentOrNull
-                ?.toIntOrNull() ?: 0,
-        )
+        parseGatewayModelProvider(obj)
     }
     return ApiProviderModelOptions(
         providers = providers,

@@ -58,11 +58,16 @@ import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayEventMapper
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
+import com.hermesandroid.relay.network.upstream.GatewayModelCapabilities
 import com.hermesandroid.relay.network.upstream.GatewayModelOptions
 import com.hermesandroid.relay.network.upstream.GatewayProcess
 import com.hermesandroid.relay.network.upstream.GatewayProcessCapability
 import com.hermesandroid.relay.network.upstream.GatewayProcessEvent
 import com.hermesandroid.relay.network.upstream.GatewaySessionModel
+import com.hermesandroid.relay.network.upstream.ReasoningEffortAvailability
+import com.hermesandroid.relay.network.upstream.ReasoningEffortIdentity
+import com.hermesandroid.relay.network.upstream.ReasoningEfforts
+import com.hermesandroid.relay.network.upstream.resolveReasoningEffortAvailability
 import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
@@ -563,6 +568,11 @@ class ChatViewModel : ViewModel() {
      */
     private val _modelProviders = MutableStateFlow<List<GatewayModelProvider>>(emptyList())
     val modelProviders: StateFlow<List<GatewayModelProvider>> = _modelProviders.asStateFlow()
+    private val relayReasoningCapabilities =
+        MutableStateFlow<Map<ReasoningEffortIdentity, GatewayModelCapabilities>>(emptyMap())
+    private val _reasoningCapabilityRevision = MutableStateFlow(0L)
+    val reasoningCapabilityRevision: StateFlow<Long> = _reasoningCapabilityRevision.asStateFlow()
+    private val relayCapabilityGeneration = AtomicLong(0L)
     private val modelOptionsGeneration = java.util.concurrent.atomic.AtomicLong(0L)
     private val modelOptionsByProfile = mutableMapOf<String, GatewayModelOptions>()
 
@@ -572,10 +582,16 @@ class ChatViewModel : ViewModel() {
         return "$connectionProfile::$session"
     }
 
+    private fun reasoningCapabilityContextKey(): String =
+        activeProfileContextKey ?: "__unbound__"
+
     private fun activateModelOptionsProfile(profileKey: String) {
         modelOptionsGeneration.incrementAndGet()
         val cached = modelOptionsByProfile[profileKey]
         _modelProviders.value = cached?.providers.orEmpty()
+        relayCapabilityGeneration.incrementAndGet()
+        relayReasoningCapabilities.value = emptyMap()
+        _reasoningCapabilityRevision.value += 1L
         _gatewayCurrentModel.value = cached?.currentModel.orEmpty()
         _gatewayCurrentProvider.value = cached?.currentProvider.orEmpty()
         _apiModelOptions.value = emptyList()
@@ -608,6 +624,9 @@ class ChatViewModel : ViewModel() {
      */
     private val _selectedReasoningEffort = MutableStateFlow<String?>(null)
     val selectedReasoningEffort: StateFlow<String?> = _selectedReasoningEffort.asStateFlow()
+    /** Exact provider/model identity that confirmed the currently displayed effort. */
+    private var selectedReasoningEffortConfirmedIdentity: ReasoningEffortIdentity? = null
+    private val reasoningEffortRevision = AtomicLong(0)
 
     private val _reasoningDisplay = MutableStateFlow<String?>(null)
 
@@ -690,6 +709,7 @@ class ChatViewModel : ViewModel() {
                     _modelProviders.value = it.providers
                     _gatewayCurrentModel.value = it.currentModel
                     _gatewayCurrentProvider.value = it.currentProvider
+                    refreshRelayReasoningCapabilities(refresh = refresh)
                     android.util.Log.i(
                         "ChatViewModel",
                         "model.options${if (refresh) " refresh" else ""}: ${it.providers.size} providers, " +
@@ -713,10 +733,20 @@ class ChatViewModel : ViewModel() {
             android.util.Log.i("ChatViewModel", "refreshReasoningSettings: no gateway client")
             return
         }
+        val revision = reasoningEffortRevision.get()
+        val identity = reasoningEffortIdentity()
         viewModelScope.launch {
             gateway.getReasoningSettings().fold(
                 onSuccess = {
+                    if (!isCurrentReasoningResponse(
+                            capturedRevision = revision,
+                            currentRevision = reasoningEffortRevision.get(),
+                            capturedIdentity = identity,
+                            activeIdentity = reasoningEffortIdentity(),
+                        )
+                    ) return@fold
                     _selectedReasoningEffort.value = normalizeReasoningEffort(it.effort)
+                    selectedReasoningEffortConfirmedIdentity = identity
                     _reasoningDisplay.value = it.display
                 },
                 onFailure = {
@@ -834,7 +864,96 @@ class ChatViewModel : ViewModel() {
      * model override is cleared.
      */
     private val _selectedProviderOverride = MutableStateFlow<String?>(null)
+    val selectedProviderOverride: StateFlow<String?> = _selectedProviderOverride.asStateFlow()
     private val apiSessionModelLocks = mutableMapOf<String, ApiModelSelectionAck.Locked>()
+
+    /** Active provider/model capability contract used by every reasoning control and send path. */
+    fun reasoningEffortAvailability(): ReasoningEffortAvailability {
+        val identity = reasoningEffortIdentity()
+        return resolveReasoningEffortAvailability(
+            providers = _modelProviders.value,
+            provider = identity?.provider,
+            model = identity?.model,
+            relayCapabilities = relayReasoningCapabilities.value,
+        )
+    }
+
+    private fun reasoningEffortIdentity(): ReasoningEffortIdentity? {
+        val selectedModel = _selectedModelOverride.value
+        val selectedProvider = _selectedProviderOverride.value
+        val aliasRoot = selectedModel?.let { selected ->
+            _apiModelOptions.value.firstOrNull { it.id == selected }?.root
+        }
+        val capabilityModel = aliasRoot ?: selectedModel ?: _gatewayCurrentModel.value
+        val capabilityProvider = selectedProvider ?: aliasRoot?.let { root ->
+            _modelProviders.value.singleOrNull { root in it.models }?.slug
+        } ?: if (selectedModel == null) {
+            _gatewayCurrentProvider.value
+        } else {
+            null
+        }
+        val provider = capabilityProvider?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val model = capabilityModel.trim().takeIf { it.isNotEmpty() } ?: return null
+        return ReasoningEffortIdentity(provider = provider.lowercase(), model = model)
+    }
+
+    private fun refreshRelayReasoningCapabilities(
+        focus: ReasoningEffortIdentity? = reasoningEffortIdentity(),
+        refresh: Boolean = false,
+    ) {
+        val relay = relayHttpClient ?: return
+        val pairs = buildList {
+            focus?.let(::add)
+            _modelProviders.value.forEach { provider ->
+                provider.models.forEach { model ->
+                    add(ReasoningEffortIdentity(provider.slug.lowercase(), model))
+                }
+            }
+        }.distinct().take(RelayHttpClient.MAX_MODEL_CAPABILITY_ROWS)
+        if (pairs.isEmpty()) return
+        val generation = relayCapabilityGeneration.incrementAndGet()
+        val profileKey = reasoningCapabilityContextKey()
+        val profile = sessionProfileNameProvider()
+        viewModelScope.launch {
+            val result = relay.fetchModelCapabilities(
+                models = pairs.map {
+                    RelayHttpClient.ModelCapabilityRequestRow(it.provider, it.model)
+                },
+                profile = profile,
+                refresh = refresh,
+            )
+            if (
+                relayHttpClient !== relay ||
+                !isCurrentReasoningCapabilityOverlay(
+                    requestGeneration = generation,
+                    currentGeneration = relayCapabilityGeneration.get(),
+                    requestProfileKey = profileKey,
+                    currentProfileKey = reasoningCapabilityContextKey(),
+                )
+            ) return@launch
+            val response = result.getOrNull()
+            val requested = pairs.toSet()
+            val capabilities = response?.capabilities.orEmpty()
+                .asSequence()
+                .take(RelayHttpClient.MAX_MODEL_CAPABILITY_ROWS)
+                .mapNotNull { row ->
+                    val identity = ReasoningEffortIdentity(
+                        provider = row.provider.trim().lowercase(),
+                        model = row.model.trim(),
+                    )
+                    if (identity !in requested) return@mapNotNull null
+                    identity to GatewayModelCapabilities(
+                        reasoning = row.reasoning,
+                        reasoningEfforts = row.reasoningEfforts,
+                        reasoningEffortsExact = row.reasoningEffortsExact,
+                    )
+                }
+                .toMap()
+            relayReasoningCapabilities.value = capabilities
+            _reasoningCapabilityRevision.value += 1L
+            reconcilePendingReasoningEffortForModel()
+        }
+    }
 
     fun fetchModels(userInitiated: Boolean = false) {
         val client = apiClient ?: return
@@ -869,6 +988,7 @@ class ChatViewModel : ViewModel() {
                 _apiModelOptions.value = aliases
                 _availableModels.value =
                     (options.providers.flatMap { it.models } + aliases.map { it.id }).distinct()
+                refreshRelayReasoningCapabilities()
             } else {
                 val failure = providerResult.exceptionOrNull()
                 if (
@@ -930,6 +1050,7 @@ class ChatViewModel : ViewModel() {
             if (locked != null) {
                 _selectedModelOverride.value = locked.model
                 _selectedProviderOverride.value = locked.provider
+                transitionReasoningEffortIdentity()
                 _transientNotice.tryEmit(
                     "This session is locked to ${locked.model}. Start a new chat to use Server default.",
                 )
@@ -943,6 +1064,7 @@ class ChatViewModel : ViewModel() {
         // model is cleared so the next new session falls back to the default.
         _selectedProviderOverride.value =
             provider?.takeIf { it.isNotBlank() && !model.isNullOrBlank() }
+        transitionReasoningEffortIdentity()
         val gateway = gatewayClient
         val handler = chatHandler
         if (model.isNullOrBlank()) {
@@ -1048,6 +1170,7 @@ class ChatViewModel : ViewModel() {
     fun selectApiModel(modelId: String) {
         _selectedModelOverride.value = modelId.trim().takeIf { it.isNotEmpty() }
         _selectedProviderOverride.value = null
+        transitionReasoningEffortIdentity()
         refreshActiveAgentName()
     }
 
@@ -1065,6 +1188,10 @@ class ChatViewModel : ViewModel() {
      */
     fun selectReasoningEffort(value: String) {
         val normalized = normalizeReasoningEffort(value)
+        if (!reasoningEffortAvailability().accepts(normalized)) return
+        val revision = reasoningEffortRevision.incrementAndGet()
+        selectedReasoningEffortConfirmedIdentity = null
+        val identity = reasoningEffortIdentity()
         _selectedReasoningEffort.value = normalized
         val gateway = gatewayClient ?: return
         val handler = chatHandler
@@ -1074,9 +1201,17 @@ class ChatViewModel : ViewModel() {
             gateway.prewarm(handler.currentSessionId.value)
             gateway.setReasoning(normalized).fold(
                 onSuccess = { result ->
+                    if (!isCurrentReasoningResponse(
+                            capturedRevision = revision,
+                            currentRevision = reasoningEffortRevision.get(),
+                            capturedIdentity = identity,
+                            activeIdentity = reasoningEffortIdentity(),
+                        )
+                    ) return@fold
                     _selectedReasoningEffort.value = normalizeReasoningEffort(
                         result.stringValue("value") ?: normalized,
                     )
+                    selectedReasoningEffortConfirmedIdentity = identity
                 },
                 onFailure = { e ->
                     handler.addSystemNotice(
@@ -1085,6 +1220,27 @@ class ChatViewModel : ViewModel() {
                     refreshReasoningSettings()
                 },
             )
+        }
+    }
+
+    private fun transitionReasoningEffortIdentity() {
+        reasoningEffortRevision.incrementAndGet()
+        selectedReasoningEffortConfirmedIdentity = null
+        reconcilePendingReasoningEffortForModel()
+        refreshRelayReasoningCapabilities()
+    }
+
+    private fun reconcilePendingReasoningEffortForModel() {
+        val identity = reasoningEffortIdentity()
+        val reconciled = reconcilePendingReasoningEffort(
+            value = _selectedReasoningEffort.value,
+            confirmedIdentity = selectedReasoningEffortConfirmedIdentity,
+            activeIdentity = identity,
+            availability = reasoningEffortAvailability(),
+        )
+        if (reconciled != _selectedReasoningEffort.value) {
+            reasoningEffortRevision.incrementAndGet()
+            _selectedReasoningEffort.value = reconciled
         }
     }
 
@@ -1257,6 +1413,8 @@ class ChatViewModel : ViewModel() {
         // session.info confirm it on the first turn (see the dropped
         // getReasoningSettings below).
         _selectedReasoningEffort.value = null
+        reasoningEffortRevision.incrementAndGet()
+        selectedReasoningEffortConfirmedIdentity = null
         _reasoningDisplay.value = null
         // The personality overlay is per-profile. On SSE, leaving a stale pick
         // here would inject the previous profile's overlay onto the new
@@ -1423,6 +1581,7 @@ class ChatViewModel : ViewModel() {
             val model = _selectedModelOverride.value?.takeIf { it.isNotBlank() }
             val provider = _selectedProviderOverride.value?.takeIf { it.isNotBlank() }
             val effort = _selectedReasoningEffort.value?.takeIf { it.isNotBlank() }
+                ?.takeIf { reasoningEffortAvailability().accepts(it) }
             // Contract v4 distinguishes all three states: null omits the field
             // and inherits the profile tier, true pins priority, and false pins
             // normal. Do not filter false here or a user's explicit Fast-off
@@ -1506,6 +1665,8 @@ class ChatViewModel : ViewModel() {
                 // null = unknown (honest); refreshReasoningSettings/session.info
                 // re-seed it. Never a stale default that could ride session.create.
                 _selectedReasoningEffort.value = null
+                reasoningEffortRevision.incrementAndGet()
+                selectedReasoningEffortConfirmedIdentity = null
                 _reasoningDisplay.value = null
             }
             // Catalog fetch must never cold-open /api/ws — only fetch over an
@@ -1529,6 +1690,8 @@ class ChatViewModel : ViewModel() {
                 // null = unknown (honest); refreshReasoningSettings/session.info
                 // re-seed it. Never a stale default that could ride session.create.
                 _selectedReasoningEffort.value = null
+                reasoningEffortRevision.incrementAndGet()
+                selectedReasoningEffortConfirmedIdentity = null
                 _reasoningDisplay.value = null
             }
         }
@@ -2375,27 +2538,32 @@ class ChatViewModel : ViewModel() {
                 }
             }
             launch {
-                client.serverModel.collect { value ->
-                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
-                    if (_gatewayCurrentModel.value != value) _gatewayCurrentModel.value = value
-                }
-            }
-            launch {
-                client.serverProvider.collect { value ->
-                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
-                    if (_gatewayCurrentProvider.value != value) _gatewayCurrentProvider.value = value
-                }
-            }
-            launch {
-                client.serverReasoningEffort.collect { value ->
-                    // Ignore blank (upstream "" = reasoning disabled — never
-                    // clobber the chip). Compare on the normalized value, the
-                    // same form the optimistic setter + config.get refresh store.
-                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
-                    val normalized = normalizeReasoningEffort(value)
-                    if (_selectedReasoningEffort.value != normalized) {
-                        _selectedReasoningEffort.value = normalized
+                client.serverModelIdentity.collect { identity ->
+                    if (gatewayClient !== client || identity == null) return@collect
+                    _gatewayCurrentModel.value = identity.model
+                    _gatewayCurrentProvider.value = identity.provider
+                    // A session.info identity is authoritative and coherent.
+                    // Retaining a pending override after an acknowledgement or
+                    // external Desktop/TUI switch can otherwise pair its stale
+                    // model with the newly reported provider.
+                    if (_selectedModelOverride.value != null) {
+                        _selectedModelOverride.value = null
+                        _selectedProviderOverride.value = null
                     }
+                    transitionReasoningEffortIdentity()
+                }
+            }
+            launch {
+                client.serverReasoningIdentity.collect { state ->
+                    if (gatewayClient !== client || state == null) return@collect
+                    val activeIdentity = reasoningEffortIdentity() ?: return@collect
+                    if (
+                        !state.identity.provider.equals(activeIdentity.provider, ignoreCase = true) ||
+                        state.identity.model != activeIdentity.model
+                    ) return@collect
+                    reasoningEffortRevision.incrementAndGet()
+                    selectedReasoningEffortConfirmedIdentity = activeIdentity
+                    _selectedReasoningEffort.value = normalizeReasoningEffort(state.effort)
                 }
             }
             launch {
@@ -2755,6 +2923,7 @@ class ChatViewModel : ViewModel() {
         }
         ensureCheckpointObservers()
         this.relayHttpClient = relayHttpClient
+        if (_modelProviders.value.isNotEmpty()) refreshRelayReasoningCapabilities()
         this.mediaSettingsRepo = mediaSettingsRepo
         this.mediaCacheWriter = mediaCacheWriter
 
@@ -2843,6 +3012,9 @@ class ChatViewModel : ViewModel() {
                 sessionRefreshJob?.cancel()
                 _isLoadingSessions.value = false
                 activeProfileContextKey = null
+                relayCapabilityGeneration.incrementAndGet()
+                relayReasoningCapabilities.value = emptyMap()
+                _reasoningCapabilityRevision.value += 1L
                 publishBackgroundSessionActivity()
                 _queuedMessages.value = emptyList()
                 _pendingAttachments.value = emptyList()
@@ -2860,6 +3032,8 @@ class ChatViewModel : ViewModel() {
                 // reset to unknown/default so neither a stale chip nor a stale
                 // SSE persona overlay carries into the new connection.
                 _selectedReasoningEffort.value = null
+                reasoningEffortRevision.incrementAndGet()
+                selectedReasoningEffortConfirmedIdentity = null
                 _reasoningDisplay.value = null
                 _selectedPersonality.value = "default"
                 pendingTruncateOrdinal = null
@@ -2895,6 +3069,7 @@ class ChatViewModel : ViewModel() {
         ) {
             activateModelOptionsProfile(contextKey)
             activeProfileContextKey = contextKey
+            refreshRelayReasoningCapabilities()
             publishBackgroundSessionActivity()
             activeTurnCheckpointSeed?.contextKey = contextKey
             scheduleCheckpointWrite(immediate = true)
@@ -2913,6 +3088,7 @@ class ChatViewModel : ViewModel() {
         _isLoadingSessions.value = false
         activateModelOptionsProfile(contextKey)
         activeProfileContextKey = contextKey
+        refreshRelayReasoningCapabilities()
         publishBackgroundSessionActivity()
         _queuedMessages.value = emptyList()
         _pendingAttachments.value = emptyList()
@@ -2929,10 +3105,12 @@ class ChatViewModel : ViewModel() {
         // SSE profile switch: reset the reasoning chip to unknown (a sessionless
         // config.get reads the wrong profile's effort) and the personality to
         // default so composeInjectedContext can't inject the previous profile's
-        // overlay onto this profile's first SSE turn. The serverReasoningEffort /
-        // serverPersonality collectors (gateway) and session.info reconcile after
-        // the first turn; on pure SSE the new profile's own SOUL carries instead.
+        // overlay onto this profile's first SSE turn. The identity-bound reasoning
+        // and personality collectors reconcile gateway session.info after the
+        // first turn; on pure SSE the new profile's own SOUL carries instead.
         _selectedReasoningEffort.value = null
+        reasoningEffortRevision.incrementAndGet()
+        selectedReasoningEffortConfirmedIdentity = null
         _reasoningDisplay.value = null
         _selectedPersonality.value = "default"
         // The agent display name was stamped above with the pre-reset persona —
@@ -8191,12 +8369,32 @@ private fun JsonObject.stringValue(key: String): String? =
 
 private const val RECENT_PROMPTS_LIMIT = 15
 private const val MAX_GATEWAY_COMMAND_DISPLAY_CHARS = 2_000
-private const val DEFAULT_REASONING_EFFORT = "medium"
-private val VALID_REASONING_EFFORTS = setOf("none", "minimal", "low", "medium", "high", "xhigh")
+internal fun normalizeReasoningEffort(value: String?): String = ReasoningEfforts.normalize(value)
 
-private fun normalizeReasoningEffort(value: String?): String {
-    val normalized = value?.trim()?.lowercase().orEmpty()
-    return normalized.takeIf { it in VALID_REASONING_EFFORTS } ?: DEFAULT_REASONING_EFFORT
+internal fun isCurrentReasoningResponse(
+    capturedRevision: Long,
+    currentRevision: Long,
+    capturedIdentity: ReasoningEffortIdentity?,
+    activeIdentity: ReasoningEffortIdentity?,
+): Boolean = capturedRevision == currentRevision && capturedIdentity == activeIdentity
+
+internal fun isCurrentReasoningCapabilityOverlay(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    requestProfileKey: String,
+    currentProfileKey: String,
+): Boolean = requestGeneration == currentGeneration && requestProfileKey == currentProfileKey
+
+internal fun reconcilePendingReasoningEffort(
+    value: String?,
+    confirmedIdentity: ReasoningEffortIdentity?,
+    activeIdentity: ReasoningEffortIdentity?,
+    availability: ReasoningEffortAvailability,
+): String? = when {
+    value == null -> null
+    confirmedIdentity != null && confirmedIdentity == activeIdentity -> value
+    availability.accepts(value) -> value
+    else -> null
 }
 
 private fun String.compactWords(): String = replace(Regex("\\s+"), " ").trim()
