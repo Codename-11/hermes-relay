@@ -234,49 +234,31 @@ class SessionsRoutesTests(AioHTTPTestCase):
         )
         self.assertEqual(resp.status, 400)
 
-    async def test_extend_ttl_only_restarts_clock(self) -> None:
-        """ttl_seconds=N sets expires_at to now+N, not old_expiry+N."""
-        import time as _time
-
+    async def test_extend_ttl_rejects_lifetime_expansion(self) -> None:
+        """A bearer cannot extend its own operator-approved lifetime."""
         token = await self._mint("dev-a", ttl_seconds=3600)  # 1h session
         old = self._server().sessions.get_session(token)
         old_expiry = old.expires_at
-
-        # Wait a hair to make sure the new expiry is measurably different
-        # from the old one, even on fast clocks.
-        await self._settle()
-
         resp = await self.client.patch(
             f"/sessions/{token[:8]}",
             json={"ttl_seconds": 7 * 86400},  # 7 days
             headers={"Authorization": f"Bearer {token}"},
         )
-        self.assertEqual(resp.status, 200)
-        body = await resp.json()
-        new_expiry = body["expires_at"]
-        self.assertIsNotNone(new_expiry)
-        # New expiry should be roughly now + 7d, not old_expiry + 7d
-        now = _time.time()
-        self.assertAlmostEqual(new_expiry, now + 7 * 86400, delta=5)
-        # And the persisted session matches
+        self.assertEqual(resp.status, 403)
         updated = self._server().sessions.get_session(token)
-        self.assertAlmostEqual(updated.expires_at, new_expiry, delta=0.01)
-        # And it's definitely different from the old expiry
-        self.assertNotAlmostEqual(updated.expires_at, old_expiry, delta=60)
+        self.assertAlmostEqual(updated.expires_at, old_expiry, delta=0.01)
 
-    async def test_extend_ttl_zero_means_never(self) -> None:
+    async def test_extend_ttl_rejects_never_expire_escalation(self) -> None:
         token = await self._mint("dev-a", ttl_seconds=3600)
+        old = self._server().sessions.get_session(token)
         resp = await self.client.patch(
             f"/sessions/{token[:8]}",
             json={"ttl_seconds": 0},
             headers={"Authorization": f"Bearer {token}"},
         )
-        self.assertEqual(resp.status, 200)
-        body = await resp.json()
-        self.assertIsNone(body["expires_at"])  # null = never
-        # All grants should also be None (never) since session is infinite
-        for channel in ("chat", "terminal", "bridge"):
-            self.assertIsNone(body["grants"][channel])
+        self.assertEqual(resp.status, 403)
+        updated = self._server().sessions.get_session(token)
+        self.assertAlmostEqual(updated.expires_at, old.expires_at, delta=0.01)
 
     async def test_extend_grants_only(self) -> None:
         token = await self._mint("dev-a", ttl_seconds=30 * 86400)  # 30d
@@ -317,16 +299,16 @@ class SessionsRoutesTests(AioHTTPTestCase):
             self.assertIsNotNone(grant_expiry, f"{channel} should not be null")
             self.assertLessEqual(grant_expiry, new_session_expiry + 0.001)
 
-    async def test_extend_self(self) -> None:
-        """Caller can extend their own session."""
+    async def test_extend_self_rejects_policy_expansion(self) -> None:
+        """Session identity does not grant session-management authority."""
         token = await self._mint("dev-a", ttl_seconds=3600)
         resp = await self.client.patch(
             f"/sessions/{token[:8]}",
             json={"ttl_seconds": 2 * 86400},
             headers={"Authorization": f"Bearer {token}"},
         )
-        self.assertEqual(resp.status, 200)
-        # Caller's session still valid after the extend
+        self.assertEqual(resp.status, 403)
+        # The rejected expansion does not revoke the caller.
         self.assertIsNotNone(self._server().sessions.get_session(token))
 
     async def _settle(self) -> None:
