@@ -1,5 +1,153 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-05 — Restored chat bottom ownership and effort fallback clarity
+
+Opening an existing Android session now retains exact bottom ownership through
+late, non-streaming layout changes. Composer capability controls, status rows,
+and restored message content can finish measuring after history first reaches
+the footer; a session-scoped geometry observer corrects those changes without
+using a fixed delay. New-message following remains governed by the smooth
+auto-scroll setting, while a real drag, IME ownership, and the Voice dock keep
+their existing anchors.
+
+The advisory effort drawer now states that Hermes does not advertise exact
+levels for the selected model before explaining why standard options are shown.
+The wording is consistent across all shipped Android locales.
+
+## 2026-08-05 — Provider-aware reasoning effort discovery
+
+The optional Relay plugin now exposes a bearer-protected, profile-aware model
+capability overlay without requiring changes to upstream Hermes. Android merges
+that overlay with the standard `model.options` inventory using exact provider
+and model identities, while older or unpaired Relay installations continue with
+the canonical advisory fallback.
+
+Dynamic LM Studio, Ollama Cloud, and Copilot discovery is bounded by a shared
+network limiter, cached by profile, endpoint, model, and credential fingerprint,
+and fenced across refresh generations. Neither credentials nor internal cache
+scope are returned to clients. Composer controls, Agent Passport, session
+creation, and asynchronous server reconciliation share the same capability
+resolver so a displayed effort cannot silently differ from the value sent.
+
+## 2026-08-05 — Chat drawer and companion terrain ownership
+
+The Chat screen now clears composer focus when the session drawer commits to
+opening, dismissing the IME without continuously clearing focus from drawer
+search or rename fields. Drawer refreshes override keyed list anchoring only
+when the leading session identity changes, keeping the newest row visible after
+activity-based reordering.
+
+Floating companions wait for Chat's measured composer rail before publishing
+their first roaming position. Their collision footprint contains both the
+pointer target and rendered sprite, and the complete scroll-to-bottom control
+envelope is an obstacle rather than a landing perch. Supported rails add no
+visual lift, and the floating-only renderer aligns each frame's opaque bottom
+edge to its canvas baseline so transparent atlas padding cannot make pets hover;
+centered previews and message avatars remain unchanged.
+
+## 2026-08-05 — Measured pet placement and passive model sync
+
+The floating pet now remains unpublished until the app-level overlay has a
+positive measured viewport. Its initial home coordinate is therefore derived
+from the real safe bounds instead of the zero-size pre-measure bounds that
+collapsed to the top-left corner.
+
+API provider inventory remains an optional background catalog on Gateway-led
+connections. A timeout, refusal, or unavailable optional route no longer emits
+a global chat notice during initialization, reconnection, or connection-sheet
+refresh. The failure is retained as a contextual warning in local Diagnostics,
+including the operation, endpoint role, redacted stack trace, preserved network
+cause, and targeted troubleshooting guidance. Cached and Gateway-owned model
+options remain unchanged.
+
+## 2026-08-05 — Stable chat-tail completion
+
+Chat and Voice now treat the active streamed reply as the owner of its live
+renderer until a different row becomes the conversation tail. Stream
+completion retains the existing Compose subtree and list anchor; the full
+Markdown renderer is deferred until the row is no longer active or the session
+is revisited.
+
+The last-in-group timestamp occupies its final geometry from the first
+streaming frame and is only revealed at completion. Measured positive growth
+during an active stream continues to follow the bottom without replacing the
+logical anchor. Once completion layout stabilizes, a bottom-owned transcript
+settles to the exact LazyColumn boundary; proximity slop is reserved for
+retaining follow intent during motion and cannot define the final position. The
+visible footer supplies the exact remaining distance so rounding or adjacent
+layout changes cannot leave a residual forward range.
+
+IME expansion participates in that same viewport owner. A transcript already
+at the bottom advances by the measured viewport-height loss throughout the
+keyboard animation, then settles exactly after inset updates stop on both open
+and close. A transcript being read above the bottom preserves its existing
+anchor, and a real drag cancels keyboard follow immediately. Host-side coverage
+verifies renderer ownership, unchanged bubble height, exact footer settling,
+keyboard arming, viewport loss, completion/IME settlement ownership, and
+history-reading behavior.
+
+## 2026-08-05 — Focus voice input boundary repair
+
+The Focus voice presentation remains modal without installing a consuming
+pointer handler on the full overlay ancestor. Its click-through guard is now a
+behind-content sibling: empty-space gestures cannot reach the chat or drawer,
+while the mic, close, expand/collapse, and panel controls receive their full
+pointer sequence.
+
+Host-side Compose coverage injects real touch events instead of invoking
+semantic click actions. It verifies both child callback delivery and the modal
+background boundary so the two requirements cannot regress independently.
+
+## 2026-08-05 — Actionable Android connection diagnostics
+
+Android diagnostic entries now separate the configured route from the exact
+request operation and path used to test it. Relay health checks identify the
+HTTP `/health` probe that precedes a WebSocket connection, route selection
+records its Dashboard, API, or Relay probe, and WebSocket and API checks name
+their handshake or authentication stage.
+
+Known network and HTTP failure classes attach a bounded next step for refused
+listeners, DNS, routing, timeouts, TLS, credentials, rate limits, missing
+routes, and server failures. The activity list, status timeline, detail dialog,
+copy text, and GitHub issue prefill all carry the same context. Public issue
+text preserves protocol and request paths while redacting hosts, credentials,
+queries, and user information.
+
+## 2026-08-04 — Android transcript identity ownership
+
+ChatHandler now owns one render identity for every published transcript row.
+Checkpoint recovery and all streamed message mutations resolve both the mutable
+server/domain ID and the stable UI identity, so history adoption cannot leave a
+stale client reference that appends a second row. The publication boundary also
+coalesces repeated render identities before Chat or Voice can observe them,
+while keeping the first transcript position and latest state.
+
+Focused coverage composes history reconciliation with checkpoint restore,
+exercises stale post-adoption callbacks, and runs deterministic transition
+sequences across restore, replay, deltas, thinking, and usage updates. Voice's
+temporary transcript row now occupies an auxiliary key namespace disjoint from
+real message rows.
+
+## 2026-08-04 — Android reliability and support foundation
+
+Android fatal capture and centrally classified handled failures now converge on
+a versioned, allowlisted reliability record. Reports are redacted before local
+persistence, capped at 20 records with 14-day retention, written atomically,
+and correlated only with random app/report identifiers. Expected cancellation
+and permission denial remain non-reportable. The pre-existing one-file crash
+format migrates locally on first launch.
+
+Crash recovery leads with the recovery outcome and no-upload guarantee, then
+requires an explicit review before copy, share, or GitHub actions. Diagnostics
+adds an offline support-information review using the same exact redacted text.
+Android issue prefills now request the Android area while repository-wide issue
+ownership remains maintainer-reviewed, and the release workflow retains both
+variant R8 mappings for deterministic retrace.
+
+The architecture audit defers an ANR watchdog, richer allowlisted breadcrumbs,
+hashed product correlation, and OOM emergency writing until their lifecycle,
+privacy, and false-positive behavior can be validated on devices.
+
 ## 2026-08-02 — Android Russian localization
 
 Android now ships complete Russian catalogs for the main and sideload builds.

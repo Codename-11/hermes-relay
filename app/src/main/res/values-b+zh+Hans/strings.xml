@@ -118,6 +118,8 @@
     <string name="chat_placeholder_message">输入消息…</string>
     <string name="chat_edit_busy_snackbar">暂时无法编辑——请等当前这一轮结束</string>
     <string name="chat_select_reasoning_effort">选择推理强度</string>
+    <string name="reasoning_effort_standard_levels_notice">Hermes 未公布此模型的确切推理强度级别，因此显示标准选项。</string>
+    <string name="reasoning_effort_current_outside_supported">当前会话：%1$s（由 Hermes 报告）。此模型的新选择仅限于 %2$s。</string>
 
     <!-- 语音提示 -->
     <string name="voice_toast_signin_route">语音需要在 %1$s 路由上登录一次——打开管理</string>
@@ -852,6 +854,9 @@
     <string name="drawer_refresh_sessions">刷新会话</string>
     <string name="drawer_new_chat">新对话</string>
     <string name="drawer_search_placeholder">搜索会话或 ID…</string>
+    <string name="drawer_search_sessions">搜索会话</string>
+    <string name="drawer_activity_working">正在处理</string>
+    <string name="drawer_activity_needs_input">需要输入</string>
     <string name="drawer_new_thread">新话题</string>
     <string name="drawer_chats_not_named">此连接上的对话不会自动命名——使用 ⋮ → 重命名。</string>
     <string name="drawer_loading_sessions">正在加载会话…</string>
@@ -2636,7 +2641,14 @@
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay 意外关闭</string>
-    <string name="crash_body">上次会话崩溃了。发送此报告有助于更快修复问题。</string>
+    <string name="crash_body">Hermes-Relay 在意外问题后已重新启动。你可以继续使用应用。</string>
+    <string name="crash_privacy">未发送任何内容。分享前请查看在本地脱敏的报告。</string>
+    <string name="crash_review">查看报告</string>
+    <string name="crash_share_title">分享崩溃报告</string>
+    <string name="crash_share_subject">Hermes-Relay 崩溃报告 — %1$s</string>
+    <string name="crash_toast_no_share">报告已复制 — 未找到可分享的应用</string>
+    <string name="crash_toast_opened">完整报告已复制 — 提交前请检查 GitHub 问题</string>
+    <string name="crash_toast_no_browser">报告已复制 — 未找到可打开 GitHub 的浏览器</string>
     <string name="crash_dismiss">忽略</string>
     <string name="crash_copy">复制</string>
     <string name="crash_share">分享</string>
@@ -2853,6 +2865,9 @@
     <string name="chat_reasoning_low">低</string>
     <string name="chat_reasoning_medium">中</string>
     <string name="chat_reasoning_high">高</string>
+    <string name="chat_reasoning_xhigh">特高</string>
+    <string name="chat_reasoning_max">最高</string>
+    <string name="chat_reasoning_ultra">超高</string>
     <string name="chat_date_today">今天</string>
     <string name="chat_date_yesterday">昨天</string>
     <string name="chat_share_subject">Hermes 对话</string>
@@ -3767,4 +3782,10 @@
     <string name="plugins_keep">保留</string>
     <string name="plugins_remove">移除</string>
     <string name="plugins_remove_confirm">要移除“%1$s”吗？此插件页面将不再显示在已连接的 Android 设备上。</string>
+    <string name="support_bundle_review">查看支持信息</string>
+    <string name="support_bundle_title">支持信息</string>
+    <string name="support_bundle_privacy">不会自动上传任何内容。请查看最多包含 %1$d 个报告的本地导出。</string>
+    <string name="support_bundle_copied">支持信息已复制</string>
+    <string name="support_bundle_no_share">支持信息已复制 — 未找到可分享的应用</string>
+    <string name="support_bundle_share_title">分享 Hermes-Relay 支持信息</string>
 </resources>

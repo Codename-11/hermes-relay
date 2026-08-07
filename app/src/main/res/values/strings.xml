@@ -118,6 +118,8 @@
     <string name="chat_placeholder_message">Message…</string>
     <string name="chat_edit_busy_snackbar">Can\'t edit right now — wait for the current turn to finish</string>
     <string name="chat_select_reasoning_effort">Select reasoning effort</string>
+    <string name="reasoning_effort_standard_levels_notice">Hermes doesn\'t advertise exact effort levels for this model, so standard options are shown.</string>
+    <string name="reasoning_effort_current_outside_supported">Current session: %1$s (reported by Hermes). New selections for this model are limited to %2$s.</string>
 
     <!-- Voice toasts -->
     <string name="voice_toast_signin_route">Voice needs a one-time sign-in on the %1$s route — open Manage</string>
@@ -951,6 +953,9 @@
     <string name="drawer_refresh_sessions">Refresh sessions</string>
     <string name="drawer_new_chat">New Chat</string>
     <string name="drawer_search_placeholder">Search sessions or id...</string>
+    <string name="drawer_search_sessions">Search sessions</string>
+    <string name="drawer_activity_working">Working</string>
+    <string name="drawer_activity_needs_input">Needs input</string>
     <string name="drawer_new_thread">New Thread</string>
     <string name="drawer_chats_not_named">Chats aren\'t auto-named on this connection — use ⋮ → Rename.</string>
     <string name="drawer_loading_sessions">Loading sessions…</string>
@@ -2772,7 +2777,14 @@
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay closed unexpectedly</string>
-    <string name="crash_body">The last session crashed. Sending this report helps get it fixed faster.</string>
+    <string name="crash_body">Hermes-Relay restarted after an unexpected problem. You can continue using the app.</string>
+    <string name="crash_privacy">Nothing was sent. Review the locally redacted report before choosing copy, share, or GitHub.</string>
+    <string name="crash_review">Review report</string>
+    <string name="crash_share_title">Share crash report</string>
+    <string name="crash_share_subject">Hermes-Relay crash report — %1$s</string>
+    <string name="crash_toast_no_share">Report copied — no app found to share to</string>
+    <string name="crash_toast_opened">Full report copied — review the GitHub issue before submitting</string>
+    <string name="crash_toast_no_browser">Report copied — no browser found to open GitHub</string>
     <string name="crash_dismiss">Dismiss</string>
     <string name="crash_copy">Copy</string>
     <string name="crash_share">Share</string>
@@ -2989,6 +3001,9 @@
     <string name="chat_reasoning_low">Low</string>
     <string name="chat_reasoning_medium">Medium</string>
     <string name="chat_reasoning_high">High</string>
+    <string name="chat_reasoning_xhigh">Extra high</string>
+    <string name="chat_reasoning_max">Max</string>
+    <string name="chat_reasoning_ultra">Ultra</string>
     <string name="chat_date_today">Today</string>
     <string name="chat_date_yesterday">Yesterday</string>
     <string name="chat_share_subject">Hermes conversation</string>
@@ -3845,4 +3860,10 @@
     <string name="plugins_keep">Keep</string>
     <string name="plugins_remove">Remove</string>
     <string name="plugins_remove_confirm">Remove “%1$s”? This plugin page will no longer appear on connected Android devices.</string>
+    <string name="support_bundle_review">Review support information</string>
+    <string name="support_bundle_title">Support information</string>
+    <string name="support_bundle_privacy">Nothing is uploaded automatically. Review the exact local export below. It contains up to %1$d recent reports.</string>
+    <string name="support_bundle_copied">Support information copied</string>
+    <string name="support_bundle_no_share">Support information copied — no app found to share to</string>
+    <string name="support_bundle_share_title">Share Hermes-Relay support information</string>
 </resources>

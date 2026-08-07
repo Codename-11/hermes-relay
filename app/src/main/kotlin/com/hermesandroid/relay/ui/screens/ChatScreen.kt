@@ -87,6 +87,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -122,9 +123,11 @@ import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.ReasoningEfforts
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
+import com.hermesandroid.relay.ui.components.reasoningEffortLabel
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -163,6 +166,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
@@ -178,6 +182,7 @@ import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.CommandPalette
 import com.hermesandroid.relay.ui.components.KeepScreenOnWhile
 import com.hermesandroid.relay.ui.components.ModelPickerSheet
+import com.hermesandroid.relay.ui.components.OptionPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
@@ -249,9 +254,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
-private const val CHAT_SCROLL_TO_BOTTOM_PET_PERCH = "chat-scroll-to-bottom-perch"
 private const val CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE = "chat-scroll-to-bottom-obstacle"
 private val CHAT_PET_ROUTES = setOf("chat")
+
+internal fun resolveSessionActivityStates(
+    background: Map<String, SessionActivityState>,
+    currentSessionId: String?,
+    isStreaming: Boolean,
+    needsInput: Boolean,
+): Map<String, SessionActivityState> = background.toMutableMap().apply {
+    currentSessionId?.let { sessionId ->
+        when {
+            needsInput -> put(sessionId, SessionActivityState.NeedsInput)
+            isStreaming -> put(sessionId, SessionActivityState.Working)
+            else -> remove(sessionId)
+        }
+    }
+}
 
 internal fun resolveChatHeaderSubtitle(
     isStreaming: Boolean,
@@ -299,32 +318,130 @@ internal data class ChatScrollSnapshot(
     val isStreaming: Boolean
 )
 
-internal fun ChatScrollSnapshot.isCompletionAfter(previous: ChatScrollSnapshot?): Boolean =
-    previous?.isStreaming == true &&
-        !isStreaming &&
-        previous.messageCount == messageCount &&
-        previous.lastMessageUiKey == lastMessageUiKey
-
-internal fun releaseRetainedLiveTail(
+internal fun retainedLiveTailAfterTransition(
     retainedUiKey: String?,
-    completedUiKey: String?,
-): String? = retainedUiKey?.takeUnless { it == completedUiKey }
-
-internal fun tailEndScrollOffset(
-    tailSizePx: Int,
-    footerSizePx: Int,
-    viewportSizePx: Int,
-): Int = (tailSizePx + footerSizePx - viewportSizePx).coerceAtLeast(0)
+    streamStarted: Boolean,
+    lastMessageUiKey: String?,
+): String? = when {
+    streamStarted -> lastMessageUiKey
+    retainedUiKey != null && retainedUiKey != lastMessageUiKey -> null
+    else -> retainedUiKey
+}
 
 private class ChatTailTransitionRef(
     var snapshot: ChatScrollSnapshot? = null,
 )
 
-private data class ChatTailLayoutSnapshot(
-    val uiKey: String?,
-    val measuredSizePx: Int?,
-    val shouldFollowGrowth: Boolean,
+internal data class ChatViewportFollowSnapshot(
+    val totalItemsCount: Int,
+    val tailUiKey: String?,
+    val tailSizePx: Int?,
+    val viewportHeightPx: Int,
+    val visibleBottomDistancePx: Int?,
+    val followTailGrowth: Boolean,
+    val followViewportResize: Boolean,
 )
+
+internal fun shouldCorrectConversationBottomAfterLayout(
+    previous: ChatViewportFollowSnapshot?,
+    current: ChatViewportFollowSnapshot,
+    atExactBottom: Boolean,
+    userScrolledAway: Boolean,
+    userDragging: Boolean,
+    isStreaming: Boolean,
+    smoothAutoScroll: Boolean,
+    viewportFollowAllowed: Boolean,
+): Boolean {
+    val old = previous ?: return false
+    if (
+        atExactBottom || userScrolledAway || userDragging || !viewportFollowAllowed ||
+        (isStreaming && !smoothAutoScroll)
+    ) {
+        return false
+    }
+    if (
+        old.totalItemsCount != current.totalItemsCount ||
+        old.tailUiKey == null ||
+        old.tailUiKey != current.tailUiKey
+    ) {
+        return false
+    }
+    return old.tailSizePx != current.tailSizePx ||
+        old.viewportHeightPx != current.viewportHeightPx ||
+        old.visibleBottomDistancePx != current.visibleBottomDistancePx
+}
+
+internal fun requiredBottomFollowScroll(
+    previous: ChatViewportFollowSnapshot?,
+    current: ChatViewportFollowSnapshot,
+): Int {
+    if (!current.followTailGrowth && !current.followViewportResize) return 0
+
+    // When the footer is visible, its trailing edge is the authoritative
+    // distance to the exact bottom. This also consumes rounding and any small
+    // non-tail layout changes that a tail-height delta cannot represent.
+    current.visibleBottomDistancePx?.let { return it.coerceAtLeast(0) }
+
+    val previousSnapshot = previous ?: return 0
+    val tailGrowthPx = if (
+        current.followTailGrowth &&
+        previousSnapshot.tailUiKey == current.tailUiKey
+    ) {
+        ((current.tailSizePx ?: 0) - (previousSnapshot.tailSizePx ?: 0)).coerceAtLeast(0)
+    } else {
+        0
+    }
+    val viewportLossPx = if (current.followViewportResize) {
+        (previousSnapshot.viewportHeightPx - current.viewportHeightPx).coerceAtLeast(0)
+    } else {
+        0
+    }
+    return maxOf(tailGrowthPx, viewportLossPx)
+}
+
+internal fun ownedBottomFollowScroll(
+    previous: ChatViewportFollowSnapshot?,
+    current: ChatViewportFollowSnapshot,
+): Int {
+    val sameTranscript = previous != null &&
+        previous.totalItemsCount == current.totalItemsCount &&
+        previous.tailUiKey == current.tailUiKey
+    // A structural/new-tail transition belongs to the existing streaming
+    // owner. Ordinary restore-layout following must never opt a reader into
+    // new-message auto-follow when smooth auto-scroll is disabled.
+    if (!sameTranscript && !current.followTailGrowth) return 0
+    return requiredBottomFollowScroll(previous, current)
+}
+
+internal fun shouldFollowImeAfterInsetChange(
+    wasFollowing: Boolean,
+    previousImeBottomPx: Int,
+    currentImeBottomPx: Int,
+    wasAtBottom: Boolean,
+    userDragging: Boolean,
+): Boolean = when {
+    currentImeBottomPx == 0 || userDragging -> false
+    previousImeBottomPx == 0 -> wasAtBottom
+    else -> wasFollowing
+}
+
+internal fun shouldExactlySettleConversation(
+    autoFollowEnabled: Boolean,
+    userScrolledAway: Boolean,
+    userDragging: Boolean,
+    hasMessages: Boolean,
+): Boolean = autoFollowEnabled && hasMessages && !userScrolledAway && !userDragging
+
+internal fun shouldFollowConversationViewportResize(
+    userScrolledAway: Boolean,
+    userDragging: Boolean,
+    imeBottomPx: Int,
+    followImeResize: Boolean,
+    voiceDockAnchorTransitionActive: Boolean,
+): Boolean = !userScrolledAway &&
+    !userDragging &&
+    !voiceDockAnchorTransitionActive &&
+    (followImeResize || imeBottomPx == 0)
 
 private fun LazyListState.isAtConversationBottom(slopPx: Int): Boolean {
     val layout = layoutInfo
@@ -332,6 +449,14 @@ private fun LazyListState.isAtConversationBottom(slopPx: Int): Boolean {
     val last = layout.visibleItemsInfo.lastOrNull() ?: return false
     return last.index == layout.totalItemsCount - 1 &&
         (last.offset + last.size) - layout.viewportEndOffset <= slopPx
+}
+
+private fun LazyListState.visibleConversationBottomDistancePx(): Int? {
+    val layout = layoutInfo
+    val lastIndex = layout.totalItemsCount - 1
+    if (lastIndex < 0) return 0
+    val footer = layout.visibleItemsInfo.firstOrNull { it.index == lastIndex } ?: return null
+    return ((footer.offset + footer.size) - layout.viewportEndOffset).coerceAtLeast(0)
 }
 
 private suspend fun LazyListState.scrollToConversationBottom(
@@ -619,8 +744,24 @@ fun ChatScreen(
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
     val sessions by chatViewModel.sessions.collectAsState()
+    val backgroundSessionActivityStates by
+        chatViewModel.backgroundSessionActivityStates.collectAsState()
     val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
+    val pendingAsk by chatViewModel.pendingAsk.collectAsState()
+    val sessionActivityStates = remember(
+        backgroundSessionActivityStates,
+        currentSessionId,
+        isStreaming,
+        pendingAsk,
+    ) {
+        resolveSessionActivityStates(
+            background = backgroundSessionActivityStates,
+            currentSessionId = currentSessionId,
+            isStreaming = isStreaming,
+            needsInput = pendingAsk != null,
+        )
+    }
     val backgroundProcesses by chatViewModel.backgroundProcesses.collectAsState()
     val backgroundProcessesLoading by chatViewModel.backgroundProcessesLoading.collectAsState()
     val stoppingProcessIds by chatViewModel.stoppingProcessIds.collectAsState()
@@ -645,8 +786,11 @@ fun ChatScreen(
     val apiModelOptions by chatViewModel.apiModelOptions.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
+    val reasoningCapabilityRevision by chatViewModel.reasoningCapabilityRevision.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
+    val selectedProviderOverride by chatViewModel.selectedProviderOverride.collectAsState()
     val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
+    val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
     val gatewayProjectName by chatViewModel.gatewayProjectName.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
@@ -796,6 +940,7 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf("") }
     var showCommandPalette by remember { mutableStateOf(false) }
     var showModelSheet by remember { mutableStateOf(false) }
+    var showEffortSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
     var showBackgroundProcesses by remember { mutableStateOf(false) }
 
@@ -1169,7 +1314,25 @@ fun ChatScreen(
     var isUserDragging by remember(currentSessionId) { mutableStateOf(false) }
     var programmaticBottomScroll by remember { mutableStateOf(false) }
     var retainedLiveTailUiKey by remember(currentSessionId) { mutableStateOf<String?>(null) }
-    var completionSettlingUiKey by remember(currentSessionId) { mutableStateOf<String?>(null) }
+    val density = LocalDensity.current
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    val latestImeBottomPx by rememberUpdatedState(imeBottomPx)
+    var previousImeBottomPx by remember(currentSessionId) { mutableStateOf(imeBottomPx) }
+    var followImeResize by remember(currentSessionId) { mutableStateOf(false) }
+    SideEffect {
+        followImeResize = shouldFollowImeAfterInsetChange(
+            wasFollowing = followImeResize,
+            previousImeBottomPx = previousImeBottomPx,
+            currentImeBottomPx = imeBottomPx,
+            // At the first non-zero IME inset, LazyColumn still exposes the
+            // pre-resize layout. Capture bottom ownership before the viewport
+            // starts losing height.
+            wasAtBottom = !userScrolledAway &&
+                listState.isAtConversationBottom(atBottomSlopPx),
+            userDragging = isUserDragging,
+        )
+        previousImeBottomPx = imeBottomPx
+    }
     val currentUnreadSnapshot = remember(messages) { messages.toUnreadSnapshot() }
     var lastReadSnapshot by remember(currentSessionId) {
         mutableStateOf(currentUnreadSnapshot)
@@ -1194,7 +1357,9 @@ fun ChatScreen(
         try {
             listState.scrollToConversationBottom(
                 animated = animated,
-                slopPx = atBottomSlopPx,
+                // Slop preserves follow ownership during motion; an explicit
+                // settlement must reach the real LazyColumn boundary.
+                slopPx = 0,
             )
             userScrolledAway = false
         } finally {
@@ -1216,6 +1381,7 @@ fun ChatScreen(
             when (interaction) {
                 is DragInteraction.Start -> {
                     isUserDragging = true
+                    followImeResize = false
                 }
                 is DragInteraction.Stop, is DragInteraction.Cancel -> {
                     isUserDragging = false
@@ -1225,6 +1391,7 @@ fun ChatScreen(
         }
     }
     var voiceDockAnchorGuardReady by remember { mutableStateOf(false) }
+    var voiceDockAnchorTransitionActive by remember { mutableStateOf(false) }
     LaunchedEffect(conversationVoiceDockVisible) {
         if (!voiceDockAnchorGuardReady) {
             voiceDockAnchorGuardReady = true
@@ -1238,19 +1405,45 @@ fun ChatScreen(
         // every animation frame and appears to scroll when voice mode opens.
         val anchorIndex = listState.firstVisibleItemIndex
         val anchorOffset = listState.firstVisibleItemScrollOffset
-        var firstFrameNanos = 0L
-        var frameNanos: Long
-        do {
-            if (isUserDragging) return@LaunchedEffect
-            listState.requestScrollToItem(anchorIndex, anchorOffset)
-            frameNanos = withFrameNanos { it }
-            if (firstFrameNanos == 0L) firstFrameNanos = frameNanos
-        } while (frameNanos - firstFrameNanos < 300_000_000L)
+        voiceDockAnchorTransitionActive = true
+        try {
+            var firstFrameNanos = 0L
+            var frameNanos: Long
+            do {
+                if (isUserDragging) return@LaunchedEffect
+                listState.requestScrollToItem(anchorIndex, anchorOffset)
+                frameNanos = withFrameNanos { it }
+                if (firstFrameNanos == 0L) firstFrameNanos = frameNanos
+            } while (frameNanos - firstFrameNanos < 300_000_000L)
+        } finally {
+            voiceDockAnchorTransitionActive = false
+        }
     }
     // Reaching the bottom by any means (user, follow-pin, content shrank)
     // always re-arms auto-follow.
     LaunchedEffect(isAtBottom) {
         if (isAtBottom) userScrolledAway = false
+    }
+
+    // IME insets arrive as an animation, not one layout. Wait until inset
+    // updates pause, then remove any rounding/late-measurement residue if the
+    // conversation still owns bottom-follow. This runs for both opening and
+    // closing without moving a transcript whose reader scrolled away.
+    var lastImeSettleTargetPx by remember(currentSessionId) { mutableStateOf(imeBottomPx) }
+    LaunchedEffect(imeBottomPx) {
+        if (imeBottomPx == lastImeSettleTargetPx) return@LaunchedEffect
+        lastImeSettleTargetPx = imeBottomPx
+        delay(96)
+        if (
+            shouldExactlySettleConversation(
+                autoFollowEnabled = true,
+                userScrolledAway = userScrolledAway,
+                userDragging = isUserDragging,
+                hasMessages = messages.isNotEmpty(),
+            )
+        ) {
+            scrollConversationToBottom(animated = false)
+        }
     }
 
     // Scroll-to-bottom FAB visibility. The button means "you've scrolled up —
@@ -1267,12 +1460,10 @@ fun ChatScreen(
         derivedStateOf {
             val retainingVisibleTail = retainedLiveTailUiKey != null &&
                 messages.lastOrNull()?.uiKey == retainedLiveTailUiKey
-            val settlingVisibleTail = completionSettlingUiKey != null &&
-                messages.lastOrNull()?.uiKey == completionSettlingUiKey
             messages.isNotEmpty() &&
                 !isAtBottom &&
                 !programmaticBottomScroll &&
-                !((isStreaming || retainingVisibleTail || settlingVisibleTail) &&
+                !((isStreaming || retainingVisibleTail) &&
                     smoothAutoScroll &&
                     !userScrolledAway)
         }
@@ -1422,6 +1613,22 @@ fun ChatScreen(
         }
     }
 
+    // The drawer and composer share this screen's focus owner. Clear the
+    // composer's input focus as soon as an open transition is committed so
+    // menu activation, accessibility activation, and edge swipes all dismiss
+    // the IME without leaving the obscured composer ready for hardware input.
+    // Observe the target rather than isOpen so the keyboard closes alongside
+    // the drawer animation, not after it settles.
+    LaunchedEffect(drawerState, focusManager) {
+        snapshotFlow { drawerState.targetValue }
+            .distinctUntilChanged()
+            .collect { target ->
+                if (target == DrawerValue.Open) {
+                    focusManager.clearFocus(force = true)
+                }
+            }
+    }
+
     // Opening the drawer re-syncs the list — so a session created on another
     // device (or one whose optimistic row was dropped on a profile switch)
     // shows up without a manual reload. Cheap dashboard read; the optimistic
@@ -1450,13 +1657,12 @@ fun ChatScreen(
     )
     val tailTransitionRef = remember(currentSessionId) { ChatTailTransitionRef() }
 
-    // New rows and streaming -> final Markdown are structural transitions.
-    // Anchor their trailing spacer in SideEffect so the request participates in
-    // the very next remeasure instead of correcting an already-drawn frame.
+    // A live tail owns its stable renderer until another row becomes the tail.
+    // Completion is deliberately not a structural transition: changing the
+    // renderer or list anchor at that boundary caused a visible scroll jump.
     SideEffect {
         val previous = tailTransitionRef.snapshot
         val streamStarted = tailTransition.isStreaming && previous?.isStreaming != true
-        val completed = tailTransition.isCompletionAfter(previous)
         val tailStructureChanged = tailTransition.lastMessageUiKey != null &&
             (previous == null ||
                 previous.messageCount != tailTransition.messageCount ||
@@ -1467,21 +1673,17 @@ fun ChatScreen(
             // transcript had previously been left above the bottom. Do not
             // clear isUserDragging: a real finger keeps priority until release.
             userScrolledAway = false
-            retainedLiveTailUiKey = tailTransition.lastMessageUiKey
-        } else if (completed) {
-            completionSettlingUiKey = tailTransition.lastMessageUiKey
-        } else if (
-            tailStructureChanged &&
-            retainedLiveTailUiKey != null &&
-            retainedLiveTailUiKey != tailTransition.lastMessageUiKey
-        ) {
-            retainedLiveTailUiKey = null
         }
+        retainedLiveTailUiKey = retainedLiveTailAfterTransition(
+            retainedUiKey = retainedLiveTailUiKey,
+            streamStarted = streamStarted,
+            lastMessageUiKey = tailTransition.lastMessageUiKey,
+        )
 
         val shouldAnchor = smoothAutoScroll &&
             !isUserDragging &&
             (!userScrolledAway || streamStarted) &&
-            (streamStarted || completed || tailStructureChanged)
+            (streamStarted || tailStructureChanged)
         if (shouldAnchor) {
             listState.requestScrollToItem(tailTransition.messageCount + 1)
         }
@@ -1489,123 +1691,17 @@ fun ChatScreen(
         tailTransitionRef.snapshot = tailTransition
     }
 
-    // Completion adds the timestamp/footer after the final token. Keep the
-    // stable live renderer, then consume any small remaining forward range for
-    // two settled frames. scrollBy preserves the current item anchor and is
-    // visually inert when already at the exact bottom; unlike scrollToItem it
-    // cannot align the top of a tall response with the viewport.
-    LaunchedEffect(
-        completionSettlingUiKey,
-        smoothAutoScroll,
-        userScrolledAway,
-        isUserDragging,
-    ) {
-        val settlingKey = completionSettlingUiKey ?: return@LaunchedEffect
-        if (!smoothAutoScroll || userScrolledAway || isUserDragging) {
-            // Retention is only a completion-transition aid. Never leave the
-            // finalized tail on the plain streaming renderer just because the
-            // user disabled follow-scroll or is reading above the bottom.
-            retainedLiveTailUiKey = releaseRetainedLiveTail(
-                retainedUiKey = retainedLiveTailUiKey,
-                completedUiKey = settlingKey,
-            )
-            completionSettlingUiKey = null
-            return@LaunchedEffect
-        }
-
-        var settledFrames = 0
-        var previousMarkdownTailSize: Int? = null
-        var previousMarkdownFooterSize: Int? = null
-        val markdownWasAlreadyReleased = retainedLiveTailUiKey != settlingKey
-        repeat(60) completionFrame@{
-            withFrameNanos { }
-            if (messages.lastOrNull()?.uiKey != settlingKey) {
-                completionSettlingUiKey = null
-                return@LaunchedEffect
-            }
-
-            if (!markdownWasAlreadyReleased && retainedLiveTailUiKey == settlingKey) {
-                if (listState.canScrollForward) {
-                    settledFrames = 0
-                    val viewportHeight = listState.layoutInfo.viewportSize.height
-                    if (viewportHeight > 0) {
-                        listState.scroll(MutatePriority.Default) {
-                            scrollBy(viewportHeight.toFloat())
-                        }
-                    }
-                    return@completionFrame
-                }
-
-                settledFrames += 1
-                if (settledFrames < 2) return@completionFrame
-                retainedLiveTailUiKey = releaseRetainedLiveTail(
-                    retainedUiKey = retainedLiveTailUiKey,
-                    completedUiKey = settlingKey,
-                )
-                settledFrames = 0
-                return@completionFrame
-            }
-
-            // Once Markdown owns the row, position its measured trailing edge
-            // explicitly. `canScrollForward` is insufficient here: LazyColumn
-            // may preserve the leading edge of a tall item while reporting an
-            // otherwise valid item anchor. Repeating catches deferred parsing,
-            // highlighted code, and attachment measurement without competing
-            // with the ordinary streaming-growth coroutine.
-            val layout = listState.layoutInfo
-            val tailIndex = messages.size // header item + zero-based messages
-            val footerIndex = tailIndex + 1
-            val tailInfo = layout.visibleItemsInfo.firstOrNull { it.index == tailIndex }
-            val footerInfo = layout.visibleItemsInfo.firstOrNull { it.index == footerIndex }
-            if (tailInfo == null) {
-                listState.scrollToItem(tailIndex)
-                settledFrames = 0
-                return@completionFrame
-            }
-
-            val viewportHeight = layout.viewportSize.height
-            if (viewportHeight <= 0) return@completionFrame
-            val desiredOffset = tailEndScrollOffset(
-                tailSizePx = tailInfo.size,
-                footerSizePx = footerInfo?.size ?: 0,
-                viewportSizePx = viewportHeight,
-            )
-            if (desiredOffset == 0) {
-                listState.scrollToItem(footerIndex)
-            } else {
-                listState.scrollToItem(tailIndex, desiredOffset)
-            }
-            val footerSize = footerInfo?.size ?: 0
-            settledFrames = if (
-                previousMarkdownTailSize == tailInfo.size &&
-                previousMarkdownFooterSize == footerSize
-            ) {
-                settledFrames + 1
-            } else {
-                0
-            }
-            previousMarkdownTailSize = tailInfo.size
-            previousMarkdownFooterSize = footerSize
-            if (settledFrames >= 12) {
-                completionSettlingUiKey = null
-                return@LaunchedEffect
-            }
-        }
-        retainedLiveTailUiKey = releaseRetainedLiveTail(
-            retainedUiKey = retainedLiveTailUiKey,
-            completedUiKey = settlingKey,
-        )
-        completionSettlingUiKey = null
-    }
-
-    // Ordinary streaming growth keeps the same row and Text node. Advance the
-    // existing scroll position by exactly the measured positive height delta;
-    // never replace the logical anchor with scrollToItem(). User input has a
-    // higher mutation priority and cancels this work naturally.
-    LaunchedEffect(listState, smoothAutoScroll, userScrolledAway, isUserDragging) {
-        if (!smoothAutoScroll || userScrolledAway || isUserDragging) return@LaunchedEffect
-
-        var previousLayout: ChatTailLayoutSnapshot? = null
+    // One owner follows every bottom-preserving viewport transition. Streaming
+    // growth advances by its measured delta, while any ordinary viewport loss
+    // (IME, late composer controls, status text, or top chrome hydration)
+    // advances by the lost height. This matters on restore: model and effort
+    // controls can finish resolving after history has already reached the
+    // footer. The voice dock's measured 300 ms anchor transition temporarily
+    // owns both follow paths; ordinary late layout correction resumes after it
+    // settles. A visible footer supplies the authoritative final distance. No
+    // transition replaces the logical item anchor.
+    LaunchedEffect(listState, currentSessionId, smoothAutoScroll) {
+        var previousLayout: ChatViewportFollowSnapshot? = null
         snapshotFlow {
             val tail = messages.lastOrNull()
             val tailSize = tail?.uiKey?.let { uiKey ->
@@ -1613,39 +1709,80 @@ fun ChatScreen(
                     .firstOrNull { item -> item.key == uiKey }
                     ?.size
             }
-            ChatTailLayoutSnapshot(
-                uiKey = tail?.uiKey,
-                measuredSizePx = tailSize,
-                shouldFollowGrowth = tail?.isStreaming == true ||
-                    (retainedLiveTailUiKey != null && tail?.uiKey == retainedLiveTailUiKey),
+            ChatViewportFollowSnapshot(
+                totalItemsCount = listState.layoutInfo.totalItemsCount,
+                tailUiKey = tail?.uiKey,
+                tailSizePx = tailSize,
+                viewportHeightPx = listState.layoutInfo.viewportSize.height,
+                visibleBottomDistancePx = listState.visibleConversationBottomDistancePx(),
+                followTailGrowth = !voiceDockAnchorTransitionActive &&
+                    !isUserDragging &&
+                    smoothAutoScroll &&
+                    !userScrolledAway &&
+                    (tail?.isStreaming == true ||
+                        (retainedLiveTailUiKey != null && tail?.uiKey == retainedLiveTailUiKey)),
+                followViewportResize = shouldFollowConversationViewportResize(
+                    userScrolledAway = userScrolledAway,
+                    userDragging = isUserDragging,
+                    imeBottomPx = latestImeBottomPx,
+                    followImeResize = followImeResize,
+                    voiceDockAnchorTransitionActive = voiceDockAnchorTransitionActive,
+                ),
             )
         }
             .distinctUntilChanged()
             .collect { current ->
                 val previous = previousLayout
+                val scrollPx = ownedBottomFollowScroll(previous, current)
+                val correctLateLayout = shouldCorrectConversationBottomAfterLayout(
+                    previous = previous,
+                    current = current,
+                    atExactBottom = listState.isAtConversationBottom(0),
+                    userScrolledAway = userScrolledAway,
+                    userDragging = isUserDragging,
+                    isStreaming = messages.lastOrNull()?.isStreaming == true,
+                    smoothAutoScroll = smoothAutoScroll,
+                    viewportFollowAllowed = current.followViewportResize,
+                )
                 previousLayout = current
-                val previousSize = previous?.measuredSizePx ?: return@collect
-                val currentSize = current.measuredSizePx ?: return@collect
-                if (!current.shouldFollowGrowth || previous.uiKey != current.uiKey) return@collect
-
-                val growthPx = currentSize - previousSize
-                if (growthPx > 0) {
+                if (scrollPx > 0) {
                     listState.scroll(MutatePriority.Default) {
-                        scrollBy(growthPx.toFloat())
+                        scrollBy(scrollPx.toFloat())
+                    }
+                } else if (correctLateLayout) {
+                    val lastIndex = listState.layoutInfo.totalItemsCount - 1
+                    if (lastIndex >= 0) {
+                        programmaticBottomScroll = true
+                        try {
+                            listState.scrollToItem(lastIndex)
+                            userScrolledAway = false
+                        } finally {
+                            programmaticBottomScroll = false
+                        }
                     }
                 }
             }
     }
 
-    // Completion haptic only; scroll ownership remains with the transition and
-    // measured-growth paths above.
-    var observedActiveStream by remember { mutableStateOf(false) }
+    // Completion keeps the stable live renderer, then settles the owned
+    // transcript to the exact boundary after its final layout pass.
+    var observedActiveStream by remember(currentSessionId) { mutableStateOf(false) }
     LaunchedEffect(isStreaming) {
         if (isStreaming) {
             observedActiveStream = true
         } else if (observedActiveStream) {
             observedActiveStream = false
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            if (
+                shouldExactlySettleConversation(
+                    autoFollowEnabled = smoothAutoScroll,
+                    userScrolledAway = userScrolledAway,
+                    userDragging = isUserDragging,
+                    hasMessages = messages.isNotEmpty(),
+                )
+            ) {
+                scrollConversationToBottom(animated = false)
+            }
         }
     }
 
@@ -1730,6 +1867,8 @@ fun ChatScreen(
                 scopeSubtitle = drawerSubtitle,
                 isLoading = isLoadingSessions,
                 isOpen = drawerState.isOpen,
+                activityStates = sessionActivityStates,
+                animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
                 onRefresh = { chatViewModel.refreshSessions() },
                 onNewChat = {
@@ -2777,14 +2916,14 @@ fun ChatScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                // The visible FAB is narrower than the pet's
-                                // footprint. Measure a transparent landing
-                                // ledge around it so the pet can stand above
-                                // the control without covering its touch area.
+                                // The complete control envelope is forbidden
+                                // terrain. Registering it as a perch invited
+                                // the pet onto the button and let sibling
+                                // composer routes treat it as walkable terrain.
                                 .width(72.dp)
                                 .height(48.dp)
-                                .petPerchSurface(
-                                    key = CHAT_SCROLL_TO_BOTTOM_PET_PERCH,
+                                .petObstacleSurface(
+                                    key = CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE,
                                     routes = CHAT_PET_ROUTES,
                                 ),
                             contentAlignment = Alignment.Center,
@@ -2792,14 +2931,6 @@ fun ChatScreen(
                         SmallFloatingActionButton(
                             modifier = Modifier
                                 .size(48.dp)
-                                // The surrounding box is a landing ledge, but
-                                // the real control remains forbidden space so
-                                // composer and bubble routes cannot pass the
-                                // pet's complete scaled footprint over it.
-                                .petObstacleSurface(
-                                    key = CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE,
-                                    routes = CHAT_PET_ROUTES,
-                                )
                                 .semantics {
                                     contentDescription = if (unreadMessageCount > 0) {
                                         "Scroll to bottom, $unreadMessageCount unread " +
@@ -3228,22 +3359,37 @@ fun ChatScreen(
                 )
             }
             val normalizedEffort = normalizeReasoningEffortForInput(selectedReasoningEffort)
-            val effortLabels = mapOf(
-                "none" to stringResource(R.string.chat_reasoning_none),
-                "minimal" to stringResource(R.string.chat_reasoning_minimal),
-                "low" to stringResource(R.string.chat_reasoning_low),
-                "medium" to stringResource(R.string.chat_reasoning_medium),
-                "high" to stringResource(R.string.chat_reasoning_high),
-                "xhigh" to stringResource(R.string.chat_reasoning_high),
-            )
-            val effortPickerOptions = remember(normalizedEffort) {
-                CHAT_INPUT_REASONING_EFFORTS.map { effort ->
+            // Reads the same provider/model resolver used by session.create.
+            // Collected identity flows above keep this synchronous view reactive.
+            val effortAvailability = remember(
+                selectedModelOverride,
+                selectedProviderOverride,
+                gatewayCurrentModel,
+                gatewayCurrentProvider,
+                modelProviders,
+                apiModelOptions,
+                reasoningCapabilityRevision,
+            ) {
+                chatViewModel.reasoningEffortAvailability()
+            }
+            val effortPickerOptions = effortAvailability.choices.map { effort ->
                     ChatInputPickerOption(
-                        label = reasoningEffortChipLabel(effort, effortLabels),
+                        label = reasoningEffortLabel(effort),
                         value = effort,
-                        selected = effort == normalizedEffort,
+                        selected = selectedReasoningEffort != null && effort == normalizedEffort,
                     )
-                }
+            }
+            val effortPickerSubtitle = when {
+                effortAvailability.exact &&
+                    selectedReasoningEffort != null &&
+                    normalizedEffort !in effortAvailability.choices -> stringResource(
+                        R.string.reasoning_effort_current_outside_supported,
+                        reasoningEffortLabel(normalizedEffort),
+                        effortPickerOptions.joinToString { it.label },
+                    )
+                !effortAvailability.exact ->
+                    stringResource(R.string.reasoning_effort_standard_levels_notice)
+                else -> null
             }
             // Show the effort chip as soon as the gateway IS the transport or is
             // still being probed (Unknown) — so it appears alongside the model
@@ -3254,9 +3400,14 @@ fun ChatScreen(
             // shows the current effort but disabled. Hidden only when the gateway
             // is definitively unreachable (SSE-only) — the agent sheet carries the
             // disabled-with-reason version there.
-            val effortControl = if (chatGatewayAvailability != GatewayAvailability.Unreachable) {
+            val effortControl = if (
+                chatGatewayAvailability != GatewayAvailability.Unreachable &&
+                effortAvailability.supported != false &&
+                effortPickerOptions.isNotEmpty()
+            ) {
                 ChatInputPickerControl(
-                    value = reasoningEffortChipLabel(normalizedEffort, effortLabels),
+                    value = selectedReasoningEffort?.let { reasoningEffortLabel(it) }
+                        ?: stringResource(R.string.conn_info_server_default),
                     contentDescription = stringResource(R.string.chat_select_reasoning_effort),
                     options = effortPickerOptions,
                     enabled = isGatewayTransport && chatReady && !isStreaming,
@@ -3364,9 +3515,7 @@ fun ChatScreen(
                     }
                 },
                 effortControl = effortControl,
-                onEffortOptionSelected = { option ->
-                    option.value?.let { chatViewModel.selectReasoningEffort(it) }
-                },
+                onEffortPickerClick = { showEffortSheet = true },
                 topContent = {
                     ConversationVoiceDock(
                         uiState = voiceUiState,
@@ -3391,10 +3540,10 @@ fun ChatScreen(
                 },
                 topContentVisible = conversationVoiceDockVisible,
                 suppressVoiceTrailing = conversationVoiceDockVisible,
-                // Measure the existing composer as a Desktop-style ledge. The
-                // floating host stands on its top edge; no transcript space is
-                // reserved and the composer controls remain unobstructed.
-                modifier = Modifier.petPerchSurface(
+                // Measure the visible composer Surface as a Desktop-style
+                // ledge. Registering the outer input column includes its 6dp
+                // visual margin and makes a correctly grounded pet look raised.
+                surfaceModifier = Modifier.petPerchSurface(
                     key = CHAT_PET_WALK_REGION,
                     routes = CHAT_PET_ROUTES,
                 ),
@@ -3416,6 +3565,20 @@ fun ChatScreen(
                         }
                     },
                     onDismiss = { showModelSheet = false },
+                )
+            }
+            if (showEffortSheet) {
+                OptionPickerSheet(
+                    title = stringResource(R.string.chat_select_reasoning_effort),
+                    subtitle = effortPickerSubtitle,
+                    options = effortPickerOptions.map { option ->
+                        option.copy(enabled = effortControl?.enabled == true)
+                    },
+                    onSelect = { option ->
+                        showEffortSheet = false
+                        option.value?.let(chatViewModel::selectReasoningEffort)
+                    },
+                    onDismiss = { showEffortSheet = false },
                 )
             }
         } // end Column
@@ -4179,8 +4342,6 @@ private fun createCameraCaptureUri(context: android.content.Context): Uri {
     )
 }
 
-private val CHAT_INPUT_REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")
-
 internal fun shouldShowCleanViewHint(
     hasMessages: Boolean,
     ambientMode: Boolean,
@@ -4195,12 +4356,8 @@ private fun compactModelChipLabel(model: String?, defaultLabel: String): String 
 }
 
 private fun normalizeReasoningEffortForInput(value: String?): String {
-    val normalized = value?.trim()?.lowercase().orEmpty()
-    return normalized.takeIf { it in CHAT_INPUT_REASONING_EFFORTS } ?: "medium"
+    return ReasoningEfforts.normalize(value)
 }
-
-private fun reasoningEffortChipLabel(value: String, labels: Map<String, String>): String =
-    labels[value] ?: labels["medium"] ?: value
 
 private fun isSameDay(ts1: Long, ts2: Long): Boolean {
     val d1 = java.time.Instant.ofEpochMilli(ts1).atZone(java.time.ZoneId.systemDefault()).toLocalDate()

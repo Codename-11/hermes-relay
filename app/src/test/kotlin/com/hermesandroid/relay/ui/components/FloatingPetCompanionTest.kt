@@ -20,6 +20,11 @@ import org.junit.Test
 
 class FloatingPetCompanionTest {
     @Test
+    fun `supported floating pet rails add no visible vertical clearance`() {
+        assertEquals(0f, FLOATING_PET_SUPPORTED_RAIL_CLEARANCE_DP, 0f)
+    }
+
+    @Test
     fun `terrain lookahead plans multiple levels before movement starts`() {
         val composer = PetRoamingRail(
             key = "composer:0",
@@ -107,6 +112,35 @@ class FloatingPetCompanionTest {
         assertTrue(floatingPetAcceptsPointerInput(positioned = true, surfaceScrolling = false))
         assertFalse(floatingPetAcceptsPointerInput(positioned = true, surfaceScrolling = true))
         assertFalse(floatingPetAcceptsPointerInput(positioned = false, surfaceScrolling = false))
+    }
+
+    @Test
+    fun `pet waits for a measured viewport before publishing its position`() {
+        assertFalse(shouldInitializeFloatingPet(false, viewportWidth = 0, viewportHeight = 0))
+        assertFalse(shouldInitializeFloatingPet(false, viewportWidth = 400, viewportHeight = 0))
+        assertFalse(shouldInitializeFloatingPet(false, viewportWidth = 0, viewportHeight = 800))
+        assertTrue(shouldInitializeFloatingPet(false, viewportWidth = 400, viewportHeight = 800))
+        assertFalse(shouldInitializeFloatingPet(true, viewportWidth = 400, viewportHeight = 800))
+    }
+
+    @Test
+    fun `chat pet waits for owner terrain before publishing its first position`() {
+        assertFalse(
+            shouldInitializeFloatingPet(
+                positioned = false,
+                viewportWidth = 400,
+                viewportHeight = 800,
+                terrainReady = false,
+            ),
+        )
+        assertTrue(
+            shouldInitializeFloatingPet(
+                positioned = false,
+                viewportWidth = 400,
+                viewportHeight = 800,
+                terrainReady = true,
+            ),
+        )
     }
 
     @Test
@@ -429,6 +463,16 @@ class FloatingPetCompanionTest {
         assertEquals(60f, compactMaximum.visualSizeDp, 0.001f)
         assertEquals(72f, compactMaximum.targetSizeDp, 0.001f)
         assertEquals(FloatingPetDimensions(60f, 70f), floatingPetDimensions(false, Float.NaN))
+
+        listOf(
+            70f to 60f,
+            48f to 72f,
+            84f to 84f,
+        ).forEach { (target, visual) ->
+            val collision = floatingPetCollisionSizePx(target, visual)
+            assertTrue(collision >= target)
+            assertTrue(collision >= visual)
+        }
     }
 
     @Test

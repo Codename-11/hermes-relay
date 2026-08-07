@@ -260,6 +260,9 @@ class GatewayChatClient(
     private val _serverProvider = MutableStateFlow<String?>(null)
     val serverProvider: StateFlow<String?> = _serverProvider.asStateFlow()
 
+    private val _serverModelIdentity = MutableStateFlow<GatewayModelIdentity?>(null)
+    val serverModelIdentity: StateFlow<GatewayModelIdentity?> = _serverModelIdentity.asStateFlow()
+
     /**
      * Active reasoning EFFORT from `session.info` (string; "" when reasoning is
      * disabled). The reasoning DISPLAY mode is NOT on session.info — it stays a
@@ -268,6 +271,10 @@ class GatewayChatClient(
      */
     private val _serverReasoningEffort = MutableStateFlow<String?>(null)
     val serverReasoningEffort: StateFlow<String?> = _serverReasoningEffort.asStateFlow()
+
+    private val _serverReasoningIdentity = MutableStateFlow<GatewayReasoningIdentity?>(null)
+    val serverReasoningIdentity: StateFlow<GatewayReasoningIdentity?> =
+        _serverReasoningIdentity.asStateFlow()
 
     /**
      * Server-reported credential warning (upstream `session.info.credential_warning`)
@@ -1421,20 +1428,7 @@ class GatewayChatClient(
         return rpc("model.options", params).map { result ->
             val providers = (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
                 val obj = el as? JsonObject ?: return@mapNotNull null
-                val slug = obj.stringField("slug") ?: return@mapNotNull null
-                GatewayModelProvider(
-                    name = obj.stringField("name") ?: slug,
-                    slug = slug,
-                    models = (obj["models"] as? JsonArray).orEmpty()
-                        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-                    isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
-                    warning = obj.stringField("warning"),
-                    authenticated = (obj["authenticated"] as? JsonPrimitive)?.booleanOrNull ?: true,
-                    unavailableModels = (obj["unavailable_models"] as? JsonArray).orEmpty()
-                        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-                    freeTier = (obj["free_tier"] as? JsonPrimitive)?.booleanOrNull ?: false,
-                    totalModels = (obj["total_models"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0,
-                )
+                parseGatewayModelProvider(obj)
             }
             GatewayModelOptions(
                 providers = providers,
@@ -1784,12 +1778,23 @@ class GatewayChatClient(
             _serverPersonality.value =
                 (info.stringField("personality") ?: "").ifBlank { "none" }
         }
-        info.stringField("model")?.takeIf { it.isNotBlank() }?.let { _serverModel.value = it }
-        info.stringField("provider")?.takeIf { it.isNotBlank() }?.let { _serverProvider.value = it }
+        val model = info.stringField("model")?.takeIf { it.isNotBlank() }
+        val provider = info.stringField("provider")?.takeIf { it.isNotBlank() }
+        model?.let { _serverModel.value = it }
+        provider?.let { _serverProvider.value = it }
+        if (model != null && provider != null) {
+            _serverModelIdentity.value = GatewayModelIdentity(model = model, provider = provider)
+        }
         // reasoning effort: ignore "" (reasoning disabled) so it can't clobber
         // the chip; display mode is config.get-only, not here.
-        info.stringField("reasoning_effort")?.takeIf { it.isNotBlank() }
-            ?.let { _serverReasoningEffort.value = it }
+        val reasoningEffort = info.stringField("reasoning_effort")?.takeIf { it.isNotBlank() }
+        reasoningEffort?.let { _serverReasoningEffort.value = it }
+        if (model != null && provider != null && reasoningEffort != null) {
+            _serverReasoningIdentity.value = GatewayReasoningIdentity(
+                identity = GatewayModelIdentity(model = model, provider = provider),
+                effort = reasoningEffort,
+            )
+        }
         // credential_warning: present only when the provider key is missing/
         // invalid. ABSENT means healthy — clear to null so it self-resolves.
         _serverCredentialWarning.value =

@@ -118,6 +118,8 @@
     <string name="chat_placeholder_message">Nachricht…</string>
     <string name="chat_edit_busy_snackbar">Bearbeiten derzeit nicht möglich — warte, bis der aktuelle Durchlauf beendet ist</string>
     <string name="chat_select_reasoning_effort">Denkaufwand auswählen</string>
+    <string name="reasoning_effort_standard_levels_notice">Hermes gibt für dieses Modell keine genauen Aufwandsstufen an. Daher werden Standardoptionen angezeigt.</string>
+    <string name="reasoning_effort_current_outside_supported">Aktuelle Sitzung: %1$s (von Hermes gemeldet). Neue Auswahlen für dieses Modell sind auf %2$s beschränkt.</string>
 
     <!-- Voice toasts -->
     <string name="voice_toast_signin_route">Sprache erfordert eine einmalige Anmeldung über die Route %1$s — öffne Verwalten</string>
@@ -855,6 +857,9 @@
     <string name="drawer_refresh_sessions">Sitzungen aktualisieren</string>
     <string name="drawer_new_chat">Neuer Chat</string>
     <string name="drawer_search_placeholder">Sitzungen oder ID suchen...</string>
+    <string name="drawer_search_sessions">Sitzungen durchsuchen</string>
+    <string name="drawer_activity_working">Wird bearbeitet</string>
+    <string name="drawer_activity_needs_input">Eingabe erforderlich</string>
     <string name="drawer_new_thread">Neuer Thread</string>
     <string name="drawer_chats_not_named">Chats werden bei dieser Verbindung nicht automatisch benannt — verwende ⋮ → Umbenennen.</string>
     <string name="drawer_loading_sessions">Sitzungen werden geladen…</string>
@@ -2640,7 +2645,14 @@
 
     <!-- CrashReportDialog -->
     <string name="crash_title">Hermes-Relay wurde unerwartet beendet</string>
-    <string name="crash_body">Die letzte Sitzung ist abgestürzt. Dieser Bericht hilft, den Fehler schneller zu beheben.</string>
+    <string name="crash_body">Hermes-Relay wurde nach einem unerwarteten Problem neu gestartet. Sie können die App weiter verwenden.</string>
+    <string name="crash_privacy">Es wurde nichts gesendet. Prüfen Sie den lokal bereinigten Bericht vor dem Teilen.</string>
+    <string name="crash_review">Bericht prüfen</string>
+    <string name="crash_share_title">Absturzbericht teilen</string>
+    <string name="crash_share_subject">Hermes-Relay-Absturzbericht — %1$s</string>
+    <string name="crash_toast_no_share">Bericht kopiert — keine App zum Teilen gefunden</string>
+    <string name="crash_toast_opened">Vollständiger Bericht kopiert — GitHub-Problem vor dem Senden prüfen</string>
+    <string name="crash_toast_no_browser">Bericht kopiert — kein Browser für GitHub gefunden</string>
     <string name="crash_dismiss">Schließen</string>
     <string name="crash_copy">Kopieren</string>
     <string name="crash_share">Teilen</string>
@@ -2857,6 +2869,9 @@
     <string name="chat_reasoning_low">Niedrig</string>
     <string name="chat_reasoning_medium">Mittel</string>
     <string name="chat_reasoning_high">Hoch</string>
+    <string name="chat_reasoning_xhigh">Extra hoch</string>
+    <string name="chat_reasoning_max">Maximum</string>
+    <string name="chat_reasoning_ultra">Ultra</string>
     <string name="chat_date_today">Heute</string>
     <string name="chat_date_yesterday">Gestern</string>
     <string name="chat_share_subject">Hermes-Unterhaltung</string>
@@ -3839,4 +3854,10 @@
     <string name="plugins_keep">Behalten</string>
     <string name="plugins_remove">Entfernen</string>
     <string name="plugins_remove_confirm">„%1$s“ entfernen? Diese Plugin-Seite wird auf verbundenen Android-Geräten nicht mehr angezeigt.</string>
+    <string name="support_bundle_review">Supportinformationen prüfen</string>
+    <string name="support_bundle_title">Supportinformationen</string>
+    <string name="support_bundle_privacy">Nichts wird automatisch hochgeladen. Prüfen Sie den lokalen Export mit bis zu %1$d Berichten.</string>
+    <string name="support_bundle_copied">Supportinformationen kopiert</string>
+    <string name="support_bundle_no_share">Supportinformationen kopiert — keine App zum Teilen gefunden</string>
+    <string name="support_bundle_share_title">Hermes-Relay-Supportinformationen teilen</string>
 </resources>

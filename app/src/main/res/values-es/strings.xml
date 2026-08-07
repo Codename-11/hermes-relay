@@ -101,6 +101,8 @@
     <string name="chat_placeholder_message">Mensaje…</string>
     <string name="chat_edit_busy_snackbar">No se puede editar en este momento: espera a que termine el turno actual</string>
     <string name="chat_select_reasoning_effort">Seleccionar esfuerzo de razonamiento</string>
+    <string name="reasoning_effort_standard_levels_notice">Hermes no anuncia niveles de esfuerzo exactos para este modelo, por lo que se muestran las opciones estándar.</string>
+    <string name="reasoning_effort_current_outside_supported">Sesión actual: %1$s (informado por Hermes). Las nuevas selecciones para este modelo se limitan a %2$s.</string>
     <string name="voice_toast_signin_route">Voice necesita un inicio de sesión único en la ruta %1$s: abra Administrar</string>
     <string name="voice_toast_signin_default">Voice necesita iniciar sesión en el panel: abra Administrar para iniciar sesión</string>
     <string name="voice_toast_unsupported">Esta compilación Hermes no tiene rutas de voz: actualice el agente hermes o empareje Relay</string>
@@ -770,6 +772,9 @@
     <string name="drawer_refresh_sessions">Actualizar sesiones</string>
     <string name="drawer_new_chat">Nuevo chat</string>
     <string name="drawer_search_placeholder">Buscar sesiones o id...</string>
+    <string name="drawer_search_sessions">Buscar sesiones</string>
+    <string name="drawer_activity_working">En curso</string>
+    <string name="drawer_activity_needs_input">Requiere intervención</string>
     <string name="drawer_new_thread">Nuevo hilo</string>
     <string name="drawer_chats_not_named">Los chats no tienen nombre automático en esta conexión. Utiliza «→Renombrar».</string>
     <string name="drawer_loading_sessions">Cargando sesiones…</string>
@@ -2393,7 +2398,14 @@
     <string name="attachment_type_text">Texto</string>
     <string name="attachment_type_file">Archivo</string>
     <string name="crash_title">Hermes-Relay cerró inesperadamente</string>
-    <string name="crash_body">La última sesión fracasó. Enviar este informe ayuda a solucionarlo más rápido.</string>
+    <string name="crash_body">Hermes-Relay se reinició tras un problema inesperado. Puedes seguir usando la aplicación.</string>
+    <string name="crash_privacy">No se envió nada. Revisa el informe redactado localmente antes de compartirlo.</string>
+    <string name="crash_review">Revisar informe</string>
+    <string name="crash_share_title">Compartir informe de fallo</string>
+    <string name="crash_share_subject">Informe de fallo de Hermes-Relay — %1$s</string>
+    <string name="crash_toast_no_share">Informe copiado — no se encontró una aplicación para compartir</string>
+    <string name="crash_toast_opened">Informe completo copiado — revisa la incidencia de GitHub antes de enviarla</string>
+    <string name="crash_toast_no_browser">Informe copiado — no se encontró un navegador para GitHub</string>
     <string name="crash_dismiss">Descartar</string>
     <string name="crash_copy">Copiar</string>
     <string name="crash_share">Compartir</string>
@@ -2584,6 +2596,9 @@
     <string name="chat_reasoning_low">Bajo</string>
     <string name="chat_reasoning_medium">Medio</string>
     <string name="chat_reasoning_high">Alto</string>
+    <string name="chat_reasoning_xhigh">Muy alto</string>
+    <string name="chat_reasoning_max">Máximo</string>
+    <string name="chat_reasoning_ultra">Ultra</string>
     <string name="chat_date_today">Hoy</string>
     <string name="chat_date_yesterday">Ayer</string>
     <string name="chat_share_subject">Conversación Hermes</string>
@@ -3524,4 +3539,10 @@
     <string name="plugins_keep">Conservar</string>
     <string name="plugins_remove">Eliminar</string>
     <string name="plugins_remove_confirm">¿Eliminar «%1$s»? Esta página del plugin dejará de aparecer en los dispositivos Android conectados.</string>
+    <string name="support_bundle_review">Revisar información de soporte</string>
+    <string name="support_bundle_title">Información de soporte</string>
+    <string name="support_bundle_privacy">Nada se sube automáticamente. Revisa la exportación local con hasta %1$d informes.</string>
+    <string name="support_bundle_copied">Información de soporte copiada</string>
+    <string name="support_bundle_no_share">Información de soporte copiada — no se encontró una aplicación para compartir</string>
+    <string name="support_bundle_share_title">Compartir información de soporte de Hermes-Relay</string>
 </resources>

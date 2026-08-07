@@ -83,8 +83,15 @@ git worktree remove <path> # delete a worktree (must be clean, or pass --force)
   (`../hermes-feat-x`), not under the repo root, or it gets swept into globs and
   IDE indexing.
 - **Build outputs are per-folder.** That's the point (warm caches), but it also
-  means three worktrees ≈ three `build/` trees on disk. Prune merged worktrees so
-  they don't accumulate.
+  means three worktrees ≈ three `build/` trees on disk. Gradle's local build
+  cache is shared through the Gradle user home and can reuse compatible task
+  outputs across worktrees. Prune merged worktrees so build trees don't
+  accumulate.
+- **Serialize heavy Gradle invocations on one host.** Worktrees isolate source
+  and output directories, but concurrent Android compiles, lint, tests, and APK
+  packaging still compete for the same CPU, memory, daemon pool, and local
+  cache. Keep one heavy Gradle lane active at a time; parallelism inside that
+  invocation remains enabled.
 
 ## How this maps to releasing
 

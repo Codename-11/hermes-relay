@@ -194,27 +194,29 @@ fun VoiceModeOverlay(
         modifier = modifier
             .fillMaxSize()
             .background(if (focusMode) surface.copy(alpha = 0.96f) else Color.Transparent)
-            // Click-through fix: in focus mode the overlay is a true modal.
-            // Consume any pointer event a child (mic button, transcript,
-            // chips, pill) didn't handle so stray taps/swipes don't fall
-            // through to the chat + session drawer behind it. Children run on
-            // the same Main pass leaf-first, so this only catches the gaps.
-            // In Conversation the overlay is intentionally transparent and the
-            // chat stays interactive, so no scrim is installed.
-            .then(
-                if (focusMode) {
-                    Modifier.pointerInput(Unit) {
+    ) {
+        if (focusMode) {
+            // Focus is modal, but its click-through guard must be a sibling
+            // behind the controls. A consuming pointerInput on the root is an
+            // ancestor of every button and cancels their gesture detectors on
+            // later pointer passes, leaving ripples without firing callbacks.
+            // This scrim wins hit-testing only where no foreground control did,
+            // so blank-space gestures stay off the chat underneath while mic,
+            // close, pill, and expanded-panel controls remain interactive.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .testTag("voiceFocusInputScrim")
+                    .pointerInput(Unit) {
                         awaitPointerEventScope {
                             while (true) {
                                 awaitPointerEvent().changes.forEach { it.consume() }
                             }
                         }
-                    }
-                } else {
-                    Modifier
-                }
+                    },
             )
-    ) {
+        }
+
         if (focusMode) {
             VoiceSessionPill(
                 uiState = uiState,
@@ -427,7 +429,7 @@ fun VoiceModeOverlay(
                                 )
                             }
                             if (pendingTranscriptText != null) {
-                                item(key = "pending-voice-transcript") {
+                                item(key = "aux:pending-voice-transcript") {
                                     CompactTranscriptRow(
                                         message = ChatMessage(
                                             id = "pending-voice-transcript",
@@ -741,7 +743,8 @@ internal fun pendingVoiceTranscriptText(
     return if (alreadyRendered) null else transcribed
 }
 
-internal fun voiceTranscriptItemKey(message: ChatMessage): String = message.uiKey
+/** Message rows and Voice-only auxiliary rows occupy disjoint key namespaces. */
+internal fun voiceTranscriptItemKey(message: ChatMessage): String = "message:${message.uiKey}"
 
 /**
  * Conversation-mode voice controls that live inside the chat composer.

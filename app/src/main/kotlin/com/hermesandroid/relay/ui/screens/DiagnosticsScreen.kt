@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -10,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -42,6 +45,13 @@ import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.ui.components.DiagnosticDetailDialog
 import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.StatusCheckTimeline
+import com.hermesandroid.relay.ui.components.SupportBundleDialog
+import com.hermesandroid.relay.ui.components.SupportReviewState
+import com.hermesandroid.relay.ui.components.buildSupportReviewState
+import com.hermesandroid.relay.reliability.ReliabilityCenter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
@@ -118,6 +128,8 @@ fun DiagnosticsScreen(
 
     // Tapping a check backed by a concrete log entry opens its full detail.
     var selectedEntry by remember { mutableStateOf<DiagnosticLogEntry?>(null) }
+    var supportReview by remember { mutableStateOf<SupportReviewState?>(null) }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -232,6 +244,19 @@ fun DiagnosticsScreen(
                 },
             )
 
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        supportReview = withContext(Dispatchers.IO) {
+                            buildSupportReviewState(ReliabilityCenter.reports(context))
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.support_bundle_review))
+            }
+
             Text(
                 text = stringResource(R.string.diag_recent_diagnostics),
                 style = MaterialTheme.typography.titleMedium,
@@ -255,6 +280,9 @@ fun DiagnosticsScreen(
 
     selectedEntry?.let { entry ->
         DiagnosticDetailDialog(entry = entry, onDismiss = { selectedEntry = null })
+    }
+    supportReview?.let { state ->
+        SupportBundleDialog(state = state, onDismiss = { supportReview = null })
     }
 }
 
@@ -295,7 +323,7 @@ internal fun buildStatusChecks(
             it.category == category && it.severity == DiagnosticSeverity.Error
         }
 
-    fun DiagnosticLogEntry.message(): String = detail ?: title
+    fun DiagnosticLogEntry.message(): String = suggestion ?: detail ?: title
 
     val checks = mutableListOf<StatusCheck>()
 

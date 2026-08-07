@@ -218,8 +218,14 @@ class ChatHandler {
      */
     private val activeAnnotationTools = mutableMapOf<String, String>()
 
-    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
-    val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+    // All Chat and Voice transcript publications pass through this invariant
+    // boundary. A caller may address a row by its mutable server/domain id or
+    // its retained client uiKey, but Compose must never observe both aliases.
+    private val _messages = RenderedMessageState(emptyList())
+    val messages: StateFlow<List<ChatMessage>> = _messages.flow
+
+    private fun ChatMessage.matchesIdentity(reference: String): Boolean =
+        id == reference || uiKey == reference
 
     /**
      * Latest gateway `status.update` lifecycle line for the in-flight turn
@@ -324,8 +330,8 @@ class ChatHandler {
         // message.started can replace that domain id with the server id while
         // uiKey deliberately retains the client id. Resolve the current domain
         // id before every event so the tail keeps mutating the same visible row.
-        val currentMessageId = _messages.value.findLast { message ->
-            message.id == messageId || message.uiKey == messageId
+        val currentMessageId = _messages.value.findLast {
+            it.matchesIdentity(messageId)
         }?.id ?: messageId
 
         when (envelope.event) {
@@ -392,7 +398,7 @@ class ChatHandler {
      */
     fun updateDeliveryStatus(messageId: String, status: MessageDeliveryStatus) {
         _messages.update { list ->
-            list.map { if (it.id == messageId) it.copy(deliveryStatus = status) else it }
+            list.map { if (it.matchesIdentity(messageId)) it.copy(deliveryStatus = status) else it }
         }
     }
 
@@ -400,7 +406,7 @@ class ChatHandler {
     fun setBackgroundTask(messageId: String, task: BackgroundTaskState) {
         _messages.update { list ->
             list.map { message ->
-                if (message.id == messageId) message.copy(backgroundTask = task) else message
+                if (message.matchesIdentity(messageId)) message.copy(backgroundTask = task) else message
             }
         }
     }
@@ -412,7 +418,7 @@ class ChatHandler {
     ) {
         _messages.update { list ->
             list.map { message ->
-                if (message.id == messageId && message.backgroundTask != null) {
+                if (message.matchesIdentity(messageId) && message.backgroundTask != null) {
                     message.copy(backgroundTask = transform(message.backgroundTask))
                 } else {
                     message
@@ -493,7 +499,7 @@ class ChatHandler {
      */
     fun appendAskCardMessage(messageId: String, card: HermesCard) {
         _messages.update { list ->
-            if (list.any { it.id == messageId }) return@update list
+            if (list.any { it.matchesIdentity(messageId) }) return@update list
             val msg = ChatMessage(
                 id = messageId,
                 role = MessageRole.ASSISTANT,
@@ -515,7 +521,7 @@ class ChatHandler {
      */
     fun truncateMessagesFrom(messageId: String) {
         _messages.update { list ->
-            val idx = list.indexOfFirst { it.id == messageId }
+            val idx = list.indexOfFirst { it.matchesIdentity(messageId) }
             if (idx < 0) list else list.take(idx)
         }
     }
@@ -523,7 +529,7 @@ class ChatHandler {
     fun replaceMessageContent(messageId: String, content: String) {
         _messages.update { messages ->
             messages.map { message ->
-                if (message.id == messageId) {
+                if (message.matchesIdentity(messageId)) {
                     message.copy(content = content)
                 } else {
                     message
@@ -543,8 +549,9 @@ class ChatHandler {
         content: String,
     ) {
         _messages.update { messages ->
-            val interim = messages.firstOrNull { it.id == interimMessageId } ?: return@update messages
-            val current = messages.firstOrNull { it.id == currentMessageId }
+            val interim = messages.firstOrNull { it.matchesIdentity(interimMessageId) }
+                ?: return@update messages
+            val current = messages.firstOrNull { it.matchesIdentity(currentMessageId) }
             val mergedTools = (interim.toolCalls + current?.toolCalls.orEmpty())
                 .distinctBy { it.id ?: "${it.name}:${it.startedAt}" }
             val merged = interim.copy(
@@ -563,14 +570,18 @@ class ChatHandler {
                 backgroundTask = current?.backgroundTask ?: interim.backgroundTask,
             )
             messages
-                .filterNot { it.id == currentMessageId && currentMessageId != interimMessageId }
-                .map { if (it.id == interimMessageId) merged else it }
+                .filterNot {
+                    current != null &&
+                        current.uiKey != interim.uiKey &&
+                        it.matchesIdentity(currentMessageId)
+                }
+                .map { if (it.matchesIdentity(interimMessageId)) merged else it }
         }
     }
 
     /** Remove a provisional client-side message that never became a real turn. */
     fun removeMessage(messageId: String) {
-        _messages.update { messages -> messages.filterNot { it.id == messageId } }
+        _messages.update { messages -> messages.filterNot { it.matchesIdentity(messageId) } }
     }
 
     /**
@@ -752,7 +763,7 @@ class ChatHandler {
         _messages.update { messages ->
             var changed = false
             val mapped = messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     changed = true
                     // A realtimeTurn trace is attached ONLY for provider-only
                     // (non-Hermes-backed) turns — Hermes-backed ones leave it
@@ -971,7 +982,12 @@ class ChatHandler {
         val user = checkpoint.user
         val assistant = checkpoint.assistant
         val upstreamText = upstreamAssistantText.orEmpty()
-        val currentAssistant = _messages.value.lastOrNull { it.id == assistant.id }
+        // A history poll may already have adopted the server id while the
+        // checkpoint still names the original client identity. They are one
+        // logical row, resolved through either side of that alias.
+        val currentAssistant = _messages.value.lastOrNull {
+            it.matchesIdentity(assistant.id) && it.role == MessageRole.ASSISTANT
+        }
         val restoredContent = listOf(
             assistant.content,
             upstreamText,
@@ -1053,7 +1069,8 @@ class ChatHandler {
             ?.takeIf { it.isNotEmpty() }
             ?: checkpointMoaReferences
         val restoredAssistant = ChatMessage(
-            id = assistant.id,
+            id = currentAssistant?.id ?: assistant.id,
+            uiKey = currentAssistant?.uiKey ?: assistant.id,
             role = MessageRole.ASSISTANT,
             content = restoredContent,
             timestamp = assistant.timestamp,
@@ -1080,10 +1097,12 @@ class ChatHandler {
 
         activeAgentName = restoredAssistant.agentName ?: activeAgentName
         _messages.update { current ->
-            val withoutOldAssistant = current.filterNot { it.id == assistant.id }
+            val withoutOldAssistant = current.filterNot {
+                it.matchesIdentity(assistant.id) && it.role == MessageRole.ASSISTANT
+            }
             val users = withoutOldAssistant.filter { it.role == MessageRole.USER }
             val positionalUser = users.getOrNull(checkpoint.priorUserMessageCount)
-            val hasUser = withoutOldAssistant.any { it.id == user.id } ||
+            val hasUser = withoutOldAssistant.any { it.matchesIdentity(user.id) } ||
                 positionalUser?.content?.trim() == user.content.trim()
             val withUser = if (hasUser) {
                 withoutOldAssistant
@@ -1100,7 +1119,7 @@ class ChatHandler {
             // those corrections as ordinary user bubbles before the assistant
             // row. Consume matching already-present rows first so repeated
             // resume/checkpoint passes cannot duplicate them.
-            val originalUserIndex = withUser.indexOfFirst { it.id == user.id }
+            val originalUserIndex = withUser.indexOfFirst { it.matchesIdentity(user.id) }
                 .takeIf { it >= 0 }
                 ?: withUser.indexOfFirst {
                     it.role == MessageRole.USER && it.content.trim() == user.content.trim()
@@ -1213,7 +1232,7 @@ class ChatHandler {
     fun replaceMessageId(oldId: String, newId: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == oldId && msg.content.isBlank() && msg.isStreaming) {
+                if (msg.matchesIdentity(oldId) && msg.content.isBlank() && msg.isStreaming) {
                     msg.copy(id = newId)
                 } else msg
             }
@@ -1236,7 +1255,7 @@ class ChatHandler {
     fun mutateMessage(messageId: String, transform: (ChatMessage) -> ChatMessage) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId) transform(msg) else msg
+                if (msg.matchesIdentity(messageId)) transform(msg) else msg
             }
         }
     }
@@ -2024,12 +2043,12 @@ class ChatHandler {
 
         _messages.update { messages ->
             val existing = messages.findLast {
-                it.id == messageId && it.role == MessageRole.ASSISTANT
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
             }
 
             if (existing != null) {
                 messages.map { msg ->
-                    if (msg.id == messageId) {
+                    if (msg.matchesIdentity(messageId)) {
                         msg.copy(content = msg.content + processedDelta)
                     } else {
                         msg
@@ -2262,7 +2281,7 @@ class ChatHandler {
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     msg.copy(cards = msg.cards + card)
                 } else msg
             }
@@ -2288,7 +2307,7 @@ class ChatHandler {
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
                 var cleaned = msg.content
                 var changed = false
                 for (rawLine in msg.content.lines()) {
@@ -2355,7 +2374,7 @@ class ChatHandler {
     private fun stripLineFromContent(messageId: String, line: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     // Remove the line (with surrounding newlines) from content
                     val cleaned = msg.content
                         .replace("\n$line\n", "\n")
@@ -2492,7 +2511,7 @@ class ChatHandler {
         // that raced with stripLineFromContent during streaming.
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
                 var cleaned = msg.content
                 var changed = false
                 for (rawLine in msg.content.lines()) {
@@ -2546,7 +2565,7 @@ class ChatHandler {
     private fun finalizeAnnotations(messageId: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
 
                 val existingToolNames = msg.toolCalls.map { it.name }.toSet()
                 val newToolCalls = mutableListOf<ToolCall>()
@@ -2629,7 +2648,7 @@ class ChatHandler {
             .take(4)
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     msg.copy(badges = cleaned)
                 } else {
                     msg
@@ -2645,7 +2664,7 @@ class ChatHandler {
         if (cleaned.isEmpty()) return
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     msg.copy(badges = (msg.badges + cleaned).distinct().take(4))
                 } else {
                     msg
@@ -2679,11 +2698,11 @@ class ChatHandler {
         )
         _messages.update { messages ->
             val target = messages.findLast {
-                it.id == messageId && it.role == MessageRole.ASSISTANT
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
             }
             if (target != null) {
                 messages.map { msg ->
-                    if (msg.id == messageId) {
+                    if (msg.matchesIdentity(messageId)) {
                         msg.copy(toolCalls = msg.toolCalls + placeholder)
                     } else {
                         msg
@@ -2714,7 +2733,7 @@ class ChatHandler {
 
         _messages.update { messages ->
             val target = messages.findLast {
-                it.id == messageId && it.role == MessageRole.ASSISTANT
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
             }
             if (target != null) {
                 // Adopt a pending "preparing" placeholder for this name
@@ -2728,7 +2747,7 @@ class ChatHandler {
                         .indexOfFirst { it.isGenerating && !it.isComplete && it.name.isEmpty() }
                         .takeIf { it >= 0 }
                 messages.map { msg ->
-                    if (msg.id != messageId) return@map msg
+                    if (!msg.matchesIdentity(messageId)) return@map msg
                     if (genIdx != null) {
                         val calls = msg.toolCalls.toMutableList()
                         calls[genIdx] = calls[genIdx].copy(
@@ -2786,7 +2805,7 @@ class ChatHandler {
     fun onMoaReference(messageId: String, event: GatewayMoaReference) {
         _messages.update { messages ->
             val targetIndex = messages.indexOfLast {
-                it.id == messageId && it.role == MessageRole.ASSISTANT
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
             }
             if (targetIndex < 0) return@update messages
             _isStreaming.value = true
@@ -2861,11 +2880,11 @@ class ChatHandler {
                 )
                 _messages.update { messages ->
                     val target = messages.findLast {
-                        it.id == messageId && it.role == MessageRole.ASSISTANT
+                        it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
                     }
                     if (target != null) {
                         messages.map { msg ->
-                            if (msg.id != messageId) return@map msg
+                            if (!msg.matchesIdentity(messageId)) return@map msg
                             val closed = msg.toolCalls.map { call ->
                                 if (call.taskIndex == event.taskIndex && !call.isComplete) {
                                     call.copy(
@@ -2900,7 +2919,7 @@ class ChatHandler {
                 val summaryId = "subagent-${event.taskIndex}-${syntheticToolSeq++}"
                 _messages.update { messages ->
                     messages.map { msg ->
-                        if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                        if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
                         val hasLaneCalls = msg.toolCalls.any { it.taskIndex == event.taskIndex }
                         val closed = msg.toolCalls.map { call ->
                             if (call.taskIndex == event.taskIndex && !call.isComplete) {
@@ -2951,14 +2970,14 @@ class ChatHandler {
         // Snapshot the matching tool call's name BEFORE mutating — we need it
         // to decide whether to emit a phone-action result bubble below.
         val toolName = _messages.value
-            .firstOrNull { it.id == messageId && it.role == MessageRole.ASSISTANT }
+            .firstOrNull { it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT }
             ?.toolCalls
             ?.firstOrNull { it.id == toolCallId }
             ?.name
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     val updatedCalls = msg.toolCalls.map { call ->
                         if (call.id == toolCallId && !call.isComplete) {
                             call.copy(
@@ -2995,14 +3014,14 @@ class ChatHandler {
         // Snapshot tool name before the update so the phone-action bubble
         // can label the failure correctly.
         val toolName = _messages.value
-            .firstOrNull { it.id == messageId && it.role == MessageRole.ASSISTANT }
+            .firstOrNull { it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT }
             ?.toolCalls
             ?.firstOrNull { it.id == toolCallId }
             ?.name
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     val updatedCalls = msg.toolCalls.map { call ->
                         if (call.id == toolCallId && !call.isComplete) {
                             call.copy(
@@ -3035,7 +3054,7 @@ class ChatHandler {
     fun onToolOutputRisk(messageId: String, outputRisk: GatewayToolOutputRisk) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
                 val updatedCalls = msg.toolCalls.map { call ->
                     if (call.id == outputRisk.toolCallId) {
                         call.copy(
@@ -3066,7 +3085,7 @@ class ChatHandler {
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId) {
+                if (msg.matchesIdentity(messageId)) {
                     msg.copy(isStreaming = false, isThinkingStreaming = false)
                 } else {
                     msg
@@ -3095,7 +3114,7 @@ class ChatHandler {
     fun markStopped(messageId: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && "Stopped" !in msg.badges) {
+                if (msg.matchesIdentity(messageId) && "Stopped" !in msg.badges) {
                     msg.copy(badges = msg.badges + "Stopped")
                 } else {
                     msg
@@ -3122,7 +3141,7 @@ class ChatHandler {
     fun markError(messageId: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && "Error" !in msg.badges) {
+                if (msg.matchesIdentity(messageId) && "Error" !in msg.badges) {
                     msg.copy(badges = msg.badges + "Error", clientOnly = true)
                 } else {
                     msg
@@ -3148,7 +3167,7 @@ class ChatHandler {
         _messages.update { messages ->
             messages
                 .filterNot { msg ->
-                        msg.id == messageId &&
+                        msg.matchesIdentity(messageId) &&
                         msg.role == MessageRole.ASSISTANT &&
                         msg.toolCalls.isEmpty() &&
                         msg.backgroundTask == null &&
@@ -3156,7 +3175,7 @@ class ChatHandler {
                         (msg.content.isBlank() || isIntentionalSilenceMarker(msg.content))
                 }
                 .map { msg ->
-                    if (msg.id == messageId || msg.isStreaming) {
+                    if (msg.matchesIdentity(messageId) || msg.isStreaming) {
                         msg.copy(isStreaming = false, isThinkingStreaming = false)
                     } else {
                         msg
@@ -3220,10 +3239,12 @@ class ChatHandler {
     fun onThinkingDelta(messageId: String, delta: String) {
         _isStreaming.value = true
         _messages.update { messages ->
-            val existing = messages.findLast { it.id == messageId && it.role == MessageRole.ASSISTANT }
+            val existing = messages.findLast {
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
+            }
             if (existing != null) {
                 messages.map { msg ->
-                    if (msg.id == messageId) {
+                    if (msg.matchesIdentity(messageId)) {
                         msg.copy(
                             thinkingContent = msg.thinkingContent + delta,
                             isThinkingStreaming = true
@@ -3248,7 +3269,7 @@ class ChatHandler {
     fun onUsageReceived(messageId: String, inputTokens: Int?, outputTokens: Int?, totalTokens: Int?, cost: Double?) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId) {
+                if (msg.matchesIdentity(messageId)) {
                     msg.copy(
                         inputTokens = inputTokens,
                         outputTokens = outputTokens,
@@ -3281,7 +3302,7 @@ class ChatHandler {
         )
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId) return@map msg
+                if (!msg.matchesIdentity(messageId)) return@map msg
                 val alreadyDispatched = msg.cardDispatches.any {
                     it.cardKey == cardKey && it.actionValue == actionValue
                 }

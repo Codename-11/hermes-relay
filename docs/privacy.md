@@ -7,7 +7,9 @@ Hermes-Relay is a companion app for the Hermes agent. It connects only to server
 - The app makes **no connections** to Anthropic, Google, or any third party by default
 - **No telemetry**, analytics, crash reports, or tracking data are sent externally
 - **No advertising SDKs** or third-party SDKs that phone home are included
-- Your Hermes server may connect to AI providers such as OpenAI or Anthropic; that is server-side and outside this app's scope
+- Your Hermes server may connect to configured AI providers for inference and
+  bounded capability discovery; that traffic is server-side and uses the
+  credentials already owned by the selected Hermes profile
 
 ## Build Tracks
 
@@ -31,6 +33,7 @@ All app data is stored on-device in the app's private sandbox:
 | Relay session token | EncryptedSharedPreferences | Same encryption as API key |
 | Theme and display preferences | DataStore preferences | Tool display mode, reasoning toggle, voice preferences |
 | Stats for Nerds counters | DataStore preferences | Response times, token counts, health stats — local only |
+| Reliability reports | App-private JSON | Up to 20 locally redacted crash/handled-error records, retained for 14 days; no prompts, messages, profile names, hosts, tokens, or media |
 
 Chat messages are **not cached locally**. They are loaded from the Hermes API server on demand and exist only in memory while the app is running.
 
@@ -41,8 +44,20 @@ The app connects only to user-configured endpoints:
 - **HTTP/SSE** to your Hermes API server for chat streaming
 - **WSS** to your relay server for terminal/TUI relay, Bridge Core status, media handoff, notification companion, and paired-session management
 - **HTTP(S)/WSS** to your relay server's `/voice/*` routes for voice settings, speech-to-text uploads, realtime voice websocket sessions, and text-to-speech audio when you use Voice mode
+- **HTTP(S)** to your optional Relay server's `/relay/model-capabilities` route
+  when Android refines reasoning-effort choices for models already reported by
+  upstream Hermes. The phone sends provider/model identifiers and the selected
+  profile name, not provider credentials.
 - Cleartext HTTP is permitted for local/private network connections to user-configured servers; the app warns when using insecure remote connections
 - No DNS prefetching and no background pings to external services
+
+The Relay capability resolver may make short, bounded requests from the Hermes
+host to a configured provider endpoint. Results are cached for five minutes by
+profile, endpoint, model, and a one-way credential fingerprint to limit repeated
+provider traffic. Credentials and fingerprints remain on the host; Android
+receives only reasoning support, ordered effort values, whether the values are
+exact, and diagnostic provenance. A manual refresh requests a new server-side
+resolution but does not expose or copy the selected profile's secrets.
 
 ## Permissions
 
@@ -73,6 +88,9 @@ Notification companion is opt-in. The app only forwards notification metadata af
 ## Data Export & Reset
 
 From Settings, users can:
+
+- **Review support information** in Diagnostics, then explicitly copy or share
+  the exact redacted local text. Nothing is uploaded automatically.
 
 - **Export** a full connection backup. The file includes server URLs,
   preferences, API keys, relay session tokens, device IDs, and dashboard

@@ -89,12 +89,13 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.6.1 - Clearer recovery, steadier chat
+v1.7.0 - Smarter controls, steadier sessions
 
-* Clear optional Relay status and recovery guidance.
-* Full session history through compatible paging.
-* Stable streamed text selection and Voice microphone handoff.
-* New-chat coaching stays clear of Voice controls.
+* Provider-aware reasoning levels with a standard fallback.
+* Working and needs-input states in the searchable session drawer.
+* Restored chats stay bottom-pinned without overriding scrollback.
+* Private support information and clearer connection diagnostics.
+* Reliable Focus Voice controls and recovered chat rows.
 ```
 
 ## Category
@@ -161,12 +162,43 @@ This app is a client for a Hermes server the user runs themselves, so a fresh in
 
 ### Foreground service permissions
 
-The Play build declares `**FOREGROUND_SERVICE_SPECIAL_USE**` for `GatewayKeepAliveService`. It protects user-started active chat turns automatically and also backs the opt-in **Persistent connection** feature for idle connectivity. At submission, complete **App content → Foreground service permissions** for `specialUse`:
+Before promoting any Play release, compare this section with the merged
+`googlePlayRelease` manifest and complete **App content → Foreground service
+permissions** for every declared type. Google blocks the Android Publisher API
+edit at commit time when a declaration is missing, even if the Production draft
+upload itself succeeded.
+
+The Play build declares `**FOREGROUND_SERVICE_SPECIAL_USE**` for
+`GatewayKeepAliveService`. It protects user-started active chat turns
+automatically and also backs the opt-in **Persistent connection** feature for
+idle connectivity. Declare `specialUse` with:
 
 - **Use case:** keeps a user-started Hermes turn connected until it finishes or pauses for user input, including multiple concurrent sessions; optionally maintains the idle connection when the user enables Persistent connection.
 - **Why a foreground service:** it's a real-time, user-initiated streaming connection that must survive Doze / background execution limits; `dataSync` is force-stopped after a 6-hour/day cap on Android 15, so `specialUse` is the only fit for "stay connected."
 - **User control:** the service starts when the user sends a chat message and stops after all active turns settle. Continuous idle retention is off by default and enabled only via *Settings → Quick Controls → Persistent connection*. The ongoing notification shows the active/waiting session count; its **Turn off always-on** action disables idle retention without interrupting active work. Swiping the app from recents ends it.
 - Google usually asks for a short screen recording of a backgrounded active turn, the ongoing notification, and the optional persistent toggle.
+
+The Play build also declares `**FOREGROUND_SERVICE_MICROPHONE**` for two
+explicitly user-started voice features. Declare `microphone` and cover both
+entry points in its description and demonstration:
+
+- **Local wake word:** when the user explicitly enables *Hey Hermes* in Voice
+  settings, `WakeWordForegroundService` listens on-device for the configured
+  wake phrase. Audio before activation remains on the device, the ongoing
+  microphone notification has a Stop action, and the service is never started
+  at boot.
+- **Voice overlay:** when the user opens the app-owned voice overlay while
+  Hermes is visible, `VoiceOverlayForegroundService` preserves microphone
+  access for that active voice session while the overlay is shown over another
+  app. Hiding or exiting the overlay, stopping voice, or removing the task ends
+  the service.
+- **Why a foreground service:** Android requires an active microphone
+  foreground service for user-visible capture that continues while the app is
+  backgrounded. Both paths are opt-in, show Android's persistent microphone
+  indicator and ongoing notification, and expose an immediate Stop action.
+- Record a short video that enables the wake listener and shows its notification
+  and Stop action, then opens the voice overlay, backgrounds Hermes, and ends
+  the session from the overlay or notification.
 
 The Play build does **not** declare `FOREGROUND_SERVICE_MEDIA_PROJECTION` or the Device Control accessibility/bridge services — those are sideload-only.
 

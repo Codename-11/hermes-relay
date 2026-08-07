@@ -1,7 +1,15 @@
 package com.hermesandroid.relay.ui.components
 
 import android.content.Context
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.SweepGradient
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -57,13 +65,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import java.text.SimpleDateFormat
@@ -77,6 +95,8 @@ private enum class SessionDrawerFilter {
     Archive,
 }
 
+internal const val SESSION_DRAWER_LIST_TAG = "session-drawer-list"
+
 @Composable
 fun SessionDrawerContent(
     sessions: List<ChatSession>,
@@ -85,6 +105,8 @@ fun SessionDrawerContent(
     scopeSubtitle: String? = null,
     isLoading: Boolean = false,
     isOpen: Boolean = true,
+    activityStates: Map<String, SessionActivityState> = emptyMap(),
+    animationEnabled: Boolean = true,
     autoTitlesSupported: Boolean = true,
     onRefresh: (() -> Unit)? = null,
     onNewChat: () -> Unit,
@@ -115,11 +137,11 @@ fun SessionDrawerContent(
     var sourceFilterOpen by remember { mutableStateOf(false) }
     var deleteDialogSession by remember { mutableStateOf<ChatSession?>(null) }
     var query by remember { mutableStateOf("") }
+    var searchExpanded by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
     var pinnedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var archivedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val listState = rememberLazyListState()
-    var scrollToTopPending by remember { mutableStateOf(false) }
     val trimmedQuery = query.trim()
     // Threads affordance shows when the capability is active OR there's already at least one
     // agent Thread (source=phone) in the list. If the filter is on Threads but they've
@@ -174,27 +196,12 @@ fun SessionDrawerContent(
         .toList()
     val topVisibleSessionId = visibleSessions.firstOrNull()?.sessionId
 
-    LaunchedEffect(isOpen) {
-        scrollToTopPending = isOpen
-        if (isOpen && visibleSessions.isNotEmpty()) {
-            listState.scrollToItem(0)
-            scrollToTopPending = false
-        }
-    }
-
-    LaunchedEffect(filter, trimmedQuery) {
-        if (isOpen && visibleSessions.isNotEmpty()) {
-            listState.scrollToItem(0)
-            scrollToTopPending = false
-        } else if (isOpen) {
-            scrollToTopPending = true
-        }
-    }
-
-    LaunchedEffect(isOpen, topVisibleSessionId, visibleSessions.size) {
-        if (isOpen && scrollToTopPending && visibleSessions.isNotEmpty()) {
-            listState.scrollToItem(0)
-            scrollToTopPending = false
+    LaunchedEffect(isOpen, activeFilter, trimmedQuery, topVisibleSessionId) {
+        if (isOpen && topVisibleSessionId != null) {
+            // A drawer-open refresh can reorder rows after the initial scroll.
+            // Override LazyColumn's normal key anchoring so the new leading
+            // session is visible instead of being retained above the viewport.
+            listState.requestScrollToItem(0)
         }
     }
 
@@ -298,6 +305,21 @@ fun SessionDrawerContent(
                         )
                     }
                 }
+                IconButton(
+                    onClick = { searchExpanded = !searchExpanded },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Search,
+                        contentDescription = stringResource(R.string.drawer_search_sessions),
+                        tint = if (searchExpanded || query.isNotBlank()) {
+                            RelayRefresh.Relay
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
                 // Manual re-pull: the server titles a session asynchronously after
                 // the first turn (and never pushes a rename), so a refresh is the
                 // way to pick up a title the auto-reconcile window missed.
@@ -335,17 +357,19 @@ fun SessionDrawerContent(
                 Text(stringResource(R.string.drawer_new_chat))
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                leadingIcon = {
-                    Icon(Icons.Filled.Search, contentDescription = null)
-                },
-                placeholder = { Text(stringResource(R.string.drawer_search_placeholder)) },
-            )
+            if (searchExpanded || query.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(Icons.Filled.Search, contentDescription = null)
+                    },
+                    placeholder = { Text(stringResource(R.string.drawer_search_placeholder)) },
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -462,11 +486,16 @@ fun SessionDrawerContent(
                 )
             }
         } else {
-            LazyColumn(state = listState) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.testTag(SESSION_DRAWER_LIST_TAG),
+            ) {
                 items(visibleSessions, key = { it.sessionId }) { session ->
                     SessionItem(
                         session = session,
                         isActive = session.sessionId == currentSessionId,
+                        activityState = activityStates[session.sessionId],
+                        animationEnabled = animationEnabled,
                         pinned = session.sessionId in pinnedSessionIds,
                         archived = session.sessionId in archivedSessionIds,
                         onClick = { onSelectSession(session.sessionId) },
@@ -590,6 +619,8 @@ fun SessionDrawerContent(
 private fun SessionItem(
     session: ChatSession,
     isActive: Boolean,
+    activityState: SessionActivityState?,
+    animationEnabled: Boolean,
     pinned: Boolean,
     archived: Boolean,
     onClick: () -> Unit,
@@ -603,6 +634,12 @@ private fun SessionItem(
     val locale = LocalLocale.current.platformLocale
     val context = LocalContext.current
     val untitledLabel = stringResource(R.string.drawer_untitled)
+    val activityLabel = when (activityState) {
+        SessionActivityState.Working -> stringResource(R.string.drawer_activity_working)
+        SessionActivityState.NeedsInput -> stringResource(R.string.drawer_activity_needs_input)
+        null -> null
+    }
+    val motion = rememberAccessibleMotionState()
     val backgroundColor = if (isActive) {
         MaterialTheme.colorScheme.secondaryContainer
     } else {
@@ -613,6 +650,13 @@ private fun SessionItem(
         modifier = Modifier
             .fillMaxWidth()
             .background(backgroundColor)
+            .sessionActivityBorder(
+                state = activityState,
+                animated = animationEnabled && motion.osAnimations && !motion.touchExploration,
+            )
+            .semantics {
+                activityLabel?.let { stateDescription = it }
+            }
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -637,6 +681,17 @@ private fun SessionItem(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (activityState != null && activityLabel != null) {
+                    SessionActivityIndicator(activityState, activityLabel)
+                }
+                if (pinned) {
+                    Icon(
+                        Icons.Filled.Star,
+                        contentDescription = null,
+                        tint = RelayRefresh.Amber,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
                 // Agent Thread tag — the clean spool + "Thread", so a source=phone
                 // conversation reads as its own lane in the unified session list (ADR 12).
                 if (isThreadSource(session.source)) {
@@ -687,18 +742,6 @@ private fun SessionItem(
             }
         }
 
-        IconButton(
-            onClick = onTogglePinned,
-            modifier = Modifier.size(36.dp),
-        ) {
-            Icon(
-                Icons.Filled.Star,
-                contentDescription = if (pinned) stringResource(R.string.drawer_unpin_session) else stringResource(R.string.drawer_pin_session),
-                tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(19.dp),
-            )
-        }
-
         Box {
             IconButton(
                 onClick = { menuOpen = true },
@@ -715,6 +758,32 @@ private fun SessionItem(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
             ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (pinned) {
+                                stringResource(R.string.drawer_unpin_session)
+                            } else {
+                                stringResource(R.string.drawer_pin_session)
+                            }
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = null,
+                            tint = if (pinned) {
+                                RelayRefresh.Amber
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onTogglePinned()
+                    },
+                )
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.chat_copy_session_id)) },
                     leadingIcon = {
@@ -771,6 +840,147 @@ private fun SessionItem(
                         menuOpen = false
                         onDelete()
                     },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionActivityIndicator(state: SessionActivityState, label: String) {
+    val color = when (state) {
+        SessionActivityState.Working -> RelayRefresh.Relay
+        SessionActivityState.NeedsInput -> RelayRefresh.Amber
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(RoundedCornerShape(50))
+                .background(color),
+        )
+        Text(
+            text = label,
+            style = relayMetadataStyle(),
+            color = color,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun Modifier.sessionActivityBorder(
+    state: SessionActivityState?,
+    animated: Boolean,
+): Modifier {
+    if (state == null) return this
+    val color = when (state) {
+        SessionActivityState.Working -> RelayRefresh.Relay
+        SessionActivityState.NeedsInput -> RelayRefresh.Amber
+    }
+    val shouldRotate = animated && state == SessionActivityState.Working
+    val phase = if (shouldRotate) {
+        val transition = rememberInfiniteTransition(label = "session-activity")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2_230, easing = LinearEasing),
+            ),
+            label = "session-activity-glow",
+        )
+    } else {
+        null
+    }
+    return drawWithCache {
+        val coreWidth = 1.25.dp.toPx()
+        val coreInset = coreWidth / 2f
+        val haloWidth = 5.dp.toPx()
+        val haloInset = haloWidth / 2f
+        val radius = 12.dp.toPx()
+        // Matching transparent endpoints make phase 0 and 1 identical, so the
+        // full shader rotation loops without the dash-pattern reset of the old ring.
+        val animatedShader = SweepGradient(
+            size.width / 2f,
+            size.height / 2f,
+            intArrayOf(
+                color.copy(alpha = 0f).toArgb(),
+                color.copy(alpha = 0f).toArgb(),
+                color.copy(alpha = 0.16f).toArgb(),
+                color.copy(alpha = 0.72f).toArgb(),
+                color.toArgb(),
+                color.copy(alpha = 0.34f).toArgb(),
+                color.copy(alpha = 0f).toArgb(),
+            ),
+            floatArrayOf(0f, 0.52f, 0.66f, 0.78f, 0.84f, 0.92f, 1f),
+        )
+        val shaderMatrix = Matrix()
+        val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = haloWidth
+            alpha = 88
+            shader = animatedShader
+        }
+        val middlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 2.75.dp.toPx()
+            alpha = 150
+            shader = animatedShader
+        }
+        val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = coreWidth
+            shader = animatedShader
+        }
+        val haloRect = RectF(
+            haloInset,
+            haloInset,
+            size.width - haloInset,
+            size.height - haloInset,
+        )
+        val middleInset = middlePaint.strokeWidth / 2f
+        val middleRect = RectF(
+            middleInset,
+            middleInset,
+            size.width - middleInset,
+            size.height - middleInset,
+        )
+        val coreRect = RectF(
+            coreInset,
+            coreInset,
+            size.width - coreInset,
+            size.height - coreInset,
+        )
+
+        onDrawWithContent {
+            drawContent()
+            if (phase != null) {
+                shaderMatrix.setRotate(
+                    phase.value * 360f - 90f,
+                    size.width / 2f,
+                    size.height / 2f,
+                )
+                animatedShader.setLocalMatrix(shaderMatrix)
+                drawContext.canvas.nativeCanvas.apply {
+                    drawRoundRect(haloRect, radius, radius, haloPaint)
+                    drawRoundRect(middleRect, radius, radius, middlePaint)
+                    drawRoundRect(coreRect, radius, radius, corePaint)
+                }
+            } else {
+                drawRoundRect(
+                    brush = Brush.linearGradient(
+                        listOf(color.copy(alpha = 0.72f), color.copy(alpha = 0.28f))
+                    ),
+                    topLeft = androidx.compose.ui.geometry.Offset(coreInset, coreInset),
+                    size = androidx.compose.ui.geometry.Size(
+                        width = size.width - coreWidth,
+                        height = size.height - coreWidth,
+                    ),
+                    cornerRadius = CornerRadius(radius),
+                    style = Stroke(width = coreWidth),
                 )
             }
         }

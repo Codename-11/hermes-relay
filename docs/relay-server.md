@@ -325,7 +325,78 @@ See [`docs/spec.md` §3.3](spec.md) for the full auth flow and the QR wire forma
 | Device Control routes (`/screen`, `/tap`, `/type`, and peers) | GET/POST | Require `Authorization: Bearer <session_token>` and an active `bridge` grant before any request data is forwarded to a connected Android client. Host tools supply the token through `ANDROID_BRIDGE_TOKEN`; loopback callers do not bypass this gate. |
 | `/media/inspect` | GET | **Loopback only.** Returns `{"media": [ {token, file_name, content_type, size, created_at, expires_at, last_accessed, is_expired}, ... ]}` — `MediaRegistry.list_all()` snapshot, newest first. Absolute file paths are **never** included — only `file_name` (basename). Query param: `?include_expired=true` includes evicted entries (default false, hides them). 403 for non-loopback callers. Consumed by the dashboard plugin's Media Inspector tab. |
 | `/relay/info` | GET | Aggregate status and capability contract. Loopback dashboard calls may omit auth; remote callers require a paired-device bearer. Returns backward-compatible `version` plus `plugin_version`, `protocol_version`, stable `capabilities`, per-profile `relay_state`, counters, `health`, and an optional sanitized `gateway_heartbeat` assessment. The heartbeat is diagnostic-only and never changes Relay health, fallback, or restart policy. |
+| `/relay/model-capabilities` | POST | Resolve reasoning-effort metadata for up to 64 exact `{provider, model}` pairs. Loopback callers may omit auth; remote callers require a paired-device bearer with an active `chat` grant. Request schema v1 accepts optional `profile` and `refresh`; response rows include `reasoning`, ordered `reasoning_efforts`, `reasoning_efforts_exact`, and `source`. Provider credentials and internal cache scopes never leave the host. Advertised by `/relay/info` as `model_reasoning_capabilities_v1`. |
 | `/relay/security` | GET/PATCH | **Loopback only.** Runtime security toggles for local operators, `hermes relay insecure-api-key`, and `hermes-relay insecure-api-key`. `GET` returns `{"allow_insecure_api_bearer": false, "trust_proxy_headers": false, "scope": "runtime"}`. `PATCH {"allow_insecure_api_bearer": true}` enables plain-LAN API-key voice auth immediately for the running relay; `false` disables it. This is not persisted across restarts. |
+
+### Model capability overlay
+
+`POST /relay/model-capabilities` is an optional metadata overlay for clients
+that already obtained coherent provider/model identities from upstream Hermes.
+It does not list models, select a model, proxy chat, or make Relay a requirement
+for reasoning controls.
+
+Request schema v1:
+
+```json
+{
+  "schema_version": 1,
+  "profile": "default",
+  "refresh": false,
+  "models": [
+    {"provider": "example-provider", "model": "reasoner-v1"}
+  ]
+}
+```
+
+`profile` defaults to `default`, and `refresh` defaults to `false`. `models`
+must contain 1–64 exact pairs; provider values are limited to 128 characters,
+model values to 512 characters, and profile values to 128 characters. An
+unsupported schema, malformed pair, unknown profile, or over-limit request is
+rejected with a structured 4xx response.
+
+Response contract 1.0:
+
+```json
+{
+  "schema_version": 1,
+  "contract_version": "1.0",
+  "capabilities": [
+    {
+      "provider": "example-provider",
+      "model": "reasoner-v1",
+      "reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high"],
+      "reasoning_efforts_exact": true,
+      "source": "provider-adapter"
+    }
+  ]
+}
+```
+
+`reasoning_efforts_exact: true` means the ordered list is verified for that
+specific provider/model pair. `false` means the row is advisory; clients should
+label it as standard compatibility choices rather than guaranteed provider
+support. `source` is diagnostic provenance, not UI copy or a precedence signal.
+Android merges the overlay after an exact upstream effort list and before an
+explicit upstream `reasoning: false`; otherwise it retains the canonical
+advisory set `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`,
+`ultra`.
+
+Loopback callers may omit authentication. Remote callers must send a valid
+Relay session bearer with an active `chat` grant. The route is profile-isolated:
+it reads only the selected profile's configuration and credential scope. Some
+providers can be answered from static or upstream metadata; others require
+short, bounded provider requests. The resolver caps provider concurrency,
+applies per-request timeouts, caches results for five minutes by profile,
+endpoint, model, and credential fingerprint, and fences an explicit refresh so
+stale in-flight work cannot repopulate the refreshed profile cache.
+
+Provider credentials stay on the Hermes host. Responses never include secrets,
+credential fingerprints, endpoint probe details, or internal cache keys. A
+provider timeout or unsupported provider produces a safe non-exact row; an old
+Relay `404`, absent pairing, expired grant, unsupported response schema, or
+network failure is handled client-side by keeping the advisory choices. These
+fail-soft cases never block model selection or chat.
 
 ### Dashboard plugin proxy routes
 

@@ -88,7 +88,6 @@ def main() -> int:
         str(wrapper),
         "--console=plain",
         "--configuration-cache",
-        "-Dorg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8",
         *tasks,
     ]
     if not args.skip_tests:

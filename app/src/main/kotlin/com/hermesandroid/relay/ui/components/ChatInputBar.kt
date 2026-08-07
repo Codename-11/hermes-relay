@@ -167,11 +167,12 @@ fun ChatInputBar(
     onModelOptionSelected: (ChatInputPickerOption) -> Unit = {},
     onModelPickerClick: (() -> Unit)? = null,
     effortControl: ChatInputPickerControl? = null,
-    onEffortOptionSelected: (ChatInputPickerOption) -> Unit = {},
+    onEffortPickerClick: (() -> Unit)? = null,
     topContent: (@Composable () -> Unit)? = null,
     topContentVisible: Boolean = topContent != null,
     suppressVoiceTrailing: Boolean = false,
     modifier: Modifier = Modifier,
+    surfaceModifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
     // Keep the last caption around so the AnimatedVisibility exit doesn't
@@ -255,7 +256,8 @@ fun ChatInputBar(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .then(surfaceModifier),
         ) {
             Column {
                 if (topContent != null) {
@@ -397,8 +399,9 @@ fun ChatInputBar(
                     if (effortControl != null) {
                         ChatInputPickerChip(
                             control = effortControl,
-                            onSelect = onEffortOptionSelected,
+                            onSelect = {},
                             modifier = Modifier.widthIn(max = 104.dp),
+                            onClickOverride = onEffortPickerClick,
                         )
                     }
 

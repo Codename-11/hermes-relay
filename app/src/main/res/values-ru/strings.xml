@@ -118,6 +118,8 @@
     <string name="chat_placeholder_message">Сообщение…</string>
     <string name="chat_edit_busy_snackbar">Нельзя редактировать сейчас — подождите, пока завершится текущий ход</string>
     <string name="chat_select_reasoning_effort">Выберите усилия по рассуждению</string>
+    <string name="reasoning_effort_standard_levels_notice">Hermes не сообщает точные уровни усилий для этой модели, поэтому показаны стандартные варианты.</string>
+    <string name="reasoning_effort_current_outside_supported">Текущий сеанс: %1$s (по данным Hermes). Для этой модели новые варианты ограничены: %2$s.</string>
     <string name="voice_toast_signin_route">Голосу требуется одноразовый вход на маршруте %1$s — откройте Управление</string>
     <string name="voice_toast_signin_default">Голосу требуется вход в панель управления — откройте Управление для входа</string>
     <string name="voice_toast_unsupported">Эта сборка Гермеса не имеет голосовых маршрутов — обновите Агента Гермеса или сопрягите плагин Relay</string>
@@ -878,6 +880,9 @@
     <string name="drawer_refresh_sessions">Обновить сессии</string>
     <string name="drawer_new_chat">Новый чат</string>
     <string name="drawer_search_placeholder">Поиск сессий или id...</string>
+    <string name="drawer_search_sessions">Поиск сессий</string>
+    <string name="drawer_activity_working">Выполняется</string>
+    <string name="drawer_activity_needs_input">Требуется ввод</string>
     <string name="drawer_new_thread">Новая ветка</string>
     <string name="drawer_chats_not_named">Чаты не автоматически именуются на этом соединении — используйте ⋮ → Переименовать.</string>
     <string name="drawer_loading_sessions">Загрузка сессий…</string>
@@ -2600,7 +2605,14 @@
     <string name="attachment_type_text">Текст</string>
     <string name="attachment_type_file">Файл</string>
     <string name="crash_title">Hermes-Relay неожиданно закрылся</string>
-    <string name="crash_body">Последняя сессия завершилась аварийно. Отправка этого отчета поможет быстрее исправить проблему.</string>
+    <string name="crash_body">Hermes-Relay перезапустился после непредвиденной проблемы. Приложением можно продолжать пользоваться.</string>
+    <string name="crash_privacy">Ничего не отправлено. Перед отправкой проверьте локально обезличенный отчёт.</string>
+    <string name="crash_review">Проверить отчёт</string>
+    <string name="crash_share_title">Поделиться отчётом о сбое</string>
+    <string name="crash_share_subject">Отчёт о сбое Hermes-Relay — %1$s</string>
+    <string name="crash_toast_no_share">Отчёт скопирован — приложение для отправки не найдено</string>
+    <string name="crash_toast_opened">Полный отчёт скопирован — проверьте проблему GitHub перед отправкой</string>
+    <string name="crash_toast_no_browser">Отчёт скопирован — браузер для GitHub не найден</string>
     <string name="crash_dismiss">Закрыть</string>
     <string name="crash_copy">Скопировать</string>
     <string name="crash_share">Поделиться</string>
@@ -2792,6 +2804,9 @@
     <string name="chat_reasoning_low">Низкий</string>
     <string name="chat_reasoning_medium">Средний</string>
     <string name="chat_reasoning_high">Высокий</string>
+    <string name="chat_reasoning_xhigh">Очень высокий</string>
+    <string name="chat_reasoning_max">Максимальный</string>
+    <string name="chat_reasoning_ultra">Ультра</string>
     <string name="chat_date_today">Сегодня</string>
     <string name="chat_date_yesterday">Вчера</string>
     <string name="chat_share_subject">Разговор с Гермес</string>
@@ -3560,4 +3575,10 @@
     <string name="plugins_keep">Оставить</string>
     <string name="plugins_remove">Удалить</string>
     <string name="plugins_remove_confirm">Удалить «%1$s»? Эта страница плагина больше не будет отображаться на подключённых устройствах Android.</string>
+    <string name="support_bundle_review">Проверить сведения для поддержки</string>
+    <string name="support_bundle_title">Сведения для поддержки</string>
+    <string name="support_bundle_privacy">Ничего не загружается автоматически. Проверьте локальный экспорт с не более чем %1$d отчётами.</string>
+    <string name="support_bundle_copied">Сведения для поддержки скопированы</string>
+    <string name="support_bundle_no_share">Сведения для поддержки скопированы — приложение для отправки не найдено</string>
+    <string name="support_bundle_share_title">Поделиться сведениями поддержки Hermes-Relay</string>
 </resources>

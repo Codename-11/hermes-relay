@@ -8,7 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [Android 1.7.0] - 2026-08-06
+
+### Added
+
+- **Android exposes provider-aware reasoning controls.** The effort drawer consumes exact upstream or optional Relay capability metadata for each provider/model identity, while unmodified or older Hermes installations retain a fail-soft standard fallback including `max` and `ultra`.
+- **Android support information is local, redacted, and reviewable.** Fatal crashes and handled failures share a bounded on-device record, Diagnostics can copy or share the exact reviewed text, and nothing is uploaded automatically.
+
+### Fixed
+
+- **Android chat chrome follows its active interaction state.** Opening the session drawer dismisses the composer keyboard, refreshed sessions keep their newest row visible, and floating pets wait for measured chat terrain, sit flush on supported rails, and treat the complete scroll-to-bottom control as forbidden space.
+- **Android pets and optional model discovery initialize quietly.** Floating companions wait for a measured overlay before taking their home position, and background API model-inventory failures retain actionable local diagnostics without interrupting chat with a generic notice.
+- **Android chat and Voice stay precisely bottom-pinned through replies, restores, and layout changes.** The active tail keeps its stable live renderer until another row takes ownership, restored sessions follow late composer and message measurement without overriding a reader, and bottom-owned transcripts settle to the exact list boundary after replies and keyboard animations instead of leaving a small hidden remainder.
+- **Android Focus voice controls remain responsive.** The modal click-through guard now sits behind the voice UI instead of consuming pointer events from the mic, close, expansion, and panel controls.
+- **Android diagnostics explain what failed and what to try next.** Relay, route, WebSocket, and API checks distinguish the saved route from the redacted request they actually attempted, name the operation, and provide targeted guidance for connection, DNS, timeout, TLS, authentication, rate-limit, and server failures.
+- **Android chat and Voice keep one render identity through recovery.** Checkpoint restore, streamed callbacks, server-ID adoption, and replay now resolve the same owned transcript row before publication, preventing recurring Compose duplicate-key crashes.
+- **Android crash reports retain actionable release context.** Reports identify the Android surface, avoid exposing hosts and credentials, migrate earlier local crash records, and release automation retains exact Play and sideload R8 mappings for retrace.
+
+## [1.6.0] - 2026-08-06
+
+### Added
+
+- **Relay supplies exact provider/model reasoning capabilities when providers expose them.** The bounded, profile-aware overlay resolves dynamic catalogs for OpenAI Codex, Copilot, LM Studio, and Ollama Cloud, keeps provider credentials on the host, and leaves unknown or unavailable catalogs on the advisory fallback.
 
 ## [Android 1.6.1] - 2026-08-03
 

@@ -107,6 +107,8 @@
     <string name="chat_placeholder_message">Mensagem…</string>
     <string name="chat_edit_busy_snackbar">Não é possível editar agora — aguarde o turno atual terminar</string>
     <string name="chat_select_reasoning_effort">Selecionar nível de raciocínio</string>
+    <string name="reasoning_effort_standard_levels_notice">O Hermes não informa níveis exatos de esforço para este modelo, então as opções padrão são exibidas.</string>
+    <string name="reasoning_effort_current_outside_supported">Sessão atual: %1$s (informado pelo Hermes). Novas seleções para este modelo estão limitadas a %2$s.</string>
     <!-- Voice toasts -->
     <string name="voice_toast_signin_route">A voz exige um login único pela rota %1$s — abra Gerenciar</string>
     <string name="voice_toast_signin_default">A voz exige login no painel — abra Gerenciar para entrar</string>
@@ -806,6 +808,9 @@
     <string name="drawer_refresh_sessions">Atualizar sessões</string>
     <string name="drawer_new_chat">Novo Chat</string>
     <string name="drawer_search_placeholder">Pesquisar sessões ou id...</string>
+    <string name="drawer_search_sessions">Pesquisar sessões</string>
+    <string name="drawer_activity_working">Em andamento</string>
+    <string name="drawer_activity_needs_input">Precisa de resposta</string>
     <string name="drawer_new_thread">Nova Thread</string>
     <string name="drawer_chats_not_named">Os chats não recebem nomes automáticos nesta conexão — use ⋮ → Renomear.</string>
     <string name="drawer_loading_sessions">Carregando sessões…</string>
@@ -2518,7 +2523,14 @@
     <string name="attachment_type_file">Arquivo</string>
     <!-- CrashReportDialog -->
     <string name="crash_title">O Hermes-Relay fechou inesperadamente</string>
-    <string name="crash_body">A última sessão falhou. Enviar este relatório ajuda a corrigir o problema mais rápido.</string>
+    <string name="crash_body">O Hermes-Relay reiniciou após um problema inesperado. Você pode continuar usando o app.</string>
+    <string name="crash_privacy">Nada foi enviado. Revise o relatório editado localmente antes de compartilhar.</string>
+    <string name="crash_review">Revisar relatório</string>
+    <string name="crash_share_title">Compartilhar relatório de falha</string>
+    <string name="crash_share_subject">Relatório de falha do Hermes-Relay — %1$s</string>
+    <string name="crash_toast_no_share">Relatório copiado — nenhum app encontrado para compartilhar</string>
+    <string name="crash_toast_opened">Relatório completo copiado — revise o problema no GitHub antes de enviar</string>
+    <string name="crash_toast_no_browser">Relatório copiado — nenhum navegador encontrado para abrir o GitHub</string>
     <string name="crash_dismiss">Dispensar</string>
     <string name="crash_copy">Copiar</string>
     <string name="crash_share">Compartilhar</string>
@@ -2722,6 +2734,9 @@
     <string name="chat_reasoning_low">Baixo</string>
     <string name="chat_reasoning_medium">Médio</string>
     <string name="chat_reasoning_high">Alto</string>
+    <string name="chat_reasoning_xhigh">Extra alto</string>
+    <string name="chat_reasoning_max">Máximo</string>
+    <string name="chat_reasoning_ultra">Ultra</string>
     <string name="chat_date_today">Hoje</string>
     <string name="chat_date_yesterday">Ontem</string>
     <string name="chat_share_subject">Conversa do Hermes</string>
@@ -3679,4 +3694,10 @@
     <string name="plugins_keep">Manter</string>
     <string name="plugins_remove">Remover</string>
     <string name="plugins_remove_confirm">Remover “%1$s”? Esta página do plugin não aparecerá mais nos dispositivos Android conectados.</string>
+    <string name="support_bundle_review">Revisar informações de suporte</string>
+    <string name="support_bundle_title">Informações de suporte</string>
+    <string name="support_bundle_privacy">Nada é enviado automaticamente. Revise a exportação local com até %1$d relatórios.</string>
+    <string name="support_bundle_copied">Informações de suporte copiadas</string>
+    <string name="support_bundle_no_share">Informações de suporte copiadas — nenhum app encontrado para compartilhar</string>
+    <string name="support_bundle_share_title">Compartilhar informações de suporte do Hermes-Relay</string>
 </resources>

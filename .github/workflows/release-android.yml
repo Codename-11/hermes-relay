@@ -191,6 +191,19 @@ jobs:
         #   app/build/outputs/bundle/sideloadRelease/hermes-relay-<version>-sideload-release.aab
         run: ./gradlew bundleRelease assembleRelease
 
+      # The Play AAB carries its mapping for Play Console deobfuscation, but
+      # sideload issue reports need the exact mapping from this immutable build.
+      # Keep both variants as a workflow artifact (not a public release asset).
+      - name: Retain R8 mappings for retrace
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-r8-mappings-${{ needs.validate.outputs.version }}-${{ github.sha }}
+          path: |
+            app/build/outputs/mapping/googlePlayRelease/mapping.txt
+            app/build/outputs/mapping/sideloadRelease/mapping.txt
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Scan release DEX for unsupported collection APIs
         run: |
           python3 scripts/check-android-collection-apis.py \

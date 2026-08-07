@@ -4,6 +4,8 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
@@ -40,6 +42,7 @@ class EndpointResolverTest {
 
     @Before
     fun setUp() {
+        DiagnosticsLog.clear()
         clockMillis.set(0L)
         reachableServer = MockWebServer().apply {
             dispatcher = healthDispatcher(statusCode = 200)
@@ -61,6 +64,7 @@ class EndpointResolverTest {
 
     @After
     fun tearDown() {
+        DiagnosticsLog.clear()
         runCatching { reachableServer.shutdown() }
         runCatching { secondReachableServer.shutdown() }
     }
@@ -370,6 +374,11 @@ class EndpointResolverTest {
         assertNotNull(request)
         assertEquals("GET", request!!.method)
         assertEquals("/api/status", request.path)
+        val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Endpoint))
+            .first { it.operation != null }
+        assertEquals("Dashboard or API route health probe", diagnostic.operation)
+        assertEquals("http://[host]", diagnostic.configuredUrl)
+        assertEquals("http://[host]/api/status", diagnostic.requestUrl)
     }
 
     @Test
