@@ -1,6 +1,35 @@
 {
  "versions": [
   {
+   "version": "1.7.0",
+   "title": "Smarter controls, steadier sessions",
+   "date": "2026-08-06",
+   "sections": [
+    {
+     "header": "Model controls fit the model",
+     "bullets": [
+      "Reasoning effort choices follow the selected provider and model when an exact supported list is available.",
+      "Unmodified Hermes and setups without the optional Relay capability overlay keep a fail-soft standard choice list."
+     ]
+    },
+    {
+     "header": "Active chats stay easy to follow",
+     "bullets": [
+      "The searchable session drawer shows which conversations are working or waiting for input.",
+      "Restored and completed chats remain bottom-pinned through late layout changes without overriding intentional scrollback.",
+      "Chat and Voice keep stable rows through recovery, and Focus Voice controls receive taps normally."
+     ]
+    },
+    {
+     "header": "Support stays private and useful",
+     "bullets": [
+      "Review locally redacted support information before choosing to copy, share, or open GitHub; nothing uploads automatically.",
+      "Connection diagnostics identify the failed operation and offer targeted guidance without exposing hosts or credentials."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.6.1",
    "title": "Clearer recovery, steadier chat",
    "date": "2026-08-03",

@@ -89,12 +89,13 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.6.1 - Clearer recovery, steadier chat
+v1.7.0 - Smarter controls, steadier sessions
 
-* Clear optional Relay status and recovery guidance.
-* Full session history through compatible paging.
-* Stable streamed text selection and Voice microphone handoff.
-* New-chat coaching stays clear of Voice controls.
+* Provider-aware reasoning levels with a standard fallback.
+* Working and needs-input states in the searchable session drawer.
+* Restored chats stay bottom-pinned without overriding scrollback.
+* Private support information and clearer connection diagnostics.
+* Reliable Focus Voice controls and recovered chat rows.
 ```
 
 ## Category

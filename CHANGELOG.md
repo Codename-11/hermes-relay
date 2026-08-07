@@ -6,9 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
+- **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [Android 1.7.0] - 2026-08-06
+
 ### Added
 
-- **Android discovers the reasoning levels supported by each provider and model.** The optional Relay plugin supplies bounded, profile-aware capability metadata for current Hermes installations, while unmodified or older servers retain a fail-soft canonical fallback including `max` and `ultra`.
+- **Android exposes provider-aware reasoning controls.** The effort drawer consumes exact upstream or optional Relay capability metadata for each provider/model identity, while unmodified or older Hermes installations retain a fail-soft standard fallback including `max` and `ultra`.
 - **Android support information is local, redacted, and reviewable.** Fatal crashes and handled failures share a bounded on-device record, Diagnostics can copy or share the exact reviewed text, and nothing is uploaded automatically.
 
 ### Fixed
@@ -19,9 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android Focus voice controls remain responsive.** The modal click-through guard now sits behind the voice UI instead of consuming pointer events from the mic, close, expansion, and panel controls.
 - **Android diagnostics explain what failed and what to try next.** Relay, route, WebSocket, and API checks distinguish the saved route from the redacted request they actually attempted, name the operation, and provide targeted guidance for connection, DNS, timeout, TLS, authentication, rate-limit, and server failures.
 - **Android chat and Voice keep one render identity through recovery.** Checkpoint restore, streamed callbacks, server-ID adoption, and replay now resolve the same owned transcript row before publication, preventing recurring Compose duplicate-key crashes.
-- **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
 - **Android crash reports retain actionable release context.** Reports identify the Android surface, avoid exposing hosts and credentials, migrate earlier local crash records, and release automation retains exact Play and sideload R8 mappings for retrace.
-- **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
 ## [1.6.0] - 2026-08-06
 
