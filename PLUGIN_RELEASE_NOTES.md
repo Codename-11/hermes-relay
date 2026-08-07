@@ -1,17 +1,22 @@
 # Hermes-Relay-Server v__VERSION__
 
-**Release Date:** August 3, 2026
+**Release Date:** August 6, 2026
 
-This patch makes intentional re-pairing repair the existing device record instead of accumulating duplicate Relay sessions.
+This patch adds an optional Relay capability overlay so clients can present the reasoning effort levels supported by an exact provider and model without changing upstream model selection or chat behavior.
 
 Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
 ## What's changed
 
-### Fixed
+### Added
 
-- **Re-pairing replaces stale credentials for the same device.** After the host approves a new pair, Relay revokes older sessions and refresh credentials that belong to that device before issuing the replacement.
-- **Existing and unrelated sessions remain operator-controlled.** The Dashboard and `/relay revoke <token-prefix>` continue to provide explicit cleanup without treating optional Relay pairing as a requirement.
+- **Profile-aware reasoning capability resolution.** `POST /relay/model-capabilities` accepts exact provider/model pairs and returns ordered effort choices with explicit exactness and source metadata.
+- **Bounded live discovery for local and authenticated providers.** Relay can query OpenAI Codex, GitHub Copilot, LM Studio, and Ollama Cloud capability surfaces with short timeouts, concurrency limits, isolated caches, and an explicit refresh option.
+- **Capability advertisement.** `/relay/info` now advertises `model_reasoning_capabilities_v1` so clients can detect the optional overlay before using it.
+
+### Security
+
+- **Provider credentials remain host-local.** Remote requests require a paired session with the chat grant, and responses never serialize provider credentials.
 
 ## Install / update
 

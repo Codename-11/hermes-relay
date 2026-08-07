@@ -23,6 +23,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android crash reports retain actionable release context.** Reports identify the Android surface, avoid exposing hosts and credentials, migrate earlier local crash records, and release automation retains exact Play and sideload R8 mappings for retrace.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
+## [1.6.0] - 2026-08-06
+
+### Added
+
+- **Relay supplies exact provider/model reasoning capabilities when providers expose them.** The bounded, profile-aware overlay resolves dynamic catalogs for OpenAI Codex, Copilot, LM Studio, and Ollama Cloud, keeps provider credentials on the host, and leaves unknown or unavailable catalogs on the advisory fallback.
+
 ## [Android 1.6.1] - 2026-08-03
 
 ### Fixed
