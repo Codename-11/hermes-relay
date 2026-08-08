@@ -20,6 +20,21 @@ that successfully reaches `approval.respond`, an authoritative upstream expiry,
 or an explicit interrupt can retire the local request; the interrupt path stays
 visibly denied because upstream force-denies it.
 
+## 2026-08-08 — Agent Passport control and dismissal accessibility
+
+The Android Agent Passport keeps its title and explicit close action outside
+the nested content scroller. Material bottom-sheet gestures are enabled again,
+so a downward gesture scrolls long content toward its top boundary before the
+sheet receives the gesture and dismisses; backdrop and Back dismissal retain
+the same callback.
+
+Safety and speed choices now sit below their labels instead of competing for a
+narrow horizontal column. Every segment provides at least a 48 dp target,
+allows two-line labels, exposes radio-selection semantics, and states the
+meaning of the current approval, chat override, or processing-tier choice in
+plain language. The layout remains scrollable on compact heights and at larger
+font scales without moving the close action off-screen.
+
 ## 2026-08-07 — Provider-owned model inventory identity
 
 Android now normalizes Gateway and API model inventories before publishing

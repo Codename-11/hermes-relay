@@ -2386,6 +2386,7 @@
     <string name="conn_info_customize_identity">Customize identity</string>
     <string name="conn_info_agent_passport">Agent Passport</string>
     <string name="conn_info_chat_override">Chat override</string>
+    <string name="conn_info_chat_override_inherited_desc">Use the profile approval policy for this chat.</string>
     <string name="conn_info_fast_tier">Fast tier</string>
     <string name="conn_info_fast">Fast</string>
     <string name="conn_info_context">Context</string>
@@ -2406,6 +2407,7 @@
     <string name="conn_info_expires">Expires</string>
     <string name="conn_info_failed_reason">Failed: %1$s</string>
     <string name="conn_info_fast_mode_desc">Priority processing tier (model-gated).</string>
+    <string name="conn_info_normal_tier_desc">Use the standard processing tier.</string>
     <string name="conn_info_fast_mode_title">Fast mode</string>
     <string name="conn_info_gateway_idle">Gateway idle</string>
     <string name="conn_info_gateway_running">Gateway running</string>

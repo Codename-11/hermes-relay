@@ -2277,8 +2277,10 @@
     <string name="conn_info_customize_identity">アイデンティティをカスタマイズ</string>
     <string name="conn_info_agent_passport">エージェントパスポート</string>
     <string name="conn_info_chat_override">チャットの上書き</string>
+    <string name="conn_info_chat_override_inherited_desc">このチャットではプロフィールの承認ポリシーを使用します。</string>
     <string name="conn_info_fast_tier">高速ティア</string>
     <string name="conn_info_fast">高速</string>
+    <string name="conn_info_normal_tier_desc">標準の処理ティアを使用します。</string>
     <string name="conn_info_context">コンテキスト</string>
     <string name="conn_info_profile_already_bypasses">承認はプロファイルですでにバイパスされています。</string>
     <string name="conn_info_start_new_chat">新しいチャットを開始</string>

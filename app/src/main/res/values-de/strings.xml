@@ -2266,8 +2266,10 @@
     <string name="conn_info_customize_identity">Identität anpassen</string>
     <string name="conn_info_agent_passport">Agentenpass</string>
     <string name="conn_info_chat_override">Chat-Überschreibung</string>
+    <string name="conn_info_chat_override_inherited_desc">Verwende die Genehmigungsrichtlinie des Profils für diesen Chat.</string>
     <string name="conn_info_fast_tier">Schnellstufe</string>
     <string name="conn_info_fast">Schnell</string>
+    <string name="conn_info_normal_tier_desc">Verwende die Standardverarbeitungsstufe.</string>
     <string name="conn_info_context">Kontext</string>
     <string name="conn_info_profile_already_bypasses">Genehmigungen werden bereits vom Profil umgangen.</string>
     <string name="conn_info_start_new_chat">Neuen Chat starten</string>

@@ -2071,8 +2071,10 @@
     <string name="conn_info_customize_identity">Personalizar identidad</string>
     <string name="conn_info_agent_passport">Pasaporte del agente</string>
     <string name="conn_info_chat_override">Anulación del chat</string>
+    <string name="conn_info_chat_override_inherited_desc">Usa la política de aprobación del perfil para este chat.</string>
     <string name="conn_info_fast_tier">Nivel rápido</string>
     <string name="conn_info_fast">Rápido</string>
+    <string name="conn_info_normal_tier_desc">Usa el nivel de procesamiento estándar.</string>
     <string name="conn_info_context">Contexto</string>
     <string name="conn_info_profile_already_bypasses">El perfil ya omite las aprobaciones.</string>
     <string name="conn_info_start_new_chat">Iniciar nuevo chat</string>
