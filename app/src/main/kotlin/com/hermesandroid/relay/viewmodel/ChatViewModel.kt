@@ -13,6 +13,7 @@ import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.BackgroundTaskPhase
 import com.hermesandroid.relay.data.BackgroundTaskState
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatQueuedMessageCheckpoint
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
@@ -212,6 +213,8 @@ class ChatViewModel : ViewModel() {
     /** Durable UI checkpoints for recoverable, session-backed turns. */
     private var chatTurnCheckpointStore: ChatTurnCheckpointStore? = null
     private var activeTurnCheckpointSeed: ActiveTurnCheckpointSeed? = null
+    /** Stable local run owner for queued sends, including unsolicited Gateway turns. */
+    private var activeQueueOwnerRunId: String? = null
     private data class TurnCheckpointKey(val contextKey: String, val sessionId: String)
     private val backgroundTurnCheckpoints =
         ConcurrentHashMap<TurnCheckpointKey, ChatTurnCheckpoint>()
@@ -478,6 +481,25 @@ class ChatViewModel : ViewModel() {
     }
 
     // --- Message queue ---
+    /**
+     * A queued send is owned by the exact turn it was composed behind. Keeping
+     * only its text here used to let whichever session happened to be visible
+     * at completion drain it (issue #315). The destination and all composer
+     * payload are therefore captured once and never inferred at dispatch time.
+     */
+    private data class QueuedMessage(
+        val id: String,
+        val text: String,
+        val contextKey: String,
+        val sessionId: String,
+        val transport: String,
+        val ownerRunId: String,
+        val attachments: List<Attachment>,
+        val interfaceContextPrompt: String?,
+    )
+
+    private val queuedMessageItems = mutableListOf<QueuedMessage>()
+    private val completedQueueOwnerRuns = ConcurrentHashMap.newKeySet<String>()
     private val _queuedMessages = MutableStateFlow<List<String>>(emptyList())
     val queuedMessages: StateFlow<List<String>> = _queuedMessages.asStateFlow()
 
@@ -1712,10 +1734,14 @@ class ChatViewModel : ViewModel() {
     private fun settleBackgroundTurnCheckpoint(completion: GatewayBackgroundTurnCompletion) {
         val profileKey = AgentDisplay.profileSessionKey(completion.profile)
         val matching = backgroundTurnCheckpoints.keys.filter { key ->
+            val checkpoint = backgroundTurnCheckpoints[key]
             key.sessionId == completion.storedSessionId &&
-                key.contextKey.substringAfterLast("::") == profileKey
+                key.contextKey.substringAfterLast("::") == profileKey &&
+                checkpoint?.liveSessionId == completion.liveSessionId
         }
         if (matching.isEmpty()) return
+        matching.mapNotNull(backgroundTurnCheckpoints::get)
+            .mapTo(completedQueueOwnerRuns) { it.user.id }
         matching.forEach(backgroundTurnCheckpoints::remove)
         matching.forEach { key ->
             backgroundNeedsInputKeys -= key
@@ -1732,6 +1758,7 @@ class ChatViewModel : ViewModel() {
                 }
             }
         }
+        drainQueue()
     }
 
     /**
@@ -1776,6 +1803,7 @@ class ChatViewModel : ViewModel() {
             }
             accepted = false
             boundHandle = null
+            activeQueueOwnerRunId = null
         }
 
         val callbacks = GatewayTurnCallbacks(
@@ -1880,7 +1908,7 @@ class ChatViewModel : ViewModel() {
                     handler.onStreamError(message)
                     emitError(Exception(message), context = "send_message")
                     settleBoundTurnState()
-                    _queuedMessages.value = emptyList()
+                    clearQueue()
                     scheduleGatewayHistoryReconcile(
                         storedSessionId = storedSessionId,
                         baselineAssistantCount = baselineAssistantCount,
@@ -1952,6 +1980,7 @@ class ChatViewModel : ViewModel() {
                     accepted = true
                     activeStream = handle
                     activeStreamIsGateway = true
+                    activeQueueOwnerRunId = "gateway-inbound:$messageId"
                     _steerableTurn.value = true
                     queuedRecovery?.let { handoff ->
                         val now = System.currentTimeMillis()
@@ -3034,7 +3063,9 @@ class ChatViewModel : ViewModel() {
                 relayReasoningCapabilities.value = emptyMap()
                 _reasoningCapabilityRevision.value += 1L
                 publishBackgroundSessionActivity()
-                _queuedMessages.value = emptyList()
+                queuedMessageItems.clear()
+                completedQueueOwnerRuns.clear()
+                publishQueuedMessages()
                 _pendingAttachments.value = emptyList()
                 _steerableTurn.value = false
                 _steerNotice.value = null
@@ -3077,6 +3108,7 @@ class ChatViewModel : ViewModel() {
             activeProfileContextKey == contextKey &&
             handler.currentSessionId.value == sessionId
         ) {
+            publishQueuedMessages()
             _initialChatSettled.value = true
             return
         }
@@ -3092,6 +3124,7 @@ class ChatViewModel : ViewModel() {
             activeTurnCheckpointSeed?.contextKey = contextKey
             scheduleCheckpointWrite(immediate = true)
             selectBackgroundProcessSession(sessionId, contextKey)
+            publishQueuedMessages()
             _initialChatSettled.value = true
             return
         }
@@ -3108,7 +3141,6 @@ class ChatViewModel : ViewModel() {
         activeProfileContextKey = contextKey
         refreshRelayReasoningCapabilities()
         publishBackgroundSessionActivity()
-        _queuedMessages.value = emptyList()
         _pendingAttachments.value = emptyList()
         _steerableTurn.value = false
         _steerNotice.value = null
@@ -3120,6 +3152,7 @@ class ChatViewModel : ViewModel() {
         _fastEnabled.value = null
         resetApprovalModeState()
         pendingYolo = null
+        publishQueuedMessages()
         // SSE profile switch: reset the reasoning chip to unknown (a sessionless
         // config.get reads the wrong profile's effort) and the personality to
         // default so composeInjectedContext can't inject the previous profile's
@@ -3138,6 +3171,7 @@ class ChatViewModel : ViewModel() {
         pendingTruncateOrdinal = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
+        publishQueuedMessages()
         selectBackgroundProcessSession(sessionId, contextKey)
         if (sessionId != null) {
             onSessionChanged?.invoke(sessionId)
@@ -3527,6 +3561,7 @@ class ChatViewModel : ViewModel() {
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
+        publishQueuedMessages()
         if (streamingEndpoint != "gateway") {
             val session = handler.sessions.value.firstOrNull { it.sessionId == sessionId }
             if (session?.hasModelConfig == true && !session.model.isNullOrBlank()) {
@@ -3575,6 +3610,7 @@ class ChatViewModel : ViewModel() {
             }
             if (historyLoadGeneration.get() == loadGeneration) {
                 _isLoadingHistory.value = false
+                drainQueue()
             }
         }
     }
@@ -3594,6 +3630,16 @@ class ChatViewModel : ViewModel() {
 
         // Save reference before removing (for rollback on failure)
         val removedSession = handler.sessions.value.find { it.sessionId == sessionId }
+        val removedQueued = removeQueuedMessagesFor(activeProfileContextKey, sessionId)
+        if (removedQueued > 0) {
+            _transientNotice.tryEmit(
+                if (removedQueued == 1) {
+                    "A queued message was canceled because its chat was deleted."
+                } else {
+                    "$removedQueued queued messages were canceled because their chat was deleted."
+                },
+            )
+        }
 
         // Optimistic removal
         handler.removeSession(sessionId)
@@ -3791,7 +3837,7 @@ class ChatViewModel : ViewModel() {
             if (_steerableTurn.value && streamingEndpoint == "gateway") {
                 steerActiveTurn(text.trim())
             } else {
-                _queuedMessages.update { it + text.trim() }
+                enqueueMessage(text.trim())
             }
             return
         }
@@ -3809,7 +3855,7 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return
         val gateway = gatewayClient
         if (gateway == null) {
-            _queuedMessages.update { it + text }
+            enqueueMessage(text)
             return
         }
         viewModelScope.launch {
@@ -3826,7 +3872,7 @@ class ChatViewModel : ViewModel() {
                 }
                 SteerResult.Rejected, SteerResult.Failed -> {
                     if (activeStream != null) {
-                        _queuedMessages.update { it + text }
+                        enqueueMessage(text)
                         _steerNotice.value = "Queued — sends after this turn"
                     } else {
                         // Turn ended while the correction RPC was in flight —
@@ -4672,6 +4718,7 @@ class ChatViewModel : ViewModel() {
             },
             startedAt = assistantTimestamp,
         )
+        activeQueueOwnerRunId = userMessageId
         activeTurnCheckpointKey()?.let { ActiveTurnKeepAliveRegistry.acquire(it.keepAliveKey()) }
         // Remove a prior turn for THIS session immediately. Detached sibling
         // turns retain their own durable checkpoints while this chat starts a
@@ -4708,6 +4755,8 @@ class ChatViewModel : ViewModel() {
             baselineAssistantCount = checkpoint.baselineAssistantCount,
             startedAt = checkpoint.startedAt,
         )
+        activeQueueOwnerRunId = checkpoint.user.id
+        restoreQueuedMessages(checkpoint)
         activeTurnCheckpointKey()?.let { key ->
             ActiveTurnKeepAliveRegistry.acquire(key.keepAliveKey())
             ActiveTurnKeepAliveRegistry.setWaiting(key.keepAliveKey(), checkpoint.pendingAsk != null)
@@ -4842,9 +4891,52 @@ class ChatViewModel : ViewModel() {
                     receivedAt = ask.receivedAt,
                 )
             },
+            queuedMessages = queuedMessageItems
+                .filter {
+                    it.contextKey == contextKey &&
+                        it.sessionId == sessionId &&
+                        it.ownerRunId == seed.userMessageId
+                }
+                .map { item ->
+                    ChatQueuedMessageCheckpoint(
+                        id = item.id,
+                        text = item.text.take(MAX_CHECKPOINT_TEXT_CHARS),
+                        transport = item.transport,
+                        ownerRunId = item.ownerRunId,
+                        interfaceContextPrompt = item.interfaceContextPrompt,
+                        hadAttachments = item.attachments.isNotEmpty(),
+                    )
+                },
             startedAt = seed.startedAt,
             updatedAt = now,
         )
+    }
+
+    private fun restoreQueuedMessages(checkpoint: ChatTurnCheckpoint) {
+        var droppedAttachmentQueue = false
+        checkpoint.queuedMessages.forEach { saved ->
+            if (queuedMessageItems.any { it.id == saved.id }) return@forEach
+            if (saved.hadAttachments) {
+                droppedAttachmentQueue = true
+                return@forEach
+            }
+            queuedMessageItems += QueuedMessage(
+                id = saved.id,
+                text = saved.text,
+                contextKey = checkpoint.contextKey,
+                sessionId = checkpoint.sessionId,
+                transport = saved.transport,
+                ownerRunId = saved.ownerRunId,
+                attachments = emptyList(),
+                interfaceContextPrompt = saved.interfaceContextPrompt,
+            )
+        }
+        publishQueuedMessages()
+        if (droppedAttachmentQueue) {
+            _transientNotice.tryEmit(
+                "A queued attachment message could not be restored. Review the attachment and send it again.",
+            )
+        }
     }
 
     private fun scheduleCheckpointWrite(immediate: Boolean = false) {
@@ -4878,6 +4970,7 @@ class ChatViewModel : ViewModel() {
             seed.contextKey?.let { TurnCheckpointKey(it, seed.sessionId) }
         }
         activeTurnCheckpointSeed = null
+        activeQueueOwnerRunId = null
         val generation = checkpointGeneration.incrementAndGet()
         checkpointWriteJob?.cancel()
         checkpointWriteJob = null
@@ -4901,6 +4994,7 @@ class ChatViewModel : ViewModel() {
     /** Drop visible ownership while preserving a detached sibling's checkpoint. */
     private fun releaseActiveTurnCheckpoint() {
         activeTurnCheckpointSeed = null
+        activeQueueOwnerRunId = null
         checkpointGeneration.incrementAndGet()
         checkpointWriteJob?.cancel()
         checkpointWriteJob = null
@@ -4940,6 +5034,9 @@ class ChatViewModel : ViewModel() {
             return
         }
 
+        handler.currentSessionId.value?.let { sessionId ->
+            removeQueuedMessagesFor(activeProfileContextKey, sessionId)
+        }
         clearTurnCheckpoint()
         intentionallyCancelled = true
         activeStream?.cancel()
@@ -5351,7 +5448,7 @@ class ChatViewModel : ViewModel() {
                     handler.onStreamError(message)
                     clearTurnCheckpoint()
                     emitError(Exception(message), context = "send_message")
-                    _queuedMessages.value = emptyList()
+                    removeQueuedMessagesForOwner(checkpoint.user.id)
                 }
             },
         )
@@ -5364,7 +5461,11 @@ class ChatViewModel : ViewModel() {
      * finalizes with exactly the completion semantics.
      */
     private fun finalizeTurnSideEffects(handler: ChatHandler, messageId: String) {
+        val completedOwner = activeQueueOwnerRunId
         handler.onStreamComplete(messageId)
+        if (completedOwner != null && queuedMessageItems.any { it.ownerRunId == completedOwner }) {
+            completedQueueOwnerRuns += completedOwner
+        }
         clearTurnCheckpoint()
         activeStream = null
         _steerableTurn.value = false
@@ -5539,21 +5640,102 @@ class ChatViewModel : ViewModel() {
                     AppAnalytics.onStreamError()
                     handler.onStreamError(message)
                     emitError(Exception(message), context = "send_message")
-                    _queuedMessages.value = emptyList()
+                    clearQueue()
                 }
             },
         )
     }
 
+    private fun enqueueMessage(text: String) {
+        val seed = activeTurnCheckpointSeed
+        val contextKey = seed?.contextKey ?: activeProfileContextKey
+        val sessionId = seed?.sessionId?.takeIf { it.isNotBlank() }
+            ?: chatHandler?.currentSessionId?.value
+        val activeOwnerRunId = activeQueueOwnerRunId
+        if (contextKey == null || sessionId == null || activeOwnerRunId == null) {
+            _transientNotice.tryEmit(
+                "This message could not be queued because the active chat destination is not available.",
+            )
+            return
+        }
+        // Queue order is a run-generation chain: the first item waits for the
+        // active turn; each later item waits for the queued turn before it.
+        // sendMessageInternal reuses each item's stable id as that turn's user
+        // id, so this ownership also survives checkpoint persistence.
+        val ownerRunId = queuedMessageItems.lastOrNull {
+            it.contextKey == contextKey && it.sessionId == sessionId
+        }?.id ?: activeOwnerRunId
+        val item = QueuedMessage(
+            id = UUID.randomUUID().toString(),
+            text = text,
+            contextKey = contextKey,
+            sessionId = sessionId,
+            transport = streamingEndpoint,
+            ownerRunId = ownerRunId,
+            attachments = _pendingAttachments.value,
+            interfaceContextPrompt = nextInterfaceContextPrompt,
+        )
+        _pendingAttachments.value = emptyList()
+        nextInterfaceContextPrompt = null
+        queuedMessageItems += item
+        publishQueuedMessages()
+        scheduleCheckpointWrite(immediate = true)
+    }
+
+    private fun currentQueueDestination(): Pair<String, String>? {
+        val contextKey = activeProfileContextKey ?: return null
+        val sessionId = chatHandler?.currentSessionId?.value ?: return null
+        return contextKey to sessionId
+    }
+
+    private fun publishQueuedMessages() {
+        val destination = currentQueueDestination()
+        _queuedMessages.value = if (destination == null) {
+            emptyList()
+        } else {
+            queuedMessageItems.filter {
+                it.contextKey == destination.first && it.sessionId == destination.second
+            }.map(QueuedMessage::text)
+        }
+    }
+
+    private fun removeQueuedMessagesFor(contextKey: String?, sessionId: String): Int {
+        if (contextKey == null) return 0
+        val removedOwners = queuedMessageItems
+            .filter { it.contextKey == contextKey && it.sessionId == sessionId }
+            .mapTo(mutableSetOf(), QueuedMessage::ownerRunId)
+        val before = queuedMessageItems.size
+        queuedMessageItems.removeAll { it.contextKey == contextKey && it.sessionId == sessionId }
+        removedOwners.forEach { owner ->
+            if (queuedMessageItems.none { it.ownerRunId == owner }) completedQueueOwnerRuns -= owner
+        }
+        publishQueuedMessages()
+        return before - queuedMessageItems.size
+    }
+
+    private fun removeQueuedMessagesForOwner(ownerRunId: String) {
+        queuedMessageItems.removeAll { it.ownerRunId == ownerRunId }
+        completedQueueOwnerRuns -= ownerRunId
+        publishQueuedMessages()
+    }
+
     fun clearQueue() {
-        _queuedMessages.value = emptyList()
+        val destination = currentQueueDestination() ?: return
+        removeQueuedMessagesFor(destination.first, destination.second)
     }
 
     /** Drop a single queued message by index (no-op if out of range). */
     fun removeQueuedAt(index: Int) {
-        _queuedMessages.update { list ->
-            if (index in list.indices) list.toMutableList().apply { removeAt(index) } else list
+        val destination = currentQueueDestination() ?: return
+        val visible = queuedMessageItems.filter {
+            it.contextKey == destination.first && it.sessionId == destination.second
         }
+        val item = visible.getOrNull(index) ?: return
+        queuedMessageItems.removeAll { it.id == item.id }
+        if (queuedMessageItems.none { it.ownerRunId == item.ownerRunId }) {
+            completedQueueOwnerRuns -= item.ownerRunId
+        }
+        publishQueuedMessages()
     }
 
     /**
@@ -5561,12 +5743,18 @@ class ChatViewModel : ViewModel() {
      * the composer can prefill it. Null if the index is out of range.
      */
     fun takeQueuedForEdit(index: Int): String? {
-        val current = _queuedMessages.value
-        if (index !in current.indices) return null
-        _queuedMessages.update { list ->
-            if (index in list.indices) list.toMutableList().apply { removeAt(index) } else list
+        val destination = currentQueueDestination() ?: return null
+        val item = queuedMessageItems.filter {
+            it.contextKey == destination.first && it.sessionId == destination.second
+        }.getOrNull(index) ?: return null
+        queuedMessageItems.removeAll { it.id == item.id }
+        if (queuedMessageItems.none { it.ownerRunId == item.ownerRunId }) {
+            completedQueueOwnerRuns -= item.ownerRunId
         }
-        return current[index]
+        _pendingAttachments.value = item.attachments
+        nextInterfaceContextPrompt = item.interfaceContextPrompt
+        publishQueuedMessages()
+        return item.text
     }
 
     private fun drainQueue() {
@@ -5574,9 +5762,27 @@ class ChatViewModel : ViewModel() {
         val client = apiClient
         if (streamingEndpoint != "gateway" && client == null) return
         if (streamingEndpoint == "gateway" && gatewayClient == null && client == null) return
-        val next = _queuedMessages.value.firstOrNull() ?: return
-        _queuedMessages.update { it.drop(1) }
-        sendMessageInternal(client, handler, next, queuedFollowUp = true)
+        if (activeStream != null || streamRecovery != null) return
+        val destination = currentQueueDestination() ?: return
+        val next = queuedMessageItems.firstOrNull {
+            it.contextKey == destination.first &&
+                it.sessionId == destination.second &&
+                it.ownerRunId in completedQueueOwnerRuns
+        } ?: return
+        if (next.transport != streamingEndpoint) {
+            queuedMessageItems.removeAll { it.id == next.id }
+            publishQueuedMessages()
+            _transientNotice.tryEmit(
+                "A queued message was not sent because this chat's route changed.",
+            )
+            return
+        }
+        queuedMessageItems.removeAll { it.id == next.id }
+        if (queuedMessageItems.none { it.ownerRunId == next.ownerRunId }) {
+            completedQueueOwnerRuns -= next.ownerRunId
+        }
+        publishQueuedMessages()
+        sendMessageInternal(client, handler, next.text, queuedFollowUp = true, queuedMessage = next)
     }
 
     private fun sendMessageInternal(
@@ -5585,18 +5791,19 @@ class ChatViewModel : ViewModel() {
         text: String,
         transportText: String = text,
         queuedFollowUp: Boolean = false,
+        queuedMessage: QueuedMessage? = null,
     ) {
         AppAnalytics.onMessageSent()
         val displayText = text.trim()
         val outboundText = transportText.trim()
-        val interfaceContextPrompt = nextInterfaceContextPrompt
-        nextInterfaceContextPrompt = null
+        val interfaceContextPrompt = queuedMessage?.interfaceContextPrompt ?: nextInterfaceContextPrompt
+        if (queuedMessage == null) nextInterfaceContextPrompt = null
 
         // Snapshot and clear pending attachments
-        val attachments = _pendingAttachments.value.ifEmpty { null }
-        _pendingAttachments.value = emptyList()
+        val attachments = (queuedMessage?.attachments ?: _pendingAttachments.value).ifEmpty { null }
+        if (queuedMessage == null) _pendingAttachments.value = emptyList()
 
-        val messageId = UUID.randomUUID().toString()
+        val messageId = queuedMessage?.id ?: UUID.randomUUID().toString()
 
         // Add user message locally (with attachments for display)
         handler.addUserMessage(
@@ -6958,7 +7165,7 @@ class ChatViewModel : ViewModel() {
                 handler.messages.value.findLast { it.isStreaming }
                     ?.let { handler.onStreamComplete(it.id) }
                 activeStream = null
-                _queuedMessages.value = emptyList()
+                removeQueuedMessagesForOwner(userMessageId)
                 _steerableTurn.value = false
                 _steerNotice.value = null
                 clearTurnCheckpoint()
@@ -7030,7 +7237,7 @@ class ChatViewModel : ViewModel() {
                     }
                 }
                 activeStream = null
-                _queuedMessages.value = emptyList()
+                removeQueuedMessagesForOwner(userMessageId)
                 _steerableTurn.value = false
                 _steerNotice.value = null
                 clearTurnCheckpoint()
@@ -7049,7 +7256,7 @@ class ChatViewModel : ViewModel() {
             handler.onStreamError(errorMsg)
             emitError(error, context = "send_message")
             activeStream = null
-            _queuedMessages.value = emptyList()
+            removeQueuedMessagesForOwner(userMessageId)
             _steerableTurn.value = false
             _steerNotice.value = null
             clearTurnCheckpoint()
@@ -7535,7 +7742,7 @@ class ChatViewModel : ViewModel() {
         activeStream = null
         imageActivityJob?.cancel()
         imageActivityJob = null
-        _queuedMessages.value = emptyList()
+        clearQueue()
         _steerableTurn.value = false
         _steerNotice.value = null
         // Gateway cancel issues session.interrupt, which force-denies any

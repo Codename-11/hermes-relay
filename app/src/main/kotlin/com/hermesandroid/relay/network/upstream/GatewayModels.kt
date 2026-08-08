@@ -173,6 +173,7 @@ data class GatewaySessionRecovery(
 /** A detached sibling turn reached its terminal event on the shared Gateway socket. */
 data class GatewayBackgroundTurnCompletion(
     val storedSessionId: String,
+    val liveSessionId: String,
     val profile: String?,
     val expectedAssistantText: String?,
 )

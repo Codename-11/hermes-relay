@@ -23,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -938,6 +939,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun queuedMessageDrainsAfterUnsolicitedTurnCompletes() {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
         gatewayHarness.redirectStatus = "rejected"
         serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
         serverWs.send(
@@ -970,6 +972,276 @@ class ChatViewModelGatewayInboundTurnTest {
             }
         }
         assertTrue(viewModel.queuedMessages.value.isEmpty())
+    }
+
+    @Test
+    fun multipleQueuedMessagesDrainAsAnOwnedRunChain() {
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            STORED_SESSION_ID,
+        )
+        gatewayHarness.redirectStatus = "rejected"
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        awaitCondition { handler.isStreaming.value }
+
+        viewModel.sendMessage("Queued first")
+        gatewayHarness.awaitRpc("session.redirect")
+        viewModel.sendMessage("Queued second")
+        gatewayHarness.awaitRpcCount("session.redirect", 2)
+        awaitCondition {
+            viewModel.queuedMessages.value == listOf("Queued first", "Queued second")
+        }
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Original complete") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition {
+            gatewayHarness.rpcLog.count { it.first == "prompt.submit" } == 1
+        }
+        assertEquals(listOf("Queued second"), viewModel.queuedMessages.value)
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "First queued complete") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition {
+            gatewayHarness.rpcLog.filter { it.first == "prompt.submit" }
+                .map { it.second["text"] } ==
+                listOf(JsonPrimitive("Queued first"), JsonPrimitive("Queued second"))
+        }
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+    }
+
+    @Test
+    fun queuedMessageStaysWithOriginWhileAnotherRunningSessionCompletes() {
+        val secondSession = "stored-session-b"
+        val contextKey = AgentDisplay.profileContextKey("connection-a", null)
+        gatewayHarness.resumeLiveSessionIds[secondSession] = "live-b"
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+
+        viewModel.sendMessage("Run task A")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Partial A") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.isStreaming.value }
+
+        viewModel.sendMessage("Follow up A")
+        gatewayHarness.awaitRpc("session.redirect")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Follow up A") }
+
+        viewModel.switchSession(secondSession)
+        gatewayHarness.awaitRpcCount("session.resume", 2)
+        awaitCondition { handler.currentSessionId.value == secondSession && !handler.isStreaming.value }
+        assertTrue("session B must not show A's queue", viewModel.queuedMessages.value.isEmpty())
+
+        viewModel.sendMessage("Run task B")
+        gatewayHarness.awaitRpcCount("prompt.submit", 2)
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Task B complete") },
+                "live-b",
+            ),
+        )
+        awaitCondition { !handler.isStreaming.value }
+        assertEquals(
+            0,
+            gatewayHarness.rpcLog.count { (method, params) ->
+                method == "prompt.submit" && params["text"] == JsonPrimitive("Follow up A")
+            },
+        )
+
+        // A finishes late while B remains visible. Its queue becomes eligible,
+        // but must not be dispatched through B's mutable visible route.
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Task A complete") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(100)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+        assertEquals(
+            0,
+            gatewayHarness.rpcLog.count { (method, params) ->
+                method == "prompt.submit" && params["text"] == JsonPrimitive("Follow up A")
+            },
+        )
+
+        viewModel.switchSession(STORED_SESSION_ID)
+        awaitCondition {
+            gatewayHarness.rpcLog.any { (method, params) ->
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Follow up A") &&
+                    params["queued"] == JsonPrimitive(true)
+            }
+        }
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+    }
+
+    @Test
+    fun queuedMessageVisibilityFollowsItsOriginProfile() {
+        val defaultContext = AgentDisplay.profileContextKey("connection-a", null)
+        val otherContext = AgentDisplay.profileContextKey("connection-a", "profile-b")
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(defaultContext, STORED_SESSION_ID)
+
+        viewModel.sendMessage("Run in default profile")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Default profile partial") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.isStreaming.value }
+        viewModel.sendMessage("Default profile follow-up")
+        gatewayHarness.awaitRpc("session.redirect")
+        awaitCondition { viewModel.queuedMessages.value.size == 1 }
+
+        viewModel.switchProfileContext(otherContext, STORED_SESSION_ID)
+        awaitCondition { viewModel.queuedMessages.value.isEmpty() }
+
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Default profile partial"
+        viewModel.switchProfileContext(defaultContext, STORED_SESSION_ID)
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.isStreaming.value &&
+                viewModel.queuedMessages.value == listOf("Default profile follow-up")
+        }
+    }
+
+    @Test
+    fun connectionChangeCancelsOwnedQueueAndLateCompletionCannotResendIt() {
+        val switches = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            STORED_SESSION_ID,
+        )
+        viewModel.observeConnectionSwitches(switches)
+
+        viewModel.sendMessage("Run before connection change")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.sendMessage("Must stay on the old connection")
+        awaitCondition { viewModel.queuedMessages.value.size == 1 }
+
+        switches.tryEmit("connection-b")
+        awaitCondition { viewModel.queuedMessages.value.isEmpty() }
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Late old-connection completion") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(100)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertFalse(
+            gatewayHarness.rpcLog.any { (method, params) ->
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Must stay on the old connection")
+            },
+        )
+    }
+
+    @Test
+    fun deletingDestinationCancelsItsQueueAndEditRestoresOnlyThatItem() {
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            STORED_SESSION_ID,
+        )
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = STORED_SESSION_ID,
+                title = "Owned session",
+                model = null,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+        viewModel.profileSessionDeleter = { true }
+
+        viewModel.sendMessage("Run before delete")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.sendMessage("Edit this queued message")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Edit this queued message") }
+        assertEquals("Edit this queued message", viewModel.takeQueuedForEdit(0))
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+
+        viewModel.sendMessage("Cancel when destination is deleted")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Cancel when destination is deleted") }
+        viewModel.deleteSession(STORED_SESSION_ID)
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Late deleted-session completion") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(100)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertFalse(
+            gatewayHarness.rpcLog.any { (method, params) ->
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Cancel when destination is deleted")
+            },
+        )
+    }
+
+    @Test
+    fun retryQueuedForActiveRunIsCancelledWithThatRun() {
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            STORED_SESSION_ID,
+        )
+
+        viewModel.sendMessage("Retry this turn")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.retryLastMessage()
+        gatewayHarness.awaitRpc("session.redirect")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Retry this turn") }
+
+        viewModel.cancelStream()
+        gatewayHarness.awaitRpc("session.interrupt")
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Late completion after cancel") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(100)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertEquals(
+            1,
+            gatewayHarness.rpcLog.count { (method, params) ->
+                method == "prompt.submit" && params["text"] == JsonPrimitive("Retry this turn")
+            },
+        )
     }
 
     @Test

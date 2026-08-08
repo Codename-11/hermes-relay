@@ -35,6 +35,21 @@ meaning of the current approval, chat override, or processing-tier choice in
 plain language. The layout remains scrollable on compact heights and at larger
 font scales without moving the close action off-screen.
 
+## 2026-08-08 — Session-owned Android send queues
+
+Android follow-up queues now capture the composing connection/profile context,
+stored session, configured transport, originating run, attachments, and voice
+context as one immutable destination. Queue presentation is filtered to the
+visible session, while completion eligibility is tied to the exact run and live
+Gateway generation that owned the queue. A completion from another session or
+an older live generation cannot dispatch through the current composer route.
+
+In-flight checkpoints retain bounded queued text across process restoration.
+Attachment bytes are not copied into Preferences DataStore; an attachment queue
+that cannot be restored is rejected with a visible review-and-resend notice.
+Connection replacement and session deletion cancel their owned queues, while
+switching among concurrent Gateway sessions preserves each session's queue.
+
 ## 2026-08-07 — Provider-owned model inventory identity
 
 Android now normalizes Gateway and API model inventories before publishing
