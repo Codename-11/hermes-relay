@@ -2165,6 +2165,7 @@ class GatewayChatClient(
                     unmatchedTurnCompleteListener?.invoke(
                         GatewayBackgroundTurnCompletion(
                             storedSessionId = backgroundTurn.storedSessionId,
+                            liveSessionId = eventSessionId,
                             profile = backgroundTurn.profile,
                             expectedAssistantText = expectedText,
                         ),
@@ -2239,6 +2240,7 @@ class GatewayChatClient(
                     unmatchedTurnCompleteListener?.invoke(
                         GatewayBackgroundTurnCompletion(
                             storedSessionId = storedId,
+                            liveSessionId = eventSessionId,
                             profile = liveSessionProfile,
                             expectedAssistantText = expectedText,
                         ),

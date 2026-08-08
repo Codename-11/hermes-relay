@@ -2638,3 +2638,45 @@ clients. Identical session ids in different profiles or installations remain
 isolated by their server database. Hosts predating the upstream fields fail the
 mutation visibly and retain their previous row rather than reporting local-only
 success.
+
+---
+
+## ADR 47 — Android follow-up queues are destination- and run-owned
+
+**Status:** Accepted (2026-08-08).
+
+**Context.** Android previously represented queued composer submissions as one
+ViewModel-wide list of strings. Queue presentation and completion dispatch both
+consulted the mutable visible session, so switching between two running Gateway
+sessions could display and submit a follow-up in the wrong server conversation.
+Composer attachments and voice context were also read at dispatch time rather
+than captured with the queued text.
+
+**Decision.**
+
+- Each queued item snapshots its connection/profile context key, stored session,
+  configured transport, originating local run id, attachments, voice context,
+  and stable queue id at submission.
+- The queue tray projects only items owned by the visible context and session.
+  Session/profile switching does not rebind or globally expose queued items.
+- A run must complete before its own items become eligible. Detached Gateway
+  completion carries the exact live session generation and reconciles only the
+  checkpoint with that same durable and live identity, preventing a late older
+  completion from releasing a newer same-session queue.
+- Dispatch occurs only while the exact destination is visible and idle. A route
+  change, deleted session, connection replacement, cancellation, or unavailable
+  destination removes only the affected queue and reports the loss where user
+  action is required.
+- In-flight checkpoints persist bounded queued text and voice context. Attachment
+  bytes are deliberately excluded from Preferences DataStore; restoration drops
+  such an item with a visible review-and-resend notice rather than sending an
+  incomplete prompt.
+- Durable session metadata and live tool-card identity remain independent. Queue
+  ownership consumes their existing connection/profile and checkpoint seams but
+  does not move metadata or Compose expansion state into the queue.
+
+**Consequences.** Concurrent Gateway sessions retain independent queues and no
+completion can redirect a follow-up through the currently visible chat. Queue
+editing restores only the selected item's composer payload. Process restoration
+is deterministic for bounded text queues, while attachment restoration fails
+closed instead of silently changing the submitted turn.

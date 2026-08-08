@@ -32,6 +32,7 @@ data class ChatTurnCheckpoint(
     val priorUserMessageCount: Int,
     val baselineAssistantCount: Int,
     val pendingAsk: ChatTurnAskCheckpoint? = null,
+    val queuedMessages: List<ChatQueuedMessageCheckpoint> = emptyList(),
     val startedAt: Long,
     val updatedAt: Long,
 ) {
@@ -40,6 +41,17 @@ data class ChatTurnCheckpoint(
         const val MAX_AGE_MS = 24L * 60L * 60L * 1_000L
     }
 }
+
+@Serializable
+data class ChatQueuedMessageCheckpoint(
+    val id: String,
+    val text: String,
+    val transport: String,
+    val ownerRunId: String,
+    val interfaceContextPrompt: String? = null,
+    /** Attachment bytes are intentionally not copied into Preferences DataStore. */
+    val hadAttachments: Boolean = false,
+)
 
 @Serializable
 data class ChatTurnUserCheckpoint(
