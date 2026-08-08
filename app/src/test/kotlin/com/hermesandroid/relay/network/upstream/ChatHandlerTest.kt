@@ -266,7 +266,7 @@ class ChatHandlerTest {
     @Test
     fun onToolCallStart_createsToolCallEntry() {
         handler.onTextDelta("assist-1", "")
-        handler.onToolCallStart("assist-1", "call-1", "read_file")
+        handler.onToolCallStart("assist-1", "call-1", "read_file", "README.md")
 
         val msg = handler.messages.value.find { it.id == "assist-1" }
         assertNotNull(msg)
@@ -275,6 +275,7 @@ class ChatHandlerTest {
         val toolCall = msg.toolCalls[0]
         assertEquals("call-1", toolCall.id)
         assertEquals("read_file", toolCall.name)
+        assertEquals("README.md", toolCall.args)
         assertFalse(toolCall.isComplete)
         assertNull(toolCall.success)
     }

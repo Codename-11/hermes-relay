@@ -2866,6 +2866,15 @@ fun ChatScreen(
                                         else -> ToolProgressCard(
                                             toolCall = toolCall,
                                             messageTimestamp = message.timestamp,
+                                            onExpandedChange = { expanded ->
+                                                // Expanding a live-tail card is reading intent,
+                                                // not new stream output. Yield bottom-follow so
+                                                // the row's height change stays under the user's
+                                                // finger instead of being scrolled away.
+                                                if (expanded && isStreaming) {
+                                                    userScrolledAway = true
+                                                }
+                                            },
                                         )
                                     }
                                 }
