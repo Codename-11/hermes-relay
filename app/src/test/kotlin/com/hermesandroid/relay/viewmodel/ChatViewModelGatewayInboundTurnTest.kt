@@ -74,18 +74,23 @@ class ChatViewModelGatewayInboundTurnTest {
     private var persistedHistory: List<MessageItem> = emptyList()
     @Volatile
     private var holdCompletionsStream = false
+    private val apiCompletionsRequestCount = AtomicInteger(0)
 
     @Before
     fun setUp() {
         gatewayHarness = GatewayClientHarness()
         apiServer = MockWebServer().apply {
             dispatcher = object : Dispatcher() {
-                override fun dispatch(request: RecordedRequest): MockResponse =
-                    if (holdCompletionsStream && request.path == "/v1/chat/completions") {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (request.path == "/v1/chat/completions") {
+                        apiCompletionsRequestCount.incrementAndGet()
+                    }
+                    return if (holdCompletionsStream && request.path == "/v1/chat/completions") {
                         MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
                     } else {
                         MockResponse().setResponseCode(404)
                     }
+                }
             }
             start()
         }
@@ -106,6 +111,7 @@ class ChatViewModelGatewayInboundTurnTest {
         handler = ChatHandler().also { it.setSessionId(STORED_SESSION_ID) }
         persistedHistory = emptyList()
         holdCompletionsStream = false
+        apiCompletionsRequestCount.set(0)
         viewModel = ChatViewModel().also {
             it.initialize(
                 HermesApiClient(apiServer.url("/").toString(), "test-key"),
@@ -198,7 +204,7 @@ class ChatViewModelGatewayInboundTurnTest {
         )
         handler.onTurnComplete(cardMessageId)
         val card = handler.messages.value.single { it.id == cardMessageId }.cards.single()
-        val apiRequestsBeforeAction = apiServer.requestCount
+        val apiRequestsBeforeAction = apiCompletionsRequestCount.get()
 
         viewModel.dispatchCardAction(
             messageId = cardMessageId,
@@ -208,7 +214,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
         val submit = gatewayHarness.awaitRpc("prompt.submit")
         assertEquals("approve", (submit["text"] as JsonPrimitive).content)
-        assertEquals(apiRequestsBeforeAction, apiServer.requestCount)
+        assertEquals(apiRequestsBeforeAction, apiCompletionsRequestCount.get())
     }
 
     @Test
@@ -516,7 +522,9 @@ class ChatViewModelGatewayInboundTurnTest {
 
         gatewayHarness.awaitRpc("session.activate")
         awaitCondition {
-            handler.messages.value.any { it.id == "pending-assistant" } &&
+            handler.messages.value.any {
+                it.id == "pending-assistant" && it.content == "Partial answer from upstream"
+            } &&
                 handler.isStreaming.value
         }
         val restored = handler.messages.value.single { it.id == "pending-assistant" }
@@ -526,6 +534,8 @@ class ChatViewModelGatewayInboundTurnTest {
         assertFalse(restored.toolCalls.single().isComplete)
         assertEquals("Running terminal", handler.turnStatus.value)
         assertEquals("approval-1", viewModel.pendingAsk.value?.cardKey)
+        assertEquals(PROFILE_CONTEXT, viewModel.pendingAsk.value?.contextKey)
+        assertEquals(STORED_SESSION_ID, viewModel.pendingAsk.value?.sessionId)
         val restoredApproval = handler.messages.value
             .single { it.id == "ask-approval-1" }
             .cards
@@ -572,13 +582,85 @@ class ChatViewModelGatewayInboundTurnTest {
             ),
         )
 
-        awaitCondition { !handler.isStreaming.value }
         shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(handler.isStreaming.value)
+        assertEquals("approval-1", checkpointStore.checkpoint?.pendingAsk?.cardKey)
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "approval.respond" })
+        awaitCondition {
+            handler.messages.value.any {
+                it.role == MessageRole.ASSISTANT &&
+                    it.content == "Partial answer from upstream and finished"
+            }
+        }
+        // Neither replayed activity nor generic completion proves consent.
+        // The client-only card remains actionable until an explicit response
+        // or authoritative expiry event owns the transition.
+        assertEquals("approval-1", viewModel.pendingAsk.value?.cardKey)
+        assertTrue(
+            handler.messages.value
+                .single { it.id == "ask-approval-1" }
+                .cardDispatches
+                .isEmpty(),
+        )
+
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "once")
+        gatewayHarness.awaitRpc("approval.respond")
+        awaitCondition { !handler.isStreaming.value }
         awaitCondition { checkpointStore.checkpoint == null }
-        assertTrue(handler.messages.value.any {
-            it.role == MessageRole.ASSISTANT &&
-                it.content == "Partial answer from upstream and finished"
-        })
+        assertEquals(
+            "once",
+            handler.messages.value.single { it.id == "ask-approval-1" }
+                .cardDispatches.single().actionValue,
+        )
+    }
+
+    @Test
+    fun explicitApprovalActionAloneEmitsResponseAndCollapsesCard() {
+        viewModel.sendMessage("Run the guarded command")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "approval.request",
+                buildJsonObject { put("command", "guarded command") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "once")
+
+        val response = gatewayHarness.awaitRpc("approval.respond")
+        assertEquals(JsonPrimitive("live-resumed"), response["session_id"])
+        assertEquals(JsonPrimitive("once"), response["choice"])
+        awaitCondition { viewModel.pendingAsk.value == null }
+        val cardMessage = handler.messages.value.single { it.id == pending.messageId }
+        assertEquals("once", cardMessage.cardDispatches.single().actionValue)
+    }
+
+    @Test
+    fun explicitDenialActionEmitsResponseAndCollapsesCard() {
+        viewModel.sendMessage("Run the guarded command")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "approval.request",
+                buildJsonObject { put("command", "guarded command") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "deny")
+
+        val response = gatewayHarness.awaitRpc("approval.respond")
+        assertEquals(JsonPrimitive("live-resumed"), response["session_id"])
+        assertEquals(JsonPrimitive("deny"), response["choice"])
+        awaitCondition { viewModel.pendingAsk.value == null }
+        val cardMessage = handler.messages.value.single { it.id == pending.messageId }
+        assertEquals("deny", cardMessage.cardDispatches.single().actionValue)
     }
 
     @Test

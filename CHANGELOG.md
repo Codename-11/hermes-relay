@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android approval cards require an explicit labeled decision.** Reading or scrolling a guarded command, navigating away, backgrounding, recomposition, later turn activity, and card dismissal cannot submit or locally resolve it; pending requests remain bound to their owning profile and session until an explicit response or authoritative upstream expiry.
 - **Android model pickers reject duplicate catalog identities before rendering.** Repeated provider/model rows from cached or refreshed inventories are merged at the provider boundary, while identical model IDs under different providers remain distinct choices with provider-aware reasoning capabilities.
 - **Android session pins and archives survive app restarts.** The session drawer now reads and updates the owning Hermes profile's durable session metadata, rolls failed changes back, and makes unpinned stars clearly distinct in light theme.
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.

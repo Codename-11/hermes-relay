@@ -189,7 +189,8 @@ sealed interface GatewayBackgroundInteractionEvent {
         override val ask: GatewayAsk,
     ) : GatewayBackgroundInteractionEvent
 
-    data class Resolved(
+    /** An authoritative upstream `*.expire` event ended this request. */
+    data class Expired(
         override val storedSessionId: String,
         override val profile: String?,
         override val ask: GatewayAsk,
@@ -598,8 +599,6 @@ class GatewayTurnCallbacks(
     val onInteractionRequest: (GatewayAsk) -> Unit,
     /** Server declared a pending interaction expired; clear only the matching card. */
     val onInteractionExpired: (GatewayAskExpiry) -> Unit,
-    /** The turn resumed after a pending interaction was resolved elsewhere. */
-    val onInteractionResolved: (GatewayAskExpiry) -> Unit = { _ -> },
     /**
      * Gateway `status.update` lifecycle line — model fallback, retries, and
      * errors (often emoji-prefixed: 🔄 fallback, ⏳ retry, ❌ error). Default
