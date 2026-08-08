@@ -239,6 +239,56 @@ class ConnectionDashboardFieldsTest {
         )
     }
 
+    @Test
+    fun cloudDashboardDefaultLabel_usesOfficialAgentSlug() {
+        assertEquals(
+            "agent-1",
+            Connection.extractDefaultLabel(
+                dashboardUrl = "https://agent-1.agents.nousresearch.com/chat",
+                apiServerUrl = "",
+                relayUrl = "",
+            ),
+        )
+    }
+
+    @Test
+    fun cloudDashboardDefaultLabel_requiresExactSingleLabelOfficialOrigin() {
+        assertEquals(
+            "agent-1.agents.nousresearch.com.example.test",
+            Connection.extractDefaultLabel(
+                dashboardUrl = "https://agent-1.agents.nousresearch.com.example.test",
+                apiServerUrl = "",
+                relayUrl = "",
+            ),
+        )
+        assertEquals(
+            "nested.agent-1.agents.nousresearch.com",
+            Connection.extractDefaultLabel(
+                dashboardUrl = "https://nested.agent-1.agents.nousresearch.com",
+                apiServerUrl = "",
+                relayUrl = "",
+            ),
+        )
+    }
+
+    @Test
+    fun cloudDashboardDefaultLabel_doesNotReplaceUserEditedName() {
+        val automatic = Connection.extractDefaultLabel(
+            dashboardUrl = "https://agent-1.agents.nousresearch.com",
+            apiServerUrl = "",
+            relayUrl = "",
+        )
+
+        assertEquals(
+            "My research agent",
+            Connection.chooseDiscoveredLabel(
+                currentLabel = "My research agent",
+                primaryHost = automatic,
+                discoveredHostname = null,
+            ),
+        )
+    }
+
     private fun sampleConnection(
         dashboardUrl: String? = null,
     ): Connection = Connection(

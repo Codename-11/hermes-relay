@@ -272,6 +272,27 @@
     <!-- Connection wizard — Connect page essentials -->
     <string name="cw_connect_to_hermes">Conectar ao Hermes</string>
     <string name="cw_nearby_description">Vamos procurar o Hermes nesta rede. O Painel e o Gateway fornecem a conexão padrão para Chat, Gerenciar e Voz.</string>
+    <string name="cw_connection_chooser_description">Escolha a configuração que você tem. O Hermes Relay é opcional.</string>
+    <string name="cw_scan_setup_qr_title">Ler QR de configuração do Hermes</string>
+    <string name="cw_scan_setup_qr_subtitle">Configure rotas locais, remotas e do Relay disponíveis</string>
+    <string name="cw_recommended">Recomendado</string>
+    <string name="cw_other_ways_to_connect">Outras formas de conectar</string>
+    <string name="cw_advanced">Avançado</string>
+    <string name="cw_cloud_title">Hermes hospedado pela Nous</string>
+    <string name="cw_cloud_subtitle">Conecte ao seu agente hospedado</string>
+    <string name="cw_server_vps_title">Servidor ou VPS</string>
+    <string name="cw_server_vps_subtitle">Insira um endereço seguro do Painel</string>
+    <string name="cw_relay_optional_note">Chat, Gerenciar e Voz padrão funcionam sem o Relay. QRs de configuração compatíveis adicionam recursos avançados do Relay quando disponíveis.</string>
+    <string name="cw_cloud_entry_title">Conectar ao Hermes hospedado pela Nous</string>
+    <string name="cw_cloud_entry_description">Insira o endereço do agente mostrado no Nous Portal. Você entrará com segurança depois que o Hermes for encontrado.</string>
+    <string name="cw_cloud_agent_name">Endereço do agente</string>
+    <string name="cw_cloud_slug_placeholder">seu-agente</string>
+    <string name="cw_cloud_slug_hint">Conectaremos a seu-agente.agents.nousresearch.com.</string>
+    <string name="cw_cloud_slug_error">Insira exatamente as letras, os números e os hifens antes de .agents.nousresearch.com.</string>
+    <string name="cw_cloud_address_placeholder">https://seu-agente.example.com</string>
+    <string name="cw_cloud_address_hint">Use o endereço HTTPS completo exibido para seu agente hospedado.</string>
+    <string name="cw_cloud_use_custom_address">Usar URL personalizada</string>
+    <string name="cw_cloud_use_nous_address">Usar endereço hospedado pela Nous</string>
     <string name="cw_before_connecting">Antes de conectar</string>
     <string name="cw_connect_step_server_title">Inicie o Hermes no computador</string>
     <string name="cw_connect_step_server_body">Inicie o Painel no computador com Hermes. No primeiro acesso pela rede local, use o guia abaixo para torná-lo acessível pelo celular e ativar o login.</string>
@@ -2542,6 +2563,8 @@
     <string name="qr_scanner_title">Ler QR do Hermes</string>
     <string name="qr_scanner_instruction">Leia um QR de configuração do Hermes</string>
     <string name="qr_scanner_subtext">Escaneie um QR de configuração do Hermes ou de pareamento do Relay. Conexões padrão pelo Dashboard não exigem uma chave de API.</string>
+    <string name="qr_scanner_ready">Pronto para ler</string>
+    <string name="qr_scanner_found">QR de configuração do Hermes encontrado</string>
     <string name="qr_scanner_relay_title">Escanear QR do Relay</string>
     <string name="qr_scanner_relay_instruction">Escaneie um QR de pareamento do Relay</string>
     <string name="qr_scanner_relay_subtext">Abra o QR de pareamento do Relay no seu servidor Hermes. A conexão do Dashboard e as rotas existentes não serão alteradas.</string>
@@ -3260,6 +3283,7 @@
     <string name="dashboard_native_signin_cancelled">Login pelo navegador cancelado.</string>
     <string name="dashboard_native_signin_requires_https">O login seguro pelo navegador exige um endereço HTTPS do painel.</string>
     <string name="dashboard_native_signin_unavailable">O login seguro pelo navegador não está disponível para esta conexão. Atualize a conexão e tente novamente.</string>
+    <string name="dashboard_native_signin_transport_retry">A conexão segura foi interrompida. Toque no botão de login para tentar novamente.</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">Ignore as solicitações de aprovação somente neste chat. A opção é redefinida quando a sessão muda.</string>
     <string name="conn_info_yolo_mode_profile_off">As aprovações do perfil estão desativadas, então este chat já ignora as solicitações. Escolha Manual ou Inteligente antes de usar a exceção por chat.</string>
     <string name="conn_info_approval_mode_title">Modo de aprovação do perfil</string>

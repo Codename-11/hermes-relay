@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.network.upstream
 
+import com.hermesandroid.relay.BuildConfig
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.Socket
@@ -67,19 +68,72 @@ class NativeDashboardSignInCoordinatorTest {
             val redirect = URI(query(authorize)["redirect_uri"]!!)
             val state = query(authorize)["state"]!!
 
-            val rejected = sendCallback(
+            val rejected = sendCallbackResponse(
                 redirect,
-                "/callback?code=attacker&state=wrong",
+                "/callback?code=attacker-secret&state=wrong-secret",
             )
             assertTrue(rejected.startsWith("HTTP/1.1 400"))
+            assertTrue(rejected.contains("Callback not accepted"))
+            assertTrue(rejected.contains("Content-Security-Policy:"))
+            assertTrue(rejected.contains("Cache-Control: no-store"))
+            assertReturnLinkIsFixedAndPrivate(rejected)
+            assertFalse(rejected.contains("attacker-secret"))
+            assertFalse(rejected.contains("wrong-secret"))
             assertFalse(result.isCompleted)
 
-            val accepted = sendCallback(
+            val accepted = sendCallbackResponse(
                 redirect,
                 "/callback?code=code-1&state=$state",
             )
             assertTrue(accepted.startsWith("HTTP/1.1 200"))
+            assertTrue(accepted.contains("Content-Type: text/html; charset=utf-8"))
+            assertTrue(accepted.contains("Sign-in complete"))
+            assertReturnLinkIsFixedAndPrivate(accepted)
+            assertTrue(accepted.contains("prefers-reduced-motion:reduce"))
+            assertTrue(accepted.contains("frame-ancestors 'none'"))
+            assertTrue(accepted.contains("style-src 'sha256-"))
+            assertTrue(accepted.contains("script-src 'none'"))
+            assertFalse(accepted.contains("'unsafe-inline'"))
+            assertFalse(accepted.contains("window.close"))
+            assertFalse(accepted.contains("code-1"))
+            assertFalse(accepted.contains(state))
             assertEquals("access-1", result.await().accessToken)
+        }
+    }
+
+    @Test
+    fun signIn_tokenExchangeFailure_returnsPrivateActionablePage() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(400).setBody("sensitive-upstream-detail"))
+        val coordinator = NativeDashboardSignInCoordinator(
+            NativeDashboardAuthClient(server.url("/").toString(), store),
+        )
+
+        coroutineScope {
+            val authorizationUrl = CompletableDeferred<String>()
+            val result = async {
+                runCatching {
+                    coordinator.signIn("nous") { authorizationUrl.complete(it) }
+                }
+            }
+            val authorize = URI(authorizationUrl.await())
+            val query = query(authorize)
+            val redirect = URI(query.getValue("redirect_uri"))
+            val response = sendCallbackResponse(
+                redirect,
+                "/callback?code=one-time-secret&state=${query.getValue("state")}",
+            )
+
+            assertTrue(response.startsWith("HTTP/1.1 400"))
+            assertTrue(response.contains("Sign-in needs another try"))
+            assertTrue(response.contains("No session details were saved"))
+            assertTrue(response.contains("Referrer-Policy: no-referrer"))
+            assertTrue(response.contains("X-Content-Type-Options: nosniff"))
+            assertTrue(response.contains("Permissions-Policy:"))
+            assertReturnLinkIsFixedAndPrivate(response)
+            assertFalse(response.contains("one-time-secret"))
+            assertFalse(response.contains(query.getValue("state")))
+            assertFalse(response.contains("sensitive-upstream-detail"))
+            assertTrue(result.await().exceptionOrNull() is NativeDashboardAuthHttpException)
         }
     }
 
@@ -139,6 +193,18 @@ class NativeDashboardSignInCoordinatorTest {
         )
     }
 
+    @Test
+    fun returnUri_usesTheExactFlavorApplicationId_withoutAuthMaterial() {
+        val returnUri = URI(NATIVE_SIGN_IN_RETURN_URI)
+
+        assertEquals(BuildConfig.APPLICATION_ID, returnUri.scheme)
+        assertEquals("return", returnUri.host)
+        assertEquals("", returnUri.path)
+        assertEquals(null, returnUri.userInfo)
+        assertEquals(null, returnUri.query)
+        assertEquals(null, returnUri.fragment)
+    }
+
     private suspend fun completeSignIn(
         coordinator: NativeDashboardSignInCoordinator,
         provider: String,
@@ -154,7 +220,7 @@ class NativeDashboardSignInCoordinatorTest {
         val redirect = URI(authorizeQuery["redirect_uri"]!!)
         assertEquals("127.0.0.1", redirect.host)
         assertTrue(redirect.port > 0)
-        val response = sendCallback(
+        val response = sendCallbackResponse(
             redirect,
             "/callback?code=code-1&state=${authorizeQuery["state"]}",
         )
@@ -162,15 +228,27 @@ class NativeDashboardSignInCoordinatorTest {
         result.await()
     }
 
-    private fun sendCallback(redirect: URI, target: String): String =
+    private fun sendCallbackResponse(redirect: URI, target: String): String =
         Socket("127.0.0.1", redirect.port).use { socket ->
             socket.getOutputStream().write(
                 "GET $target HTTP/1.1\r\nHost: 127.0.0.1:${redirect.port}\r\n\r\n"
                     .toByteArray(StandardCharsets.US_ASCII),
             )
             socket.getOutputStream().flush()
-            BufferedReader(InputStreamReader(socket.getInputStream())).readLine()
+            BufferedReader(InputStreamReader(socket.getInputStream())).readText()
         }
+
+    private fun assertReturnLinkIsFixedAndPrivate(response: String) {
+        assertTrue(
+            response.contains(
+                "<a class=\"return-link\" href=\"$NATIVE_SIGN_IN_RETURN_URI\">" +
+                    "Return to Hermes Relay</a>",
+            ),
+        )
+        assertFalse(NATIVE_SIGN_IN_RETURN_URI.contains('?'))
+        assertFalse(NATIVE_SIGN_IN_RETURN_URI.contains('#'))
+        assertFalse(NATIVE_SIGN_IN_RETURN_URI.contains('@'))
+    }
 
     private fun query(uri: URI): Map<String, String> =
         uri.rawQuery.orEmpty()

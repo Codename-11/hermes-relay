@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.network.upstream
 
+import com.hermesandroid.relay.BuildConfig
 import java.io.IOException
 import java.io.InputStream
 import java.net.InetAddress
@@ -7,6 +8,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -14,12 +16,44 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import okio.ByteString.Companion.toByteString
 
 private const val CALLBACK_PATH = "/callback"
 private const val MAX_REQUEST_LINE_BYTES = 8 * 1024
 private const val MAX_HEADER_BYTES = 16 * 1024
 private const val ACCEPT_POLL_MILLIS = 500
 internal const val DEFAULT_NATIVE_SIGN_IN_TIMEOUT_MILLIS = 2 * 60 * 1000L
+internal val NATIVE_SIGN_IN_RETURN_URI = "${BuildConfig.APPLICATION_ID}://return"
+
+private enum class CallbackPage(
+    val modifier: String,
+    val eyebrow: String,
+    val title: String,
+    val message: String,
+    val guidance: String,
+) {
+    Success(
+        modifier = "success",
+        eyebrow = "Secure sign-in",
+        title = "Sign-in complete",
+        message = "Your secure session is ready in Hermes Relay.",
+        guidance = "Return to Hermes Relay to continue.",
+    ),
+    Failure(
+        modifier = "failure",
+        eyebrow = "Secure sign-in",
+        title = "Sign-in needs another try",
+        message = "No session details were saved from this attempt.",
+        guidance = "Return to Hermes Relay and start sign-in again.",
+    ),
+    Rejected(
+        modifier = "rejected",
+        eyebrow = "Protected callback",
+        title = "Callback not accepted",
+        message = "Hermes Relay ignored this request to protect your sign-in.",
+        guidance = "Return to the app and continue the sign-in already in progress.",
+    ),
+}
 
 internal enum class DashboardRedirectAuthMode {
     NativePkce,
@@ -119,7 +153,7 @@ class NativeDashboardSignInCoordinator(
                     writeResponse(
                         socket,
                         status = "403 Forbidden",
-                        body = "This sign-in callback was not accepted.",
+                        page = CallbackPage.Rejected,
                     )
                     return@use null
                 }
@@ -132,7 +166,7 @@ class NativeDashboardSignInCoordinator(
                     writeResponse(
                         socket,
                         status = "400 Bad Request",
-                        body = "This sign-in callback was not accepted.",
+                        page = CallbackPage.Rejected,
                     )
                     return@use null
                 }
@@ -145,7 +179,7 @@ class NativeDashboardSignInCoordinator(
                         writeResponse(
                             socket,
                             status = "200 OK",
-                            body = "Sign-in complete. You can return to Hermes Relay.",
+                            page = CallbackPage.Success,
                         )
                     }
                 } catch (error: NativeDashboardCallbackException) {
@@ -153,21 +187,21 @@ class NativeDashboardSignInCoordinator(
                         writeResponse(
                             socket,
                             status = "400 Bad Request",
-                            body = "This sign-in callback was not accepted.",
+                            page = CallbackPage.Rejected,
                         )
                         return@use null
                     }
                     writeResponse(
                         socket,
                         status = "400 Bad Request",
-                        body = "Sign-in could not be completed. Return to Hermes Relay and try again.",
+                        page = CallbackPage.Failure,
                     )
                     throw error
                 } catch (error: Exception) {
                     writeResponse(
                         socket,
                         status = "400 Bad Request",
-                        body = "Sign-in could not be completed. Return to Hermes Relay and try again.",
+                        page = CallbackPage.Failure,
                     )
                     throw error
                 }
@@ -237,17 +271,20 @@ class NativeDashboardSignInCoordinator(
         throw IOException("Native sign-in callback line was too large")
     }
 
-    private fun writeResponse(socket: Socket, status: String, body: String) {
-        val html = """
-            <!doctype html>
-            <html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-            <body><p>${escapeHtml(body)}</p></body></html>
-        """.trimIndent().toByteArray(Charsets.UTF_8)
+    private fun writeResponse(socket: Socket, status: String, page: CallbackPage) {
+        val html = callbackPageHtml(page).toByteArray(Charsets.UTF_8)
         val headers = buildString {
             append("HTTP/1.1 ").append(status).append("\r\n")
             append("Content-Type: text/html; charset=utf-8\r\n")
             append("Content-Length: ").append(html.size).append("\r\n")
             append("Cache-Control: no-store\r\n")
+            append("Pragma: no-cache\r\n")
+            append("Expires: 0\r\n")
+            append("Content-Security-Policy: ").append(CALLBACK_CSP).append("\r\n")
+            append("Referrer-Policy: no-referrer\r\n")
+            append("X-Content-Type-Options: nosniff\r\n")
+            append("X-Frame-Options: DENY\r\n")
+            append("Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), usb=()\r\n")
             append("Connection: close\r\n\r\n")
         }.toByteArray(Charsets.US_ASCII)
         runCatching {
@@ -259,8 +296,63 @@ class NativeDashboardSignInCoordinator(
         }
     }
 
-    private fun escapeHtml(value: String): String =
-        value.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
+    private fun callbackPageHtml(page: CallbackPage): String = """
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+          <meta name="color-scheme" content="dark">
+          <title>${page.title} · Hermes Relay</title>
+          <style>$CALLBACK_STYLE</style>
+        </head>
+        <body>
+          <main class="shell">
+            <section class="card ${page.modifier}" aria-labelledby="page-title" aria-describedby="page-message page-guidance">
+              <div class="status-rail" aria-hidden="true"></div>
+              <p class="brand">Hermes Relay</p>
+              <p class="eyebrow">${page.eyebrow}</p>
+              <h1 id="page-title" tabindex="-1">${page.title}</h1>
+              <p id="page-message" class="message">${page.message}</p>
+              <p id="page-guidance" class="guidance">${page.guidance}</p>
+              <a class="return-link" href="$NATIVE_SIGN_IN_RETURN_URI">Return to Hermes Relay</a>
+            </section>
+          </main>
+        </body>
+        </html>
+    """.trimIndent()
+
+    private companion object {
+        private val CALLBACK_STYLE = """
+            :root{color-scheme:dark;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#08090d;color:#f7f4ff}
+            *{box-sizing:border-box}
+            body{margin:0;min-height:100vh;min-height:100svh;background:#08090d}
+            .shell{min-height:100vh;min-height:100svh;display:grid;place-items:center;padding:max(24px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left))}
+            .card{position:relative;width:min(100%,460px);overflow:hidden;border:1px solid #2d2938;border-radius:18px;background:#111219;padding:32px 28px 28px;box-shadow:0 18px 48px rgba(0,0,0,.34);animation:card-in 220ms ease-out both}
+            .status-rail{position:absolute;inset:0 auto 0 0;width:4px;background:#9b6bf0}
+            .success .status-rail{background:#55d98b}.failure .status-rail{background:#ff7188}
+            .brand{margin:0 0 28px;color:#bba4f5;font-size:.78rem;font-weight:750;letter-spacing:.12em;text-transform:uppercase}
+            .eyebrow{margin:0 0 8px;color:#cac4d8;font-size:.9rem;font-weight:650}
+            h1{margin:0;color:#fff;font-size:clamp(1.8rem,8vw,2.45rem);font-weight:720;letter-spacing:-.035em;line-height:1.08;outline:none}
+            h1:focus-visible{outline:2px solid #9b6bf0;outline-offset:6px;border-radius:3px}
+            .message{margin:18px 0 0;color:#eeeaf7;font-size:1.04rem;line-height:1.6}
+            .guidance{margin:12px 0 0;color:#bdb7c9;font-size:.95rem;line-height:1.55}
+            .return-link{display:block;width:100%;margin-top:26px;border:1px solid #8c5ef0;border-radius:12px;background:#6b35e8;color:#fff;padding:13px 18px;font:inherit;font-weight:700;text-align:center;text-decoration:none;cursor:pointer}
+            .return-link:hover{border-color:#c4a8ff}.return-link:focus-visible{outline:3px solid #c4a8ff;outline-offset:3px}.return-link:active{background:#5d28d3}
+            @keyframes card-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+            @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
+            @media (max-width:380px){.card{padding:28px 22px 24px;border-radius:16px}}
+        """.trimIndent()
+
+        private fun cspHash(value: String): String = MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .toByteString()
+            .base64()
+
+        private val CALLBACK_CSP = buildString {
+            append("default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; ")
+            append("img-src 'none'; connect-src 'none'; object-src 'none'; script-src 'none'; ")
+            append("style-src 'sha256-").append(cspHash(CALLBACK_STYLE)).append("'")
+        }
+    }
 }

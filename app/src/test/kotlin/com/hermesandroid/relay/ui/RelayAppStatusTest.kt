@@ -57,6 +57,38 @@ class RelayAppStatusTest {
     }
 
     @Test
+    fun `full-screen connect routes suppress connection-dependent app chrome`() {
+        assertTrue(
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = true,
+                isDemoMode = false,
+                currentRoute = Screen.Pair.route,
+            ),
+        )
+        assertTrue(
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = true,
+                isDemoMode = false,
+                currentRoute = Screen.Onboarding.route,
+            ),
+        )
+        assertFalse(
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = true,
+                isDemoMode = false,
+                currentRoute = Screen.ConnectionsSettings.route,
+            ),
+        )
+        assertFalse(
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = false,
+                isDemoMode = true,
+                currentRoute = Screen.Chat.route,
+            ),
+        )
+    }
+
+    @Test
     fun `dashboard-only connection counts as configured startup chat`() {
         assertTrue(hasConfiguredStartupChat(connection(dashboardUrl = "https://host.ts.net:9119")))
         assertFalse(hasConfiguredStartupChat(connection(relayUrl = "wss://host.ts.net:8767")))
