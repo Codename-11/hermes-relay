@@ -6,6 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
@@ -54,5 +55,37 @@ class MessageBubbleCompletionLayoutTest {
             .fetchSemanticsNode().boundsInRoot.height
 
         assertEquals(streamingHeight, completedHeight, 0.01f)
+    }
+
+    @Test
+    fun `releasing a completed live tail renders markdown without navigation`() {
+        val streaming = mutableStateOf(true)
+        val retainStreamingLayout = mutableStateOf(true)
+        val message = ChatMessage(
+            id = "assistant-live",
+            role = MessageRole.ASSISTANT,
+            content = "**bold**",
+            timestamp = 1_700_000_000_000L,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = message.copy(isStreaming = streaming.value),
+                    retainStreamingLayout = retainStreamingLayout.value,
+                    modifier = Modifier.testTag("completion-tail"),
+                )
+            }
+        }
+
+        compose.onNodeWithText("**bold**").assertExists()
+        compose.runOnIdle {
+            streaming.value = false
+            retainStreamingLayout.value = false
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithText("**bold**").assertDoesNotExist()
+        compose.onNodeWithTag("completion-tail").assertExists()
     }
 }

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Completed Android replies format Markdown immediately.** Live assistant text keeps its stable plain renderer only while incomplete, then the same owned row transitions to rich code blocks, lists, emphasis, and links without leaving or reopening the session.
 - **Android model pickers reject duplicate catalog identities before rendering.** Repeated provider/model rows from cached or refreshed inventories are merged at the provider boundary, while identical model IDs under different providers remain distinct choices with provider-aware reasoning capabilities.
 - **Android session pins and archives survive app restarts.** The session drawer now reads and updates the owning Hermes profile's durable session metadata, rolls failed changes back, and makes unpinned stars clearly distinct in light theme.
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.

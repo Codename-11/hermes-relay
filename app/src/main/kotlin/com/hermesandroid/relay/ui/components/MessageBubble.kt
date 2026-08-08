@@ -88,9 +88,10 @@ fun MessageBubble(
     isFirstInGroup: Boolean = true,
     isLastInGroup: Boolean = true,
     /**
-     * Keeps a just-completed live tail on its stable Text layout. The owning
-     * list releases this once another row becomes the tail, allowing full
-     * Markdown to render without disturbing the visible bottom anchor.
+     * Keeps the current live tail on its stable Text layout while a final
+     * streaming frame commits. The owning list releases it immediately after
+     * completion so the same row transitions to full Markdown with its bottom
+     * anchor preserved.
      */
     retainStreamingLayout: Boolean = false,
     onCopyMessage: (String) -> Unit = {},
@@ -540,11 +541,10 @@ fun MessageBubble(
                             color = textColor
                         )
                     } else {
-                        // Keep one plain Text node stable while content grows
-                        // and while this completed response remains the visible
-                        // tail. Full Markdown renders once another row becomes
-                        // the tail (or the session is revisited), where its
-                        // remeasure cannot reset the active viewport.
+                        // Keep one plain Text node stable only while content is
+                        // incomplete (plus the final committed live frame).
+                        // Completion releases this flag and selects the full
+                        // Markdown tree on the same stable message row.
                         if (markdownBody.isNotEmpty()) {
                             StreamingMarkdownContent(
                                 content = markdownBody,
