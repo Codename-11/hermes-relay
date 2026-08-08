@@ -2255,8 +2255,10 @@
     <string name="conn_info_customize_identity">Настроить идентичность</string>
     <string name="conn_info_agent_passport">Паспорт агента</string>
     <string name="conn_info_chat_override">Переопределение чата</string>
+    <string name="conn_info_chat_override_inherited_desc">Использовать политику подтверждений профиля для этого чата.</string>
     <string name="conn_info_fast_tier">Быстрый уровень</string>
     <string name="conn_info_fast">Быстрый</string>
+    <string name="conn_info_normal_tier_desc">Использовать стандартный уровень обработки.</string>
     <string name="conn_info_context">Контекст</string>
     <string name="conn_info_profile_already_bypasses">Утверждения уже пропущены профилем.</string>
     <string name="conn_info_start_new_chat">Начать новый чат</string>

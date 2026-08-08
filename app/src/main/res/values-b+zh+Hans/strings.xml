@@ -2261,8 +2261,10 @@
     <string name="conn_info_customize_identity">自定义身份</string>
     <string name="conn_info_agent_passport">智能体档案</string>
     <string name="conn_info_chat_override">对话覆盖</string>
+    <string name="conn_info_chat_override_inherited_desc">此聊天使用配置文件的审批策略。</string>
     <string name="conn_info_fast_tier">快速层级</string>
     <string name="conn_info_fast">快速</string>
+    <string name="conn_info_normal_tier_desc">使用标准处理层级。</string>
     <string name="conn_info_context">上下文</string>
     <string name="conn_info_profile_already_bypasses">此配置已绕过审批。</string>
     <string name="conn_info_start_new_chat">开始新对话</string>

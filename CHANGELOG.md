@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android Agent Passport controls are readable and easy to dismiss.** Safety and speed choices use full-width accessible targets with plain-language selected-state explanations, while a persistent close action and boundary-aware downward swipe make the sheet reliably dismissible without stealing nested content scrolling.
 - **Android model pickers reject duplicate catalog identities before rendering.** Repeated provider/model rows from cached or refreshed inventories are merged at the provider boundary, while identical model IDs under different providers remain distinct choices with provider-aware reasoning capabilities.
 - **Android session pins and archives survive app restarts.** The session drawer now reads and updates the owning Hermes profile's durable session metadata, rolls failed changes back, and makes unpinned stars clearly distinct in light theme.
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
