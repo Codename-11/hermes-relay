@@ -3278,6 +3278,7 @@ fun ChatScreen(
                 modelProviders,
                 sseModelOptions,
                 selectedModelOverride,
+                selectedProviderOverride,
                 gatewayCurrentModel,
                 fallbackModelDetail,
                 serverDefaultModelDetail,
@@ -3317,7 +3318,8 @@ fun ChatScreen(
                                                 !provider.authenticated -> provider.warning ?: needsSetupLabel
                                                 else -> null
                                             },
-                                            selected = selectedModelOverride == model,
+                                            selected = selectedModelOverride == model &&
+                                                selectedProviderOverride.equals(provider.slug, ignoreCase = true),
                                             enabled = !unavailable,
                                         ),
                                     )

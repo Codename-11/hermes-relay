@@ -213,10 +213,12 @@ internal fun parseApiProviderModelOptionsBody(
     val root = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull()
         ?: return null
     val rows = root["providers"] as? JsonArray ?: return null
-    val providers = rows.mapNotNull { element ->
-        val obj = element as? JsonObject ?: return@mapNotNull null
-        parseGatewayModelProvider(obj)
-    }
+    val providers = normalizeGatewayModelProviders(
+        rows.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            parseGatewayModelProvider(obj)
+        },
+    )
     return ApiProviderModelOptions(
         providers = providers,
         currentModel = (root["model"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
@@ -323,7 +325,7 @@ internal fun parseModelOptionsBody(json: Json, body: String): List<ApiModelOptio
             root = (obj["root"] as? JsonPrimitive)?.contentOrNull,
             parent = (obj["parent"] as? JsonPrimitive)?.contentOrNull,
         )
-    }
+    }.distinctBy { it.id }
 }
 
 private const val STREAM_ERROR_BODY_LIMIT = 16L * 1024L

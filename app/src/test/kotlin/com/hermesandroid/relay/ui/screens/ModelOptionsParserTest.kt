@@ -178,6 +178,37 @@ class ModelOptionsParserTest {
     }
 
     @Test
+    fun repeatedProviderAndModelRowsMergeAtTheDashboardInventoryBoundary() {
+        val options = parse(
+            """
+            {
+              "providers": [
+                {
+                  "slug": "deepseek",
+                  "name": "DeepSeek",
+                  "models": ["deepseek-v4-flash", "deepseek-v4-flash"],
+                  "authenticated": false
+                },
+                {
+                  "slug": "DeepSeek",
+                  "name": "DeepSeek",
+                  "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+                  "authenticated": true
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, options.size)
+        assertTrue(options.single().authenticated)
+        assertEquals(
+            listOf("deepseek-v4-flash", "deepseek-v4-pro"),
+            options.single().models,
+        )
+    }
+
+    @Test
     fun disabledAndExcludedProvidersAreHiddenWhenUpstreamMarksThemExplicitly() {
         val options = parse(
             """

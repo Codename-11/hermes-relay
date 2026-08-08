@@ -1426,10 +1426,12 @@ class GatewayChatClient(
             if (refresh) put("refresh", true)
         }
         return rpc("model.options", params).map { result ->
-            val providers = (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
-                val obj = el as? JsonObject ?: return@mapNotNull null
-                parseGatewayModelProvider(obj)
-            }
+            val providers = normalizeGatewayModelProviders(
+                (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
+                    val obj = el as? JsonObject ?: return@mapNotNull null
+                    parseGatewayModelProvider(obj)
+                },
+            )
             GatewayModelOptions(
                 providers = providers,
                 currentModel = result.stringField("model") ?: "",
