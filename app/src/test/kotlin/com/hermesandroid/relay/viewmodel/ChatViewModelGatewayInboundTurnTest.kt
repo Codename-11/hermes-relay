@@ -575,6 +575,10 @@ class ChatViewModelGatewayInboundTurnTest {
                 content = JsonPrimitive("Partial answer from upstream and finished"),
             ),
         )
+
+        assertTrue(handler.isStreaming.value)
+        assertEquals("approval-1", checkpointStore.checkpoint?.pendingAsk?.cardKey)
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "approval.respond" })
         serverWs.send(
             gatewayHarness.eventFrame(
                 "message.complete",
@@ -584,15 +588,13 @@ class ChatViewModelGatewayInboundTurnTest {
         )
 
         shadowOf(Looper.getMainLooper()).idle()
-        assertTrue(handler.isStreaming.value)
-        assertEquals("approval-1", checkpointStore.checkpoint?.pendingAsk?.cardKey)
-        assertTrue(gatewayHarness.rpcLog.none { it.first == "approval.respond" })
         awaitCondition {
             handler.messages.value.any {
                 it.role == MessageRole.ASSISTANT &&
                     it.content == "Partial answer from upstream and finished"
             }
         }
+        awaitCondition { !handler.isStreaming.value }
         // Neither replayed activity nor generic completion proves consent.
         // The client-only card remains actionable until an explicit response
         // or authoritative expiry event owns the transition.

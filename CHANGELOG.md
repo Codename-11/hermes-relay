@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Hosted Hermes onboarding completes through the official Dashboard sign-in path.** Android recognizes hosted account addresses, uses the system-browser native PKCE flow, resumes the verified Dashboard session after its loopback callback, and accepts canonical Dashboard setup handoffs from the optional plugin.
+- **Live Android tool cards remain expandable while a run is active.** Streaming Gateway updates preserve stable card identity and merge tool arguments and result previews into the existing row, so details can be opened before the session finishes.
 - **Completed Android replies format Markdown immediately.** Live assistant text keeps its stable plain renderer only while incomplete, then the same owned row transitions to rich code blocks, lists, emphasis, and links without leaving or reopening the session.
 - **Android approval cards require an explicit labeled decision.** Reading or scrolling a guarded command, navigating away, backgrounding, recomposition, later turn activity, and card dismissal cannot submit or locally resolve it; pending requests remain bound to their owning profile and session until an explicit response or authoritative upstream expiry.
 - **Android Agent Passport controls are readable and easy to dismiss.** Safety and speed choices use full-width accessible targets with plain-language selected-state explanations, while a persistent close action and boundary-aware downward swipe make the sheet reliably dismissible without stealing nested content scrolling.
