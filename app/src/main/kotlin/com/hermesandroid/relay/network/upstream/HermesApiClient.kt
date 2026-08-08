@@ -27,6 +27,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
@@ -213,10 +214,12 @@ internal fun parseApiProviderModelOptionsBody(
     val root = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull()
         ?: return null
     val rows = root["providers"] as? JsonArray ?: return null
-    val providers = rows.mapNotNull { element ->
-        val obj = element as? JsonObject ?: return@mapNotNull null
-        parseGatewayModelProvider(obj)
-    }
+    val providers = normalizeGatewayModelProviders(
+        rows.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            parseGatewayModelProvider(obj)
+        },
+    )
     return ApiProviderModelOptions(
         providers = providers,
         currentModel = (root["model"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
@@ -323,7 +326,7 @@ internal fun parseModelOptionsBody(json: Json, body: String): List<ApiModelOptio
             root = (obj["root"] as? JsonPrimitive)?.contentOrNull,
             parent = (obj["parent"] as? JsonPrimitive)?.contentOrNull,
         )
-    }
+    }.distinctBy { it.id }
 }
 
 private const val STREAM_ERROR_BODY_LIMIT = 16L * 1024L
@@ -678,6 +681,34 @@ class HermesApiClient(
             client.newCall(request).execute().use { it.isSuccessful }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to rename session: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun setSessionPinned(sessionId: String, pinned: Boolean): Boolean =
+        patchSessionFlag(sessionId, "pinned", pinned)
+
+    suspend fun setSessionArchived(sessionId: String, archived: Boolean): Boolean =
+        patchSessionFlag(sessionId, "archived", archived)
+
+    private suspend fun patchSessionFlag(
+        sessionId: String,
+        field: String,
+        value: Boolean,
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val reqBody = buildJsonObject { put(field, value) }.toString()
+            val request = authRequest("$baseUrl/api/sessions/$sessionId")
+                .patch(reqBody.toRequestBody(JSON_MEDIA))
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "Set session $field failed: HTTP ${response.code}")
+                }
+                response.isSuccessful
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to set session $field: ${e.message}")
             false
         }
     }

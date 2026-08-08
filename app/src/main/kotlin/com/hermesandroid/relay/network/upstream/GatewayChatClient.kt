@@ -1122,41 +1122,59 @@ class GatewayChatClient(
         )
 
     /** Answer a [GatewayAsk.Kind.CLARIFY] ask. */
-    suspend fun respondClarify(requestId: String, answer: String): Result<GatewayAskResponse> =
-        rpc(
+    suspend fun respondClarify(requestId: String, answer: String): Result<GatewayAskResponse> {
+        val respondingTurn = activeTurn
+        return rpc(
             "clarify.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("answer", answer)
             },
-        ).map { it.gatewayAskResponse() }
+        ).map {
+            it.gatewayAskResponse().also {
+                respondingTurn?.acknowledgeInteraction(GatewayAskExpiry(GatewayAsk.Kind.CLARIFY, requestId))
+            }
+        }
+    }
 
     /**
      * Answer a [GatewayAsk.Kind.SUDO] ask. The password must NEVER be logged
      * or persisted — it exists only inside this outbound frame.
      */
-    suspend fun respondSudo(requestId: String, password: String): Result<GatewayAskResponse> =
-        rpc(
+    suspend fun respondSudo(requestId: String, password: String): Result<GatewayAskResponse> {
+        val respondingTurn = activeTurn
+        return rpc(
             "sudo.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("password", password)
             },
-        ).map { it.gatewayAskResponse() }
+        ).map {
+            it.gatewayAskResponse().also {
+                respondingTurn?.acknowledgeInteraction(GatewayAskExpiry(GatewayAsk.Kind.SUDO, requestId))
+            }
+        }
+    }
 
     /**
      * Answer a [GatewayAsk.Kind.SECRET] ask. Empty [value] = skip (upstream
      * returns `skipped: true` to the tool). The value must NEVER be logged
      * or persisted — it exists only inside this outbound frame.
      */
-    suspend fun respondSecret(requestId: String, value: String): Result<GatewayAskResponse> =
-        rpc(
+    suspend fun respondSecret(requestId: String, value: String): Result<GatewayAskResponse> {
+        val respondingTurn = activeTurn
+        return rpc(
             "secret.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("value", value)
             },
-        ).map { it.gatewayAskResponse() }
+        ).map {
+            it.gatewayAskResponse().also {
+                respondingTurn?.acknowledgeInteraction(GatewayAskExpiry(GatewayAsk.Kind.SECRET, requestId))
+            }
+        }
+    }
 
     /**
      * Answer a [GatewayAsk.Kind.APPROVAL] ask — correlated by the live
@@ -1164,6 +1182,7 @@ class GatewayChatClient(
      * resolves every pending approval on the session at once.
      */
     suspend fun respondApproval(choice: String, all: Boolean = false): Result<GatewayAskResponse> {
+        val respondingTurn = activeTurn
         val sid = liveSessionId
             ?: return Result.failure(GatewayRpcException("no live session"))
         return rpc(
@@ -1173,7 +1192,11 @@ class GatewayChatClient(
                 put("choice", choice)
                 put("all", all)
             },
-        ).map { it.gatewayAskResponse() }
+        ).map {
+            it.gatewayAskResponse().also {
+                respondingTurn?.acknowledgeInteraction(GatewayAskExpiry(GatewayAsk.Kind.APPROVAL, null))
+            }
+        }
     }
 
     /**
@@ -1426,10 +1449,12 @@ class GatewayChatClient(
             if (refresh) put("refresh", true)
         }
         return rpc("model.options", params).map { result ->
-            val providers = (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
-                val obj = el as? JsonObject ?: return@mapNotNull null
-                parseGatewayModelProvider(obj)
-            }
+            val providers = normalizeGatewayModelProviders(
+                (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
+                    val obj = el as? JsonObject ?: return@mapNotNull null
+                    parseGatewayModelProvider(obj)
+                },
+            )
             GatewayModelOptions(
                 providers = providers,
                 currentModel = result.stringField("model") ?: "",
@@ -2141,13 +2166,14 @@ class GatewayChatClient(
                 pendingAsk.kind == expiry.kind &&
                 (pendingAsk.kind == GatewayAsk.Kind.APPROVAL ||
                     pendingAsk.requestId == expiry.requestId)
-            val turnResumed = pendingAsk != null &&
-                GatewayEventMapper.isInteractionResumeEvent(type)
-            if (explicitlyExpired || turnResumed) {
+            // Ordinary turn activity is not a decision acknowledgement. It can
+            // be replayed or buffered. Only an authoritative expiry retires a
+            // detached ask; an explicit response is retired by its foreground VM.
+            if (explicitlyExpired) {
                 backgroundTurn.pendingAsk = null
                 callbackDispatcher {
                     backgroundInteractionListener?.invoke(
-                        GatewayBackgroundInteractionEvent.Resolved(
+                        GatewayBackgroundInteractionEvent.Expired(
                             storedSessionId = backgroundTurn.storedSessionId,
                             profile = backgroundTurn.profile,
                             ask = pendingAsk,
@@ -2163,6 +2189,7 @@ class GatewayChatClient(
                     unmatchedTurnCompleteListener?.invoke(
                         GatewayBackgroundTurnCompletion(
                             storedSessionId = backgroundTurn.storedSessionId,
+                            liveSessionId = eventSessionId,
                             profile = backgroundTurn.profile,
                             expectedAssistantText = expectedText,
                         ),
@@ -2237,6 +2264,7 @@ class GatewayChatClient(
                     unmatchedTurnCompleteListener?.invoke(
                         GatewayBackgroundTurnCompletion(
                             storedSessionId = storedId,
+                            liveSessionId = eventSessionId,
                             profile = liveSessionProfile,
                             expectedAssistantText = expectedText,
                         ),
@@ -2645,6 +2673,9 @@ class GatewayChatClient(
         fun restoreInteraction(ask: GatewayAsk) {
             mapper.restoreInteraction(ask)
         }
+        fun acknowledgeInteraction(expiry: GatewayAskExpiry) {
+            mapper.acknowledgeInteraction(expiry)
+        }
         private val deferredEventLock = Any()
         private val deferredEvents = mutableListOf<Pair<String, JsonObject?>>()
         private var eventsDeferred = deferEvents
@@ -2974,7 +3005,9 @@ class GatewayChatClient(
             callbackDispatcher { callbacks.onInterimReconciled(text) }
         },
         onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
-        onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },
+        onToolCallStart = { id, name, args ->
+            callbackDispatcher { callbacks.onToolCallStart(id, name, args) }
+        },
         onToolCallDone = { a, b -> callbackDispatcher { callbacks.onToolCallDone(a, b) } },
         onToolCallFailed = { a, b -> callbackDispatcher { callbacks.onToolCallFailed(a, b) } },
         onToolOutputRisk = { v -> callbackDispatcher { callbacks.onToolOutputRisk(v) } },
@@ -2988,7 +3021,6 @@ class GatewayChatClient(
         onMoaReference = { v -> callbackDispatcher { callbacks.onMoaReference(v) } },
         onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
         onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
-        onInteractionResolved = { v -> callbackDispatcher { callbacks.onInteractionResolved(v) } },
         // MUST be wrapped like every other member: GatewayTurnCallbacks gives
         // onStatusUpdate a default no-op, so omitting it here silently swallows
         // EVERY gateway status line — the ❌ terminal-error lifecycle update

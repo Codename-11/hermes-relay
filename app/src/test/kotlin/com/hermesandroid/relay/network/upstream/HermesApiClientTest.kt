@@ -484,6 +484,16 @@ class HermesApiClientTest {
     }
 
     @Test
+    fun modelOptionsDeduplicateRepeatedAliasRowsByRequestIdentity() {
+        val parsed = parseModelOptionsBody(
+            Json { ignoreUnknownKeys = true },
+            """{"data":[{"id":"fast","root":"gpt-5-mini"},{"id":"fast","root":"gpt-5-mini"}]}""",
+        )
+
+        assertEquals(listOf("fast"), parsed?.map { it.id })
+    }
+
+    @Test
     fun modelOptionsIgnoreMalformedRowsButKeepCompatibilityShape() {
         val parsed = parseModelOptionsBody(
             Json { ignoreUnknownKeys = true },

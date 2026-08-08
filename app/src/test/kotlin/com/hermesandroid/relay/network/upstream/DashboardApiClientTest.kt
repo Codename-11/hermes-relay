@@ -1197,6 +1197,26 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun setSessionPinned_patchesPinnedScopedToProfile() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ok":true,"pinned":true}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.setSessionPinned("sess-keep", pinned = true, profile = "mizu").getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("PATCH", request.method)
+        assertEquals("/api/sessions/sess-keep", request.requestUrl!!.encodedPath)
+        assertEquals("mizu", request.requestUrl!!.queryParameter("profile"))
+        val body = request.body.readUtf8()
+        assertTrue(body.contains(""""pinned":true"""))
+        assertTrue(body.contains(""""profile":"mizu"""))
+    }
+
+    @Test
     fun renameSession_carriesProfileInBodyAndQuery() = runTest {
         server.enqueue(
             MockResponse()

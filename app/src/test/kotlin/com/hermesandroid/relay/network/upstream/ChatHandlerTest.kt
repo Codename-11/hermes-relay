@@ -266,7 +266,7 @@ class ChatHandlerTest {
     @Test
     fun onToolCallStart_createsToolCallEntry() {
         handler.onTextDelta("assist-1", "")
-        handler.onToolCallStart("assist-1", "call-1", "read_file")
+        handler.onToolCallStart("assist-1", "call-1", "read_file", "README.md")
 
         val msg = handler.messages.value.find { it.id == "assist-1" }
         assertNotNull(msg)
@@ -275,6 +275,7 @@ class ChatHandlerTest {
         val toolCall = msg.toolCalls[0]
         assertEquals("call-1", toolCall.id)
         assertEquals("read_file", toolCall.name)
+        assertEquals("README.md", toolCall.args)
         assertFalse(toolCall.isComplete)
         assertNull(toolCall.success)
     }
@@ -547,6 +548,33 @@ class ChatHandlerTest {
         handler.updateSessions(listOf(item))
 
         assertEquals(0, handler.sessions.value[0].messageCount)
+    }
+
+    @Test
+    fun updateSessions_restoresServerOwnedFlagsAfterFreshHandlerCreation() {
+        val persisted = listOf(
+            SessionItem(id = "pinned", pinned = true),
+            SessionItem(id = "archived", archived = true),
+        )
+
+        val restartedHandler = ChatHandler()
+        restartedHandler.updateSessions(persisted)
+
+        assertTrue(restartedHandler.sessions.value.first { it.sessionId == "pinned" }.pinned)
+        assertTrue(restartedHandler.sessions.value.first { it.sessionId == "archived" }.archived)
+    }
+
+    @Test
+    fun setSessionFlagsLocal_supportsOptimisticUpdateAndRollback() {
+        handler.updateSessions(listOf(SessionItem(id = "s1")))
+
+        handler.setSessionFlagsLocal("s1", pinned = true, archived = true)
+        assertTrue(handler.sessions.value.single().pinned)
+        assertTrue(handler.sessions.value.single().archived)
+
+        handler.setSessionFlagsLocal("s1", pinned = false, archived = false)
+        assertFalse(handler.sessions.value.single().pinned)
+        assertFalse(handler.sessions.value.single().archived)
     }
 
     @Test

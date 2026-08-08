@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -88,7 +89,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class SessionDrawerFilter {
+internal enum class SessionDrawerFilter {
     All,
     Threads,
     Pinned,
@@ -96,6 +97,20 @@ private enum class SessionDrawerFilter {
 }
 
 internal const val SESSION_DRAWER_LIST_TAG = "session-drawer-list"
+internal const val UNPINNED_STAR_ALPHA = 0.45f
+
+internal fun sessionPinIcon(pinned: Boolean) =
+    if (pinned) Icons.Filled.Star else Icons.Outlined.StarBorder
+
+internal fun resolveSessionDrawerFilter(
+    filter: SessionDrawerFilter,
+    showThreads: Boolean,
+    archiveSupported: Boolean,
+): SessionDrawerFilter = when {
+    filter == SessionDrawerFilter.Threads && !showThreads -> SessionDrawerFilter.All
+    filter == SessionDrawerFilter.Archive && !archiveSupported -> SessionDrawerFilter.All
+    else -> filter
+}
 
 @Composable
 fun SessionDrawerContent(
@@ -108,11 +123,14 @@ fun SessionDrawerContent(
     activityStates: Map<String, SessionActivityState> = emptyMap(),
     animationEnabled: Boolean = true,
     autoTitlesSupported: Boolean = true,
+    archiveSupported: Boolean = true,
     onRefresh: (() -> Unit)? = null,
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onRenameSession: (String, String) -> Unit,
+    onSetSessionPinned: (String, Boolean) -> Unit = { _, _ -> },
+    onSetSessionArchived: (String, Boolean) -> Unit = { _, _ -> },
     onCopySessionId: ((String) -> Unit)? = null,
     /**
      * When true, the Threads affordance (header spool + filter chip) shows even with no
@@ -139,19 +157,13 @@ fun SessionDrawerContent(
     var query by remember { mutableStateOf("") }
     var searchExpanded by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
-    var pinnedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var archivedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val listState = rememberLazyListState()
     val trimmedQuery = query.trim()
     // Threads affordance shows when the capability is active OR there's already at least one
     // agent Thread (source=phone) in the list. If the filter is on Threads but they've
     // vanished, fall back to All so the drawer never gets stuck on an empty hidden filter.
     val showThreads = threadsCapabilityActive || sessions.any { isThreadSource(it.source) }
-    val activeFilter = if (filter == SessionDrawerFilter.Threads && !showThreads) {
-        SessionDrawerFilter.All
-    } else {
-        filter
-    }
+    val activeFilter = resolveSessionDrawerFilter(filter, showThreads, archiveSupported)
     // External gateway sources present (discord/telegram/cron/…) for the source
     // filter dropdown. Own chats (tui/api_server) + phone Threads aren't listed.
     val presentSources = sessions
@@ -163,14 +175,13 @@ fun SessionDrawerContent(
         .asSequence()
         .filter { session ->
             when (activeFilter) {
-                SessionDrawerFilter.All -> session.sessionId !in archivedSessionIds
+                SessionDrawerFilter.All -> !session.archived
                 SessionDrawerFilter.Threads ->
                     isThreadSource(session.source) &&
-                        session.sessionId !in archivedSessionIds
+                        !session.archived
                 SessionDrawerFilter.Pinned ->
-                    session.sessionId in pinnedSessionIds &&
-                        session.sessionId !in archivedSessionIds
-                SessionDrawerFilter.Archive -> session.sessionId in archivedSessionIds
+                    session.pinned && !session.archived
+                SessionDrawerFilter.Archive -> session.archived
             }
         }
         .filter { session ->
@@ -188,7 +199,7 @@ fun SessionDrawerContent(
                 session.model.orEmpty().contains(needle, ignoreCase = true)
         }
         .sortedWith(
-            compareByDescending<ChatSession> { it.sessionId in pinnedSessionIds }
+            compareByDescending<ChatSession> { it.pinned }
                 .thenByDescending { it.activityTimestamp }
                 .thenByDescending { it.startTimestamp }
                 .thenBy { it.title.orEmpty().lowercase(locale = Locale.ROOT) }
@@ -376,7 +387,10 @@ fun SessionDrawerContent(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 SessionDrawerFilter.entries
-                    .filter { it != SessionDrawerFilter.Threads || showThreads }
+                    .filter { item ->
+                        (item != SessionDrawerFilter.Threads || showThreads) &&
+                            (item != SessionDrawerFilter.Archive || archiveSupported)
+                    }
                     .forEach { item ->
                         FilterChip(
                             selected = activeFilter == item,
@@ -496,22 +510,15 @@ fun SessionDrawerContent(
                         isActive = session.sessionId == currentSessionId,
                         activityState = activityStates[session.sessionId],
                         animationEnabled = animationEnabled,
-                        pinned = session.sessionId in pinnedSessionIds,
-                        archived = session.sessionId in archivedSessionIds,
+                        pinned = session.pinned,
+                        archived = session.archived,
+                        archiveSupported = archiveSupported,
                         onClick = { onSelectSession(session.sessionId) },
                         onTogglePinned = {
-                            pinnedSessionIds = if (session.sessionId in pinnedSessionIds) {
-                                pinnedSessionIds - session.sessionId
-                            } else {
-                                pinnedSessionIds + session.sessionId
-                            }
+                            onSetSessionPinned(session.sessionId, !session.pinned)
                         },
                         onToggleArchived = {
-                            archivedSessionIds = if (session.sessionId in archivedSessionIds) {
-                                archivedSessionIds - session.sessionId
-                            } else {
-                                archivedSessionIds + session.sessionId
-                            }
+                            onSetSessionArchived(session.sessionId, !session.archived)
                         },
                         onRename = { renameDialogSession = session },
                         onCopySessionId = { onCopySessionId?.invoke(session.sessionId) },
@@ -623,6 +630,7 @@ private fun SessionItem(
     animationEnabled: Boolean,
     pinned: Boolean,
     archived: Boolean,
+    archiveSupported: Boolean,
     onClick: () -> Unit,
     onTogglePinned: () -> Unit,
     onToggleArchived: () -> Unit,
@@ -770,12 +778,12 @@ private fun SessionItem(
                     },
                     leadingIcon = {
                         Icon(
-                            Icons.Filled.Star,
+                            sessionPinIcon(pinned),
                             contentDescription = null,
                             tint = if (pinned) {
                                 RelayRefresh.Amber
                             } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = UNPINNED_STAR_ALPHA)
                             },
                         )
                     },
@@ -804,24 +812,26 @@ private fun SessionItem(
                         onRename()
                     },
                 )
-                DropdownMenuItem(
-                    text = { Text(if (archived) stringResource(R.string.drawer_restore) else stringResource(R.string.drawer_archive)) },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.Archive,
-                            contentDescription = null,
-                            tint = if (archived) {
-                                RelayRefresh.Relay
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    },
-                    onClick = {
-                        menuOpen = false
-                        onToggleArchived()
-                    },
-                )
+                if (archiveSupported) {
+                    DropdownMenuItem(
+                        text = { Text(if (archived) stringResource(R.string.drawer_restore) else stringResource(R.string.drawer_archive)) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Archive,
+                                contentDescription = null,
+                                tint = if (archived) {
+                                    RelayRefresh.Relay
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onToggleArchived()
+                        },
+                    )
+                }
                 DropdownMenuItem(
                     text = {
                         Text(

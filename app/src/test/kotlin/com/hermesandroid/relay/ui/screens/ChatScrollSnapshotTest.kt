@@ -341,21 +341,51 @@ class ChatScrollSnapshotTest {
             retainedLiveTailAfterTransition(
                 retainedUiKey = null,
                 streamStarted = true,
+                streamCompleted = false,
                 lastMessageUiKey = "assistant-live",
             ),
         )
     }
 
     @Test
-    fun `same-tail completion keeps the stable live renderer`() {
-        assertEquals(
-            "assistant-live",
+    fun `same-tail completion releases the live renderer for markdown`() {
+        assertNull(
             retainedLiveTailAfterTransition(
                 retainedUiKey = "assistant-live",
                 streamStarted = false,
+                streamCompleted = true,
                 lastMessageUiKey = "assistant-live",
             ),
         )
+    }
+
+    @Test
+    fun `late completion survives server id adoption on the same ui row`() {
+        val live = snapshot().copy(
+            lastMessageId = "assistant-client-id",
+            lastContentLength = 40,
+            isStreaming = true,
+        )
+        val completed = live.copy(
+            lastMessageId = "assistant-server-id",
+            lastContentLength = 120,
+            isStreaming = false,
+        )
+
+        assertEquals(true, completed.isCompletionAfter(live))
+        assertNull(
+            retainedLiveTailAfterTransition(
+                retainedUiKey = "assistant-ui-key",
+                streamStarted = false,
+                streamCompleted = completed.isCompletionAfter(live),
+                lastMessageUiKey = completed.lastMessageUiKey,
+            ),
+        )
+    }
+
+    @Test
+    fun `restored settled history does not invent a live completion transition`() {
+        assertEquals(false, snapshot().isCompletionAfter(previous = null))
     }
 
     @Test
@@ -364,6 +394,7 @@ class ChatScrollSnapshotTest {
             retainedLiveTailAfterTransition(
                 retainedUiKey = "assistant-live",
                 streamStarted = false,
+                streamCompleted = false,
                 lastMessageUiKey = "next-row",
             ),
         )
@@ -371,6 +402,7 @@ class ChatScrollSnapshotTest {
             retainedLiveTailAfterTransition(
                 retainedUiKey = null,
                 streamStarted = false,
+                streamCompleted = false,
                 lastMessageUiKey = "next-row",
             ),
         )

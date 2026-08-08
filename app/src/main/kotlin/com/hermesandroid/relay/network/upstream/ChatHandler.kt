@@ -1962,6 +1962,8 @@ class ChatHandler {
                 // rows (default source). (ADR 12 — Threads surface, slice 1.)
                 source = item.source,
                 hasModelConfig = item.hasModelConfig,
+                pinned = item.pinned,
+                archived = item.archived,
             )
         }.sortedByDescending { it.activityTimestamp }
         // Preserve the active session's optimistic row when the server list
@@ -2004,6 +2006,26 @@ class ChatHandler {
         _sessions.update { sessions ->
             sessions.map { s ->
                 if (s.sessionId == sessionId) s.copy(title = newTitle) else s
+            }
+        }
+    }
+
+    /** Apply an optimistic pin/archive mutation; a failed server write restores the copy. */
+    fun setSessionFlagsLocal(
+        sessionId: String,
+        pinned: Boolean? = null,
+        archived: Boolean? = null,
+    ) {
+        _sessions.update { sessions ->
+            sessions.map { session ->
+                if (session.sessionId == sessionId) {
+                    session.copy(
+                        pinned = pinned ?: session.pinned,
+                        archived = archived ?: session.archived,
+                    )
+                } else {
+                    session
+                }
             }
         }
     }
@@ -2726,6 +2748,7 @@ class ChatHandler {
         messageId: String,
         toolCallId: String,
         toolName: String,
+        argsPreview: String? = null,
         runId: String? = null,
         provenance: String? = null,
     ) {
@@ -2753,6 +2776,7 @@ class ChatHandler {
                         calls[genIdx] = calls[genIdx].copy(
                             id = toolCallId,
                             name = toolName,
+                            args = argsPreview ?: calls[genIdx].args,
                             isGenerating = false,
                             // Execution starts now — preparing time isn't runtime.
                             startedAt = System.currentTimeMillis(),
@@ -2765,7 +2789,7 @@ class ChatHandler {
                             toolCalls = msg.toolCalls + ToolCall(
                                 id = toolCallId,
                                 name = toolName,
-                                args = null,
+                                args = argsPreview,
                                 result = null,
                                 success = null,
                                 isComplete = false,
@@ -2786,7 +2810,7 @@ class ChatHandler {
                         ToolCall(
                             id = toolCallId,
                             name = toolName,
-                            args = null,
+                            args = argsPreview,
                             result = null,
                             success = null,
                             isComplete = false,

@@ -530,7 +530,7 @@ class GatewayChatClientTest {
         val sessionIds = ConcurrentLinkedQueue<String>()
         val errors = ConcurrentLinkedQueue<String>()
         val interactions = ConcurrentLinkedQueue<GatewayAsk>()
-        val interactionResolutions = ConcurrentLinkedQueue<GatewayAskExpiry>()
+        val interactionExpiries = ConcurrentLinkedQueue<GatewayAskExpiry>()
         val toolStarts = ConcurrentLinkedQueue<Pair<String, String>>()
         val toolDone = ConcurrentLinkedQueue<Pair<String, String?>>()
 
@@ -548,7 +548,7 @@ class GatewayChatClientTest {
             onStart = { starts.incrementAndGet() },
             onTextDelta = { textDeltas += it },
             onThinkingDelta = { thinkingDeltas += it },
-            onToolCallStart = { id, name -> toolStarts += id to name },
+            onToolCallStart = { id, name, _ -> toolStarts += id to name },
             onToolCallDone = { id, result -> toolDone += id to result },
             onToolCallFailed = { _, _ -> },
             onTurnComplete = { },
@@ -560,8 +560,7 @@ class GatewayChatClientTest {
             onSubagentEvent = { subagentEvents += it },
             onMoaReference = { moaReferences += it },
             onInteractionRequest = { interactions += it },
-            onInteractionExpired = { },
-            onInteractionResolved = { interactionResolutions += it },
+            onInteractionExpired = { interactionExpiries += it },
             onStatusUpdate = { _, _ -> },
             onStatusClear = { },
         )
@@ -1244,6 +1243,8 @@ class GatewayChatClientTest {
             harness.eventFrame("message.complete", buildJsonObject { put("text", "done") }, "live-1"),
         )
 
+        assertFalse(r.completeLatch.await(100, TimeUnit.MILLISECONDS))
+        serverWs.send(harness.eventFrame("approval.expire", buildJsonObject { }, "live-1"))
         assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
         val ask = r.interactions.single()
         assertEquals(GatewayAsk.Kind.APPROVAL, ask.kind)
@@ -2776,7 +2777,7 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `detached interaction is retained and replayed when exact session reopens`() {
+    fun `detached interaction survives activity and expires only from explicit event`() {
         val original = Recorder()
         val backgroundEvents = ConcurrentLinkedQueue<GatewayBackgroundInteractionEvent>()
         client.setBackgroundInteractionListener(backgroundEvents::add)
@@ -2826,14 +2827,29 @@ class GatewayChatClientTest {
                 "live-1",
             ),
         )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "continued") },
+                "live-1",
+            ),
+        )
+        Thread.sleep(100)
+        assertEquals(1, resumed.interactions.size)
+        assertTrue(resumed.interactionExpiries.isEmpty())
+        assertEquals(1L, resumed.completeLatch.count)
+        assertTrue(harness.rpcLog.none { it.first == "approval.respond" })
+
+        serverWs.send(harness.eventFrame("approval.expire", buildJsonObject { }, "live-1"))
         repeat(50) {
-            if (resumed.interactionResolutions.isNotEmpty()) return@repeat
+            if (resumed.interactionExpiries.isNotEmpty()) return@repeat
             Thread.sleep(20)
         }
         assertEquals(
             GatewayAskExpiry(GatewayAsk.Kind.APPROVAL, null),
-            resumed.interactionResolutions.single(),
+            resumed.interactionExpiries.single(),
         )
+        assertTrue(resumed.completeLatch.await(5, TimeUnit.SECONDS))
     }
 
     @Test

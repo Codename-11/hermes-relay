@@ -1,6 +1,6 @@
 # Hermes-Relay Surface Matrix
 
-Updated: 2026-08-05
+Updated: 2026-08-07
 
 This matrix records the v1.0.0 route ownership contract. It is meant to keep
 future app, plugin, and agent work honest about what is vanilla upstream
@@ -9,8 +9,9 @@ Hermes, what belongs to the Relay plugin, and what is only legacy compatibility.
 Verified upstream source snapshot:
 
 - Repository: `NousResearch/hermes-agent`
-- Commit: `55cb4103beba5822303c06b662635e1491ae72f5`
+- Commit: `7307f88993fc0bcc827d15eeab079cd8905c3e53`
 - Primary files checked: `gateway/platforms/api_server.py`,
+  `hermes_cli/web_routers/sessions.py`, `apps/desktop/src/store/session-pin-sync.ts`,
   `hermes_cli/web_server.py`, `hermes_cli/dashboard_auth/routes.py`,
   `tui_gateway/server.py`, `hermes_cli/plugins.py`,
   `hermes_cli/plugins_cmd.py`
@@ -24,7 +25,7 @@ Verified upstream source snapshot:
 | `/v1/capabilities` | Upstream API server | No | Optional fallback capability probe | Source of truth for API-server features; current upstream advertises no audio API. |
 | `/v1/chat/completions` | Upstream API server | No | Chat fallback | OpenAI-compatible streaming. Tool events may degrade to inline annotations. |
 | `/v1/runs`, `/v1/runs/{id}/events` | Upstream API server | No | Chat fallback | Structured run events and stop/approval support. |
-| `/api/sessions/*` | Upstream Dashboard/Gateway and API server | No | Primary Gateway session control or optional SSE fallback | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. Newer hosts also expose single-session JSON export via `GET /api/sessions/{id}/export`, soft archive via `PATCH /api/sessions/{id}`, and guarded bulk cleanup via `POST /api/sessions/prune`; Android must dry-run prune first and show the matched count/span before destructive apply. The bootstrap no longer injects any session CRUD/messages/fork routes (retired in favor of native #33134); only `/api/sessions/search` remains a bootstrap compatibility route. |
+| `/api/sessions/*` | Upstream Dashboard/Gateway and API server | No | Primary Gateway session control or optional SSE fallback | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. Dashboard lists expose profile-stamped `pinned`/`archived`, accept `archived=exclude\|only\|include`, and PATCH either durable flag in the owning profile DB. The API-server resource also exposes and patches both fields, but its current list omits archived rows and has no archive filter; Android therefore offers restart-safe archive/restore only on the Dashboard path while API-only pinning remains valid. Newer Dashboard hosts also expose single-session JSON export and guarded bulk cleanup; Android must dry-run prune first. The bootstrap no longer injects session CRUD/messages/fork routes; only `/api/sessions/search` remains a compatibility route. |
 | `/v1/skills`, `/v1/toolsets` | Upstream API server | No | Discovery | Authenticated read-only API-server skill/toolset inventory; Android Diagnostics summarizes enabled toolsets and Relay tool visibility. |
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth | Dashboard cookie/session path; separate from API bearer. Optional status diagnostics include Nous bootstrap validity and profile/gateway topology; these do not gate transport selection. |
 | Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. |

@@ -1,14 +1,23 @@
 package com.hermesandroid.relay.network.upstream
 
+import java.io.IOException
+import java.io.InterruptedIOException
+import java.net.ConnectException
+import java.net.InetAddress
+import java.net.SocketException
+import java.net.UnknownHostException
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import javax.net.ssl.SSLHandshakeException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
+import okhttp3.Dns
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
@@ -17,6 +26,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -353,6 +363,153 @@ class NativeDashboardAuthTest {
         assertEquals(1, refreshCalls.get())
         assertEquals(2, ticketCalls.get())
         assertEquals("rotated-refresh", shared.get()?.refreshToken)
+    }
+
+    @Test
+    fun nativeSignInFailureStagesAreSecretFreeAndActionable() {
+        assertEquals(
+            "callback_error",
+            nativeDashboardSignInFailureStage(NativeDashboardCallbackException("rejected")),
+        )
+        assertEquals(
+            "token_http_400",
+            nativeDashboardSignInFailureStage(NativeDashboardAuthHttpException(400)),
+        )
+        assertEquals(
+            "token_shape",
+            nativeDashboardSignInFailureStage(
+                NativeDashboardTokenShapeException("Dashboard token response was malformed"),
+            ),
+        )
+        assertEquals(
+            "inactive_generation",
+            nativeDashboardSignInFailureStage(NativeDashboardInactiveAuthorizationException()),
+        )
+        assertEquals(
+            "token_transport",
+            nativeDashboardSignInFailureStage(IOException("connection reset")),
+        )
+        assertEquals(
+            "token_store",
+            nativeDashboardSignInFailureStage(IllegalStateException("keystore unavailable")),
+        )
+
+        val secret = "code=secret-code&state=secret-state&access_token=secret-token"
+        val diagnostic = nativeDashboardSignInFailureDiagnostic(IOException(secret))
+        assertEquals("dashboard_native_pkce_failed stage=token_transport", diagnostic)
+        assertFalse(diagnostic.contains("secret-code"))
+        assertFalse(diagnostic.contains("secret-state"))
+        assertFalse(diagnostic.contains("secret-token"))
+
+        val classified = listOf(
+            InterruptedIOException(secret) to "token_transport_timeout",
+            UnknownHostException(secret) to "token_transport_dns",
+            ConnectException(secret) to "token_transport_connect",
+            SSLHandshakeException(secret) to "token_transport_tls",
+            SocketException(secret) to "token_transport_socket",
+        )
+        classified.forEach { (cause, expectedStage) ->
+            val wrapped = IOException(secret, cause)
+            val safeDiagnostic = nativeDashboardSignInFailureDiagnostic(wrapped)
+            assertEquals("dashboard_native_pkce_failed stage=$expectedStage", safeDiagnostic)
+            assertFalse(safeDiagnostic.contains("secret-code"))
+            assertFalse(safeDiagnostic.contains("secret-state"))
+            assertFalse(safeDiagnostic.contains("secret-token"))
+        }
+    }
+
+    @Test
+    fun exchangeCallback_dnsFailureThenSuccess_sendsTokenPostOnce() {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"access_token":"access","refresh_token":"refresh","expires_at":2000,"provider":"nous","user_id":"u"}""",
+            ),
+        )
+        val calls = AtomicInteger(0)
+        val backoffs = mutableListOf<Long>()
+        val delegate = Dns { _ ->
+            if (calls.incrementAndGet() == 1) {
+                throw UnknownHostException("secret-first-lookup")
+            }
+            listOf(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+        }
+        val httpClient = OkHttpClient.Builder()
+            .dns(
+                RetryingNativeAuthDns(
+                    delegate = delegate,
+                    backoffMillis = 7L,
+                    sleeper = backoffs::add,
+                ),
+            )
+            .retryOnConnectionFailure(false)
+            .build()
+        val baseUrl = server.url("/").newBuilder().host("native-auth.test").build().toString()
+        val client = NativeDashboardAuthClient(baseUrl, store, client = httpClient)
+        val authorization = client.beginAuthorization("http://127.0.0.1:43123/callback")
+
+        val tokens = client.exchangeCallback(
+            authorization,
+            "/callback?code=one-time-code&state=${authorization.state}",
+        )
+
+        assertEquals("access", tokens.accessToken)
+        assertEquals(2, calls.get())
+        assertEquals(listOf(7L), backoffs)
+        assertEquals(1, server.requestCount)
+        assertEquals("/auth/native/token", server.takeRequest().path)
+    }
+
+    @Test
+    fun exchangeCallback_dnsRetryExhausted_reportsTypedDnsStage_withoutHttpRequest() {
+        val secret = "secret-host-detail"
+        val calls = AtomicInteger(0)
+        val delegate = Dns { _ ->
+            calls.incrementAndGet()
+            throw UnknownHostException(secret)
+        }
+        val httpClient = OkHttpClient.Builder()
+            .dns(RetryingNativeAuthDns(delegate, backoffMillis = 0L))
+            .retryOnConnectionFailure(false)
+            .build()
+        val client = NativeDashboardAuthClient(
+            "https://native-auth.invalid",
+            store,
+            client = httpClient,
+        )
+        val authorization = client.beginAuthorization("http://127.0.0.1:43123/callback")
+
+        val failure = runCatching {
+            client.exchangeCallback(
+                authorization,
+                "/callback?code=one-time-code&state=${authorization.state}",
+            )
+        }.exceptionOrNull()
+
+        assertEquals(2, calls.get())
+        assertEquals(0, server.requestCount)
+        assertEquals("token_transport_dns", nativeDashboardSignInFailureStage(failure!!))
+        assertFalse(nativeDashboardSignInFailureDiagnostic(failure).contains(secret))
+    }
+
+    @Test
+    fun retryingNativeAuthDns_nonDnsFailure_isNotRetriedOrChanged() {
+        val expected = IllegalStateException("non-dns-secret")
+        val calls = AtomicInteger(0)
+        val backoffs = mutableListOf<Long>()
+        val dns = RetryingNativeAuthDns(
+            delegate = Dns { _ ->
+                calls.incrementAndGet()
+                throw expected
+            },
+            backoffMillis = 7L,
+            sleeper = backoffs::add,
+        )
+
+        val actual = runCatching { dns.lookup("native-auth.test") }.exceptionOrNull()
+
+        assertSame(expected, actual)
+        assertEquals(1, calls.get())
+        assertTrue(backoffs.isEmpty())
     }
 
     private fun dashboardClientWithBearer(store: NativeDashboardTokenStore): DashboardApiClient =

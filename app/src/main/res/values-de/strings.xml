@@ -293,6 +293,27 @@
     <!-- Connection wizard — Connect page essentials -->
     <string name="cw_connect_to_hermes">Mit Hermes verbinden</string>
     <string name="cw_nearby_description">Wir suchen in diesem Netzwerk nach Hermes. Dashboard und Gateway stellen die Standardverbindung für Chat, Verwaltung und Sprache bereit.</string>
+    <string name="cw_connection_chooser_description">Wähle deine vorhandene Einrichtung. Hermes Relay ist optional.</string>
+    <string name="cw_scan_setup_qr_title">Hermes-Einrichtungs-QR-Code scannen</string>
+    <string name="cw_scan_setup_qr_subtitle">Lokale, entfernte und verfügbare Relay-Routen konfigurieren</string>
+    <string name="cw_recommended">Empfohlen</string>
+    <string name="cw_other_ways_to_connect">Weitere Verbindungsmöglichkeiten</string>
+    <string name="cw_advanced">Erweitert</string>
+    <string name="cw_cloud_title">Von Nous gehostetes Hermes</string>
+    <string name="cw_cloud_subtitle">Mit deinem gehosteten Agenten verbinden</string>
+    <string name="cw_server_vps_title">Server oder VPS</string>
+    <string name="cw_server_vps_subtitle">Sichere Dashboard-Adresse eingeben</string>
+    <string name="cw_relay_optional_note">Standard-Chat, Verwaltung und Sprache funktionieren ohne Relay. Kompatible Einrichtungs-QR-Codes fügen verfügbare Relay-Power-Funktionen hinzu.</string>
+    <string name="cw_cloud_entry_title">Mit von Nous gehostetem Hermes verbinden</string>
+    <string name="cw_cloud_entry_description">Gib die im Nous Portal angezeigte Agentenadresse ein. Nach dem Auffinden von Hermes meldest du dich sicher an.</string>
+    <string name="cw_cloud_agent_name">Agentenadresse</string>
+    <string name="cw_cloud_slug_placeholder">dein-agent</string>
+    <string name="cw_cloud_slug_hint">Wir verbinden dich mit dein-agent.agents.nousresearch.com.</string>
+    <string name="cw_cloud_slug_error">Gib exakt die Buchstaben, Zahlen und Bindestriche vor .agents.nousresearch.com ein.</string>
+    <string name="cw_cloud_address_placeholder">https://dein-agent.example.com</string>
+    <string name="cw_cloud_address_hint">Verwende die vollständige HTTPS-Adresse, die für deinen gehosteten Agenten angezeigt wird.</string>
+    <string name="cw_cloud_use_custom_address">Benutzerdefinierte URL verwenden</string>
+    <string name="cw_cloud_use_nous_address">Von Nous gehostete Adresse verwenden</string>
     <string name="cw_before_connecting">Vor dem Verbinden</string>
     <string name="cw_connect_step_server_title">Hermes auf dem Computer starten</string>
     <string name="cw_connect_step_server_body">Starte das Dashboard auf dem Hermes-Computer. Verwende für den ersten LAN-Zugriff die Anleitung unten, um es vom Smartphone erreichbar zu machen und die Anmeldung einzurichten.</string>
@@ -2266,8 +2287,10 @@
     <string name="conn_info_customize_identity">Identität anpassen</string>
     <string name="conn_info_agent_passport">Agentenpass</string>
     <string name="conn_info_chat_override">Chat-Überschreibung</string>
+    <string name="conn_info_chat_override_inherited_desc">Verwende die Genehmigungsrichtlinie des Profils für diesen Chat.</string>
     <string name="conn_info_fast_tier">Schnellstufe</string>
     <string name="conn_info_fast">Schnell</string>
+    <string name="conn_info_normal_tier_desc">Verwende die Standardverarbeitungsstufe.</string>
     <string name="conn_info_context">Kontext</string>
     <string name="conn_info_profile_already_bypasses">Genehmigungen werden bereits vom Profil umgangen.</string>
     <string name="conn_info_start_new_chat">Neuen Chat starten</string>
@@ -2663,6 +2686,8 @@
     <string name="qr_scanner_title">Hermes-QR-Code scannen</string>
     <string name="qr_scanner_instruction">Hermes-Einrichtungs-QR-Code scannen</string>
     <string name="qr_scanner_subtext">Scanne einen Hermes-Einrichtungs- oder Relay-Kopplungs-QR-Code. Standard-Dashboard-Verbindungen benötigen keinen API-Schlüssel.</string>
+    <string name="qr_scanner_ready">Bereit zum Scannen</string>
+    <string name="qr_scanner_found">Hermes-Einrichtungs-QR-Code gefunden</string>
     <string name="qr_scanner_relay_title">Relay-QR scannen</string>
     <string name="qr_scanner_relay_instruction">Einen Relay-Kopplungs-QR-Code scannen</string>
     <string name="qr_scanner_relay_subtext">Öffne den Relay-Kopplungs-QR-Code auf deinem Hermes-Server. Deine bestehende Dashboard-Verbindung und Routen bleiben unverändert.</string>
@@ -3418,6 +3443,7 @@
     <string name="dashboard_native_signin_cancelled">Browser-Anmeldung abgebrochen.</string>
     <string name="dashboard_native_signin_requires_https">Die sichere Browser-Anmeldung erfordert eine HTTPS-Dashboard-Adresse.</string>
     <string name="dashboard_native_signin_unavailable">Die sichere Browser-Anmeldung ist für diese Verbindung nicht verfügbar. Aktualisiere die Verbindung und versuche es erneut.</string>
+    <string name="dashboard_native_signin_transport_retry">Die sichere Verbindung wurde unterbrochen. Tippe auf die Anmeldeschaltfläche, um es erneut zu versuchen.</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">Umgehe Bestätigungsabfragen nur für diesen Chat. Wird beim Sitzungswechsel zurückgesetzt.</string>
     <string name="conn_info_yolo_mode_profile_off">Profilbestätigungen sind deaktiviert, daher umgeht dieser Chat bereits Abfragen. Wähle Manuell oder Smart, bevor du die chatbezogene Ausnahme verwendest.</string>
     <string name="conn_info_approval_mode_title">Profil-Bestätigungsmodus</string>

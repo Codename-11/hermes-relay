@@ -295,6 +295,27 @@
     <!-- Connection wizard — Connect page essentials -->
     <string name="cw_connect_to_hermes">Connect to Hermes</string>
     <string name="cw_nearby_description">We’ll look for Hermes on this network. Dashboard and Gateway provide the standard Chat, Manage, and Voice connection.</string>
+    <string name="cw_connection_chooser_description">Choose the setup you have. Hermes Relay is optional.</string>
+    <string name="cw_scan_setup_qr_title">Scan Hermes setup QR</string>
+    <string name="cw_scan_setup_qr_subtitle">Configure local, remote, and available Relay routes</string>
+    <string name="cw_recommended">Recommended</string>
+    <string name="cw_other_ways_to_connect">Other ways to connect</string>
+    <string name="cw_advanced">Advanced</string>
+    <string name="cw_cloud_title">Nous-hosted Hermes</string>
+    <string name="cw_cloud_subtitle">Connect to your hosted agent</string>
+    <string name="cw_server_vps_title">Server or VPS</string>
+    <string name="cw_server_vps_subtitle">Enter a secure Dashboard address</string>
+    <string name="cw_relay_optional_note">Standard Chat, Manage, and Voice work without Relay. Compatible setup QRs add Relay power features when available.</string>
+    <string name="cw_cloud_entry_title">Connect to Nous-hosted Hermes</string>
+    <string name="cw_cloud_entry_description">Enter the agent address shown in Nous Portal. You’ll sign in securely after Hermes is found.</string>
+    <string name="cw_cloud_agent_name">Agent address</string>
+    <string name="cw_cloud_slug_placeholder">your-agent</string>
+    <string name="cw_cloud_slug_hint">We’ll connect to your-agent.agents.nousresearch.com.</string>
+    <string name="cw_cloud_slug_error">Enter the exact letters, numbers, and hyphens before .agents.nousresearch.com.</string>
+    <string name="cw_cloud_address_placeholder">https://your-agent.example.com</string>
+    <string name="cw_cloud_address_hint">Use the complete HTTPS address shown for your hosted agent.</string>
+    <string name="cw_cloud_use_custom_address">Use custom URL</string>
+    <string name="cw_cloud_use_nous_address">Use Nous-hosted address</string>
     <string name="cw_before_connecting">Before you connect</string>
     <string name="cw_connect_step_server_title">Start Hermes on your computer</string>
     <string name="cw_connect_step_server_body">Start the Dashboard on the Hermes computer. For first-time LAN access, use Setup Guide below to make it phone-reachable and enable sign-in.</string>
@@ -1884,6 +1905,7 @@
     <string name="dashboard_native_signin_cancelled">Browser sign-in cancelled.</string>
     <string name="dashboard_native_signin_requires_https">Secure browser sign-in requires an HTTPS dashboard address.</string>
     <string name="dashboard_native_signin_unavailable">Secure browser sign-in is unavailable for this connection. Refresh the connection and try again.</string>
+    <string name="dashboard_native_signin_transport_retry">The secure connection was interrupted. Tap the sign-in button to try again.</string>
     <string name="dashboard_close_signin">Close sign-in</string>
 
     <!-- Error body -->
@@ -2386,6 +2408,7 @@
     <string name="conn_info_customize_identity">Customize identity</string>
     <string name="conn_info_agent_passport">Agent Passport</string>
     <string name="conn_info_chat_override">Chat override</string>
+    <string name="conn_info_chat_override_inherited_desc">Use the profile approval policy for this chat.</string>
     <string name="conn_info_fast_tier">Fast tier</string>
     <string name="conn_info_fast">Fast</string>
     <string name="conn_info_context">Context</string>
@@ -2406,6 +2429,7 @@
     <string name="conn_info_expires">Expires</string>
     <string name="conn_info_failed_reason">Failed: %1$s</string>
     <string name="conn_info_fast_mode_desc">Priority processing tier (model-gated).</string>
+    <string name="conn_info_normal_tier_desc">Use the standard processing tier.</string>
     <string name="conn_info_fast_mode_title">Fast mode</string>
     <string name="conn_info_gateway_idle">Gateway idle</string>
     <string name="conn_info_gateway_running">Gateway running</string>
@@ -2795,6 +2819,8 @@
     <string name="qr_scanner_title">Scan Hermes QR</string>
     <string name="qr_scanner_instruction">Scan a Hermes setup QR</string>
     <string name="qr_scanner_subtext">Scan a Hermes setup or Relay pairing QR. Standard Dashboard connections do not require an API key.</string>
+    <string name="qr_scanner_ready">Ready to scan</string>
+    <string name="qr_scanner_found">Hermes setup QR found</string>
     <string name="qr_scanner_relay_title">Scan Relay QR</string>
     <string name="qr_scanner_relay_instruction">Scan a Relay pairing QR</string>
     <string name="qr_scanner_relay_subtext">Open the Relay pairing QR on your Hermes server. Your existing Dashboard connection and routes will stay unchanged.</string>

@@ -832,6 +832,20 @@ class DashboardApiClient(
             },
         )
 
+    /** Persist the upstream keep flag that backs official-client session pins. */
+    suspend fun setSessionPinned(
+        sessionId: String,
+        pinned: Boolean,
+        profile: String? = null,
+    ): Result<JsonObject> =
+        patchJsonObject(
+            "/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}",
+            buildJsonObject {
+                put("pinned", pinned)
+                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
+            },
+        )
+
     /**
      * Dry-run a server-backed bulk session cleanup via the dashboard
      * `POST /api/sessions/prune` (`dry_run: true`). Returns what WOULD be

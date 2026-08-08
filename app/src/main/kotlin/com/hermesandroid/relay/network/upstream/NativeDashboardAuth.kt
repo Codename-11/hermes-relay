@@ -4,17 +4,28 @@ import android.content.Context
 import com.hermesandroid.relay.auth.SessionTokenStore
 import com.hermesandroid.relay.auth.SecureStoreCache
 import com.hermesandroid.relay.auth.buildRawTokenStore
+import java.io.EOFException
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.net.ConnectException
+import java.net.InetAddress
+import java.net.NoRouteToHostException
+import java.net.SocketException
+import java.net.UnknownHostException
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.Authenticator
+import okhttp3.Dns
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -28,6 +39,7 @@ import okio.ByteString.Companion.toByteString
 private const val NATIVE_PKCE_FLOW = "native_pkce"
 private const val CALLBACK_PATH = "/callback"
 private const val TOKEN_KEY = "dashboard_native_tokens_json"
+private const val NATIVE_AUTH_DNS_RETRY_BACKOFF_MILLIS = 75L
 private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
 @Serializable
@@ -91,6 +103,8 @@ class NativeDashboardAuthClient(
     baseUrl: String,
     private val tokenStore: NativeDashboardTokenStore,
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .dns(RetryingNativeAuthDns())
+        .retryOnConnectionFailure(false)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
@@ -271,12 +285,19 @@ class NativeDashboardAuthClient(
                 }
                 throw NativeDashboardAuthHttpException(response.code)
             }
-            val body = response.body?.string().orEmpty()
+            val body = response.body.string()
             runCatching { json.decodeFromString<NativeDashboardTokens>(body) }
-                .getOrElse { throw IOException("Dashboard token response was malformed", it) }
+                .getOrElse {
+                    throw NativeDashboardTokenShapeException(
+                        "Dashboard token response was malformed",
+                        it,
+                    )
+                }
                 .also {
                     if (it.accessToken.isBlank()) {
-                        throw IOException("Dashboard token response did not include an access token")
+                        throw NativeDashboardTokenShapeException(
+                            "Dashboard token response did not include an access token",
+                        )
                     }
                 }
         }
@@ -285,7 +306,7 @@ class NativeDashboardAuthClient(
                 NativeTokenRefreshCoordinator.currentGeneration(tokenStore.coordinationKey) !=
                 expectedGeneration
             ) {
-                throw IOException("Dashboard sign-in is no longer active")
+                throw NativeDashboardInactiveAuthorizationException()
             }
             tokenStore.save(tokens)
         }
@@ -308,6 +329,42 @@ class NativeDashboardAuthClient(
             require(url.port in 1..65535 && url.encodedPath == CALLBACK_PATH && url.query == null) {
                 "Native redirect must use an ephemeral port and the exact /callback path"
             }
+        }
+    }
+}
+
+/**
+ * Retries only the name lookup that precedes a native-auth request. The HTTP
+ * call itself remains single-shot, so a one-time authorization code is never
+ * replayed after the server may have consumed it.
+ */
+internal class RetryingNativeAuthDns(
+    private val delegate: Dns = Dns.SYSTEM,
+    private val backoffMillis: Long = NATIVE_AUTH_DNS_RETRY_BACKOFF_MILLIS,
+    private val sleeper: (Long) -> Unit = { Thread.sleep(it) },
+) : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        val firstFailure = try {
+            return delegate.lookup(hostname)
+        } catch (error: UnknownHostException) {
+            error
+        }
+
+        if (backoffMillis > 0L) {
+            try {
+                sleeper(backoffMillis)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                firstFailure.addSuppressed(interrupted)
+                throw firstFailure
+            }
+        }
+
+        return try {
+            delegate.lookup(hostname)
+        } catch (secondFailure: UnknownHostException) {
+            secondFailure.addSuppressed(firstFailure)
+            throw secondFailure
         }
     }
 }
@@ -430,9 +487,55 @@ class DashboardBearerAuth(
     }
 }
 
-private class NativeDashboardAuthHttpException(
+internal class NativeDashboardAuthHttpException(
     val statusCode: Int,
 ) : IOException("Dashboard native authentication failed (HTTP $statusCode)")
+
+internal class NativeDashboardTokenShapeException(
+    message: String,
+    cause: Throwable? = null,
+) : IOException(message, cause)
+
+internal class NativeDashboardInactiveAuthorizationException :
+    IOException("Dashboard sign-in is no longer active")
+
+internal fun nativeDashboardSignInFailureStage(error: Throwable): String {
+    error.firstCauseOfType<NativeDashboardCallbackException>()?.let { return "callback_error" }
+    error.firstCauseOfType<NativeDashboardAuthHttpException>()?.let {
+        return "token_http_${it.statusCode}"
+    }
+    if (error.firstCauseOfType<NativeDashboardTokenShapeException>() != null) return "token_shape"
+    if (error.firstCauseOfType<NativeDashboardInactiveAuthorizationException>() != null) {
+        return "inactive_generation"
+    }
+    if (error.firstCauseOfType<InterruptedIOException>() != null) return "token_transport_timeout"
+    if (error.firstCauseOfType<UnknownHostException>() != null) return "token_transport_dns"
+    if (error.firstCauseOfType<ConnectException>() != null ||
+        error.firstCauseOfType<NoRouteToHostException>() != null
+    ) {
+        return "token_transport_connect"
+    }
+    if (error.firstCauseOfType<SSLException>() != null) return "token_transport_tls"
+    if (error.firstCauseOfType<SocketException>() != null ||
+        error.firstCauseOfType<EOFException>() != null
+    ) {
+        return "token_transport_socket"
+    }
+    return if (error.firstCauseOfType<IOException>() != null) "token_transport" else "token_store"
+}
+
+internal fun nativeDashboardSignInFailureDiagnostic(error: Throwable): String =
+    "dashboard_native_pkce_failed stage=${nativeDashboardSignInFailureStage(error)}"
+
+private inline fun <reified T : Throwable> Throwable.firstCauseOfType(): T? {
+    val seen = Collections.newSetFromMap(IdentityHashMap<Throwable, Boolean>())
+    var current: Throwable? = this
+    while (current != null && seen.add(current)) {
+        if (current is T) return current
+        current = current.cause
+    }
+    return null
+}
 
 private object NativeTokenRefreshCoordinator {
     private val locks = ConcurrentHashMap<String, Any>()

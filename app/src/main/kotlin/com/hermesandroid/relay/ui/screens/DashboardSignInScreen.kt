@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -46,6 +47,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.ui.components.ConnectionSetupTimeline
 import com.hermesandroid.relay.ui.components.ConnectionSetupTimelineStep
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
@@ -58,6 +62,8 @@ import com.hermesandroid.relay.network.upstream.NativeDashboardSignInCoordinator
 import com.hermesandroid.relay.network.upstream.androidDashboardRedirectAuthMode
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
 import com.hermesandroid.relay.network.upstream.isNativeDashboardTransportEligible
+import com.hermesandroid.relay.network.upstream.nativeDashboardSignInFailureDiagnostic
+import com.hermesandroid.relay.network.upstream.nativeDashboardSignInFailureStage
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +71,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
+private const val NATIVE_DASHBOARD_AUTH_LOG_TAG = "HermesNativeAuth"
 
 /**
  * Connection-level Dashboard authentication flow. It is deliberately outside
@@ -246,8 +254,24 @@ fun DashboardSignInScreen(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                actionMessage = error.message
-                    ?: resources.getString(R.string.dashboard_signin_failed)
+                val failureStage = nativeDashboardSignInFailureStage(error)
+                val failureDetail = nativeDashboardSignInFailureDiagnostic(error)
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Auth,
+                    severity = DiagnosticSeverity.Error,
+                    title = resources.getString(R.string.dashboard_signin_failed),
+                    detail = failureDetail,
+                    operation = "dashboard_native_pkce",
+                )
+                Log.w(NATIVE_DASHBOARD_AUTH_LOG_TAG, failureDetail)
+                actionMessage = nativeDashboardSignInActionMessage(
+                    failureStage = failureStage,
+                    errorMessage = error.message,
+                    fallbackMessage = resources.getString(R.string.dashboard_signin_failed),
+                    transportRetryMessage = resources.getString(
+                        R.string.dashboard_native_signin_transport_retry,
+                    ),
+                )
                 actionIsError = true
             } finally {
                 actionInFlight = false
@@ -336,6 +360,17 @@ fun DashboardSignInScreen(
             }
         }
     }
+}
+
+internal fun nativeDashboardSignInActionMessage(
+    failureStage: String,
+    errorMessage: String?,
+    fallbackMessage: String,
+    transportRetryMessage: String,
+): String = if (failureStage.startsWith("token_transport")) {
+    transportRetryMessage
+} else {
+    errorMessage ?: fallbackMessage
 }
 
 @Composable

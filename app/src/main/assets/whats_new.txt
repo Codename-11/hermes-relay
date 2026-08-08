@@ -1,7 +1,7 @@
-v1.7.0 - Smarter controls, steadier sessions
+v1.7.1 - Safer, steadier conversations
 
-* Match reasoning levels to the selected provider and model, with a standard fallback.
-* See working and needs-input activity in the searchable session drawer.
-* Keep restored and completed chats bottom-pinned without overriding scrollback.
-* Review redacted local support information and actionable connection guidance.
-* Restore Focus Voice controls and stabilize recovered chat rows.
+* Follow growing replies without overriding intentional scrollback.
+* Render completed Markdown immediately and keep live tool details expandable.
+* Keep queued follow-ups with their originating chat and persist session pins and archives.
+* Require explicit approval decisions and improve Agent Passport controls.
+* Complete hosted Hermes setup through the official Dashboard sign-in flow.

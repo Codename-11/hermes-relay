@@ -40,6 +40,15 @@ class GatewayEventMapper(
         if (!duplicate) callbacks.onInteractionRequest(ask)
     }
 
+    /** Retire only the ask whose explicit respond RPC reached server truth. */
+    internal fun acknowledgeInteraction(expiry: GatewayAskExpiry) {
+        val pending = pendingInteraction ?: return
+        if (pending.matches(expiry)) {
+            pendingInteraction = null
+            drainDeferredTerminalEvent()
+        }
+    }
+
     private var sawMessageStart = false
     private var previousEventType: String? = null
     private var sawTextDelta = false
@@ -50,6 +59,7 @@ class GatewayEventMapper(
     private var compactionStatusActive = false
     private var moaStatusActive = false
     private var pendingInteraction: GatewayAsk? = null
+    private var deferredTerminalEvent: Pair<String, JsonObject?>? = null
 
     /**
      * `tool.complete` events match their `tool.start` by `tool_id`; when a
@@ -81,17 +91,17 @@ class GatewayEventMapper(
             }
             callbacks.onInteractionExpired(expiry)
             previousEventType = type
+            if (pendingInteraction == null) drainDeferredTerminalEvent()
             return
         }
-        if (type in INTERACTION_RESUME_EVENTS) {
-            pendingInteraction?.let { ask ->
-                pendingInteraction = null
-                callbacks.onInteractionResolved(
-                    GatewayAskExpiry(kind = ask.kind, requestId = ask.requestId),
-                )
-            }
+        if (pendingInteraction != null && type in TERMINAL_EVENTS) {
+            // A buffered/late terminal frame is not consent. Upstream blocks
+            // the turn on an interaction, so hold the first terminal until an
+            // explicit response acknowledgement or authoritative expiry.
+            if (deferredTerminalEvent == null) deferredTerminalEvent = type to payload
+            previousEventType = type
+            return
         }
-
         when (type) {
             "reasoning.delta" -> {
                 val text = payload.string("text")
@@ -197,7 +207,10 @@ class GatewayEventMapper(
                     }
                     else -> syntheticToolId(name)
                 }
-                callbacks.onToolCallStart(toolId, name)
+                val argsPreview = payload.string("args_text")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: payload.string("context")?.takeIf { it.isNotBlank() }
+                callbacks.onToolCallStart(toolId, name, argsPreview)
             }
 
             "tool.complete" -> {
@@ -210,7 +223,10 @@ class GatewayEventMapper(
                 if (!error.isNullOrEmpty()) {
                     callbacks.onToolCallFailed(toolId, error)
                 } else {
-                    callbacks.onToolCallDone(toolId, payload.string("summary"))
+                    val resultPreview = payload.string("result_text")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: payload.string("summary")?.takeIf { it.isNotBlank() }
+                    callbacks.onToolCallDone(toolId, resultPreview)
                 }
             }
 
@@ -371,6 +387,12 @@ class GatewayEventMapper(
         previousEventType = type
     }
 
+    private fun drainDeferredTerminalEvent() {
+        val deferred = deferredTerminalEvent ?: return
+        deferredTerminalEvent = null
+        onEvent(deferred.first, deferred.second)
+    }
+
     private fun syntheticToolId(name: String): String {
         val id = "gateway-tool-$name-${syntheticToolCounter++}"
         openSyntheticIdsByName.getOrPut(name) { ArrayDeque() }.addLast(id)
@@ -410,20 +432,7 @@ class GatewayEventMapper(
         private const val MAX_MOA_LABEL_CHARS = 120
         private const val MAX_MOA_REFERENCE_CHARS = 16_000
         private val OUTPUT_RISK_LEVELS = setOf("low", "medium", "high", "critical")
-        private val INTERACTION_RESUME_EVENTS = setOf(
-            "reasoning.delta",
-            "thinking.delta",
-            "reasoning.available",
-            "message.delta",
-            "message.interim",
-            "message.start",
-            "tool.generating",
-            "tool.start",
-            "tool.complete",
-            "message.complete",
-            "error",
-        )
-
+        private val TERMINAL_EVENTS = setOf("message.complete", "error")
         internal fun isFailedMoaReference(text: String): Boolean {
             val normalized = text.trimStart().lowercase()
             return normalized.startsWith("[failed:") || normalized.startsWith("[skipped:")
@@ -496,8 +505,6 @@ class GatewayEventMapper(
 
             else -> null
         }
-
-        fun isInteractionResumeEvent(type: String): Boolean = type in INTERACTION_RESUME_EVENTS
 
         /**
          * Hermes 2026-07-15 emits these operational wait lines through the

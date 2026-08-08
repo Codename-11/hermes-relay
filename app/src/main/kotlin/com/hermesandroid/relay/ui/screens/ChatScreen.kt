@@ -318,12 +318,20 @@ internal data class ChatScrollSnapshot(
     val isStreaming: Boolean
 )
 
+internal fun ChatScrollSnapshot.isCompletionAfter(previous: ChatScrollSnapshot?): Boolean =
+    previous?.isStreaming == true &&
+        !isStreaming &&
+        previous.messageCount == messageCount &&
+        previous.lastMessageUiKey == lastMessageUiKey
+
 internal fun retainedLiveTailAfterTransition(
     retainedUiKey: String?,
     streamStarted: Boolean,
+    streamCompleted: Boolean,
     lastMessageUiKey: String?,
 ): String? = when {
     streamStarted -> lastMessageUiKey
+    streamCompleted && retainedUiKey == lastMessageUiKey -> null
     retainedUiKey != null && retainedUiKey != lastMessageUiKey -> null
     else -> retainedUiKey
 }
@@ -747,6 +755,7 @@ fun ChatScreen(
     val backgroundSessionActivityStates by
         chatViewModel.backgroundSessionActivityStates.collectAsState()
     val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
+    val sessionArchivingSupported by chatViewModel.sessionArchivingSupported.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
     val pendingAsk by chatViewModel.pendingAsk.collectAsState()
     val sessionActivityStates = remember(
@@ -1657,12 +1666,14 @@ fun ChatScreen(
     )
     val tailTransitionRef = remember(currentSessionId) { ChatTailTransitionRef() }
 
-    // A live tail owns its stable renderer until another row becomes the tail.
-    // Completion is deliberately not a structural transition: changing the
-    // renderer or list anchor at that boundary caused a visible scroll jump.
+    // A live tail owns one stable Text renderer while content is incomplete.
+    // Completion first commits that final live frame, then this SideEffect
+    // releases the retained renderer and anchors the same uiKey for the next
+    // remeasure, where the row deterministically becomes rich Markdown.
     SideEffect {
         val previous = tailTransitionRef.snapshot
         val streamStarted = tailTransition.isStreaming && previous?.isStreaming != true
+        val streamCompleted = tailTransition.isCompletionAfter(previous)
         val tailStructureChanged = tailTransition.lastMessageUiKey != null &&
             (previous == null ||
                 previous.messageCount != tailTransition.messageCount ||
@@ -1677,13 +1688,14 @@ fun ChatScreen(
         retainedLiveTailUiKey = retainedLiveTailAfterTransition(
             retainedUiKey = retainedLiveTailUiKey,
             streamStarted = streamStarted,
+            streamCompleted = streamCompleted,
             lastMessageUiKey = tailTransition.lastMessageUiKey,
         )
 
         val shouldAnchor = smoothAutoScroll &&
             !isUserDragging &&
             (!userScrolledAway || streamStarted) &&
-            (streamStarted || tailStructureChanged)
+            (streamStarted || streamCompleted || tailStructureChanged)
         if (shouldAnchor) {
             listState.requestScrollToItem(tailTransition.messageCount + 1)
         }
@@ -1700,10 +1712,14 @@ fun ChatScreen(
     // owns both follow paths; ordinary late layout correction resumes after it
     // settles. A visible footer supplies the authoritative final distance. No
     // transition replaces the logical item anchor.
+    val latestMessages = rememberUpdatedState(messages)
     LaunchedEffect(listState, currentSessionId, smoothAutoScroll) {
         var previousLayout: ChatViewportFollowSnapshot? = null
         snapshotFlow {
-            val tail = messages.lastOrNull()
+            // The effect deliberately survives each streamed list replacement.
+            // Read through rememberUpdatedState so its long-lived coroutine does
+            // not keep the message list captured when the effect first launched.
+            val tail = latestMessages.value.lastOrNull()
             val tailSize = tail?.uiKey?.let { uiKey ->
                 listState.layoutInfo.visibleItemsInfo
                     .firstOrNull { item -> item.key == uiKey }
@@ -1740,7 +1756,7 @@ fun ChatScreen(
                     atExactBottom = listState.isAtConversationBottom(0),
                     userScrolledAway = userScrolledAway,
                     userDragging = isUserDragging,
-                    isStreaming = messages.lastOrNull()?.isStreaming == true,
+                    isStreaming = latestMessages.value.lastOrNull()?.isStreaming == true,
                     smoothAutoScroll = smoothAutoScroll,
                     viewportFollowAllowed = current.followViewportResize,
                 )
@@ -1764,8 +1780,8 @@ fun ChatScreen(
             }
     }
 
-    // Completion keeps the stable live renderer, then settles the owned
-    // transcript to the exact boundary after its final layout pass.
+    // Completion settles the owned transcript after the final live frame. The
+    // SideEffect above separately anchors the same row's Markdown remeasure.
     var observedActiveStream by remember(currentSessionId) { mutableStateOf(false) }
     LaunchedEffect(isStreaming) {
         if (isStreaming) {
@@ -1870,6 +1886,7 @@ fun ChatScreen(
                 activityStates = sessionActivityStates,
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
+                archiveSupported = sessionArchivingSupported,
                 onRefresh = { chatViewModel.refreshSessions() },
                 onNewChat = {
                     chatViewModel.createNewChat()
@@ -1885,6 +1902,8 @@ fun ChatScreen(
                 onRenameSession = { sessionId, title ->
                     chatViewModel.renameSession(sessionId, title)
                 },
+                onSetSessionPinned = chatViewModel::setSessionPinned,
+                onSetSessionArchived = chatViewModel::setSessionArchived,
                 onCopySessionId = { sessionId ->
                     scope.launch {
                         clipboard.setClipEntry(
@@ -2866,6 +2885,15 @@ fun ChatScreen(
                                         else -> ToolProgressCard(
                                             toolCall = toolCall,
                                             messageTimestamp = message.timestamp,
+                                            onExpandedChange = { expanded ->
+                                                // Expanding a live-tail card is reading intent,
+                                                // not new stream output. Yield bottom-follow so
+                                                // the row's height change stays under the user's
+                                                // finger instead of being scrolled away.
+                                                if (expanded && isStreaming) {
+                                                    userScrolledAway = true
+                                                }
+                                            },
                                         )
                                     }
                                 }
@@ -3278,6 +3306,7 @@ fun ChatScreen(
                 modelProviders,
                 sseModelOptions,
                 selectedModelOverride,
+                selectedProviderOverride,
                 gatewayCurrentModel,
                 fallbackModelDetail,
                 serverDefaultModelDetail,
@@ -3317,7 +3346,8 @@ fun ChatScreen(
                                                 !provider.authenticated -> provider.warning ?: needsSetupLabel
                                                 else -> null
                                             },
-                                            selected = selectedModelOverride == model,
+                                            selected = selectedModelOverride == model &&
+                                                selectedProviderOverride.equals(provider.slug, ignoreCase = true),
                                             enabled = !unavailable,
                                         ),
                                     )

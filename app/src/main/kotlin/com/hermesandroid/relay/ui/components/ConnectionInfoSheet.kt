@@ -5,9 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -32,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Language
@@ -83,6 +87,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -694,7 +699,6 @@ fun AgentInfoSheet(
     onNavigateToConnections: () -> Unit,
     onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val resolvedProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
@@ -846,6 +850,7 @@ fun AgentInfoSheet(
         apiModelOptions,
         agentProfiles,
         selectedModel,
+        selectedProvider,
         modelLabel,
         unavailableModelLabel,
         modelNeedsSetupLabel,
@@ -886,7 +891,8 @@ fun AgentInfoSheet(
                                         provider.warning ?: modelNeedsSetupLabel
                                     else -> null
                                 },
-                                selected = selectedModel == model,
+                                selected = selectedModel == model &&
+                                    selectedProvider.equals(provider.slug, ignoreCase = true),
                                 enabled = !unavailable,
                             ),
                         )
@@ -926,28 +932,10 @@ fun AgentInfoSheet(
         showIdentityEditor = false
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        sheetGesturesEnabled = false,
-        dragHandle = null,
+    AgentPassportSheetHost(
+        scrollState = passportScrollState,
+        onDismiss = onDismiss,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxHeight(0.94f)
-                .verticalScroll(
-                    state = passportScrollState,
-                    overscrollEffect = null,
-                )
-                .padding(horizontal = 20.dp, vertical = 4.dp)
-                .navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.conn_info_agent_passport),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
             AgentPassportHeader(
                 agentName = agentName,
                 profileLabel = profileLabel,
@@ -1164,7 +1152,6 @@ fun AgentInfoSheet(
                 )
                 }
             }
-        }
     }
 
     when (activePicker) {
@@ -1297,6 +1284,75 @@ fun AgentInfoSheet(
             onReset = connectionViewModel::resetProfilePresentation,
             onDismiss = { showProfileManager = false },
         )
+    }
+}
+
+internal const val AGENT_PASSPORT_SHEET_TAG = "agentPassportSheet"
+internal const val AGENT_PASSPORT_SCROLL_TAG = "agentPassportScroll"
+internal const val AGENT_PASSPORT_CLOSE_TAG = "agentPassportClose"
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun AgentPassportSheetHost(
+    scrollState: ScrollState,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        // Use Material's gesture owner instead of custom pointer input. The
+        // verticalScroll child consumes downward movement until its top
+        // boundary, then hands the remainder to the sheet; Material also
+        // follows the platform animator scale for reduced-motion users.
+        sheetGesturesEnabled = true,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxHeight(0.94f)
+                .testTag(AGENT_PASSPORT_SHEET_TAG),
+        ) {
+            // Keep the close action visible while compact or large-font content
+            // scrolls independently below it.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .padding(start = 20.dp, end = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.conn_info_agent_passport),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.testTag(AGENT_PASSPORT_CLOSE_TAG),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.common_close),
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(
+                        state = scrollState,
+                        overscrollEffect = null,
+                    )
+                    .testTag(AGENT_PASSPORT_SCROLL_TAG)
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                content = content,
+            )
+        }
     }
 }
 
@@ -1751,8 +1807,17 @@ private fun PassportDivider() {
     )
 }
 
+internal const val PASSPORT_APPROVAL_CONTROL_TAG = "passportApproval"
+internal const val PASSPORT_CHAT_OVERRIDE_CONTROL_TAG = "passportChatOverride"
+internal const val PASSPORT_FAST_CONTROL_TAG = "passportFast"
+
+internal data class PassportSegmentOption(
+    val label: String,
+    val description: String,
+)
+
 @Composable
-private fun AgentPassportSafetyCard(
+internal fun AgentPassportSafetyCard(
     approvalMode: GatewayApprovalMode?,
     approvalCapability: GatewayApprovalModeCapability,
     approvalWritable: Boolean,
@@ -1766,9 +1831,18 @@ private fun AgentPassportSafetyCard(
     onFast: (Boolean) -> Unit,
 ) {
     val approvalModes = listOf(
-        GatewayApprovalMode.Manual to stringResource(R.string.conn_info_approval_mode_manual),
-        GatewayApprovalMode.Smart to stringResource(R.string.conn_info_approval_mode_smart),
-        GatewayApprovalMode.Off to stringResource(R.string.conn_info_approval_mode_off),
+        GatewayApprovalMode.Manual to PassportSegmentOption(
+            label = stringResource(R.string.conn_info_approval_mode_manual),
+            description = stringResource(R.string.conn_info_approval_mode_manual_desc),
+        ),
+        GatewayApprovalMode.Smart to PassportSegmentOption(
+            label = stringResource(R.string.conn_info_approval_mode_smart),
+            description = stringResource(R.string.conn_info_approval_mode_smart_desc),
+        ),
+        GatewayApprovalMode.Off to PassportSegmentOption(
+            label = stringResource(R.string.conn_info_approval_mode_off),
+            description = stringResource(R.string.conn_info_approval_mode_off_desc),
+        ),
     )
     Surface(
         shape = RoundedCornerShape(22.dp),
@@ -1811,11 +1885,12 @@ private fun AgentPassportSafetyCard(
                     }
                     GatewayApprovalModeCapability.Supported -> {
                         PassportSegmentedControl(
-                            labels = approvalModes.map { it.second },
+                            options = approvalModes.map { it.second },
                             selected = approvalModes.indexOfFirst { it.first == approvalMode }
                                 .takeIf { it >= 0 },
                             enabled = controlsAvailable && gatewayReady &&
                                 approvalWritable && !isStreaming,
+                            testTagPrefix = PASSPORT_APPROVAL_CONTROL_TAG,
                             onSelected = { index -> onApprovalMode(approvalModes[index].first) },
                         )
                     }
@@ -1833,15 +1908,26 @@ private fun AgentPassportSafetyCard(
                 },
             ) {
                 PassportSegmentedControl(
-                    labels = listOf(
-                        stringResource(R.string.conn_info_inherited),
-                        stringResource(R.string.conn_info_bypassed),
+                    options = listOf(
+                        PassportSegmentOption(
+                            label = stringResource(R.string.conn_info_inherited),
+                            description = if (approvalMode == GatewayApprovalMode.Off) {
+                                stringResource(R.string.conn_info_profile_already_bypasses)
+                            } else {
+                                stringResource(R.string.conn_info_chat_override_inherited_desc)
+                            },
+                        ),
+                        PassportSegmentOption(
+                            label = stringResource(R.string.conn_info_bypassed),
+                            description = stringResource(R.string.conn_info_yolo_mode_desc_ephemeral),
+                        ),
                     ),
                     selected = if (
                         approvalMode != GatewayApprovalMode.Off && yoloEnabled == true
                     ) 1 else 0,
                     enabled = controlsAvailable && gatewayReady && !isStreaming &&
                         approvalMode != GatewayApprovalMode.Off,
+                    testTagPrefix = PASSPORT_CHAT_OVERRIDE_CONTROL_TAG,
                     onSelected = { onYolo(it == 1) },
                 )
             }
@@ -1853,12 +1939,19 @@ private fun AgentPassportSafetyCard(
                 description = stringResource(R.string.conn_info_fast_mode_desc),
             ) {
                 PassportSegmentedControl(
-                    labels = listOf(
-                        stringResource(R.string.conn_info_fast),
-                        stringResource(R.string.appearance_font_normal),
+                    options = listOf(
+                        PassportSegmentOption(
+                            label = stringResource(R.string.conn_info_fast),
+                            description = stringResource(R.string.conn_info_fast_mode_desc),
+                        ),
+                        PassportSegmentOption(
+                            label = stringResource(R.string.appearance_font_normal),
+                            description = stringResource(R.string.conn_info_normal_tier_desc),
+                        ),
                     ),
                     selected = if (fastEnabled == true) 0 else 1,
                     enabled = controlsAvailable && gatewayReady && !isStreaming,
+                    testTagPrefix = PASSPORT_FAST_CONTROL_TAG,
                     onSelected = { onFast(it == 0) },
                 )
             }
@@ -1873,90 +1966,118 @@ private fun PassportSafetyRow(
     description: String,
     control: @Composable () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Surface(
-            modifier = Modifier.size(38.dp),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-            contentColor = MaterialTheme.colorScheme.primary,
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+            Surface(
+                modifier = Modifier.size(40.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                contentColor = MaterialTheme.colorScheme.primary,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
-        Column(modifier = Modifier.weight(1.25f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = description,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Box(modifier = Modifier.weight(1f)) {
-            control()
-        }
+        control()
     }
 }
 
 @Composable
-private fun PassportSegmentedControl(
-    labels: List<String>,
+internal fun PassportSegmentedControl(
+    options: List<PassportSegmentOption>,
     selected: Int?,
     enabled: Boolean,
+    testTagPrefix: String,
     onSelected: (Int) -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .selectableGroup()
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            .padding(3.dp)
-            .alpha(if (enabled) 1f else 0.52f),
-    ) {
-        labels.forEachIndexed { index, label ->
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .selectable(
-                        selected = selected == index,
-                        enabled = enabled,
-                        role = Role.RadioButton,
-                        onClick = { onSelected(index) },
-                    ),
-                shape = RoundedCornerShape(11.dp),
-                color = if (selected == index) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    Color.Transparent
-                },
-                contentColor = if (selected == index) {
-                    MaterialTheme.colorScheme.onPrimary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            ) {
-                Text(
-                    text = label,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .selectableGroup()
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .padding(3.dp),
+        ) {
+            options.forEachIndexed { index, option ->
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("$testTagPrefix-$index")
+                        .selectable(
+                            selected = selected == index,
+                            enabled = enabled,
+                            role = Role.RadioButton,
+                            onClick = { onSelected(index) },
+                        )
+                        .semantics {
+                            contentDescription = "${option.label}. ${option.description}"
+                        },
+                    shape = RoundedCornerShape(11.dp),
+                    color = when {
+                        selected != index -> Color.Transparent
+                        enabled -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.primaryContainer
+                    },
+                    contentColor = when {
+                        selected == index && enabled -> MaterialTheme.colorScheme.onPrimary
+                        selected == index -> MaterialTheme.colorScheme.onPrimaryContainer
+                        enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    },
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = option.label,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = if (selected == index) {
+                                FontWeight.SemiBold
+                            } else {
+                                FontWeight.Medium
+                            },
+                            maxLines = 2,
+                        )
+                    }
+                }
             }
+        }
+        selected?.let(options::getOrNull)?.let { option ->
+            Text(
+                text = option.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
         }
     }
 }

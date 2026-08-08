@@ -134,7 +134,7 @@ data class Connection(
          * than to crash).
          */
         fun extractDefaultLabel(apiServerUrl: String): String =
-            extractHost(apiServerUrl) ?: apiServerUrl
+            extractHost(apiServerUrl)?.let(::defaultLabelFromHost) ?: apiServerUrl
 
         /** Preserve explicit labels while upgrading an auto-generated IP label to a discovered host name. */
         fun chooseDiscoveredLabel(
@@ -160,7 +160,25 @@ data class Connection(
             val primary = dashboardUrl?.trim()?.takeIf { it.isNotBlank() }
                 ?: apiServerUrl.trim().takeIf { it.isNotBlank() }
                 ?: relayUrl.trim()
-            return extractHost(primary) ?: primary
+            return extractHost(primary)?.let(::defaultLabelFromHost) ?: primary
+        }
+
+        /**
+         * Nous-hosted agent gateways use the stable
+         * `<slug>.agents.nousresearch.com` origin contract. The public Hermes
+         * status response deliberately carries no tenant/agent display name,
+         * so a URL-only connection uses that exact single-label slug as its
+         * least-surprising default. Portal's human-readable agent name is only
+         * available through its separately authenticated discovery API.
+         *
+         * Match the complete suffix and exactly one leading DNS label. This
+         * avoids shortening lookalike or operator-controlled hostnames.
+         */
+        private fun defaultLabelFromHost(host: String): String {
+            val suffix = ".agents.nousresearch.com"
+            if (!host.endsWith(suffix, ignoreCase = true)) return host
+            val slug = host.dropLast(suffix.length)
+            return slug.takeIf { it.isNotBlank() && '.' !in it } ?: host
         }
 
         private fun extractHost(url: String): String? = try {

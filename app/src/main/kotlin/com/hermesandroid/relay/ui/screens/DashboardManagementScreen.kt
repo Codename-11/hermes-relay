@@ -2833,7 +2833,7 @@ internal fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
         .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank) }
         .map { it.lowercase() }
         .toSet()
-    return providers.mapNotNull { element ->
+    val parsed = providers.mapNotNull { element ->
         val obj = element as? JsonObject ?: return@mapNotNull null
         val id = obj.stringField("slug")
             ?: obj.stringField("id")
@@ -2860,10 +2860,25 @@ internal fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
             // Absent hint field: a row with models is assumed usable; an empty
             // row can only be an unconfigured skeleton, so grey it.
             authenticated = obj.booleanField("authenticated") ?: models.isNotEmpty(),
-            models = models,
+            models = models.distinct(),
             setupHint = obj.stringField("warning"),
         )
-    }.sortedByDescending { it.authenticated }
+    }
+    val merged = linkedMapOf<String, ModelProviderOption>()
+    parsed.forEach { row ->
+        val identity = row.id.trim().lowercase()
+        val existing = merged[identity]
+        merged[identity] = if (existing == null) {
+            row.copy(id = row.id.trim())
+        } else {
+            existing.copy(
+                authenticated = existing.authenticated || row.authenticated,
+                models = (existing.models + row.models).distinct(),
+                setupHint = existing.setupHint ?: row.setupHint,
+            )
+        }
+    }
+    return merged.values.sortedByDescending { it.authenticated }
 }
 
 @Composable

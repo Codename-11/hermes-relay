@@ -1,5 +1,76 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-08 — Streaming reply tail follow
+
+Android's conversation-bottom follower now reads the current immutable message
+list from Compose state inside its long-lived layout observer. Each streamed
+replacement can therefore advance the viewport as the active bubble gains
+lines, while dragging or scrolling away still releases bottom ownership.
+
+## 2026-08-08 — Settled live replies transition to Markdown
+
+Android now releases the live plain-text renderer immediately after an
+assistant row settles. The transition retains the row's stable UI identity,
+commits the final live frame before replacing its selectable text topology,
+and anchors the same bottom-owned row during the Markdown remeasure. Readers
+who scrolled away retain their viewport, while completed code fences, lists,
+emphasis, links, and interrupted partial replies no longer require session
+navigation before rich rendering appears.
+
+## 2026-08-08 — Explicit-consent ownership for Android approvals
+
+Android no longer treats unrelated Gateway activity or a terminal display event
+as proof that an approval was resolved. Approval cards remain pending through
+scrolling, recomposition, navigation, and background restoration, and retain
+their exact connection, profile, and session ownership. Only a labeled action
+that successfully reaches `approval.respond`, an authoritative upstream expiry,
+or an explicit interrupt can retire the local request; the interrupt path stays
+visibly denied because upstream force-denies it.
+
+## 2026-08-08 — Agent Passport control and dismissal accessibility
+
+The Android Agent Passport keeps its title and explicit close action outside
+the nested content scroller. Material bottom-sheet gestures are enabled again,
+so a downward gesture scrolls long content toward its top boundary before the
+sheet receives the gesture and dismisses; backdrop and Back dismissal retain
+the same callback.
+
+Safety and speed choices now sit below their labels instead of competing for a
+narrow horizontal column. Every segment provides at least a 48 dp target,
+allows two-line labels, exposes radio-selection semantics, and states the
+meaning of the current approval, chat override, or processing-tier choice in
+plain language. The layout remains scrollable on compact heights and at larger
+font scales without moving the close action off-screen.
+
+## 2026-08-08 — Session-owned Android send queues
+
+Android follow-up queues now capture the composing connection/profile context,
+stored session, configured transport, originating run, attachments, and voice
+context as one immutable destination. Queue presentation is filtered to the
+visible session, while completion eligibility is tied to the exact run and live
+Gateway generation that owned the queue. A completion from another session or
+an older live generation cannot dispatch through the current composer route.
+
+In-flight checkpoints retain bounded queued text across process restoration.
+Attachment bytes are not copied into Preferences DataStore; an attachment queue
+that cannot be restored is rejected with a visible review-and-resend notice.
+Connection replacement and session deletion cancel their owned queues, while
+switching among concurrent Gateway sessions preserves each session's queue.
+
+## 2026-08-07 — Provider-owned model inventory identity
+
+Android now normalizes Gateway and API model inventories before publishing
+them to picker consumers. Repeated provider rows merge by canonical provider
+slug, repeated exact model IDs collapse within that provider, and capability
+metadata follows the same provider/model identity. Models intentionally offered
+by different providers remain distinct choices, even when their display labels
+and model IDs match.
+
+The searchable picker groups and keys rows by provider slug plus exact model ID
+instead of provider display text. Cached loads, dynamic refreshes, API aliases,
+and Manage inventory use the same idempotent identity rule, preventing duplicate
+catalog data from reaching keyed Compose lists without hiding valid routes.
+
 ## 2026-08-05 — Restored chat bottom ownership and effort fallback clarity
 
 Opening an existing Android session now retains exact bottom ownership through

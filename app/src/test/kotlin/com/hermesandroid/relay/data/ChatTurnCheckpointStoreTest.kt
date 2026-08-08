@@ -160,6 +160,14 @@ class ChatTurnCheckpointStoreTest {
             cardKey = "approval-1",
             receivedAt = 1_004L,
         ),
+        queuedMessages = listOf(
+            ChatQueuedMessageCheckpoint(
+                id = "queue-1",
+                text = "follow up in this session",
+                transport = "gateway",
+                ownerRunId = "user-1",
+            ),
+        ),
         startedAt = 1_001L,
         updatedAt = now,
     )

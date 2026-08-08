@@ -89,12 +89,13 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.7.0 - Smarter controls, steadier sessions
+v1.7.1 - Safer, steadier conversations
 
-* Provider-aware reasoning levels with a standard fallback.
-* Working and needs-input states in the searchable session drawer.
-* Restored chats stay bottom-pinned without overriding scrollback.
-* Private support information and clearer connection diagnostics.
+* Growing replies stay visible without overriding intentional scrollback.
+* Completed Markdown renders immediately and queued follow-ups stay with their chat.
+* Session pins and archives persist across restarts.
+* Approval cards require an explicit decision.
+* Hosted Hermes setup follows the official Dashboard sign-in flow.
 * Reliable Focus Voice controls and recovered chat rows.
 ```
 
