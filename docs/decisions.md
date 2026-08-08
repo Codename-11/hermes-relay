@@ -2561,6 +2561,11 @@ Relay mandatory would break the Vanilla Hermes path.
 
 - Upstream `model.options` remains the source of provider/model identity. Relay
   never invents models or gates model selection or chat.
+- Android normalizes that inventory before publication: repeated rows with the
+  same case-insensitive provider slug are merged, repeated exact model IDs
+  within that provider are collapsed, and different provider slugs remain
+  separate choices even when their labels and model IDs match. Compose keys use
+  the provider slug plus exact model ID, never a display label or list position.
 - When available, the optional Relay `POST /relay/model-capabilities` overlay
   resolves capability metadata for the exact, profile-scoped `{provider, model}`
   pairs supplied by the client. A remote caller needs a paired session with an
@@ -2588,4 +2593,7 @@ Relay mandatory would break the Vanilla Hermes path.
 **Consequences.** Vanilla Hermes remains complete without Relay. A connected
 Relay can narrow choices after capability discovery without changing the model
 inventory. Old Relay versions, a missing `chat` grant, network failures, and
-unsupported providers fail soft to the same stable advisory behavior.
+unsupported providers fail soft to the same stable advisory behavior. Cached,
+dynamic, and refreshed catalogs are idempotent at the Android publication
+boundary, while provider-specific aliases and reasoning capabilities retain
+their exact route identity.

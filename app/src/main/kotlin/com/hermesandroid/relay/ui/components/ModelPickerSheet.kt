@@ -85,7 +85,12 @@ fun ModelPickerSheet(
     // (the caller sorts is_current to the front).
     val otherGroupLabel = stringResource(R.string.model_picker_other)
     val grouped = remember(filtered, otherGroupLabel) {
-        filtered.groupBy { it.group?.takeIf { g -> g.isNotBlank() } ?: otherGroupLabel }
+        filtered.groupBy { option ->
+            ModelPickerGroupIdentity(
+                provider = option.provider?.trim()?.lowercase().orEmpty(),
+                label = option.group?.takeIf { it.isNotBlank() } ?: otherGroupLabel,
+            )
+        }
     }
 
     ModalBottomSheet(
@@ -180,10 +185,10 @@ fun ModelPickerSheet(
                     }
                 }
 
-                grouped.forEach { (provider, opts) ->
-                    item(key = "header_$provider") {
+                grouped.forEach { (group, opts) ->
+                    item(key = modelPickerHeaderKey(group)) {
                         Text(
-                            text = provider,
+                            text = group.label,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(
@@ -191,7 +196,7 @@ fun ModelPickerSheet(
                             ),
                         )
                     }
-                    items(items = opts, key = { "$provider:${it.value}" }) { opt ->
+                    items(items = opts, key = ::modelPickerOptionKey) { opt ->
                         ModelPickerRow(option = opt, onClick = { onSelect(opt) })
                     }
                 }
@@ -216,6 +221,18 @@ fun ModelPickerSheet(
         }
     }
 }
+
+internal data class ModelPickerGroupIdentity(
+    val provider: String,
+    val label: String,
+)
+
+internal fun modelPickerHeaderKey(group: ModelPickerGroupIdentity): String =
+    "provider:${group.provider}:${group.label}"
+
+/** Exact domain identity; duplicate provider/model rows must be repaired upstream. */
+internal fun modelPickerOptionKey(option: ChatInputPickerOption): String =
+    "model:${option.provider?.trim()?.lowercase().orEmpty()}:${option.value}"
 
 /**
  * Compact sibling of [ModelPickerSheet] for short, ungrouped control lists.

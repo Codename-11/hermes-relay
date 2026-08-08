@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-07 — Provider-owned model inventory identity
+
+Android now normalizes Gateway and API model inventories before publishing
+them to picker consumers. Repeated provider rows merge by canonical provider
+slug, repeated exact model IDs collapse within that provider, and capability
+metadata follows the same provider/model identity. Models intentionally offered
+by different providers remain distinct choices, even when their display labels
+and model IDs match.
+
+The searchable picker groups and keys rows by provider slug plus exact model ID
+instead of provider display text. Cached loads, dynamic refreshes, API aliases,
+and Manage inventory use the same idempotent identity rule, preventing duplicate
+catalog data from reaching keyed Compose lists without hiding valid routes.
+
 ## 2026-08-05 — Restored chat bottom ownership and effort fallback clarity
 
 Opening an existing Android session now retains exact bottom ownership through

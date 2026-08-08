@@ -846,6 +846,7 @@ fun AgentInfoSheet(
         apiModelOptions,
         agentProfiles,
         selectedModel,
+        selectedProvider,
         modelLabel,
         unavailableModelLabel,
         modelNeedsSetupLabel,
@@ -886,7 +887,8 @@ fun AgentInfoSheet(
                                         provider.warning ?: modelNeedsSetupLabel
                                     else -> null
                                 },
-                                selected = selectedModel == model,
+                                selected = selectedModel == model &&
+                                    selectedProvider.equals(provider.slug, ignoreCase = true),
                                 enabled = !unavailable,
                             ),
                         )
