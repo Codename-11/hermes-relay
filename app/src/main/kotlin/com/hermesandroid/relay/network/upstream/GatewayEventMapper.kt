@@ -197,7 +197,10 @@ class GatewayEventMapper(
                     }
                     else -> syntheticToolId(name)
                 }
-                callbacks.onToolCallStart(toolId, name)
+                val argsPreview = payload.string("args_text")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: payload.string("context")?.takeIf { it.isNotBlank() }
+                callbacks.onToolCallStart(toolId, name, argsPreview)
             }
 
             "tool.complete" -> {
@@ -210,7 +213,10 @@ class GatewayEventMapper(
                 if (!error.isNullOrEmpty()) {
                     callbacks.onToolCallFailed(toolId, error)
                 } else {
-                    callbacks.onToolCallDone(toolId, payload.string("summary"))
+                    val resultPreview = payload.string("result_text")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: payload.string("summary")?.takeIf { it.isNotBlank() }
+                    callbacks.onToolCallDone(toolId, resultPreview)
                 }
             }
 

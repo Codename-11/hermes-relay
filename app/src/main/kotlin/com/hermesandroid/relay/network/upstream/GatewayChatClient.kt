@@ -2976,7 +2976,9 @@ class GatewayChatClient(
             callbackDispatcher { callbacks.onInterimReconciled(text) }
         },
         onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
-        onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },
+        onToolCallStart = { id, name, args ->
+            callbackDispatcher { callbacks.onToolCallStart(id, name, args) }
+        },
         onToolCallDone = { a, b -> callbackDispatcher { callbacks.onToolCallDone(a, b) } },
         onToolCallFailed = { a, b -> callbackDispatcher { callbacks.onToolCallFailed(a, b) } },
         onToolOutputRisk = { v -> callbackDispatcher { callbacks.onToolOutputRisk(v) } },

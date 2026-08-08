@@ -40,7 +40,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,15 +68,20 @@ fun ToolProgressCard(
      * message timestamp. Null hides the time.
      */
     messageTimestamp: Long? = null,
+    /**
+     * Reports explicit user expansion so the owning transcript can yield its
+     * live-tail auto-follow while the user inspects arguments or results.
+     */
+    onExpandedChange: (Boolean) -> Unit = {},
 ) {
     // Preparing (tool.generating) starts collapsed — the args preview line
     // under the header is the whole story until tool.start lands.
-    // rememberSaveable (keyed per tool call, namespaced by the message item's
-    // key in the chat LazyColumn) so a manual expand survives scroll-off /
-    // re-render instead of snapping shut every time the row recomposes.
-    var expanded by rememberSaveable(
-        key = "toolcard:" + (toolCall.id ?: "${toolCall.name}:${toolCall.startedAt}"),
-    ) { mutableStateOf(!toolCall.isComplete && !toolCall.isGenerating) }
+    // Use the call identity as an input, not a custom saveable key: custom keys
+    // bypass positional scoping and can share state between nested lazy items.
+    // uiKey survives generating -> running ID adoption and ordinary copies.
+    var expanded by rememberSaveable(toolCall.uiKey) {
+        mutableStateOf(!toolCall.isComplete && !toolCall.isGenerating)
+    }
     val isPreparing = toolCall.isGenerating && !toolCall.isComplete
     val timeMillis = toolCall.completedAt ?: messageTimestamp
     val locale = LocalLocale.current.platformLocale
@@ -86,11 +90,6 @@ fun ToolProgressCard(
             java.text.SimpleDateFormat("h:mm a", locale)
                 .format(java.util.Date(it))
         }
-    }
-
-    // Auto-collapse when tool completes
-    LaunchedEffect(toolCall.isComplete) {
-        if (toolCall.isComplete) expanded = false
     }
 
     val statusIcon: ImageVector
@@ -162,7 +161,10 @@ fun ToolProgressCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { expanded = !expanded },
+                    .clickable {
+                        expanded = !expanded
+                        onExpandedChange(expanded)
+                    },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Tool type icon

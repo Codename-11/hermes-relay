@@ -373,6 +373,12 @@ data class ToolCall(
     val outputRiskFindings: List<String> = emptyList(),
     /** Upstream removed sensitive spans before emitting the findings. */
     val outputRiskRedacted: Boolean = false,
+    /**
+     * Stable UI identity retained when a generating placeholder adopts its
+     * gateway tool ID. This keeps per-card interaction state attached to the
+     * logical call across streaming reconciliation and list updates.
+     */
+    val uiKey: String = id ?: "$name:$startedAt",
 )
 
 enum class MessageRole {

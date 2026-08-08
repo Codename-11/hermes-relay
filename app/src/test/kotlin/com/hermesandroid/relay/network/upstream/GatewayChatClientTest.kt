@@ -548,7 +548,7 @@ class GatewayChatClientTest {
             onStart = { starts.incrementAndGet() },
             onTextDelta = { textDeltas += it },
             onThinkingDelta = { thinkingDeltas += it },
-            onToolCallStart = { id, name -> toolStarts += id to name },
+            onToolCallStart = { id, name, _ -> toolStarts += id to name },
             onToolCallDone = { id, result -> toolDone += id to result },
             onToolCallFailed = { _, _ -> },
             onTurnComplete = { },

@@ -22,6 +22,7 @@ class GatewayEventMapperTest {
         val reconciledInterims = mutableListOf<String>()
         val thinkingDeltas = mutableListOf<String>()
         val toolStarts = mutableListOf<Pair<String, String>>()
+        val toolStartArgs = mutableListOf<Pair<String, String?>>()
         val toolDones = mutableListOf<Pair<String, String?>>()
         val toolFails = mutableListOf<Pair<String, String?>>()
         val toolOutputRisks = mutableListOf<GatewayToolOutputRisk>()
@@ -49,7 +50,10 @@ class GatewayEventMapperTest {
             onInterimMessage = { text, alreadyStreamed -> interimMessages += text to alreadyStreamed },
             onInterimReconciled = { text -> reconciledInterims += text },
             onThinkingDelta = { thinkingDeltas += it },
-            onToolCallStart = { id, name -> toolStarts += id to name },
+            onToolCallStart = { id, name, args ->
+                toolStarts += id to name
+                toolStartArgs += id to args
+            },
             onToolCallDone = { id, preview -> toolDones += id to preview },
             onToolCallFailed = { id, err -> toolFails += id to err },
             onToolOutputRisk = { toolOutputRisks += it },
@@ -448,6 +452,37 @@ class GatewayEventMapperTest {
         mapper.onEvent("tool.complete", obj("""{"tool_id":"t1","name":"execute_code","summary":"ran fine"}"""))
         assertEquals(listOf("t1" to "execute_code"), r.toolStarts)
         assertEquals(listOf("t1" to "ran fine"), r.toolDones)
+    }
+
+    @Test
+    fun `tool cards retain live arguments and results for expansion`() {
+        val verbose = Recorder()
+        val verboseMapper = mapperWith(verbose)
+        verboseMapper.onEvent(
+            "tool.start",
+            obj("""{"tool_id":"t1","name":"terminal","context":"echo fallback","args_text":"{\"command\":\"echo live\"}"}"""),
+        )
+        verboseMapper.onEvent(
+            "tool.complete",
+            obj("""{"tool_id":"t1","name":"terminal","summary":"finished","result_text":"live output"}"""),
+        )
+
+        assertEquals(listOf("t1" to "{\"command\":\"echo live\"}"), verbose.toolStartArgs)
+        assertEquals(listOf("t1" to "live output"), verbose.toolDones)
+
+        val standard = Recorder()
+        val standardMapper = mapperWith(standard)
+        standardMapper.onEvent(
+            "tool.start",
+            obj("""{"tool_id":"t2","name":"skill","context":"review repository"}"""),
+        )
+        standardMapper.onEvent(
+            "tool.complete",
+            obj("""{"tool_id":"t2","name":"skill","summary":"completed skill"}"""),
+        )
+
+        assertEquals(listOf("t2" to "review repository"), standard.toolStartArgs)
+        assertEquals(listOf("t2" to "completed skill"), standard.toolDones)
     }
 
     @Test

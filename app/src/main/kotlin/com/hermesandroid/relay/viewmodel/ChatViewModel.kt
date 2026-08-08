@@ -1805,8 +1805,10 @@ class ChatViewModel : ViewModel() {
             onThinkingDelta = { delta ->
                 if (acceptsEvent()) handler.onThinkingDelta(messageId, delta)
             },
-            onToolCallStart = { toolCallId, toolName ->
-                if (acceptsEvent()) handler.onToolCallStart(messageId, toolCallId, toolName)
+            onToolCallStart = { toolCallId, toolName, argsPreview ->
+                if (acceptsEvent()) {
+                    handler.onToolCallStart(messageId, toolCallId, toolName, argsPreview)
+                }
             },
             onToolCallDone = { toolCallId, preview ->
                 if (acceptsEvent()) handler.onToolCallComplete(messageId, toolCallId, preview)
@@ -5074,9 +5076,9 @@ class ChatViewModel : ViewModel() {
             onThinkingDelta = { delta ->
                 if (owns()) handler.onThinkingDelta(messageId, delta)
             },
-            onToolCallStart = { toolCallId, toolName ->
+            onToolCallStart = { toolCallId, toolName, argsPreview ->
                 if (owns()) {
-                    handler.onToolCallStart(messageId, toolCallId, toolName)
+                    handler.onToolCallStart(messageId, toolCallId, toolName, argsPreview)
                     scheduleCheckpointWrite(immediate = true)
                 }
             },
@@ -6668,17 +6670,24 @@ class ChatViewModel : ViewModel() {
             scheduleCheckpointWrite(immediate = true)
         }
         val observedImageToolStates = mutableMapOf<String, String>()
-        val onToolCallStartCb = { toolCallId: String, toolName: String ->
+        val handleToolCallStart = { toolCallId: String, toolName: String, argsPreview: String? ->
             ensurePostInterimMessage()
             streamDeltas.flushNow()
             val alreadyObserved =
                 toolName == "image_generate" &&
                     observedImageToolStates.putIfAbsent(toolCallId, "running") != null
             if (!alreadyObserved) {
-                handler.onToolCallStart(currentMessageId, toolCallId, toolName)
+                handler.onToolCallStart(currentMessageId, toolCallId, toolName, argsPreview)
             }
             scheduleCheckpointWrite(immediate = true)
         }
+        val onToolCallStartCb = { toolCallId: String, toolName: String ->
+            handleToolCallStart(toolCallId, toolName, null)
+        }
+        val onGatewayToolCallStartCb =
+            { toolCallId: String, toolName: String, argsPreview: String? ->
+                handleToolCallStart(toolCallId, toolName, argsPreview)
+            }
         val onToolCallDoneCb = { toolCallId: String, resultPreview: String? ->
             ensurePostInterimMessage()
             streamDeltas.flushNow()
@@ -7297,7 +7306,7 @@ class ChatViewModel : ViewModel() {
                         onInterimMessage = onInterimMessageCb,
                         onInterimReconciled = onInterimReconciledCb,
                         onThinkingDelta = onThinkingDeltaCb,
-                        onToolCallStart = onToolCallStartCb,
+                        onToolCallStart = onGatewayToolCallStartCb,
                         onToolCallDone = onToolCallDoneCb,
                         onToolCallFailed = onToolCallFailedCb,
                         onToolOutputRisk = { risk ->
