@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android chat follows a growing live reply.** Bottom-owned conversations now observe each replacement of the streaming message list, keeping newly added lines visible while preserving the reader's position after a manual scroll away.
 - **Hosted Hermes onboarding completes through the official Dashboard sign-in path.** Android recognizes hosted account addresses, uses the system-browser native PKCE flow, resumes the verified Dashboard session after its loopback callback, and accepts canonical Dashboard setup handoffs from the optional plugin.
 - **Live Android tool cards remain expandable while a run is active.** Streaming Gateway updates preserve stable card identity and merge tool arguments and result previews into the existing row, so details can be opened before the session finishes.
 - **Completed Android replies format Markdown immediately.** Live assistant text keeps its stable plain renderer only while incomplete, then the same owned row transitions to rich code blocks, lists, emphasis, and links without leaving or reopening the session.
