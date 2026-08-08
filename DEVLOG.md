@@ -1,5 +1,12 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-08 — Streaming reply tail follow
+
+Android's conversation-bottom follower now reads the current immutable message
+list from Compose state inside its long-lived layout observer. Each streamed
+replacement can therefore advance the viewport as the active bubble gains
+lines, while dragging or scrolling away still releases bottom ownership.
+
 ## 2026-08-08 — Settled live replies transition to Markdown
 
 Android now releases the live plain-text renderer immediately after an

@@ -1712,10 +1712,14 @@ fun ChatScreen(
     // owns both follow paths; ordinary late layout correction resumes after it
     // settles. A visible footer supplies the authoritative final distance. No
     // transition replaces the logical item anchor.
+    val latestMessages = rememberUpdatedState(messages)
     LaunchedEffect(listState, currentSessionId, smoothAutoScroll) {
         var previousLayout: ChatViewportFollowSnapshot? = null
         snapshotFlow {
-            val tail = messages.lastOrNull()
+            // The effect deliberately survives each streamed list replacement.
+            // Read through rememberUpdatedState so its long-lived coroutine does
+            // not keep the message list captured when the effect first launched.
+            val tail = latestMessages.value.lastOrNull()
             val tailSize = tail?.uiKey?.let { uiKey ->
                 listState.layoutInfo.visibleItemsInfo
                     .firstOrNull { item -> item.key == uiKey }
@@ -1752,7 +1756,7 @@ fun ChatScreen(
                     atExactBottom = listState.isAtConversationBottom(0),
                     userScrolledAway = userScrolledAway,
                     userDragging = isUserDragging,
-                    isStreaming = messages.lastOrNull()?.isStreaming == true,
+                    isStreaming = latestMessages.value.lastOrNull()?.isStreaming == true,
                     smoothAutoScroll = smoothAutoScroll,
                     viewportFollowAllowed = current.followViewportResize,
                 )
