@@ -27,6 +27,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
@@ -678,6 +679,34 @@ class HermesApiClient(
             client.newCall(request).execute().use { it.isSuccessful }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to rename session: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun setSessionPinned(sessionId: String, pinned: Boolean): Boolean =
+        patchSessionFlag(sessionId, "pinned", pinned)
+
+    suspend fun setSessionArchived(sessionId: String, archived: Boolean): Boolean =
+        patchSessionFlag(sessionId, "archived", archived)
+
+    private suspend fun patchSessionFlag(
+        sessionId: String,
+        field: String,
+        value: Boolean,
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val reqBody = buildJsonObject { put(field, value) }.toString()
+            val request = authRequest("$baseUrl/api/sessions/$sessionId")
+                .patch(reqBody.toRequestBody(JSON_MEDIA))
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "Set session $field failed: HTTP ${response.code}")
+                }
+                response.isSuccessful
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to set session $field: ${e.message}")
             false
         }
     }

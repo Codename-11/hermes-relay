@@ -1482,6 +1482,8 @@ class ChatViewModel : ViewModel() {
      * "chats aren't auto-named here" hint in the session drawer.
      */
     val serverAutoTitles: StateFlow<Boolean> = _serverAutoTitles.asStateFlow()
+    private val _sessionArchivingSupported = MutableStateFlow(false)
+    val sessionArchivingSupported: StateFlow<Boolean> = _sessionArchivingSupported.asStateFlow()
 
     /**
      * Streaming endpoint to use for the next chat turn. Always one of
@@ -1503,6 +1505,10 @@ class ChatViewModel : ViewModel() {
             // and the drawer note. Mirror the capability so the UI can explain
             // why chats stay untitled on those transports (issue #133).
             _serverAutoTitles.value = value == "gateway"
+            // Current Dashboard lists archived rows explicitly; the API-server
+            // list does not, so enabling archive there would make restore
+            // disappear after process recreation.
+            _sessionArchivingSupported.value = value == "gateway"
         }
 
     /**
@@ -2409,6 +2415,13 @@ class ChatViewModel : ViewModel() {
      * to [com.hermesandroid.relay.viewmodel.ConnectionViewModel.renameProfileScopedSession].
      */
     var profileSessionRenamer: (suspend (String, String) -> Boolean)? = null
+
+    /** Profile-scoped durable session metadata writers; never cross to the shared API DB. */
+    var profileSessionPinner: (suspend (String, Boolean, String?) -> Boolean)? = null
+    var profileSessionArchiver: (suspend (String, Boolean, String?) -> Boolean)? = null
+
+    private val sessionFlagMutationRevisions = mutableMapOf<String, Int>()
+    private val sessionFlagMutationLocks = ConcurrentHashMap<String, Mutex>()
 
     /**
      * Loads a session's transcript scoped to the active profile (dashboard
@@ -3644,6 +3657,85 @@ class ChatViewModel : ViewModel() {
                 }
             } else {
                 client?.renameSession(sessionId, newTitle)
+            }
+        }
+    }
+
+    fun setSessionPinned(sessionId: String, pinned: Boolean) {
+        val expectedContextKey = activeProfileContextKey
+        mutateSessionFlag(
+            sessionId = sessionId,
+            target = pinned,
+            localUpdate = { handler, value ->
+                handler.setSessionFlagsLocal(sessionId, pinned = value)
+            },
+            profileWrite = {
+                profileSessionPinner?.invoke(sessionId, pinned, expectedContextKey) ?: false
+            },
+            apiWrite = { apiClient?.setSessionPinned(sessionId, pinned) == true },
+            errorContext = "pin_profile_session",
+        )
+    }
+
+    fun setSessionArchived(sessionId: String, archived: Boolean) {
+        if (!_sessionArchivingSupported.value) {
+            emitError(
+                UnsupportedOperationException("Archive and restore require Dashboard sessions"),
+                context = "archive_session_unsupported",
+            )
+            return
+        }
+        val expectedContextKey = activeProfileContextKey
+        mutateSessionFlag(
+            sessionId = sessionId,
+            target = archived,
+            localUpdate = { handler, value ->
+                handler.setSessionFlagsLocal(sessionId, archived = value)
+            },
+            profileWrite = {
+                profileSessionArchiver?.invoke(sessionId, archived, expectedContextKey) ?: false
+            },
+            apiWrite = { apiClient?.setSessionArchived(sessionId, archived) == true },
+            errorContext = "archive_profile_session",
+        )
+    }
+
+    private fun mutateSessionFlag(
+        sessionId: String,
+        target: Boolean,
+        localUpdate: (ChatHandler, Boolean) -> Unit,
+        profileWrite: suspend () -> Boolean,
+        apiWrite: suspend () -> Boolean,
+        errorContext: String,
+    ) {
+        val handler = chatHandler ?: return
+        if (streamingEndpoint != "gateway" && apiClient == null) return
+        val generation = historyLoadGeneration.get()
+        val revisionKey = "$errorContext:$sessionId"
+        val revision = (sessionFlagMutationRevisions[revisionKey] ?: 0) + 1
+        sessionFlagMutationRevisions[revisionKey] = revision
+        localUpdate(handler, target)
+        viewModelScope.launch {
+            val success = sessionFlagMutationLocks
+                .getOrPut(revisionKey) { Mutex() }
+                .withLock {
+                    if (historyLoadGeneration.get() != generation) return@withLock false
+                    if (streamingEndpoint == "gateway") profileWrite() else apiWrite()
+                }
+            // A connection/profile transition owns a different session namespace.
+            // Never apply completion or rollback state to a newly selected scope.
+            if (historyLoadGeneration.get() != generation) return@launch
+            // A newer tap owns the visible state. Its server write and refresh
+            // will reconcile the row, so an older completion must not roll it back.
+            if (sessionFlagMutationRevisions[revisionKey] != revision) return@launch
+            if (success) {
+                refreshSessions()
+            } else {
+                localUpdate(handler, !target)
+                emitError(
+                    IllegalStateException("Server rejected the session metadata update"),
+                    context = errorContext,
+                )
             }
         }
     }

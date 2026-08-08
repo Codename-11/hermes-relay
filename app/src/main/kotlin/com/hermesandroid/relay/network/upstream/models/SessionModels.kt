@@ -165,6 +165,9 @@ data class SessionItem(
     @SerialName("input_tokens") val inputTokens: Int? = null,
     @SerialName("output_tokens") val outputTokens: Int? = null,
     @SerialName("has_model_config") val hasModelConfig: Boolean = false,
+    /** Durable flags returned by current Dashboard and API-server session resources. */
+    val pinned: Boolean = false,
+    val archived: Boolean = false,
 ) {
     val resolvedLastActivity: Double?
         get() = lastActive ?: lastActivity ?: lastActivityAt ?: updatedAt

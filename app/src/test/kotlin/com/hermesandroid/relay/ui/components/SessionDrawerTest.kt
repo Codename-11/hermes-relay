@@ -14,6 +14,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ChatSession
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
@@ -25,6 +28,26 @@ class SessionDrawerTest {
 
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun `unpinned action uses a distinct lighter outlined star`() {
+        assertNotEquals(sessionPinIcon(pinned = true), sessionPinIcon(pinned = false))
+        assertTrue(sessionPinIcon(pinned = true).name.contains("Star"))
+        assertTrue(sessionPinIcon(pinned = false).name.contains("StarBorder"))
+        assertEquals(0.45f, UNPINNED_STAR_ALPHA, 0.0f)
+    }
+
+    @Test
+    fun `archive filter resets when connection cannot restore archived sessions`() {
+        assertEquals(
+            SessionDrawerFilter.All,
+            resolveSessionDrawerFilter(
+                filter = SessionDrawerFilter.Archive,
+                showThreads = true,
+                archiveSupported = false,
+            ),
+        )
+    }
 
     @Test
     fun `reordered leading session remains visible after drawer refresh`() {

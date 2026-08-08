@@ -550,6 +550,33 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun updateSessions_restoresServerOwnedFlagsAfterFreshHandlerCreation() {
+        val persisted = listOf(
+            SessionItem(id = "pinned", pinned = true),
+            SessionItem(id = "archived", archived = true),
+        )
+
+        val restartedHandler = ChatHandler()
+        restartedHandler.updateSessions(persisted)
+
+        assertTrue(restartedHandler.sessions.value.first { it.sessionId == "pinned" }.pinned)
+        assertTrue(restartedHandler.sessions.value.first { it.sessionId == "archived" }.archived)
+    }
+
+    @Test
+    fun setSessionFlagsLocal_supportsOptimisticUpdateAndRollback() {
+        handler.updateSessions(listOf(SessionItem(id = "s1")))
+
+        handler.setSessionFlagsLocal("s1", pinned = true, archived = true)
+        assertTrue(handler.sessions.value.single().pinned)
+        assertTrue(handler.sessions.value.single().archived)
+
+        handler.setSessionFlagsLocal("s1", pinned = false, archived = false)
+        assertFalse(handler.sessions.value.single().pinned)
+        assertFalse(handler.sessions.value.single().archived)
+    }
+
+    @Test
     fun updateSessions_sortsByLastActivityAndKeepsStartedAt() {
         handler.updateSessions(
             listOf(

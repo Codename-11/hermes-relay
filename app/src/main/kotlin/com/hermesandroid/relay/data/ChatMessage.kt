@@ -409,6 +409,9 @@ data class ChatSession(
     val source: String? = null,
     /** Server reports a persisted session runtime/model binding. */
     val hasModelConfig: Boolean = false,
+    /** Durable upstream session metadata, scoped by the owning connection/profile DB. */
+    val pinned: Boolean = false,
+    val archived: Boolean = false,
 ) {
     val activityTimestamp: Long
         get() = firstPositive(lastActivityAt, updatedAt, startedAt)

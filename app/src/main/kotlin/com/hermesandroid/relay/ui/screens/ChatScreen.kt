@@ -747,6 +747,7 @@ fun ChatScreen(
     val backgroundSessionActivityStates by
         chatViewModel.backgroundSessionActivityStates.collectAsState()
     val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
+    val sessionArchivingSupported by chatViewModel.sessionArchivingSupported.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
     val pendingAsk by chatViewModel.pendingAsk.collectAsState()
     val sessionActivityStates = remember(
@@ -1870,6 +1871,7 @@ fun ChatScreen(
                 activityStates = sessionActivityStates,
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
+                archiveSupported = sessionArchivingSupported,
                 onRefresh = { chatViewModel.refreshSessions() },
                 onNewChat = {
                     chatViewModel.createNewChat()
@@ -1885,6 +1887,8 @@ fun ChatScreen(
                 onRenameSession = { sessionId, title ->
                     chatViewModel.renameSession(sessionId, title)
                 },
+                onSetSessionPinned = chatViewModel::setSessionPinned,
+                onSetSessionArchived = chatViewModel::setSessionArchived,
                 onCopySessionId = { sessionId ->
                     scope.launch {
                         clipboard.setClipEntry(

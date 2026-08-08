@@ -332,7 +332,7 @@ class ProfileController(
         val dashboardUrl = activeDashboardUrlProvider() ?: return null
         val profileName = resolveSessionProfileName()
         return dashboardClientFactory(connectionId, dashboardUrl)
-            .listSessions(profile = profileName, limit = limit)
+            .listSessions(profile = profileName, limit = limit, archived = "include")
     }
 
     /**
@@ -361,6 +361,40 @@ class ProfileController(
         val dashboardUrl = activeDashboardUrlProvider() ?: return false
         return dashboardClientFactory(connectionId, dashboardUrl)
             .renameSession(sessionId, title, resolveSessionProfileName())
+            .isSuccess
+    }
+
+    suspend fun setProfileScopedSessionPinned(
+        sessionId: String,
+        pinned: Boolean,
+        expectedContextKey: String? = null,
+    ): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        val profileName = resolveSessionProfileName()
+        if (
+            expectedContextKey != null &&
+            AgentDisplay.profileContextKey(connectionId, profileName) != expectedContextKey
+        ) return false
+        return dashboardClientFactory(connectionId, dashboardUrl)
+            .setSessionPinned(sessionId, pinned, profileName)
+            .isSuccess
+    }
+
+    suspend fun setProfileScopedSessionArchived(
+        sessionId: String,
+        archived: Boolean,
+        expectedContextKey: String? = null,
+    ): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        val profileName = resolveSessionProfileName()
+        if (
+            expectedContextKey != null &&
+            AgentDisplay.profileContextKey(connectionId, profileName) != expectedContextKey
+        ) return false
+        return dashboardClientFactory(connectionId, dashboardUrl)
+            .setSessionArchived(sessionId, archived, profileName)
             .isSuccess
     }
 
