@@ -1,22 +1,17 @@
 # Hermes-Relay-Server v__VERSION__
 
-**Release Date:** August 6, 2026
+**Release Date:** August 8, 2026
 
-This patch adds an optional Relay capability overlay so clients can present the reasoning effort levels supported by an exact provider and model without changing upstream model selection or chat behavior.
+This patch makes the optional Dashboard plugin's Android setup handoff reliable for hosted Hermes connections.
 
 Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
 ## What's changed
 
-### Added
+### Fixed
 
-- **Profile-aware reasoning capability resolution.** `POST /relay/model-capabilities` accepts exact provider/model pairs and returns ordered effort choices with explicit exactness and source metadata.
-- **Bounded live discovery for local and authenticated providers.** Relay can query OpenAI Codex, GitHub Copilot, LM Studio, and Ollama Cloud capability surfaces with short timeouts, concurrency limits, isolated caches, and an explicit refresh option.
-- **Capability advertisement.** `/relay/info` now advertises `model_reasoning_capabilities_v1` so clients can detect the optional overlay before using it.
-
-### Security
-
-- **Provider credentials remain host-local.** Remote requests require a paired session with the chat grant, and responses never serialize provider credentials.
+- **Canonical hosted-Hermes setup handoff.** The Dashboard plugin supplies the verified Dashboard address Android needs to continue through the official system-browser authentication flow.
+- **Contained dialog focus behavior.** Mobile setup dialogs retain their own focus and keyboard handling without disrupting the surrounding Dashboard.
 
 ## Install / update
 
