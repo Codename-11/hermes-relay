@@ -85,6 +85,16 @@ class SessionModelsTest {
     }
 
     @Test
+    fun sessionItem_deserializesDurableSessionFlags() {
+        val item = json.decodeFromString<SessionItem>(
+            """{"id":"s1","pinned":true,"archived":true}""",
+        )
+
+        assertTrue(item.pinned)
+        assertTrue(item.archived)
+    }
+
+    @Test
     fun sessionItem_deserialization_acceptsIsoUpdatedAtFallback() {
         val jsonStr = """
             {
@@ -121,6 +131,8 @@ class SessionModelsTest {
         assertNull(item.toolCallCount)
         assertNull(item.inputTokens)
         assertNull(item.outputTokens)
+        assertEquals(false, item.pinned)
+        assertEquals(false, item.archived)
     }
 
     // --- SessionListResponse ---

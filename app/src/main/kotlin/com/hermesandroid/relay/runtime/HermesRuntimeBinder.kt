@@ -180,6 +180,8 @@ internal class HermesRuntimeBinder(
         chat.setDashboardConfigLoader { connection.loadActiveDashboardConfig() }
         chat.profileSessionDeleter = connection::deleteProfileScopedSession
         chat.profileSessionRenamer = connection::renameProfileScopedSession
+        chat.profileSessionPinner = connection::setProfileScopedSessionPinned
+        chat.profileSessionArchiver = connection::setProfileScopedSessionArchived
         chat.onSessionChanged = connection::saveLastSessionId
         chat.setDemoModeWiring(
             isDemo = { connection.isDemoMode.value },

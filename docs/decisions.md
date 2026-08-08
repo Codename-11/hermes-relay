@@ -2597,3 +2597,44 @@ unsupported providers fail soft to the same stable advisory behavior. Cached,
 dynamic, and refreshed catalogs are idempotent at the Android publication
 boundary, while provider-specific aliases and reasoning capabilities retain
 their exact route identity.
+
+---
+
+## ADR 46 — Session pin and archive state follows upstream profile storage
+
+**Status:** Accepted (2026-08-07).
+
+**Context.** Android's session drawer originally kept pin and archive sets in
+Compose `remember` state. The controls appeared to work until the drawer or app
+was recreated, at which point neither set had a durable owner. Current upstream
+Hermes exposes both fields on stored session rows, returns them from the
+Dashboard session list, and accepts `pinned` or `archived` through the existing
+profile-aware session PATCH route. The official client treats the server row as
+durable truth. A separate Android registry would drift across clients and could
+collide when two connections or profiles contain the same session id.
+
+**Decision.**
+
+- Android maps upstream `pinned` and `archived` fields into `ChatSession`; the
+  drawer is a stateless renderer of those fields.
+- Gateway-mode lists request `archived=include` through the active connection
+  and effective profile's Dashboard route so archived rows survive recreation
+  and remain available for restore.
+- Pin/unpin and archive/restore use the same profile-scoped Dashboard PATCH
+  contract as rename. API-server mode uses its official session PATCH for pins.
+  Its current list cannot include archived rows, so Android does not offer an
+  archive action there that would become unrestorable after restart. Relay
+  endpoints are never required.
+- Mutations update the visible row optimistically, roll back on a failed write,
+  and refresh from server truth after success. Revision and scope-generation
+  fences prevent older completions or a profile/connection transition from
+  changing the newly selected namespace.
+- Deleting a session needs no metadata cleanup on Android because there is no
+  local flag index; the next server list simply omits the deleted row.
+
+**Consequences.** Pin state, and archive state on the standard Dashboard path,
+now survive Android process and drawer recreation and agree with other official
+clients. Identical session ids in different profiles or installations remain
+isolated by their server database. Hosts predating the upstream fields fail the
+mutation visibly and retain their previous row rather than reporting local-only
+success.

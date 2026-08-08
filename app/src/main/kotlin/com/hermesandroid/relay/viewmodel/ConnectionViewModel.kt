@@ -1485,6 +1485,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         return profileController.renameProfileScopedSession(sessionId, title)
     }
 
+    suspend fun setProfileScopedSessionPinned(
+        sessionId: String,
+        pinned: Boolean,
+        expectedContextKey: String?,
+    ): Boolean = profileController.setProfileScopedSessionPinned(sessionId, pinned, expectedContextKey)
+
+    suspend fun setProfileScopedSessionArchived(
+        sessionId: String,
+        archived: Boolean,
+        expectedContextKey: String?,
+    ): Boolean = profileController.setProfileScopedSessionArchived(sessionId, archived, expectedContextKey)
+
     val selectedProfile: StateFlow<Profile?> get() = profileController.selectedProfile
 
     val profilePresentation: StateFlow<ProfilePresentation> get() = profileController.profilePresentation
