@@ -318,12 +318,20 @@ internal data class ChatScrollSnapshot(
     val isStreaming: Boolean
 )
 
+internal fun ChatScrollSnapshot.isCompletionAfter(previous: ChatScrollSnapshot?): Boolean =
+    previous?.isStreaming == true &&
+        !isStreaming &&
+        previous.messageCount == messageCount &&
+        previous.lastMessageUiKey == lastMessageUiKey
+
 internal fun retainedLiveTailAfterTransition(
     retainedUiKey: String?,
     streamStarted: Boolean,
+    streamCompleted: Boolean,
     lastMessageUiKey: String?,
 ): String? = when {
     streamStarted -> lastMessageUiKey
+    streamCompleted && retainedUiKey == lastMessageUiKey -> null
     retainedUiKey != null && retainedUiKey != lastMessageUiKey -> null
     else -> retainedUiKey
 }
@@ -1658,12 +1666,14 @@ fun ChatScreen(
     )
     val tailTransitionRef = remember(currentSessionId) { ChatTailTransitionRef() }
 
-    // A live tail owns its stable renderer until another row becomes the tail.
-    // Completion is deliberately not a structural transition: changing the
-    // renderer or list anchor at that boundary caused a visible scroll jump.
+    // A live tail owns one stable Text renderer while content is incomplete.
+    // Completion first commits that final live frame, then this SideEffect
+    // releases the retained renderer and anchors the same uiKey for the next
+    // remeasure, where the row deterministically becomes rich Markdown.
     SideEffect {
         val previous = tailTransitionRef.snapshot
         val streamStarted = tailTransition.isStreaming && previous?.isStreaming != true
+        val streamCompleted = tailTransition.isCompletionAfter(previous)
         val tailStructureChanged = tailTransition.lastMessageUiKey != null &&
             (previous == null ||
                 previous.messageCount != tailTransition.messageCount ||
@@ -1678,13 +1688,14 @@ fun ChatScreen(
         retainedLiveTailUiKey = retainedLiveTailAfterTransition(
             retainedUiKey = retainedLiveTailUiKey,
             streamStarted = streamStarted,
+            streamCompleted = streamCompleted,
             lastMessageUiKey = tailTransition.lastMessageUiKey,
         )
 
         val shouldAnchor = smoothAutoScroll &&
             !isUserDragging &&
             (!userScrolledAway || streamStarted) &&
-            (streamStarted || tailStructureChanged)
+            (streamStarted || streamCompleted || tailStructureChanged)
         if (shouldAnchor) {
             listState.requestScrollToItem(tailTransition.messageCount + 1)
         }
@@ -1765,8 +1776,8 @@ fun ChatScreen(
             }
     }
 
-    // Completion keeps the stable live renderer, then settles the owned
-    // transcript to the exact boundary after its final layout pass.
+    // Completion settles the owned transcript after the final live frame. The
+    // SideEffect above separately anchors the same row's Markdown remeasure.
     var observedActiveStream by remember(currentSessionId) { mutableStateOf(false) }
     LaunchedEffect(isStreaming) {
         if (isStreaming) {

@@ -78,4 +78,41 @@ class MessageBubbleActionTest {
         assertNotEquals(initialLive, settledMarkdown)
         assertNotEquals(settledMarkdown, revisedMarkdown)
     }
+
+    @Test
+    fun completedAssistantSyntax_selectsMarkdownRendererWithoutChangingContent() {
+        val completedBodies = listOf(
+            "```kotlin\nval answer = 42\n```",
+            "- first\n- second",
+            "**bold** and *emphasis*",
+            "[Hermes](https://example.com)",
+        )
+
+        completedBodies.forEach { body ->
+            assertEquals(
+                MessageSelectionTopologyKey(renderer = "markdown", markdownBody = body),
+                messageSelectionTopologyKey(
+                    isPlainText = false,
+                    isStreaming = false,
+                    retainStreamingLayout = false,
+                    markdownBody = body,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun interruptedPartialReply_selectsSettledMarkdownRenderer() {
+        val partialFence = "```kotlin\nval partial ="
+
+        assertEquals(
+            MessageSelectionTopologyKey(renderer = "markdown", markdownBody = partialFence),
+            messageSelectionTopologyKey(
+                isPlainText = false,
+                isStreaming = false,
+                retainStreamingLayout = false,
+                markdownBody = partialFence,
+            ),
+        )
+    }
 }

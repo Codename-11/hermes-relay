@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-08 — Settled live replies transition to Markdown
+
+Android now releases the live plain-text renderer immediately after an
+assistant row settles. The transition retains the row's stable UI identity,
+commits the final live frame before replacing its selectable text topology,
+and anchors the same bottom-owned row during the Markdown remeasure. Readers
+who scrolled away retain their viewport, while completed code fences, lists,
+emphasis, links, and interrupted partial replies no longer require session
+navigation before rich rendering appears.
+
 ## 2026-08-08 — Explicit-consent ownership for Android approvals
 
 Android no longer treats unrelated Gateway activity or a terminal display event
