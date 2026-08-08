@@ -272,6 +272,20 @@ internal fun shouldShowConnectionFooter(
     presentationMode: VoicePresentationMode,
 ): Boolean = !voiceMode || presentationMode == VoicePresentationMode.Conversation
 
+/**
+ * Full-screen setup owns the whole window. Keeping connection-dependent app
+ * chrome composed behind it makes that chrome rebuild while Add connection
+ * swaps to its placeholder, visibly resizing the entering setup surface.
+ */
+internal fun shouldSuppressGlobalChrome(
+    onboardingCompleted: Boolean,
+    isDemoMode: Boolean,
+    currentRoute: String?,
+): Boolean =
+    (!onboardingCompleted && !isDemoMode) ||
+        currentRoute == Screen.Onboarding.route ||
+        currentRoute == Screen.Pair.route
+
 internal const val APP_STATUS_PET_WALK_REGION = "app-status-footer"
 
 /**
@@ -907,8 +921,11 @@ fun RelayApp() {
 
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
-        val isOnboarding = currentRoute == Screen.Onboarding.route
-        val suppressGlobalChrome = (!onboardingCompleted && !isDemoMode) || isOnboarding
+        val suppressGlobalChrome = shouldSuppressGlobalChrome(
+            onboardingCompleted = onboardingCompleted,
+            isDemoMode = isDemoMode,
+            currentRoute = currentRoute,
+        )
 
         // Safety net: landing on a real connect surface (onboarding or the
         // Connect/Pair wizard) while demo is still active — via the banner's

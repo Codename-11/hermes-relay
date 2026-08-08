@@ -48,6 +48,18 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- The loopback native-PKCE result page uses this fixed, tokenless
+                 link only to bring the installed flavor back to the foreground.
+                 MainActivity intentionally does not interpret the URI as an auth
+                 callback or navigation command. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="${applicationId}"
+                    android:host="return" />
+            </intent-filter>
             <!-- Some Android OEM assistant pickers enumerate ACTION_ASSIST
                  activities in addition to VoiceInteractionService providers. -->
             <intent-filter>

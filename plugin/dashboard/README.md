@@ -6,6 +6,12 @@ inspection, and remote-access setup. The build output (`dist/index.js`) is
 **committed to git** because the dashboard `<script src=...>` loads it verbatim
 — operators never run the build.
 
+The header's **Connect mobile app** action is intentionally independent of the
+Relay service. It renders a tokenless setup QR containing only
+`{"dashboard_url":"<canonical dashboard base>"}` so Android can add and verify the
+standard Dashboard/Gateway connection. Relay pairing remains a separate,
+explicit **Pair new device** flow.
+
 ## Requirements
 
 - Node.js 18+

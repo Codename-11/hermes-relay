@@ -293,6 +293,27 @@
     <!-- 连接向导 —— Connect 页核心文案 -->
     <string name="cw_connect_to_hermes">连接 Hermes</string>
     <string name="cw_nearby_description">我们将在此网络中查找 Hermes。仪表板和网关提供聊天、管理和语音的标准连接。</string>
+    <string name="cw_connection_chooser_description">请选择你现有的设置方式。Hermes Relay 为可选功能。</string>
+    <string name="cw_scan_setup_qr_title">扫描 Hermes 设置二维码</string>
+    <string name="cw_scan_setup_qr_subtitle">配置本地、远程及可用的 Relay 路由</string>
+    <string name="cw_recommended">推荐</string>
+    <string name="cw_other_ways_to_connect">其他连接方式</string>
+    <string name="cw_advanced">高级</string>
+    <string name="cw_cloud_title">Nous 托管的 Hermes</string>
+    <string name="cw_cloud_subtitle">连接到你的托管智能体</string>
+    <string name="cw_server_vps_title">服务器或 VPS</string>
+    <string name="cw_server_vps_subtitle">输入安全的 Dashboard 地址</string>
+    <string name="cw_relay_optional_note">标准聊天、管理和语音功能无需 Relay 即可使用。兼容的设置二维码会在可用时添加 Relay 高级功能。</string>
+    <string name="cw_cloud_entry_title">连接到 Nous 托管的 Hermes</string>
+    <string name="cw_cloud_entry_description">输入 Nous Portal 中显示的智能体地址。找到 Hermes 后，你将安全登录。</string>
+    <string name="cw_cloud_agent_name">智能体地址</string>
+    <string name="cw_cloud_slug_placeholder">your-agent</string>
+    <string name="cw_cloud_slug_hint">我们将连接到 your-agent.agents.nousresearch.com。</string>
+    <string name="cw_cloud_slug_error">请准确输入 .agents.nousresearch.com 前的字母、数字和连字符。</string>
+    <string name="cw_cloud_address_placeholder">https://your-agent.example.com</string>
+    <string name="cw_cloud_address_hint">请使用为托管智能体显示的完整 HTTPS 地址。</string>
+    <string name="cw_cloud_use_custom_address">使用自定义网址</string>
+    <string name="cw_cloud_use_nous_address">使用 Nous 托管地址</string>
     <string name="cw_before_connecting">连接之前</string>
     <string name="cw_connect_step_server_title">在电脑上启动 Hermes</string>
     <string name="cw_connect_step_server_body">在 Hermes 电脑上启动仪表板。首次通过局域网访问时，请使用下方的设置指南，让手机能够访问并启用登录。</string>
@@ -2659,6 +2680,8 @@
     <string name="qr_scanner_title">扫描 Hermes QR</string>
     <string name="qr_scanner_instruction">扫描 Hermes 设置二维码</string>
     <string name="qr_scanner_subtext">扫描 Hermes 设置二维码或 Relay 配对二维码。标准 Dashboard 连接不需要 API 密钥。</string>
+    <string name="qr_scanner_ready">准备扫描</string>
+    <string name="qr_scanner_found">已找到 Hermes 设置二维码</string>
     <string name="qr_scanner_relay_title">扫描 Relay 二维码</string>
     <string name="qr_scanner_relay_instruction">扫描 Relay 配对二维码</string>
     <string name="qr_scanner_relay_subtext">在 Hermes 服务器上打开 Relay 配对二维码。现有 Dashboard 连接和路由将保持不变。</string>
@@ -3351,6 +3374,7 @@
     <string name="dashboard_native_signin_cancelled">已取消浏览器登录。</string>
     <string name="dashboard_native_signin_requires_https">安全浏览器登录需要 HTTPS 控制面板地址。</string>
     <string name="dashboard_native_signin_unavailable">此连接无法使用安全浏览器登录。请刷新连接后重试。</string>
+    <string name="dashboard_native_signin_transport_retry">安全连接已中断。请点按登录按钮重试。</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">仅在此聊天中跳过批准提示。会在会话更改时重置。</string>
     <string name="conn_info_yolo_mode_profile_off">配置文件批准已关闭，因此此聊天已经会跳过提示。使用单聊天例外前，请选择手动或智能。</string>
     <string name="conn_info_approval_mode_title">配置文件批准模式</string>

@@ -293,6 +293,27 @@
     <!-- Connection wizard — Connect page essentials -->
     <string name="cw_connect_to_hermes">Hermes に接続します</string>
     <string name="cw_nearby_description">このネットワーク上の Hermes を検索します。ダッシュボードとゲートウェイが、チャット、管理、音声の標準接続を提供します。</string>
+    <string name="cw_connection_chooser_description">利用するセットアップを選択してください。Hermes Relay は任意です。</string>
+    <string name="cw_scan_setup_qr_title">Hermes セットアップ QR をスキャン</string>
+    <string name="cw_scan_setup_qr_subtitle">ローカル、リモート、および利用可能な Relay ルートを設定します</string>
+    <string name="cw_recommended">推奨</string>
+    <string name="cw_other_ways_to_connect">その他の接続方法</string>
+    <string name="cw_advanced">詳細設定</string>
+    <string name="cw_cloud_title">Nous ホスト版 Hermes</string>
+    <string name="cw_cloud_subtitle">ホスト済みエージェントに接続します</string>
+    <string name="cw_server_vps_title">サーバーまたは VPS</string>
+    <string name="cw_server_vps_subtitle">安全な Dashboard アドレスを入力します</string>
+    <string name="cw_relay_optional_note">標準のチャット、管理、音声は Relay なしで動作します。互換性のあるセットアップ QR では、利用可能な場合に Relay の拡張機能も追加されます。</string>
+    <string name="cw_cloud_entry_title">Nous ホスト版 Hermes に接続</string>
+    <string name="cw_cloud_entry_description">Nous Portal に表示されるエージェントのアドレスを入力してください。Hermes が見つかった後、安全にサインインします。</string>
+    <string name="cw_cloud_agent_name">エージェントのアドレス</string>
+    <string name="cw_cloud_slug_placeholder">your-agent</string>
+    <string name="cw_cloud_slug_hint">your-agent.agents.nousresearch.com に接続します。</string>
+    <string name="cw_cloud_slug_error">.agents.nousresearch.com の前にある英字、数字、ハイフンを正確に入力してください。</string>
+    <string name="cw_cloud_address_placeholder">https://your-agent.example.com</string>
+    <string name="cw_cloud_address_hint">ホスト済みエージェントに表示される完全な HTTPS アドレスを使用してください。</string>
+    <string name="cw_cloud_use_custom_address">カスタム URL を使用</string>
+    <string name="cw_cloud_use_nous_address">Nous ホスト版アドレスを使用</string>
     <string name="cw_before_connecting">接続する前に</string>
     <string name="cw_connect_step_server_title">パソコンで Hermes を起動</string>
     <string name="cw_connect_step_server_body">Hermes のパソコンでダッシュボードを起動します。初めて LAN から接続する場合は、下のセットアップガイドでスマートフォンからアクセス可能にし、サインインを有効にしてください。</string>
@@ -2673,6 +2694,8 @@
     <string name="qr_scanner_title">Hermes QR をスキャン</string>
     <string name="qr_scanner_instruction">Hermes セットアップ QR をスキャンします</string>
     <string name="qr_scanner_subtext">Hermes セットアップ QR または Relay ペアリング QR をスキャンします。標準の Dashboard 接続に API キーは必要ありません。</string>
+    <string name="qr_scanner_ready">スキャン準備完了</string>
+    <string name="qr_scanner_found">Hermes セットアップ QR が見つかりました</string>
     <string name="qr_scanner_relay_title">Relay QR をスキャン</string>
     <string name="qr_scanner_relay_instruction">Relay ペアリング QR をスキャンします</string>
     <string name="qr_scanner_relay_subtext">Hermes サーバーで Relay ペアリング QR を開きます。既存の Dashboard 接続とルートは変更されません。</string>
@@ -3417,6 +3440,7 @@
     <string name="dashboard_native_signin_cancelled">ブラウザでのサインインをキャンセルしました。</string>
     <string name="dashboard_native_signin_requires_https">安全なブラウザサインインには、HTTPSのダッシュボードアドレスが必要です。</string>
     <string name="dashboard_native_signin_unavailable">この接続では安全なブラウザサインインを利用できません。接続を更新して、もう一度お試しください。</string>
+    <string name="dashboard_native_signin_transport_retry">安全な接続が中断されました。サインインボタンをタップして、もう一度お試しください。</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">このチャットでのみ承認確認を省略します。セッションが変わるとリセットされます。</string>
     <string name="conn_info_yolo_mode_profile_off">プロフィールの承認がオフのため、このチャットではすでに確認を省略しています。チャット単位の例外を使う前に、手動またはスマートを選択してください。</string>
     <string name="conn_info_approval_mode_title">プロフィール承認モード</string>

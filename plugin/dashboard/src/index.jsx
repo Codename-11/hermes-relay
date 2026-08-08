@@ -7,7 +7,8 @@ import BridgeActivity from "./tabs/BridgeActivity.jsx";
 import MediaInspector from "./tabs/MediaInspector.jsx";
 import RemoteAccess from "./tabs/RemoteAccess.jsx";
 import RelayStatusSlot from "./components/RelayStatusSlot.jsx";
-import { Switch } from "./lib/ui-shims.jsx";
+import MobileConnectDialog from "./components/MobileConnectDialog.jsx";
+import { Button, Switch } from "./lib/ui-shims.jsx";
 
 const { Label } = SDK.components;
 
@@ -52,6 +53,7 @@ function TabButton({ active, onClick, children }) {
 
 function RelayPluginRoot() {
   const [tab, setTab] = useState("management");
+  const [mobileConnectOpen, setMobileConnectOpen] = useState(false);
   const [autoRefresh, setAutoRefreshState] = useState(readAutoRefresh);
 
   const setAutoRefresh = useCallback((next) => {
@@ -64,6 +66,9 @@ function RelayPluginRoot() {
     writeAutoRefresh(autoRefresh);
   }, [autoRefresh]);
 
+  const openMobileConnect = useCallback(() => setMobileConnectOpen(true), []);
+  const closeMobileConnect = useCallback(() => setMobileConnectOpen(false), []);
+
   return (
     <div className="hermes-relay-plugin space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -73,13 +78,21 @@ function RelayPluginRoot() {
             Paired devices, bridge activity, media, and remote access for hermes-relay.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Switch
-            id="auto-refresh"
-            checked={autoRefresh}
-            onCheckedChange={setAutoRefresh}
-          />
-          <Label htmlFor="auto-refresh">Auto-refresh</Label>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            size="sm"
+            onClick={openMobileConnect}
+          >
+            Connect mobile app
+          </Button>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="auto-refresh"
+              checked={autoRefresh}
+              onCheckedChange={setAutoRefresh}
+            />
+            <Label htmlFor="auto-refresh">Auto-refresh</Label>
+          </div>
         </div>
       </div>
 
@@ -101,6 +114,10 @@ function RelayPluginRoot() {
         {tab === "media" && <MediaInspector autoRefresh={autoRefresh} />}
         {tab === "remote" && <RemoteAccess autoRefresh={autoRefresh} />}
       </div>
+      <MobileConnectDialog
+        open={mobileConnectOpen}
+        onClose={closeMobileConnect}
+      />
     </div>
   );
 }
