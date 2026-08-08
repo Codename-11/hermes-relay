@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-08 — Explicit-consent ownership for Android approvals
+
+Android no longer treats unrelated Gateway activity or a terminal display event
+as proof that an approval was resolved. Approval cards remain pending through
+scrolling, recomposition, navigation, and background restoration, and retain
+their exact connection, profile, and session ownership. Only a labeled action
+that successfully reaches `approval.respond`, an authoritative upstream expiry,
+or an explicit interrupt can retire the local request; the interrupt path stays
+visibly denied because upstream force-denies it.
+
 ## 2026-08-07 — Provider-owned model inventory identity
 
 Android now normalizes Gateway and API model inventories before publishing

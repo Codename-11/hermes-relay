@@ -1636,7 +1636,7 @@ class ChatViewModel : ViewModel() {
                     }
                     maybeNotifyInteraction(event.storedSessionId, event.ask, event.profile)
                 }
-                is GatewayBackgroundInteractionEvent.Resolved -> {
+                is GatewayBackgroundInteractionEvent.Expired -> {
                     if (key != null) {
                         backgroundNeedsInputKeys -= key
                         backgroundPendingInteractions.computeIfPresent(key) { _, current ->
@@ -1881,7 +1881,6 @@ class ChatViewModel : ViewModel() {
                     emitError(Exception(message), context = "send_message")
                     settleBoundTurnState()
                     _queuedMessages.value = emptyList()
-                    clearPendingAsk(approvalStamp = "deny")
                     scheduleGatewayHistoryReconcile(
                         storedSessionId = storedSessionId,
                         baselineAssistantCount = baselineAssistantCount,
@@ -1904,9 +1903,6 @@ class ChatViewModel : ViewModel() {
             },
             onInteractionExpired = { expiry ->
                 if (acceptsEvent()) expirePendingAsk(expiry)
-            },
-            onInteractionResolved = { resolved ->
-                if (acceptsEvent()) resolvePendingAsk(resolved)
             },
             onStatusUpdate = { kind, text ->
                 if (acceptsEvent()) {
@@ -2167,7 +2163,8 @@ class ChatViewModel : ViewModel() {
      * The live server-side interactive ask (clarify/approval/sudo/secret).
      * One at a time — the upstream agent thread blocks until the answer
      * arrives, so a second ask can't exist while the first is pending.
-     * Cleared on answer, turn end, cancel, and connection switch.
+     * Cleared only by an explicit answer, authoritative expiry, or explicit
+     * interrupt. Navigation and unrelated turn events must preserve it.
      */
     private val _pendingAsk = MutableStateFlow<PendingAsk?>(null)
     val pendingAsk: StateFlow<PendingAsk?> = _pendingAsk.asStateFlow()
@@ -3015,14 +3012,20 @@ class ChatViewModel : ViewModel() {
         connectionSwitchJob?.cancel()
         connectionSwitchJob = viewModelScope.launch {
             events.collect { newConnectionId ->
+                // A connection navigation must detach a Gateway turn, never
+                // interrupt it: session.interrupt force-denies approvals.
+                // Persist the exact profile/session checkpoint before the old
+                // client is replaced so an unresolved ask remains recoverable.
+                chatHandler?.let(::releaseTurnForNavigation) ?: run {
+                    intentionallyCancelled = true
+                    activeStream?.cancel()
+                    activeStream = null
+                }
                 clearTurnCheckpoint()
                 historyLoadGeneration.incrementAndGet()
                 sessionRefreshGeneration.incrementAndGet()
-                intentionallyCancelled = true
                 activeStreamDeltas?.discard()
                 activeStreamDeltas = null
-                activeStream?.cancel()
-                activeStream = null
                 cancelAnswerRecovery(settleUi = false)
                 sessionRefreshJob?.cancel()
                 _isLoadingSessions.value = false
@@ -3954,9 +3957,7 @@ class ChatViewModel : ViewModel() {
 
     private fun dismissPendingAskNotification() {
         val pending = _pendingAsk.value ?: return
-        chatHandler?.currentSessionId?.value?.let {
-            cancelInteractionNotification(it, pending.ask)
-        }
+        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
     }
 
     /**
@@ -3972,8 +3973,11 @@ class ChatViewModel : ViewModel() {
         restored: ChatTurnAskCheckpoint? = null,
     ) {
         val sessionId = handler.currentSessionId.value
+        val contextKey = activeProfileContextKey
         val existing = _pendingAsk.value
         if (existing != null &&
+            existing.contextKey == contextKey &&
+            existing.sessionId == sessionId &&
             existing.ask.kind == ask.kind &&
             existing.ask.requestId == ask.requestId
         ) {
@@ -3981,7 +3985,7 @@ class ChatViewModel : ViewModel() {
             return
         }
         existing?.let { pending ->
-            sessionId?.let { cancelInteractionNotification(it, pending.ask) }
+            pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
         }
         val activeKey = activeTurnCheckpointKey()
         if (activeKey != null) {
@@ -4086,6 +4090,8 @@ class ChatViewModel : ViewModel() {
             ask = ask,
             messageId = messageId,
             cardKey = cardKey,
+            contextKey = contextKey,
+            sessionId = sessionId,
             receivedAt = now,
         )
         activeKey?.let { ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), true) }
@@ -4139,7 +4145,11 @@ class ChatViewModel : ViewModel() {
     fun answerAsk(messageId: String, cardKey: String, value: String) {
         val handler = chatHandler ?: return
         val pending = _pendingAsk.value
-        if (pending == null || pending.cardKey != cardKey) {
+        if (pending == null ||
+            pending.cardKey != cardKey ||
+            pending.contextKey != activeProfileContextKey ||
+            pending.sessionId != handler.currentSessionId.value
+        ) {
             handler.addSystemNotice("This request is no longer active.")
             return
         }
@@ -4189,9 +4199,7 @@ class ChatViewModel : ViewModel() {
                     // must leave the card answerable for a retry.
                     handler.recordCardDispatch(pending.messageId, cardKey, stampValue)
                     if (_pendingAsk.value === pending) {
-                        handler.currentSessionId.value?.let {
-                            cancelInteractionNotification(it, pending.ask)
-                        }
+                        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
                         _pendingAsk.value = null
                         activeTurnCheckpointKey()?.let {
                             ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false)
@@ -4220,9 +4228,7 @@ class ChatViewModel : ViewModel() {
             val requestId = expiry.requestId?.takeIf { it.isNotBlank() } ?: return
             if (pending.ask.requestId != requestId) return
         }
-        chatHandler?.currentSessionId?.value?.let {
-            cancelInteractionNotification(it, pending.ask)
-        }
+        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
         _pendingAsk.value = null
         activeTurnCheckpointKey()?.let {
             ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false)
@@ -4236,36 +4242,22 @@ class ChatViewModel : ViewModel() {
         )
     }
 
-    private fun resolvePendingAsk(resolution: GatewayAskExpiry) {
-        val pending = _pendingAsk.value ?: return
-        if (pending.ask.kind != resolution.kind) return
-        if (resolution.kind != GatewayAsk.Kind.APPROVAL &&
-            pending.ask.requestId != resolution.requestId
-        ) {
-            return
-        }
-        clearPendingAsk(approvalStamp = "Resolved")
-    }
-
     /**
-     * Drop pending-ask UI state when the turn is torn down, stamping a
-     * still-open approval card with [approvalStamp] so its buttons don't
-     * outlive the ask — "deny" after an interrupt (`session.interrupt`
-     * force-denies server-side), "Resolved" when the turn completed without
-     * an answer. Timed asks self-collapse via their countdown.
+     * Drop pending-ask UI state after an explicit interrupt, stamping a
+     * still-open approval card as denied because `session.interrupt`
+     * force-denies server-side. Timed asks self-collapse only from
+     * authoritative expiry.
      */
-    private fun clearPendingAsk(approvalStamp: String) {
+    private fun clearPendingAskAfterInterrupt() {
         val pending = _pendingAsk.value ?: return
-        chatHandler?.currentSessionId?.value?.let {
-            cancelInteractionNotification(it, pending.ask)
-        }
+        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
         _pendingAsk.value = null
         activeTurnCheckpointKey()?.let {
             ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false)
         }
         scheduleCheckpointWrite(immediate = true)
         if (pending.ask.kind == GatewayAsk.Kind.APPROVAL) {
-            chatHandler?.recordCardDispatch(pending.messageId, pending.cardKey, approvalStamp)
+            chatHandler?.recordCardDispatch(pending.messageId, pending.cardKey, "deny")
         }
     }
 
@@ -5246,7 +5238,6 @@ class ChatViewModel : ViewModel() {
                         activeStream = null
                         _steerableTurn.value = false
                         _steerNotice.value = null
-                        clearPendingAsk(approvalStamp = "Resolved")
                     } else {
                         activeStream = null
                         _steerableTurn.value = false
@@ -5276,9 +5267,6 @@ class ChatViewModel : ViewModel() {
             },
             onInteractionExpired = { expiry ->
                 if (owns()) expirePendingAsk(expiry)
-            },
-            onInteractionResolved = { resolved ->
-                if (owns()) resolvePendingAsk(resolved)
             },
             onStatusUpdate = { kind, text ->
                 if (owns()) {
@@ -5364,7 +5352,6 @@ class ChatViewModel : ViewModel() {
                     clearTurnCheckpoint()
                     emitError(Exception(message), context = "send_message")
                     _queuedMessages.value = emptyList()
-                    clearPendingAsk(approvalStamp = "Resolved")
                 }
             },
         )
@@ -5382,11 +5369,9 @@ class ChatViewModel : ViewModel() {
         activeStream = null
         _steerableTurn.value = false
         _steerNotice.value = null
-        // Turn over — any blocked ask has been resolved server-side
-        // (answer, timeout, or interrupt). Timed cards self-collapse;
-        // an unanswered approval gets a neutral "Resolved" stamp so its
-        // buttons don't dead-end in "no longer active" notices.
-        clearPendingAsk(approvalStamp = "Resolved")
+        // A terminal turn event is not proof of a user's decision. Keep any
+        // unanswered card intact; only a labeled response, authoritative
+        // expiry, or explicit interrupt owns its transition.
 
         // Notify when the turn finished while the app is backgrounded —
         // never for cancelled streams; errors end via onErrorCb instead.
@@ -5409,7 +5394,6 @@ class ChatViewModel : ViewModel() {
         activeStream = null
         _steerableTurn.value = false
         _steerNotice.value = null
-        clearPendingAsk(approvalStamp = "Resolved")
         AppAnalytics.onStreamError()
     }
 
@@ -5556,10 +5540,6 @@ class ChatViewModel : ViewModel() {
                     handler.onStreamError(message)
                     emitError(Exception(message), context = "send_message")
                     _queuedMessages.value = emptyList()
-                    // Parity with the sibling stream-error branch: the turn is
-                    // over server-side, so force-deny any still-blocked approval
-                    // card instead of leaving its buttons dead-ended.
-                    clearPendingAsk(approvalStamp = "deny")
                 }
             },
         )
@@ -6981,7 +6961,6 @@ class ChatViewModel : ViewModel() {
                 _queuedMessages.value = emptyList()
                 _steerableTurn.value = false
                 _steerNotice.value = null
-                clearPendingAsk(approvalStamp = "deny")
                 clearTurnCheckpoint()
             } else if (
                 dispatchedSseEndpoint == "sessions" &&
@@ -7054,7 +7033,6 @@ class ChatViewModel : ViewModel() {
                 _queuedMessages.value = emptyList()
                 _steerableTurn.value = false
                 _steerNotice.value = null
-                clearPendingAsk(approvalStamp = "deny")
                 clearTurnCheckpoint()
             }
         }
@@ -7074,7 +7052,6 @@ class ChatViewModel : ViewModel() {
             _queuedMessages.value = emptyList()
             _steerableTurn.value = false
             _steerNotice.value = null
-            clearPendingAsk(approvalStamp = "deny")
             clearTurnCheckpoint()
         }
 
@@ -7437,9 +7414,6 @@ class ChatViewModel : ViewModel() {
                         onInteractionExpired = { expiry ->
                             expirePendingAsk(expiry)
                         },
-                        onInteractionResolved = { resolved ->
-                            resolvePendingAsk(resolved)
-                        },
                         onStatusUpdate = { kind, text ->
                             handler.setTurnStatus(text, kind)
                             // The server prefixes terminal failures with ❌ —
@@ -7566,7 +7540,7 @@ class ChatViewModel : ViewModel() {
         _steerNotice.value = null
         // Gateway cancel issues session.interrupt, which force-denies any
         // blocked approval server-side — stamp the card to match.
-        clearPendingAsk(approvalStamp = "deny")
+        clearPendingAskAfterInterrupt()
         clearTurnCheckpoint()
         AppAnalytics.onStreamCancelled()
         chatHandler?.let { handler ->
@@ -8250,6 +8224,10 @@ data class PendingAsk(
     /** ChatMessage id of the local ask-card message (`ask-<cardKey>`). */
     val messageId: String,
     val cardKey: String,
+    /** Exact connection/profile namespace that owns this request. */
+    val contextKey: String?,
+    /** Stored session id within [contextKey]; approvals are session-scoped upstream. */
+    val sessionId: String?,
     val receivedAt: Long = System.currentTimeMillis(),
 )
 

@@ -31,7 +31,6 @@ class GatewayEventMapperTest {
         val moaReferences = mutableListOf<GatewayMoaReference>()
         val interactions = mutableListOf<GatewayAsk>()
         val interactionExpiries = mutableListOf<GatewayAskExpiry>()
-        val interactionResolutions = mutableListOf<GatewayAskExpiry>()
         val statusUpdates = mutableListOf<Pair<String?, String>>()
         val statusClears = mutableListOf<String>()
         val sessionIds = mutableListOf<String>()
@@ -67,7 +66,6 @@ class GatewayEventMapperTest {
             onMoaReference = { moaReferences += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { interactionExpiries += it },
-            onInteractionResolved = { interactionResolutions += it },
             onStatusUpdate = { kind, text -> statusUpdates += kind to text },
             onStatusClear = { statusClears += it },
         )
@@ -831,7 +829,7 @@ class GatewayEventMapperTest {
     }
 
     @Test
-    fun `replayed request is deduplicated and resumed turn resolves it`() {
+    fun `duplicate request and later turn activity keep decision pending`() {
         val r = Recorder()
         val mapper = mapperWith(r)
         val request = obj("""{"request_id":"r1","question":"Choose","choices":["A","B"]}""")
@@ -839,12 +837,17 @@ class GatewayEventMapperTest {
         mapper.onEvent("clarify.request", request)
         mapper.onEvent("clarify.request", request)
         mapper.onEvent("message.delta", obj("""{"text":"Continuing"}"""))
+        mapper.onEvent("tool.complete", obj("""{"tool_id":"other","name":"read_file"}"""))
+        mapper.onEvent("message.complete", obj("""{"text":"Continuing"}"""))
 
         assertEquals(1, r.interactions.size)
-        assertEquals(
-            GatewayAskExpiry(GatewayAsk.Kind.CLARIFY, "r1"),
-            r.interactionResolutions.single(),
-        )
+        assertEquals(r.interactions.single(), mapper.currentInteraction)
+        assertFalse(mapper.turnEnded)
+
+        mapper.onEvent("clarify.expire", obj("""{"request_id":"r1"}"""))
+        assertNull(mapper.currentInteraction)
+        assertEquals(GatewayAskExpiry(GatewayAsk.Kind.CLARIFY, "r1"), r.interactionExpiries.single())
+        assertTrue(mapper.turnEnded)
     }
 
     @Test
