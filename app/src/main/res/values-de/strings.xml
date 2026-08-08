@@ -3886,4 +3886,13 @@
     <string name="support_bundle_copied">Supportinformationen kopiert</string>
     <string name="support_bundle_no_share">Supportinformationen kopiert — keine App zum Teilen gefunden</string>
     <string name="support_bundle_share_title">Hermes-Relay-Supportinformationen teilen</string>
+    <string name="profile_shelf_switch_agent">Agent wechseln</string>
+    <string name="profile_shelf_all_profiles">Alle Agentenprofile öffnen</string>
+    <string name="profile_shelf_open_passport">Agentenpass öffnen</string>
+    <string name="profile_shelf_switch_to">Zu diesem Agenten wechseln</string>
+    <string name="profile_shelf_locked_hint">Der Profilwechsel ist gesperrt. Halten Sie den aktiven Agenten gedrückt, um die Sperre aufzuheben.</string>
+    <string name="profile_shelf_inspect">Profil prüfen</string>
+    <string name="profile_shelf_hide">Aus der Profilablage ausblenden</string>
+    <string name="profile_shelf_expand">Profilablage erweitern</string>
+    <string name="profile_shelf_collapse">Profilablage einklappen</string>
 </resources>

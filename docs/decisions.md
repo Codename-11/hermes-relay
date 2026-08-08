@@ -2680,3 +2680,44 @@ completion can redirect a follow-up through the currently visible chat. Queue
 editing restores only the selected item's composer payload. Process restoration
 is deterministic for bounded text queues, while attachment restoration fails
 closed instead of silently changing the submitted turn.
+
+---
+
+## ADR 48 — Android profile switching lives in a context shelf
+
+**Status:** Accepted (2026-08-08).
+
+**Context.** Agent Passport had become both an inspection/configuration surface
+and the primary profile switcher, while the Session Drawer already had the
+separate responsibility of listing the active profile's conversations. Profile
+switching was therefore buried, duplicated across picker implementations, and
+the old `default` alias collapsed two different identities: following the
+server's sticky default and explicitly selecting the root profile named
+`default`.
+
+**Decision.** Chat owns a compact collapsible Profile Shelf directly below its
+top app bar. The header toggles it; the active capsule opens Agent Passport;
+inactive avatars switch context; and the fixed overflow plus Passport's Switch
+agent control open one canonical full switcher. Presentation order and hiding
+remain `ProfilePresentationStore` state owned by `ProfileController`, including
+the selected-hidden exception. Local icons remain connection/profile scoped.
+Compose renders state and invokes ViewModel actions; it never writes a store.
+
+Server default is represented only by `SERVER_DEFAULT_PROFILE_KEY`/a null
+selection and uses a home glyph. A profile literally named `default` retains its
+own request, lock, icon, presentation, and session keys. Selecting either does
+not call the upstream sticky-default mutation.
+
+Profile changes preserve the existing `activateGatewayProfile` and
+`switchProfileContext` lifecycle. A live Gateway turn detaches and reconciles to
+its original session; SSE switching remains disabled while streaming. The
+destination restores only its connection/profile/transport-compatible last
+session or starts a draft, never hot-swaps a live session. Model/provider,
+personality, reasoning, approval, Fast, and YOLO state reset at the ViewModel
+context boundary before destination session truth can repopulate them.
+
+**Consequences.** The hamburger remains exclusively the Session Drawer. Agent
+Passport stays focused on inspection and configuration. The shelf adds no fake
+activity indicator, hides for one visible identity, retains 48 dp touch targets,
+and exposes meaningful TalkBack actions in compact, large-font, light, and dark
+layouts.

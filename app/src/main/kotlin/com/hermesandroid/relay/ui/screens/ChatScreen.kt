@@ -166,6 +166,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.ProfilePresentationPolicy
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
@@ -219,6 +220,9 @@ import com.hermesandroid.relay.ui.components.ThinkingIndicatorStyle
 import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
 import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
+import com.hermesandroid.relay.ui.components.ProfileDisplayManagerDialog
+import com.hermesandroid.relay.ui.components.ProfileShelf
+import com.hermesandroid.relay.ui.components.ProfileSwitcherSheet
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.SubagentLane
@@ -784,6 +788,9 @@ fun ChatScreen(
     // of available profiles itself now lives entirely inside the sheet.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
+    val profilePresentation by connectionViewModel.profilePresentation.collectAsState()
+    val isProfileLocked by connectionViewModel.isProfileLocked.collectAsState()
+    val lockedProfileName by connectionViewModel.lockedProfileName.collectAsState()
     // Server-advertised profile catalog — used to locate the "default" profile
     // so the header can render its description/model when no explicit pick
     // has been made (the /api/config fallback is more useful than the bare
@@ -951,6 +958,9 @@ fun ChatScreen(
     var showModelSheet by remember { mutableStateOf(false) }
     var showEffortSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
+    var showProfileShelf by remember { mutableStateOf(false) }
+    var showProfileSwitcher by remember { mutableStateOf(false) }
+    var showProfileManager by remember { mutableStateOf(false) }
     var showBackgroundProcesses by remember { mutableStateOf(false) }
 
     // A process inventory is scoped to one gateway session. Never leave a
@@ -1841,6 +1851,25 @@ fun ChatScreen(
             )
         }
     }
+    val selectedProfileKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
+    val profileShelfAvailable = ProfilePresentationPolicy.shouldShowShelf(
+        profiles = agentProfiles,
+        presentation = profilePresentation,
+        selectedKey = selectedProfileKey,
+    )
+    val profileSwitchEnabled = com.hermesandroid.relay.ui.components.ProfileShelfPolicy.canSwitch(
+        isStreaming = isStreaming,
+        streamingEndpoint = chatViewModel.streamingEndpoint,
+    )
+    LaunchedEffect(profileShelfAvailable) {
+        if (!profileShelfAvailable) showProfileShelf = false
+    }
+    val selectProfileFromShelf: (com.hermesandroid.relay.data.Profile?) -> Unit = { profile ->
+        if (AgentDisplay.profileSessionKey(profile?.name) != selectedProfileKey) {
+            connectionViewModel.selectProfile(profile)
+            chatViewModel.activateGatewayProfile(profile)
+        }
+    }
     val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
     val isChatConnecting = chatConnectState == ChatConnectState.Connecting &&
         !hasLiveConversationSurface
@@ -2047,7 +2076,27 @@ fun ChatScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.clickable { showAgentInfo = true }
+                        modifier = Modifier
+                            .clickable {
+                                if (profileShelfAvailable) {
+                                    showProfileShelf = !showProfileShelf
+                                } else {
+                                    showAgentInfo = true
+                                }
+                            }
+                            .semantics {
+                                contentDescription = if (profileShelfAvailable) {
+                                    context.getString(
+                                        if (showProfileShelf) {
+                                            R.string.profile_shelf_collapse
+                                        } else {
+                                            R.string.profile_shelf_expand
+                                        },
+                                    )
+                                } else {
+                                    context.getString(R.string.profile_shelf_open_passport)
+                                }
+                            }
                     ) {
                         // Avatar — a plain 40dp circle whose letter swaps to the
                         // active agent (profile or personality). No overlay ring:
@@ -2303,6 +2352,29 @@ fun ChatScreen(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
                 )
             )
+            AnimatedVisibility(visible = profileShelfAvailable && showProfileShelf) {
+                ProfileShelf(
+                    connectionViewModel = connectionViewModel,
+                    profiles = agentProfiles,
+                    selectedProfile = selectedProfile,
+                    resolvedProfile = effectiveProfile,
+                    presentation = profilePresentation,
+                    activeDisplayName = agentDisplayName,
+                    isProfileLocked = isProfileLocked,
+                    lockedProfileName = lockedProfileName,
+                    switchEnabled = profileSwitchEnabled,
+                    onSelect = selectProfileFromShelf,
+                    onOpenPassport = { showAgentInfo = true },
+                    onOpenSwitcher = { showProfileSwitcher = true },
+                    onInspect = onNavigateToProfileInspector,
+                    onLock = { profile ->
+                        connectionViewModel.lockProfile(profile)
+                        chatViewModel.activateGatewayProfile(profile)
+                    },
+                    onUnlock = connectionViewModel::unlockProfile,
+                    onHide = { connectionViewModel.setProfileHidden(it, true) },
+                )
+            }
             // Per-session context-window gauge at the seam between the app bar
             // and the mode strip — slim bar + `NN% · used/max` token readout,
             // color-graded by fullness. Composes to nothing until the server
@@ -3824,6 +3896,34 @@ fun ChatScreen(
             onDismiss = { showAgentInfo = false },
             onNavigateToConnections = onNavigateToConnections,
             onNavigateToProfileInspector = onNavigateToProfileInspector,
+        )
+    }
+    if (showProfileSwitcher) {
+        ProfileSwitcherSheet(
+            connectionViewModel = connectionViewModel,
+            profiles = agentProfiles,
+            selectedProfile = selectedProfile,
+            resolvedProfile = effectiveProfile,
+            presentation = profilePresentation,
+            isProfileLocked = isProfileLocked,
+            switchEnabled = profileSwitchEnabled,
+            onSelect = selectProfileFromShelf,
+            onManageDisplay = {
+                showProfileSwitcher = false
+                showProfileManager = true
+            },
+            onDismiss = { showProfileSwitcher = false },
+        )
+    }
+    if (showProfileManager) {
+        ProfileDisplayManagerDialog(
+            profiles = agentProfiles,
+            presentation = profilePresentation,
+            selectedProfileName = selectedProfile?.name,
+            onMove = connectionViewModel::moveProfile,
+            onHiddenChange = connectionViewModel::setProfileHidden,
+            onReset = connectionViewModel::resetProfilePresentation,
+            onDismiss = { showProfileManager = false },
         )
     }
 }

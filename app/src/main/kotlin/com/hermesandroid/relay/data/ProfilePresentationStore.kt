@@ -26,7 +26,6 @@ object ProfilePresentationPolicy {
     fun availableKeys(profiles: List<Profile>): List<String> = buildList {
         add(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY)
         profiles.asSequence()
-            .filterNot { AgentDisplay.isServerDefaultAlias(it.name) }
             .map(Profile::name)
             .distinct()
             .forEach(::add)
@@ -49,6 +48,12 @@ object ProfilePresentationPolicy {
     ): List<String> = orderedKeys(profiles, presentation).filter { key ->
         key == selectedKey || key !in presentation.hidden
     }
+
+    fun shouldShowShelf(
+        profiles: List<Profile>,
+        presentation: ProfilePresentation,
+        selectedKey: String,
+    ): Boolean = visibleKeys(profiles, presentation, selectedKey).size > 1
 }
 
 class ProfilePresentationStore(

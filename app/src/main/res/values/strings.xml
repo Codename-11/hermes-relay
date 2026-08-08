@@ -2407,6 +2407,15 @@
     <string name="conn_info_bypassed">Bypassed</string>
     <string name="conn_info_customize_identity">Customize identity</string>
     <string name="conn_info_agent_passport">Agent Passport</string>
+    <string name="profile_shelf_switch_agent">Switch agent</string>
+    <string name="profile_shelf_all_profiles">Open all agent profiles</string>
+    <string name="profile_shelf_open_passport">Open Agent Passport</string>
+    <string name="profile_shelf_switch_to">Switch to this agent</string>
+    <string name="profile_shelf_locked_hint">Profile switching is locked. Long-press the active agent to unlock.</string>
+    <string name="profile_shelf_inspect">Inspect profile</string>
+    <string name="profile_shelf_hide">Hide from Profile Shelf</string>
+    <string name="profile_shelf_expand">Expand Profile Shelf</string>
+    <string name="profile_shelf_collapse">Collapse Profile Shelf</string>
     <string name="conn_info_chat_override">Chat override</string>
     <string name="conn_info_chat_override_inherited_desc">Use the profile approval policy for this chat.</string>
     <string name="conn_info_fast_tier">Fast tier</string>

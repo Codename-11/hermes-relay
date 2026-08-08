@@ -2,58 +2,27 @@ package com.hermesandroid.relay.data
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import androidx.datastore.preferences.core.emptyPreferences
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
-import java.io.File
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Unit tests for [ProfileSelectionStore].
  *
- * Follows the pattern in `BargeInPreferencesTest` — bypasses
- * [android.content.Context] by feeding the store a filesystem-backed
- * [DataStore] via [PreferenceDataStoreFactory.create]. That only works
- * because [ProfileSelectionStore]'s primary constructor takes a raw
- * DataStore (the Context secondary resolves to the same shape in prod).
+ * Bypasses [android.content.Context] by feeding the store an in-memory
+ * [DataStore]. [ProfileSelectionStore]'s primary constructor takes the same
+ * raw DataStore shape that its Context constructor resolves in production.
  */
 class ProfileSelectionStoreTest {
 
-    @get:Rule
-    val tempFolder = TemporaryFolder()
-
-    private lateinit var scope: CoroutineScope
-    private lateinit var dataStore: DataStore<Preferences>
-    private lateinit var store: ProfileSelectionStore
-
-    @Before
-    fun setUp() {
-        scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val file: File = tempFolder.newFile("profile_selections_test.preferences_pb")
-        // PreferenceDataStoreFactory requires the backing file NOT exist yet;
-        // TemporaryFolder.newFile() creates it, so we delete first.
-        if (file.exists()) file.delete()
-        dataStore = PreferenceDataStoreFactory.create(
-            scope = scope,
-            produceFile = { file },
-        )
-        store = ProfileSelectionStore(dataStore)
-    }
-
-    @After
-    fun tearDown() {
-        scope.cancel()
-    }
+    private val store = ProfileSelectionStore(InMemoryPreferencesDataStore())
 
     @Test
     fun unset_connection_emitsNull() = runBlocking {
@@ -109,5 +78,18 @@ class ProfileSelectionStoreTest {
         store.setSelectedProfile("conn-1", "mizu")
         store.setSelectedProfile("conn-1", "coder")
         assertEquals("coder", store.selectedProfileFlow("conn-1").first())
+    }
+
+    /** Avoids AndroidX's Windows-only atomic-rename failure in filesystem DataStore tests. */
+    private class InMemoryPreferencesDataStore : DataStore<Preferences> {
+        private val state = MutableStateFlow<Preferences>(emptyPreferences())
+        private val updateMutex = Mutex()
+
+        override val data: Flow<Preferences> = state
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+            updateMutex.withLock {
+                transform(state.value).also { state.value = it }
+            }
     }
 }

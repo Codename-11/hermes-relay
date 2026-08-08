@@ -3726,4 +3726,13 @@
     <string name="support_bundle_copied">Informações de suporte copiadas</string>
     <string name="support_bundle_no_share">Informações de suporte copiadas — nenhum app encontrado para compartilhar</string>
     <string name="support_bundle_share_title">Compartilhar informações de suporte do Hermes-Relay</string>
+    <string name="profile_shelf_switch_agent">Trocar agente</string>
+    <string name="profile_shelf_all_profiles">Abrir todos os perfis de agente</string>
+    <string name="profile_shelf_open_passport">Abrir Passaporte do agente</string>
+    <string name="profile_shelf_switch_to">Trocar para este agente</string>
+    <string name="profile_shelf_locked_hint">A troca de perfil está bloqueada. Toque e segure o agente ativo para desbloquear.</string>
+    <string name="profile_shelf_inspect">Inspecionar perfil</string>
+    <string name="profile_shelf_hide">Ocultar da estante de perfis</string>
+    <string name="profile_shelf_expand">Expandir a estante de perfis</string>
+    <string name="profile_shelf_collapse">Recolher a estante de perfis</string>
 </resources>

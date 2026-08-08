@@ -3814,4 +3814,13 @@
     <string name="support_bundle_copied">支持信息已复制</string>
     <string name="support_bundle_no_share">支持信息已复制 — 未找到可分享的应用</string>
     <string name="support_bundle_share_title">分享 Hermes-Relay 支持信息</string>
+    <string name="profile_shelf_switch_agent">切换智能体</string>
+    <string name="profile_shelf_all_profiles">打开所有智能体配置</string>
+    <string name="profile_shelf_open_passport">打开智能体护照</string>
+    <string name="profile_shelf_switch_to">切换到此智能体</string>
+    <string name="profile_shelf_locked_hint">配置切换已锁定。长按当前智能体即可解锁。</string>
+    <string name="profile_shelf_inspect">查看配置</string>
+    <string name="profile_shelf_hide">从配置架中隐藏</string>
+    <string name="profile_shelf_expand">展开配置架</string>
+    <string name="profile_shelf_collapse">收起配置架</string>
 </resources>

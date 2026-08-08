@@ -81,6 +81,7 @@ class ProfileControllerLockTest {
 
     private val mizu = Profile(name = "mizu", model = "model-a")
     private val coder = Profile(name = "coder", model = "model-b")
+    private val literalDefault = Profile(name = "default", model = "root-model")
 
     @Before
     fun setUp() {
@@ -151,6 +152,14 @@ class ProfileControllerLockTest {
         assertEquals("mizu", awaitLocked("mizu"))
         assertEquals(mizu, awaitSelected("mizu"))
         assertTrue("should report locked", awaitFlow(controller.isProfileLocked) { it })
+    }
+
+    @Test
+    fun lockProfile_keepsLiteralDefaultDistinctFromServerDefault() {
+        runBlocking { controller.lockProfile(literalDefault) }
+
+        assertEquals("default", awaitLocked("default"))
+        assertEquals(literalDefault, awaitSelected("default"))
     }
 
     @Test

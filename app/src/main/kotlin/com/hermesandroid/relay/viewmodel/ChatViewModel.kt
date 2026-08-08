@@ -3164,6 +3164,16 @@ class ChatViewModel : ViewModel() {
         selectedReasoningEffortConfirmedIdentity = null
         _reasoningDisplay.value = null
         _selectedPersonality.value = "default"
+        // Model/provider overrides are session-scoped too. This reset is owned
+        // by the context switch (not just activateGatewayProfile) so the SSE
+        // path cannot carry the previous profile's explicit model into the
+        // restored session or fresh draft.
+        modelOptionsGeneration.incrementAndGet()
+        _modelProviders.value = emptyList()
+        _apiModelOptions.value = emptyList()
+        _availableModels.value = emptyList()
+        _selectedModelOverride.value = null
+        _selectedProviderOverride.value = null
         // The agent display name was stamped above with the pre-reset persona —
         // recompute it now that the overlay is cleared so the header/bubbles read
         // the new profile's base identity, not the old persona.

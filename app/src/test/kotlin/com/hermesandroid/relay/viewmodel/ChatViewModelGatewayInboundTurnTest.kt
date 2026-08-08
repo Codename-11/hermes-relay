@@ -261,6 +261,24 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun profileContextSwitchClearsSessionScopedModelAndPersonality() {
+        viewModel.selectModel("provider/old-model", "provider")
+        viewModel.selectPersonality("coach")
+        assertEquals("provider/old-model", viewModel.selectedModelOverride.value)
+        assertEquals("coach", viewModel.selectedPersonality.value)
+
+        viewModel.switchProfileContext("connection-dashboard/profile-new", null)
+
+        assertEquals(null, viewModel.selectedModelOverride.value)
+        assertEquals(null, viewModel.selectedProviderOverride.value)
+        assertEquals("default", viewModel.selectedPersonality.value)
+        assertEquals(null, viewModel.selectedReasoningEffort.value)
+        assertEquals(null, viewModel.yoloEnabled.value)
+        assertEquals(null, viewModel.fastEnabled.value)
+        assertEquals(null, viewModel.approvalMode.value)
+    }
+
+    @Test
     fun connectionCatalogResetPreventsDashboardOnlyLeakage() {
         viewModel.updateApiClient(null)
         val config = buildJsonObject {

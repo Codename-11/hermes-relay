@@ -3607,4 +3607,13 @@
     <string name="support_bundle_copied">Сведения для поддержки скопированы</string>
     <string name="support_bundle_no_share">Сведения для поддержки скопированы — приложение для отправки не найдено</string>
     <string name="support_bundle_share_title">Поделиться сведениями поддержки Hermes-Relay</string>
+    <string name="profile_shelf_switch_agent">Сменить агента</string>
+    <string name="profile_shelf_all_profiles">Открыть все профили агентов</string>
+    <string name="profile_shelf_open_passport">Открыть паспорт агента</string>
+    <string name="profile_shelf_switch_to">Переключиться на этого агента</string>
+    <string name="profile_shelf_locked_hint">Переключение профилей заблокировано. Нажмите и удерживайте активного агента, чтобы снять блокировку.</string>
+    <string name="profile_shelf_inspect">Просмотреть профиль</string>
+    <string name="profile_shelf_hide">Скрыть с полки профилей</string>
+    <string name="profile_shelf_expand">Развернуть полку профилей</string>
+    <string name="profile_shelf_collapse">Свернуть полку профилей</string>
 </resources>

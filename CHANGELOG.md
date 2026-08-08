@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android Profile Shelf makes agent switching immediate without mixing conversations.** The Chat header expands a compact, accessible shelf with ordered profile avatars, a distinct Server-default home identity, last-session restoration, display hiding, lock controls, and one full switcher shared with Agent Passport.
+
 ### Fixed
 
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.

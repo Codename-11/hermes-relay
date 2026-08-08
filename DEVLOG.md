@@ -1,5 +1,23 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-08 — Android Profile Shelf and profile-context identity
+
+Chat profile selection now lives in a collapsible shelf directly below the top
+app bar. The header toggles the shelf, the active capsule opens Agent Passport,
+inactive 48 dp avatars switch context, and a pinned overflow opens the same full
+switcher used by Passport. Saved ordering and hidden state drive both surfaces;
+the selected hidden profile remains disclosed, while a one-identity shelf stays
+out of the layout. Long-press actions expose inspection, Passport, profile lock,
+and hiding without adding activity or presence claims.
+
+The Server-default sentinel is now distinct from a profile literally named
+`default`. Profile selection restores the last compatible connection/profile/
+transport session, otherwise leaves a fresh draft. Gateway turns detach and
+reconcile in their original session, live SSE turns keep switching disabled,
+and every profile transition clears session-scoped model, provider, personality,
+reasoning, approval, Fast, and YOLO state before the destination session seeds
+its own values. Server sticky-default state is never written.
+
 ## 2026-08-08 — Streaming reply tail follow
 
 Android's conversation-bottom follower now reads the current immutable message
