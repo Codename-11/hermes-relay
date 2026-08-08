@@ -8,8 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
+- **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [Android 1.7.1] - 2026-08-08
+
+### Fixed
+
 - **Android chat follows a growing live reply.** Bottom-owned conversations now observe each replacement of the streaming message list, keeping newly added lines visible while preserving the reader's position after a manual scroll away.
-- **Hosted Hermes onboarding completes through the official Dashboard sign-in path.** Android recognizes hosted account addresses, uses the system-browser native PKCE flow, resumes the verified Dashboard session after its loopback callback, and accepts canonical Dashboard setup handoffs from the optional plugin.
+- **Hosted Hermes onboarding completes through the official Dashboard sign-in path.** Android recognizes hosted account addresses, uses the system-browser native PKCE flow, and resumes the verified Dashboard session after its loopback callback.
 - **Live Android tool cards remain expandable while a run is active.** Streaming Gateway updates preserve stable card identity and merge tool arguments and result previews into the existing row, so details can be opened before the session finishes.
 - **Completed Android replies format Markdown immediately.** Live assistant text keeps its stable plain renderer only while incomplete, then the same owned row transitions to rich code blocks, lists, emphasis, and links without leaving or reopening the session.
 - **Android approval cards require an explicit labeled decision.** Reading or scrolling a guarded command, navigating away, backgrounding, recomposition, later turn activity, and card dismissal cannot submit or locally resolve it; pending requests remain bound to their owning profile and session until an explicit response or authoritative upstream expiry.
@@ -17,8 +24,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android queued messages stay with their originating chat.** Follow-ups now retain their exact connection, profile, session, run, route, attachments, and voice context across concurrent Gateway session switches instead of following whichever session is visible when a run finishes.
 - **Android model pickers reject duplicate catalog identities before rendering.** Repeated provider/model rows from cached or refreshed inventories are merged at the provider boundary, while identical model IDs under different providers remain distinct choices with provider-aware reasoning capabilities.
 - **Android session pins and archives survive app restarts.** The session drawer now reads and updates the owning Hermes profile's durable session metadata, rolls failed changes back, and makes unpinned stars clearly distinct in light theme.
-- **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
-- **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [1.6.1] - 2026-08-08
+
+### Fixed
+
+- **The Dashboard plugin hands hosted Hermes connections to Android reliably.** Mobile setup exposes the canonical Dashboard address and keeps dialog focus handling contained, so system-browser authentication can return to the correct connection without disrupting the Dashboard.
 
 ## [Android 1.7.0] - 2026-08-06
 

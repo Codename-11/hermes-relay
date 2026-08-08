@@ -1,6 +1,34 @@
 {
  "versions": [
   {
+   "version": "1.7.1",
+   "title": "Safer, steadier conversations",
+   "date": "2026-08-08",
+   "sections": [
+    {
+     "header": "Chat stays with you",
+     "bullets": [
+      "Growing streamed replies stay visible while you are at the bottom, and intentional scrollback remains undisturbed.",
+      "Completed replies render Markdown immediately while live tool details remain expandable."
+     ]
+    },
+    {
+     "header": "Sessions keep their ownership",
+     "bullets": [
+      "Queued follow-ups retain their originating connection, profile, session, route, attachments, and voice context.",
+      "Session pins and archives persist across restarts, and duplicate model rows are reconciled before rendering."
+     ]
+    },
+    {
+     "header": "Safer controls and setup",
+     "bullets": [
+      "Approval cards require an explicit labeled decision, and Agent Passport safety controls are easier to read and dismiss.",
+      "Hosted Hermes setup completes through the official Dashboard system-browser sign-in flow."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.7.0",
    "title": "Smarter controls, steadier sessions",
    "date": "2026-08-06",
