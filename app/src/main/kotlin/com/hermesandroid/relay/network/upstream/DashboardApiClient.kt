@@ -326,8 +326,7 @@ class DashboardApiClient(
      * Upstream strips internal `_`-prefixed keys server-side, so the object is
      * safe to mutate and round-trip back through [updateConfig].
      */
-    suspend fun getConfig(profile: String? = null): Result<JsonObject> =
-        getJsonObject("/api/config${profileQuery(profile)}")
+    suspend fun getConfig(): Result<JsonObject> = getJsonObject("/api/config")
 
     /**
      * The config SCHEMA: `{fields: {<dot.path>: {type, description, category,
@@ -335,8 +334,7 @@ class DashboardApiClient(
      * pair it with [getConfig] for current values. Note this is distinct from
      * the values tree — `fields` keys are flat dot-paths, the values are nested.
      */
-    suspend fun getConfigSchema(profile: String? = null): Result<JsonObject> =
-        getJsonObject("/api/config/schema${profileQuery(profile)}")
+    suspend fun getConfigSchema(): Result<JsonObject> = getJsonObject("/api/config/schema")
 
     /**
      * Runtime TTS provider matrix used by upstream's Tools/Capabilities picker.
@@ -347,11 +345,10 @@ class DashboardApiClient(
         getJsonObject("/api/tools/toolsets/tts/config")
 
     /**
-     * Update the runtime config (`PUT /api/config`). Current upstream deep-merges
-     * the submitted object, while older hosts may replace the document. Callers
-     * therefore round-trip the full values tree for compatibility and must
-     * refetch before saving to avoid overwriting concurrent edits. [profile]
-     * null/blank targets the launch profile.
+     * Replace the runtime config (`PUT /api/config`). Upstream `save_config`
+     * writes the WHOLE document, so [config] MUST be the full values tree
+     * (read [getConfig], mutate, write back) — a partial object would drop
+     * every key it omits. [profile] null/blank targets the launch profile.
      */
     suspend fun updateConfig(config: JsonObject, profile: String? = null): Result<JsonObject> =
         putJsonObject(
@@ -387,20 +384,12 @@ class DashboardApiClient(
      * dynamic/custom-provider catalogs on demand without probing every
      * provider during normal picker opens.
      */
-    suspend fun getModelInfo(profile: String? = null): Result<JsonObject> =
-        getJsonObject("/api/model/info${profileQuery(profile)}")
-
-    suspend fun getModelOptions(
-        refresh: Boolean = false,
-        profile: String? = null,
-    ): Result<JsonObject> =
+    suspend fun getModelOptions(refresh: Boolean = false): Result<JsonObject> =
         getJsonObject(
-            buildString {
-                append("/api/model/options?include_unconfigured=1")
-                if (refresh) append("&refresh=1")
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let {
-                    append("&profile=${pathSegment(it)}")
-                }
+            if (refresh) {
+                "/api/model/options?refresh=1&include_unconfigured=1"
+            } else {
+                "/api/model/options?include_unconfigured=1"
             },
         )
 
@@ -414,10 +403,9 @@ class DashboardApiClient(
         provider: String,
         model: String,
         confirmExpensive: Boolean = false,
-        profile: String? = null,
     ): Result<JsonObject> =
         postJsonObject(
-            path = "/api/model/set${profileQuery(profile)}",
+            path = "/api/model/set",
             payload = buildJsonObject {
                 put("scope", "main")
                 put("provider", provider)

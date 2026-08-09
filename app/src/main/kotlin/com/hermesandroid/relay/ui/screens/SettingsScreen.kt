@@ -50,7 +50,6 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -171,7 +170,6 @@ fun SettingsScreen(
     // expandable sections, so there's nothing left to link to twice.
     onNavigateToConnections: () -> Unit,
     onNavigateToManage: () -> Unit,
-    onNavigateToAgentProfileDefaults: () -> Unit,
     onNavigateToPlugins: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
     onNavigateToTerminal: () -> Unit,
@@ -481,14 +479,6 @@ fun SettingsScreen(
             )
 
             SettingsSectionHeader(stringResource(R.string.settings_hermes))
-
-            SettingsCategoryRow(
-                icon = Icons.Outlined.Person,
-                title = stringResource(R.string.settings_agent_profile_defaults),
-                subtitle = stringResource(R.string.settings_agent_profile_defaults_desc),
-                onClick = onNavigateToAgentProfileDefaults,
-                isDarkTheme = isDarkTheme,
-            )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Link,

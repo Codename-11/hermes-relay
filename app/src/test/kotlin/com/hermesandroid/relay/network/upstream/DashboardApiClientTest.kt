@@ -115,67 +115,6 @@ class DashboardApiClientTest {
     }
 
     @Test
-    fun modelReads_scopeToProfileAndOmitBlankProfile() = runTest {
-        val body = """{"providers": []}"""
-        repeat(4) {
-            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(body))
-        }
-
-        val client = DashboardApiClient(baseUrl = server.url("/").toString())
-
-        client.getModelInfo(profile = "work profile").getOrThrow()
-        val scopedInfo = server.takeRequest().requestUrl!!
-        assertEquals("/api/model/info", scopedInfo.encodedPath)
-        assertEquals("work profile", scopedInfo.queryParameter("profile"))
-
-        client.getModelOptions(refresh = true, profile = "work profile").getOrThrow()
-        val scopedOptions = server.takeRequest().requestUrl!!
-        assertEquals("/api/model/options", scopedOptions.encodedPath)
-        assertEquals("1", scopedOptions.queryParameter("include_unconfigured"))
-        assertEquals("1", scopedOptions.queryParameter("refresh"))
-        assertEquals("work profile", scopedOptions.queryParameter("profile"))
-
-        client.getModelInfo(profile = "   ").getOrThrow()
-        assertEquals(null, server.takeRequest().requestUrl!!.queryParameter("profile"))
-
-        client.getModelOptions(profile = "   ").getOrThrow()
-        assertEquals(null, server.takeRequest().requestUrl!!.queryParameter("profile"))
-    }
-
-    @Test
-    fun setMainModel_scopesQueryToProfileAndOmitsBlankProfile() = runTest {
-        repeat(2) {
-            server.enqueue(
-                MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true}"""),
-            )
-        }
-
-        val client = DashboardApiClient(baseUrl = server.url("/").toString())
-
-        client.setMainModel(
-            provider = "openrouter",
-            model = "anthropic/claude-sonnet-4",
-            confirmExpensive = true,
-            profile = "work profile",
-        ).getOrThrow()
-        val scoped = server.takeRequest()
-        assertEquals("POST", scoped.method)
-        assertEquals("/api/model/set", scoped.requestUrl!!.encodedPath)
-        assertEquals("work profile", scoped.requestUrl!!.queryParameter("profile"))
-        val scopedBody = scoped.body.readUtf8()
-        assertTrue(scopedBody.contains("\"scope\":\"main\""))
-        assertTrue(scopedBody.contains("\"provider\":\"openrouter\""))
-        assertTrue(scopedBody.contains("\"model\":\"anthropic/claude-sonnet-4\""))
-        assertTrue(scopedBody.contains("\"confirm_expensive_model\":true"))
-        assertFalse(scopedBody.contains("profile"))
-
-        client.setMainModel(provider = "nous", model = "Hermes-4", profile = "   ").getOrThrow()
-        val unscoped = server.takeRequest()
-        assertEquals(null, unscoped.requestUrl!!.queryParameter("profile"))
-        assertFalse(unscoped.body.readUtf8().contains("profile"))
-    }
-
-    @Test
     fun currentSession_onConnectionAbort_returnsFailure_doesNotThrow() = runTest {
         // Reproduces the crash: a stale pooled connection aborting mid-flight
         // ("Software caused connection abort"). currentSession() returns a
@@ -1086,38 +1025,6 @@ class DashboardApiClientTest {
 
         assertEquals("/api/config", server.takeRequest().path)
         assertEquals("/api/config/schema", server.takeRequest().path)
-    }
-
-    @Test
-    fun getConfigAndSchema_scopeToProfileAndOmitBlankProfile() = runTest {
-        repeat(2) {
-            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{}"""))
-        }
-        repeat(2) {
-            server.enqueue(
-                MockResponse()
-                    .setHeader("Content-Type", "application/json")
-                    .setBody("""{"fields":{},"category_order":[]}"""),
-            )
-        }
-
-        val client = DashboardApiClient(baseUrl = server.url("/").toString())
-
-        client.getConfig(profile = "work profile").getOrThrow()
-        val scopedConfig = server.takeRequest().requestUrl!!
-        assertEquals("/api/config", scopedConfig.encodedPath)
-        assertEquals("work profile", scopedConfig.queryParameter("profile"))
-
-        client.getConfig(profile = "   ").getOrThrow()
-        assertEquals(null, server.takeRequest().requestUrl!!.queryParameter("profile"))
-
-        client.getConfigSchema(profile = "work profile").getOrThrow()
-        val scopedSchema = server.takeRequest().requestUrl!!
-        assertEquals("/api/config/schema", scopedSchema.encodedPath)
-        assertEquals("work profile", scopedSchema.queryParameter("profile"))
-
-        client.getConfigSchema(profile = "   ").getOrThrow()
-        assertEquals(null, server.takeRequest().requestUrl!!.queryParameter("profile"))
     }
 
     @Test

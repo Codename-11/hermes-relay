@@ -137,7 +137,6 @@ import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
-import com.hermesandroid.relay.ui.screens.AgentProfileDefaultsScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
 import com.hermesandroid.relay.ui.screens.CustomPetGuideScreen
@@ -449,17 +448,7 @@ sealed class Screen(
             return "settings/connections/$encoded"
         }
     }
-    data object VoiceSettings : Screen(
-        "voice_settings?configurationProfile={configurationProfile}",
-        "Voice",
-        Icons.Filled.Settings,
-    ) {
-        const val ARG_CONFIGURATION_PROFILE: String = "configurationProfile"
-        fun destination(profileName: String? = null): String =
-            profileName?.takeIf { it.isNotBlank() }
-                ?.let { "voice_settings?configurationProfile=${android.net.Uri.encode(it)}" }
-                ?: "voice_settings"
-    }
+    data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
     // === PHASE3-notif-listener-followup ===
     data object NotificationCompanionSettings :
         Screen("settings/notifications", "Notification companion", Icons.Filled.Settings)
@@ -478,8 +467,6 @@ sealed class Screen(
     // the plural `ConnectionsSettings` subpage. See `ConnectionsSettings`
     // above for the surviving route.)
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
-    data object AgentProfileDefaults :
-        Screen("settings/agent-profile-defaults", "Agent profile defaults", Icons.Filled.Settings)
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
     data object PetdexBrowse : Screen("settings/appearance/petdex", "Petdex", Icons.Filled.Settings)
@@ -1843,7 +1830,7 @@ fun RelayApp() {
                             }
                         },
                         onNavigateToVoiceSettings = {
-                            navController.navigate(Screen.VoiceSettings.destination()) {
+                            navController.navigate(Screen.VoiceSettings.route) {
                                 launchSingleTop = true
                             }
                         },
@@ -2048,7 +2035,7 @@ fun RelayApp() {
                                     }
                                 },
                                 onNavigateToVoiceSettings = {
-                                    navController.navigate(Screen.VoiceSettings.destination())
+                                    navController.navigate(Screen.VoiceSettings.route)
                                 },
                                 onNavigateToNotificationCompanion = {
                                     navController.navigate(Screen.NotificationCompanionSettings.route)
@@ -2085,9 +2072,6 @@ fun RelayApp() {
                         onNavigateToManage = {
                             navController.navigate(Screen.Manage.route)
                         },
-                        onNavigateToAgentProfileDefaults = {
-                            navController.navigate(Screen.AgentProfileDefaults.route)
-                        },
                         onNavigateToPlugins = {
                             navController.navigate(Screen.Plugins.route)
                         },
@@ -2114,7 +2098,7 @@ fun RelayApp() {
                             navController.navigate(Screen.Diagnostics.route)
                         },
                         onNavigateToVoiceSettings = {
-                            navController.navigate(Screen.VoiceSettings.destination())
+                            navController.navigate(Screen.VoiceSettings.route)
                         },
                         onNavigateToNotificationCompanion = {
                             navController.navigate(Screen.NotificationCompanionSettings.route)
@@ -2169,15 +2153,7 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() },
                     )
                 }
-                composable(
-                    route = Screen.VoiceSettings.route,
-                    arguments = listOf(
-                        navArgument(Screen.VoiceSettings.ARG_CONFIGURATION_PROFILE) {
-                            type = NavType.StringType
-                            defaultValue = ""
-                        },
-                    ),
-                ) { entry ->
+                composable(Screen.VoiceSettings.route) {
                     if (isDemoMode) {
                         // Voice runs through the live server (transcribe /
                         // synthesize) — show the demo empty state offline.
@@ -2190,23 +2166,12 @@ fun RelayApp() {
                         connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
                     val voiceDashboardUrl by
                         connectionViewModel.effectiveDashboardUrl.collectAsState()
-                    val configurationProfileName = entry.arguments
-                        ?.getString(Screen.VoiceSettings.ARG_CONFIGURATION_PROFILE)
-                        ?.takeIf { it.isNotBlank() }
-                    val configurationDisplayProfile = configurationProfileName
-                        ?.let { name -> agentProfiles.firstOrNull { it.name == name } }
-                        ?: effectiveDisplayProfile
                     VoiceSettingsScreen(
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
                         connectionId = activeConnectionId,
-                        selectedProfile = if (configurationProfileName != null) {
-                            configurationDisplayProfile
-                        } else {
-                            selectedProfile
-                        },
-                        displayProfile = configurationDisplayProfile,
-                        configurationProfileName = configurationProfileName,
+                        selectedProfile = selectedProfile,
+                        displayProfile = effectiveDisplayProfile,
                         standardVoiceAvailability = standardVoiceAvailability,
                         standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
                         relayVoiceReady = relayVoiceReady,
@@ -2214,18 +2179,14 @@ fun RelayApp() {
                         dashboardClientProvider = { dashboardUrl ->
                             connectionViewModel.dashboardClientForActive(dashboardUrl)
                         },
-                        onOpenManage = if (configurationProfileName == null) {
-                            {
-                                navController.navigate(Screen.Manage.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
+                        onOpenManage = {
+                            navController.navigate(Screen.Manage.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
                                 }
+                                launchSingleTop = true
+                                restoreState = true
                             }
-                        } else {
-                            null
                         },
                         onBack = { navController.popBackStack() }
                     )
@@ -2290,7 +2251,7 @@ fun RelayApp() {
                                 navController.navigate(Screen.Terminal.route)
                             },
                             onNavigateToVoiceSettings = {
-                                navController.navigate(Screen.VoiceSettings.destination())
+                                navController.navigate(Screen.VoiceSettings.route)
                             },
                             onNavigateToNotificationCompanion = {
                                 navController.navigate(Screen.NotificationCompanionSettings.route)
@@ -2527,15 +2488,6 @@ fun RelayApp() {
                     ChatSettingsScreen(
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() }
-                    )
-                }
-                composable(Screen.AgentProfileDefaults.route) {
-                    AgentProfileDefaultsScreen(
-                        connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() },
-                        onOpenVoiceDefaults = { profileName ->
-                            navController.navigate(Screen.VoiceSettings.destination(profileName))
-                        },
                     )
                 }
                 composable(Screen.MediaSettings.route) {
