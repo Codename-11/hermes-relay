@@ -40,6 +40,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatQuote
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -120,6 +121,8 @@ fun MessageBubble(
      * idle Conversation voice sessions.
      */
     onSpeakMessage: ((String) -> Unit)? = null,
+    /** Stops a message-context narration currently owned by the voice pipeline. */
+    onStopSpeaking: (() -> Unit)? = null,
     /**
      * Invoked when the user taps a FAILED inbound attachment card.
      * `attachmentIndex` is the position in [ChatMessage.attachments] so the
@@ -420,7 +423,8 @@ fun MessageBubble(
             !accessibleMotion.touchExploration
         val showEditAction = onEditMessage != null && isUser
         val showSpeakAction = shouldShowSpeakResponseAction(message, onSpeakMessage != null)
-        if (onQuoteMessage != null || showEditAction || showSpeakAction) {
+        val showStopSpeakingAction = shouldShowStopSpeakingAction(message, onStopSpeaking != null)
+        if (onQuoteMessage != null || showEditAction || showSpeakAction || showStopSpeakingAction) {
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
@@ -453,6 +457,21 @@ fun MessageBubble(
                         onClick = {
                             showMessageActions = false
                             onSpeakMessage?.invoke(visibleMessageContent)
+                        },
+                    )
+                }
+                if (showStopSpeakingAction) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.msg_bubble_stop_speaking)) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Stop,
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            showMessageActions = false
+                            onStopSpeaking?.invoke()
                         },
                     )
                 }
@@ -507,7 +526,10 @@ fun MessageBubble(
                         // action menu is the discoverability moment, so it gets the
                         // same tactile confirm every chat app fires.
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (onQuoteMessage != null || showEditAction || showSpeakAction) {
+                        if (
+                            onQuoteMessage != null || showEditAction || showSpeakAction ||
+                            showStopSpeakingAction
+                        ) {
                             showMessageActions = true
                         } else {
                             onCopyMessage(visibleMessageContent)
@@ -578,7 +600,7 @@ fun MessageBubble(
                 // a live Text node becomes a Markdown tree, or settled
                 // Markdown content changes its node topology, so a handle
                 // cannot keep pointing at a removed selectable.
-                if (showSpeakAction) {
+                if (showSpeakAction || showStopSpeakingAction) {
                     DisableSelection { messageTextContent() }
                 } else {
                     key(
@@ -818,6 +840,7 @@ fun MessageBubble(
             MessageInlineActions(
                 showQuote = onQuoteMessage != null,
                 showSpeak = showSpeakAction,
+                showStopSpeaking = showStopSpeakingAction,
                 showEdit = showEditAction,
                 onCopy = {
                     showInlineActions = false
@@ -830,6 +853,10 @@ fun MessageBubble(
                 onSpeak = {
                     showInlineActions = false
                     onSpeakMessage?.invoke(visibleMessageContent)
+                },
+                onStopSpeaking = {
+                    showInlineActions = false
+                    onStopSpeaking?.invoke()
                 },
                 onEdit = {
                     showInlineActions = false
@@ -865,10 +892,12 @@ fun MessageBubble(
 private fun MessageInlineActions(
     showQuote: Boolean,
     showSpeak: Boolean,
+    showStopSpeaking: Boolean,
     showEdit: Boolean,
     onCopy: () -> Unit,
     onQuote: () -> Unit,
     onSpeak: () -> Unit,
+    onStopSpeaking: () -> Unit,
     onEdit: () -> Unit,
 ) {
     Surface(
@@ -902,6 +931,15 @@ private fun MessageInlineActions(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                         contentDescription = stringResource(R.string.msg_bubble_speak_response),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (showStopSpeaking) {
+                IconButton(onClick = onStopSpeaking, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Stop,
+                        contentDescription = stringResource(R.string.msg_bubble_stop_speaking),
                         modifier = Modifier.size(18.dp),
                     )
                 }
@@ -984,6 +1022,15 @@ internal fun newestPetAssistantIsSettled(messages: List<ChatMessage>): Boolean =
     } == true
 
 internal fun shouldShowSpeakResponseAction(
+    message: ChatMessage,
+    handlerAvailable: Boolean,
+): Boolean =
+    handlerAvailable &&
+        message.role == MessageRole.ASSISTANT &&
+        !message.isStreaming &&
+        message.content.isNotBlank()
+
+internal fun shouldShowStopSpeakingAction(
     message: ChatMessage,
     handlerAvailable: Boolean,
 ): Boolean =

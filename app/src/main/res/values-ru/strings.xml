@@ -3512,6 +3512,7 @@
     <string name="voice_overlay_attachment_ready">Вложение готово</string>
     <string name="conn_info_active_profile">Активный профиль</string>
     <string name="msg_bubble_speak_response">Озвучить ответ</string>
+    <string name="msg_bubble_stop_speaking">Остановить озвучивание</string>
     <string name="voice_overlay_engine_standard">Стандартный режим</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Открыть Hermes</string>

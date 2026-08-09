@@ -98,6 +98,11 @@ internal fun canSpeakSettledResponse(
     providerRealtimeAgentTurnActive: Boolean,
 ): Boolean = state.state == VoiceState.Idle && !providerRealtimeAgentTurnActive
 
+internal fun ownsVoiceAudioCompletion(
+    voiceMode: Boolean,
+    responseSpeechActive: Boolean,
+): Boolean = voiceMode || responseSpeechActive
+
 private enum class StandardSpeechStreamState {
     Idle,
     Opening,
@@ -735,6 +740,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(VoiceUiState())
     val uiState: StateFlow<VoiceUiState> = _uiState.asStateFlow()
+
+    /** True only for one-shot narration started from a settled chat message. */
+    private val _responseSpeechActive = MutableStateFlow(false)
+    val responseSpeechActive: StateFlow<Boolean> = _responseSpeechActive.asStateFlow()
 
     private val _voicePreviewState = MutableStateFlow(VoicePreviewUiState())
     val voicePreviewState: StateFlow<VoicePreviewUiState> = _voicePreviewState.asStateFlow()
@@ -2238,7 +2247,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * per-turn state, and go back to Idle ("stop" means ready to start a
      * new turn on the next mic tap).
      */
-    fun interruptSpeaking(): Job? {
+    fun interruptSpeaking(cancelActiveTurn: Boolean = true): Job? {
         cancelPendingListeningStart()
         Log.i(
             TAG,
@@ -2247,13 +2256,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Stop = "stop talking", not "kill my task": with a background run
         // active, silence the audio pipeline below but leave the run alive —
         // the chip's ✕ is the explicit cancel affordance.
-        val realtimeTurnWasActive =
+        _responseSpeechActive.value = false
+        val realtimeTurnWasActive = cancelActiveTurn &&
             voiceEngineMode == VoiceEngineMode.RealtimeAgent && providerRealtimeAgentTurnActive.get()
         val backgroundPhase = _uiState.value.backgroundRun?.phase
-        val backgroundRunActive = preserveRealtimeTurnOnStop(backgroundPhase)
+        val backgroundRunActive = cancelActiveTurn && preserveRealtimeTurnOnStop(backgroundPhase)
         if (backgroundRunActive) {
             Log.i(TAG, "Interrupt with background run active — stopping audio only")
-        } else {
+        } else if (cancelActiveTurn) {
             cancelRealtimeAgentTurn("interrupt")
         }
         if (realtimeTurnWasActive && rtAssistantMessageId.isNotBlank() && !backgroundRunActive) {
@@ -2283,13 +2293,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         drainRealtimeTtsQueue()
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
         try { realtimePcmPlayer?.stop() } catch (_: Exception) { /* ignore */ }
-        // Stop the upstream SSE stream so the agent quits generating tokens.
-        try { chatViewModel?.cancelStream() } catch (_: Exception) { /* ignore */ }
-        streamObserverJob?.cancel()
-        streamObserverJob = null
-        currentTurnJob?.cancel()
-        currentTurnJob = null
-        continuousLoopArmed = false
+        if (cancelActiveTurn) {
+            // Voice-mode Stop owns the turn and cancels generation. A context-
+            // menu narration owns audio only; stopping it must not cancel a new
+            // chat turn the user may have submitted while listening.
+            try { chatViewModel?.cancelStream() } catch (_: Exception) { /* ignore */ }
+            streamObserverJob?.cancel()
+            streamObserverJob = null
+            currentTurnJob?.cancel()
+            currentTurnJob = null
+            continuousLoopArmed = false
+        }
         continuousResumeJob?.cancel()
         continuousResumeJob = null
         realtimeAmplitudeDecayJob?.cancel()
@@ -2341,6 +2355,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         return bargeInReaderRelease
     }
 
+    /** Stop one-shot message narration without cancelling chat generation. */
+    fun stopResponseSpeech(): Boolean {
+        if (!_responseSpeechActive.value) return false
+        interruptSpeaking(cancelActiveTurn = false)
+        return true
+    }
+
     /**
      * Replays a completed chat response through the currently selected voice
      * output. This is intentionally independent of Voice Mode: a configured
@@ -2357,6 +2378,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (spoken.isBlank()) return false
 
         realtimeAudioSuppressed = false
+        _responseSpeechActive.value = true
         _uiState.update {
             it.copy(
                 state = VoiceState.Speaking,
@@ -2367,6 +2389,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         val queued = enqueueSentenceForTts(spoken, immediate = true)
         if (!queued) {
+            _responseSpeechActive.value = false
             _uiState.update {
                 it.copy(state = VoiceState.Idle, outputAudioActive = false)
             }
@@ -5437,7 +5460,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             delay(initialDelayMs.coerceIn(AUDIO_COMPLETION_RETRY_MS, AUDIO_COMPLETION_MAX_SLEEP_MS))
             repeat(120) {
                 val state = _uiState.value
-                if (!state.voiceMode || isMicCaptureActive()) {
+                if (!ownsVoiceAudioCompletion(state.voiceMode, _responseSpeechActive.value) ||
+                    isMicCaptureActive()
+                ) {
                     return@launch
                 }
 
@@ -5485,7 +5510,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             estimate
         }
         return decideAgentAudioCompletion(
-            voiceMode = _uiState.value.voiceMode,
+            voiceMode = ownsVoiceAudioCompletion(
+                _uiState.value.voiceMode,
+                _responseSpeechActive.value,
+            ),
             observerStopped = streamObserverJob?.isActive != true,
             pendingTtsWork = pendingInTtsQueue.get() +
                 if (standardSpeechStreamState == StandardSpeechStreamState.Opening ||
@@ -5503,6 +5531,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun finishAgentAudioOutput() {
         continuousResumeJob = null
+        _responseSpeechActive.value = false
         stopBargeInListener()
         cancelStandardSpeechStream("audio output finished")
         realtimeAmplitudeDecayJob?.cancel()

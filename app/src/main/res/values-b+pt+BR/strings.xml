@@ -3629,6 +3629,7 @@
     <string name="voice_overlay_attachment_ready">Anexo pronto</string>
     <string name="conn_info_active_profile">Perfil ativo</string>
     <string name="msg_bubble_speak_response">Falar resposta</string>
+    <string name="msg_bubble_stop_speaking">Parar fala</string>
     <string name="voice_overlay_engine_standard">Modo padrão</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Abrir Hermes</string>

@@ -3788,6 +3788,7 @@
     <string name="voice_overlay_attachment_ready">添付ファイルの準備ができました</string>
     <string name="conn_info_active_profile">アクティブなプロフィール</string>
     <string name="msg_bubble_speak_response">応答を読み上げる</string>
+    <string name="msg_bubble_stop_speaking">読み上げを停止</string>
     <string name="voice_overlay_engine_standard">標準モード</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Hermes を開く</string>

@@ -11,7 +11,10 @@ through the existing Off, Compact, and Detailed display policy.
 The Speak message action now follows configured voice readiness and idle output
 state instead of active Voice Mode or presentation style. A settled assistant
 reply can therefore be read aloud directly from chat, while live or provider
-playback still prevents overlapping output.
+playback still prevents overlapping output. One-shot message narration owns its
+completion state outside Voice Mode and replaces Speak with Stop while active;
+stopping drains only that narration pipeline and does not cancel a chat turn
+started while the response was playing.
 
 ## 2026-08-09 — Quiet reasoning and grouped tool activity
 

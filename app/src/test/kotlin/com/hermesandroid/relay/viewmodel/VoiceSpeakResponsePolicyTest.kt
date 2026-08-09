@@ -30,4 +30,11 @@ class VoiceSpeakResponsePolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `message narration owns completion outside Voice Mode`() {
+        assertTrue(ownsVoiceAudioCompletion(voiceMode = false, responseSpeechActive = true))
+        assertTrue(ownsVoiceAudioCompletion(voiceMode = true, responseSpeechActive = false))
+        assertFalse(ownsVoiceAudioCompletion(voiceMode = false, responseSpeechActive = false))
+    }
 }

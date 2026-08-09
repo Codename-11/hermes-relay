@@ -3789,6 +3789,7 @@
     <string name="voice_overlay_attachment_ready">Anhang bereit</string>
     <string name="conn_info_active_profile">Aktives Profil</string>
     <string name="msg_bubble_speak_response">Antwort vorlesen</string>
+    <string name="msg_bubble_stop_speaking">Wiedergabe stoppen</string>
     <string name="voice_overlay_engine_standard">Standardmodus</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Hermes öffnen</string>

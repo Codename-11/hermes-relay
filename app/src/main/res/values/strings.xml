@@ -3865,6 +3865,7 @@
     <string name="voice_overlay_attachment_ready">Attachment ready</string>
     <string name="conn_info_active_profile">Active profile</string>
     <string name="msg_bubble_speak_response">Speak response</string>
+    <string name="msg_bubble_stop_speaking">Stop speaking</string>
     <string name="voice_overlay_engine_standard">Standard mode</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Open Hermes</string>

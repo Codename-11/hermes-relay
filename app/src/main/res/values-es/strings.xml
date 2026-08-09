@@ -3474,6 +3474,7 @@
     <string name="voice_overlay_attachment_ready">Adjunto listo</string>
     <string name="conn_info_active_profile">Perfil activo</string>
     <string name="msg_bubble_speak_response">Leer respuesta</string>
+    <string name="msg_bubble_stop_speaking">Detener lectura</string>
     <string name="voice_overlay_engine_standard">Modo estándar</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Abrir Hermes</string>

@@ -654,6 +654,7 @@ fun ChatScreen(
     onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
+    val responseSpeechActive by voiceViewModel.responseSpeechActive.collectAsState()
     val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
     var voicePresentationOverride by remember { mutableStateOf<VoicePresentationMode?>(null) }
     val effectiveVoicePresentationMode = voicePresentationOverride ?: voicePresentationMode
@@ -2966,6 +2967,11 @@ fun ChatScreen(
                                     },
                                     onSpeakMessage = if (chatSpeakResponseActionsEnabled) {
                                         { text -> voiceViewModel.speakResponse(text) }
+                                    } else {
+                                        null
+                                    },
+                                    onStopSpeaking = if (responseSpeechActive) {
+                                        { voiceViewModel.stopResponseSpeech() }
                                     } else {
                                         null
                                     },

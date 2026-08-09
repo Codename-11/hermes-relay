@@ -3717,6 +3717,7 @@
     <string name="voice_overlay_attachment_ready">附件已就绪</string>
     <string name="conn_info_active_profile">活跃个人资料</string>
     <string name="msg_bubble_speak_response">朗读回复</string>
+    <string name="msg_bubble_stop_speaking">停止朗读</string>
     <string name="voice_overlay_engine_standard">标准模式</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">打开 Hermes</string>
