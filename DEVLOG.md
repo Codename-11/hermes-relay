@@ -1,5 +1,23 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-09 — Quiet reasoning and grouped tool activity
+
+Android Chat now treats reasoning and routine tools as transcript scaffolding.
+Visible live reasoning opens automatically without a tinted card, then collapses
+to a quiet Thought disclosure when it settles unless the reader has explicitly
+chosen its state. Empty reasoning remains absent and the existing first-token
+status continues to own the waiting state.
+
+Top-level routine calls retain their source order but render as consecutive
+activity runs. A live run keeps one summary and one latest-activity ticker in a
+stable footprint; a settled run becomes one collapsed summary that can disclose
+the original identity-preserving tool rows. File edits, approval/question tools,
+generated media, failures, output-risk findings, and delegated work split runs
+and retain independent surfaces. Off hides only ordinary activity runs, Compact
+uses compact disclosed rows, and Detailed preserves the full per-tool detail
+surface on demand. Expansion still yields bottom-follow ownership, and each run
+registers its measured bounds as Chat pet terrain.
+
 ## 2026-08-09 — Android chat experience and attachment polish
 
 The Android composer now declares sentence capitalization and a Send IME

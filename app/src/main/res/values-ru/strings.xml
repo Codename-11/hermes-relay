@@ -2536,6 +2536,23 @@
     <string name="image_generation_rendering">Рендеринг изображения</string>
     <string name="tool_progress_cd_collapse">Свернуть</string>
     <string name="tool_progress_cd_expand">Развернуть</string>
+    <string name="tool_progress_state_expanded">Развернуто</string>
+    <string name="tool_progress_state_collapsed">Свернуто</string>
+    <string name="tool_run_preparing">Подготовка: %1$s</string>
+    <string name="tool_run_running">Выполняется: %1$s</string>
+    <string name="tool_run_finished">Завершено: %1$s</string>
+    <plurals name="tool_run_reading"><item quantity="one">Чтение %d элемента</item><item quantity="few">Чтение %d элементов</item><item quantity="many">Чтение %d элементов</item><item quantity="other">Чтение %d элементов</item></plurals>
+    <plurals name="tool_run_read"><item quantity="one">Прочитан %d элемент</item><item quantity="few">Прочитано %d элемента</item><item quantity="many">Прочитано %d элементов</item><item quantity="other">Прочитано %d элементов</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="one">Поиск в %d источнике</item><item quantity="few">Поиск в %d источниках</item><item quantity="many">Поиск в %d источниках</item><item quantity="other">Поиск в %d источниках</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="one">Выполнен поиск в %d источнике</item><item quantity="few">Выполнен поиск в %d источниках</item><item quantity="many">Выполнен поиск в %d источниках</item><item quantity="other">Выполнен поиск в %d источниках</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="one">Выполняется %d команда</item><item quantity="few">Выполняется %d команды</item><item quantity="many">Выполняется %d команд</item><item quantity="other">Выполняется %d команд</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="one">Выполнена %d команда</item><item quantity="few">Выполнено %d команды</item><item quantity="many">Выполнено %d команд</item><item quantity="other">Выполнено %d команд</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="one">Выполняется %d действие браузера</item><item quantity="few">Выполняется %d действия браузера</item><item quantity="many">Выполняется %d действий браузера</item><item quantity="other">Выполняется %d действий браузера</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="one">Выполнено %d действие браузера</item><item quantity="few">Выполнено %d действия браузера</item><item quantity="many">Выполнено %d действий браузера</item><item quantity="other">Выполнено %d действий браузера</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="one">Выполняется %d действие устройства</item><item quantity="few">Выполняется %d действия устройства</item><item quantity="many">Выполняется %d действий устройства</item><item quantity="other">Выполняется %d действий устройства</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="one">Выполнено %d действие устройства</item><item quantity="few">Выполнено %d действия устройства</item><item quantity="many">Выполнено %d действий устройства</item><item quantity="other">Выполнено %d действий устройства</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="one">Используется %d инструмент</item><item quantity="few">Используется %d инструмента</item><item quantity="many">Используется %d инструментов</item><item quantity="other">Используется %d инструментов</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="one">Использован %d инструмент</item><item quantity="few">Использовано %d инструмента</item><item quantity="many">Использовано %d инструментов</item><item quantity="other">Использовано %d инструментов</item></plurals>
     <string name="agent_icon_title">Иконка агента</string>
     <string name="agent_icon_set">Выбрать файл</string>
     <string name="agent_icon_change">Выбрать файл</string>
@@ -3266,6 +3283,7 @@
     </plurals>
     <string name="tool_preparing">Подготовка инструмента…</string>
     <string name="thinking_title">Ход мыслей</string>
+    <string name="thinking_settled">Мысль</string>
     <string name="thinking_thinking">Обдумывает...</string>
     <string name="thinking_thinking_short">Обдумывает</string>
     <string name="task_background_prefix">Фоновая задача, </string>

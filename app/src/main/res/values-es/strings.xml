@@ -2333,6 +2333,23 @@
     <string name="image_generation_rendering">Generando imagen</string>
     <string name="tool_progress_cd_collapse">Colapsar</string>
     <string name="tool_progress_cd_expand">Expandir</string>
+    <string name="tool_progress_state_expanded">Expandido</string>
+    <string name="tool_progress_state_collapsed">Contraído</string>
+    <string name="tool_run_preparing">Preparando %1$s</string>
+    <string name="tool_run_running">Ejecutando %1$s</string>
+    <string name="tool_run_finished">%1$s finalizado</string>
+    <plurals name="tool_run_reading"><item quantity="one">Leyendo %d elemento</item><item quantity="other">Leyendo %d elementos</item></plurals>
+    <plurals name="tool_run_read"><item quantity="one">Se leyó %d elemento</item><item quantity="other">Se leyeron %d elementos</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="one">Buscando en %d fuente</item><item quantity="other">Buscando en %d fuentes</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="one">Se buscó en %d fuente</item><item quantity="other">Se buscó en %d fuentes</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="one">Ejecutando %d comando</item><item quantity="other">Ejecutando %d comandos</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="one">Se ejecutó %d comando</item><item quantity="other">Se ejecutaron %d comandos</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="one">Ejecutando %d acción del navegador</item><item quantity="other">Ejecutando %d acciones del navegador</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="one">Se ejecutó %d acción del navegador</item><item quantity="other">Se ejecutaron %d acciones del navegador</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="one">Ejecutando %d acción del dispositivo</item><item quantity="other">Ejecutando %d acciones del dispositivo</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="one">Se ejecutó %d acción del dispositivo</item><item quantity="other">Se ejecutaron %d acciones del dispositivo</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="one">Usando %d herramienta</item><item quantity="other">Usando %d herramientas</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="one">Se usó %d herramienta</item><item quantity="other">Se usaron %d herramientas</item></plurals>
     <string name="agent_icon_title">Icono de agente</string>
     <string name="agent_icon_set">Elegir archivo</string>
     <string name="agent_icon_change">Elegir archivo</string>
@@ -3326,6 +3343,7 @@
     <string name="tool_name_android">Acción en el teléfono</string>
     <string name="timeline_no_checks">sin comprobaciones</string>
     <string name="thinking_title">Proceso de pensamiento</string>
+    <string name="thinking_settled">Pensamiento</string>
     <string name="thinking_thinking_short">Pensando</string>
     <string name="thinking_thinking">Pensando…</string>
     <string name="task_status_working">Trabajando</string>

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Android chat keeps work in context and makes live turns easier to read.** Draft text, edits, quotes, and attachments stay with their connection, profile, and session; conversation search and prompt-turn navigation jump by stable message identity; message actions reveal smoothly on tap; quoted replies use linked previews without placing markup in the composer; assistant replies retain their compact high-contrast bubbles; and pending attachments support preview, removal, and accessible reordering.
+- **Android reasoning and tool activity use a quieter transcript.** Live thinking opens as an inline disclosure and settles to a collapsed Thought row, while consecutive routine reads, searches, commands, browser actions, and device actions share one live activity ticker or concise completed summary. Approvals, failures, generated media, file changes, output risks, and delegated work keep their own visible lifecycle surfaces even when ordinary tool progress is hidden.
 
 ### Fixed
 

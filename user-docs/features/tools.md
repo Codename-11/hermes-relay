@@ -8,24 +8,34 @@ Configure how tool calls appear in **Settings > Chat > Tool call display**:
 
 | Mode | Behavior |
 |------|----------|
-| **Off** | Tool calls are hidden entirely |
-| **Compact** | Inline one-line display showing tool name and status icon |
-| **Detailed** | Full progress cards with icons, arguments, duration, and results |
+| **Off** | Hide routine activity summaries; keep approvals, failures, generated media, file changes, risks, and delegated work visible |
+| **Compact** | Group consecutive routine calls into one summary; expanded rows stay compact |
+| **Detailed** | Use the same clean summaries, with full arguments, duration, and results available when expanded |
 
-## Detailed Mode
+## Activity summaries
 
-In Detailed mode, each tool call appears as an interactive card with:
+Consecutive reads, searches, commands, browser actions, and device actions share
+one quiet transcript row. While live, the row keeps a concise summary and a
+single latest-activity ticker instead of growing the conversation for every
+call. When the run settles, it becomes one collapsed summary. Tap it to inspect
+the original calls in order.
+
+In Detailed mode, each disclosed call includes:
 - **Tool name** and a type-specific icon (terminal, web, file, etc.)
 - **Arguments** — expandable section showing what was passed to the tool
 - **Status** — in-progress spinner or completion checkmark
 - **Duration** — how long the tool took to execute
 - **Result** — expandable section showing the tool's output (after completion)
 
-Cards **auto-expand** while the tool is running and **auto-collapse** when the tool completes. Tap to expand/collapse manually.
+The run itself stays compact by default. Tap its summary, then any individual
+tool row, to inspect the level of detail you need.
 
 ## Compact Mode
 
-In Compact mode, each tool call appears as an inline element showing the tool name and a status indicator (spinner while running, checkmark on completion). This is less intrusive for conversations with many tool calls.
+In Compact mode, expanding a run reveals small inline rows with each tool name
+and status indicator. Approvals, failures, generated media, file changes,
+output-risk findings, and delegated work always keep their independent surfaces
+because they require attention or are the requested deliverable.
 
 ## Tool Types
 
@@ -38,4 +48,4 @@ Common tools you might see:
 
 ## How It Works
 
-The Hermes API Server sends `tool.pending`/`tool.started` events when a tool begins, `tool.completed` when it succeeds, and `tool.failed` when it errors. The app renders these as interactive cards (or compact elements) that update in real-time as the response streams.
+The Hermes API Server sends `tool.pending`/`tool.started` events when a tool begins, `tool.completed` when it succeeds, and `tool.failed` when it errors. The app preserves each call's identity and source order while choosing either an activity run or an independent lifecycle surface. No Relay plugin is required.

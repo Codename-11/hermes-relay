@@ -325,7 +325,7 @@ fun MessageBubble(
         }
 
         // Thinking block (above the bubble, only for assistant messages)
-        if (!isUser && showThinking && message.thinkingContent.isNotEmpty()) {
+        if (!isUser && showThinking && message.thinkingContent.isNotBlank()) {
             ThinkingBlock(
                 thinkingContent = message.thinkingContent,
                 isStreaming = message.isThinkingStreaming,

@@ -190,7 +190,6 @@ import com.hermesandroid.relay.ui.components.ModelPickerSheet
 import com.hermesandroid.relay.ui.components.OptionPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
-import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
 import com.hermesandroid.relay.ui.components.CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
@@ -233,7 +232,10 @@ import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.SubagentLane
+import com.hermesandroid.relay.ui.components.ToolActivityRun
 import com.hermesandroid.relay.ui.components.ToolProgressCard
+import com.hermesandroid.relay.ui.components.ToolTranscriptItem
+import com.hermesandroid.relay.ui.components.groupTranscriptTools
 import com.hermesandroid.relay.ui.components.isVisibleForToolDisplay
 import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
@@ -3013,40 +3015,60 @@ fun ChatScreen(
 
                             if (!hasBackgroundTask) {
                                 // Subagent children (taskIndex != null) group
-                                // into lanes after the top-level tool cards;
-                                // the null group renders exactly as before.
+                                // into lanes after the top-level transcript
+                                // activity; the null group retains source order
+                                // while routine calls collapse into runs.
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
-                                laneGroups[null]?.forEach { toolCall ->
-                                    // Image generation renders inside MessageBubble
-                                    // so progress and final media retain one surface.
-                                    if (toolCall.showsImageGenerationPlaceholder()) {
-                                        return@forEach
-                                    }
-                                    if (!toolCall.isVisibleForToolDisplay(toolDisplay)) {
-                                        return@forEach
-                                    }
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    when (toolDisplay) {
-                                        "compact" -> CompactToolCall(toolCall = toolCall)
-                                        else -> ToolProgressCard(
-                                            toolCall = toolCall,
-                                            messageTimestamp = message.timestamp,
-                                            onExpandedChange = { expanded ->
-                                                if (expanded && isStreaming) {
-                                                    userScrolledAway = true
-                                                }
-                                            },
-                                        )
+                                val transcriptTools = groupTranscriptTools(laneGroups[null].orEmpty())
+                                transcriptTools.forEachIndexed { itemIndex, item ->
+                                    when (item) {
+                                        is ToolTranscriptItem.ActivityRun -> {
+                                            if (item.isVisibleForToolDisplay(toolDisplay)) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                ToolActivityRun(
+                                                    calls = item.calls,
+                                                    live = item.calls.any { !it.isComplete } ||
+                                                        (message.isStreaming && itemIndex == transcriptTools.lastIndex),
+                                                    detailed = toolDisplay == "detailed",
+                                                    messageTimestamp = message.timestamp,
+                                                    petObstacleKey = "chat-tools:${message.uiKey}:${item.calls.first().uiKey}",
+                                                    onExpandedChange = { expanded ->
+                                                        if (expanded && isStreaming) {
+                                                            userScrolledAway = true
+                                                        }
+                                                    },
+                                                )
+                                            }
+                                        }
+                                        is ToolTranscriptItem.Standalone -> {
+                                            // Generated media owns its lifecycle inside the
+                                            // message bubble. Every other standalone call is
+                                            // attention-bearing and stays visible even when
+                                            // ordinary tool scaffolding is Off.
+                                            if (!item.call.showsImageGenerationPlaceholder()) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                ToolProgressCard(
+                                                    toolCall = item.call,
+                                                    messageTimestamp = message.timestamp,
+                                                    onExpandedChange = { expanded ->
+                                                        if (expanded && isStreaming) {
+                                                            userScrolledAway = true
+                                                        }
+                                                    },
+                                                )
+                                            }
+                                        }
                                     }
                                 }
-                                if (toolDisplay != "off") {
-                                    laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        SubagentLane(
-                                            taskIndex = taskIndex,
-                                            calls = laneGroups.getValue(taskIndex),
-                                        )
-                                    }
+                                // Delegated work is a lifecycle surface, not
+                                // optional diagnostic scaffolding. Keep lanes
+                                // visible in Off, Compact, and Detailed modes.
+                                laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    SubagentLane(
+                                        taskIndex = taskIndex,
+                                        calls = laneGroups.getValue(taskIndex),
+                                    )
                                 }
                             }
                         }

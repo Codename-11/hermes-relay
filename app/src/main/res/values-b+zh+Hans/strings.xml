@@ -2557,6 +2557,23 @@
     <string name="image_generation_rendering">正在生成图像</string>
     <string name="tool_progress_cd_collapse">折叠</string>
     <string name="tool_progress_cd_expand">展开</string>
+    <string name="tool_progress_state_expanded">已展开</string>
+    <string name="tool_progress_state_collapsed">已折叠</string>
+    <string name="tool_run_preparing">正在准备%1$s</string>
+    <string name="tool_run_running">正在运行%1$s</string>
+    <string name="tool_run_finished">已完成%1$s</string>
+    <plurals name="tool_run_reading"><item quantity="other">正在读取 %d 项</item></plurals>
+    <plurals name="tool_run_read"><item quantity="other">已读取 %d 项</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="other">正在搜索 %d 个来源</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="other">已搜索 %d 个来源</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="other">正在运行 %d 个命令</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="other">已运行 %d 个命令</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="other">正在执行 %d 个浏览器操作</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="other">已执行 %d 个浏览器操作</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="other">正在执行 %d 个设备操作</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="other">已执行 %d 个设备操作</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="other">正在使用 %d 个工具</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="other">已使用 %d 个工具</item></plurals>
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">代理图标</string>
@@ -3574,6 +3591,7 @@
     <string name="tool_name_android">手机操作</string>
     <string name="timeline_no_checks">无检查</string>
     <string name="thinking_title">思考过程</string>
+    <string name="thinking_settled">思考</string>
     <string name="thinking_thinking_short">思考中</string>
     <string name="thinking_thinking">思考中…</string>
     <string name="task_status_working">处理中</string>
