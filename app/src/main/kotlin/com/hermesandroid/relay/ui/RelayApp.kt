@@ -59,6 +59,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -101,6 +102,7 @@ import com.hermesandroid.relay.ui.components.shouldCompactFloatingPet
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import com.hermesandroid.relay.ui.components.pet.LocalPetSafeAreaRegistry
 import com.hermesandroid.relay.ui.components.pet.PetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.PetInteractionLayer
 import com.hermesandroid.relay.ui.components.pet.PetSafeAreaRegistry
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
@@ -831,6 +833,13 @@ fun RelayApp() {
         LocalPetSafeAreaRegistry provides petSafeAreaRegistry,
         LocalAgentIconPath provides agentIconPath,
     ) {
+        // Dialogs and modal sheets use their own focused window. Treat that
+        // focus handoff as an app-wide interaction layer so a dock-only pet on
+        // any route cannot remain visible beneath modal chrome.
+        PetInteractionLayer(
+            owner = "platform-modal-window",
+            active = !LocalWindowInfo.current.isWindowFocused,
+        )
     HermesRelayTheme(
         appThemeId = appThemeId,
         themePreference = themePreference,

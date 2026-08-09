@@ -169,8 +169,18 @@ normal Hermes Relay screens.
   the saved edge. Settings/About dialogs suspend it. On a screen without a
   supported ledge, it stays docked.
 - Use the pet menu to pause roaming, reset position, open Appearance, or hide it.
-  TalkBack offers move-to-start/end, move-up/down, and reset actions so dragging
-  is never required.
+  In Chat, pausing parks the pet at the outer corner of the input rail. The dock
+  follows the input when the keyboard opens or closes, keeping the pet visible
+  without letting it drift over messages. Other screens keep the saved edge home.
+  TalkBack offers move-to-start/end and reset for the paused Chat dock. Vertical
+  move actions remain available on screens that use the saved free-form edge home,
+  so dragging is never required.
+- Chat temporarily hides the pet while the session drawer, a picker or info
+  sheet, clean mode, or voice mode owns the screen. Inline slash suggestions and
+  recent-prompt chips stay visible, but are measured as blocked controls so a
+  roaming pet routes around them.
+- On every other screen, opening a dialog or modal sheet temporarily hides the
+  docked pet as well. It returns only after that interaction layer closes.
 
 The pet's behavior has a predictable priority: your tap/drag/drop first, then
 Hermes activity, a newly completed response visit, normal roaming, and finally

@@ -192,6 +192,64 @@ class FloatingPetCompanionTest {
     }
 
     @Test
+    fun `paused chat pet follows the live composer dock`() {
+        val manual = PetPoint(40f, 900f)
+        val roaming = PetPoint(320f, 540f)
+        val composerBeforeIme = PetPoint(320f, 820f)
+        val composerWithIme = PetPoint(320f, 430f)
+
+        assertEquals(
+            composerBeforeIme,
+            floatingPetHomePoint(
+                route = "chat",
+                roamingEnabled = false,
+                roamingAllowed = true,
+                manualHomePoint = manual,
+                roamingHomePoint = roaming,
+                pausedChatDockPoint = composerBeforeIme,
+            ),
+        )
+        assertEquals(
+            composerWithIme,
+            floatingPetHomePoint(
+                route = "chat",
+                roamingEnabled = false,
+                roamingAllowed = true,
+                manualHomePoint = manual,
+                roamingHomePoint = roaming,
+                pausedChatDockPoint = composerWithIme,
+            ),
+        )
+    }
+
+    @Test
+    fun `active roaming and non-chat docking retain their existing homes`() {
+        val manual = PetPoint(40f, 900f)
+        val roaming = PetPoint(320f, 540f)
+        val composer = PetPoint(320f, 820f)
+
+        assertEquals(
+            roaming,
+            floatingPetHomePoint("chat", true, true, manual, roaming, composer),
+        )
+        assertEquals(
+            manual,
+            floatingPetHomePoint("settings", false, true, manual, roaming, composer),
+        )
+        assertEquals(
+            manual,
+            floatingPetHomePoint(null, true, false, manual, roaming, composer),
+        )
+    }
+
+    @Test
+    fun `paused chat dock exposes only meaningful movement axes`() {
+        assertFalse(floatingPetAllowsVerticalMoveActions("chat", roamingEnabled = false))
+        assertTrue(floatingPetAllowsVerticalMoveActions("chat", roamingEnabled = true))
+        assertTrue(floatingPetAllowsVerticalMoveActions("settings", roamingEnabled = false))
+    }
+
+    @Test
     fun `behavior director applies user agent response roam idle priority`() {
         assertEquals(
             PetBehaviorPriority.UserInteraction,

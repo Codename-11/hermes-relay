@@ -7,6 +7,24 @@ import org.junit.Test
 class ChatCleanViewHintTest {
 
     @Test
+    fun petRemainsVisibleOnUnobstructedChat() {
+        assertFalse(shouldHideChatPet())
+    }
+
+    @Test
+    fun everyModalChatSurfaceSuppressesPet() {
+        assertTrue(shouldHideChatPet(ambientMode = true))
+        assertTrue(shouldHideChatPet(voiceMode = true))
+        assertTrue(shouldHideChatPet(drawerOpenOrMoving = true))
+        assertTrue(shouldHideChatPet(commandPaletteVisible = true))
+        assertTrue(shouldHideChatPet(modelSheetVisible = true))
+        assertTrue(shouldHideChatPet(effortSheetVisible = true))
+        assertTrue(shouldHideChatPet(contextSheetVisible = true))
+        assertTrue(shouldHideChatPet(backgroundProcessesVisible = true))
+        assertTrue(shouldHideChatPet(agentInfoVisible = true))
+    }
+
+    @Test
     fun emptyTextChatShowsCleanViewHint() {
         assertTrue(
             shouldShowCleanViewHint(
