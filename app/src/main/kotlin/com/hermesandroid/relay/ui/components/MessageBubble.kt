@@ -32,7 +32,11 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -223,6 +227,12 @@ fun MessageBubble(
         isStreaming = message.isStreaming,
         hasMediaResult = message.attachments.isNotEmpty() || inlineImages.isNotEmpty(),
     )
+    val useFlatAssistantPresentation = shouldUseFlatAssistantPresentation(
+        message = message,
+        inlineImageCount = inlineImages.size,
+        showImageGeneration = showImageGeneration,
+        isActionBubble = isActionBubble,
+    )
     val hasImageGenerationCall = remember(message.toolCalls) {
         message.toolCalls.any {
             it.name.trim().lowercase() == "image_generate"
@@ -405,10 +415,12 @@ fun MessageBubble(
                         .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f))
                 )
             }
-        // Long-press opens a compact action menu when a quote handler is
-        // wired; with copy as the only action it stays a direct copy so the
-        // one-action case doesn't pay a menu tap.
+        Column(horizontalAlignment = alignment) {
+        // A normal tap reveals the compact action strip. Long-press preserves
+        // the existing overflow menu (or direct-copy shortcut when Copy is the
+        // only available action).
         var showMessageActions by remember { mutableStateOf(false) }
+        var showInlineActions by remember(message.uiKey) { mutableStateOf(false) }
         val haptic = LocalHapticFeedback.current
         val showEditAction = onEditMessage != null && isUser
         val showSpeakAction = shouldShowSpeakResponseAction(message, onSpeakMessage != null)
@@ -461,7 +473,7 @@ fun MessageBubble(
         }
         Surface(
             shape = bubbleShape,
-            color = backgroundColor,
+            color = if (useFlatAssistantPresentation) Color.Transparent else backgroundColor,
             modifier = Modifier
                 .then(
                     if (!isUser && !isSystem &&
@@ -484,7 +496,7 @@ fun MessageBubble(
                     }
                 )
                 .then(
-                    if (!isUser && !isSystem && isDarkTheme) {
+                    if (!isUser && !isSystem && isDarkTheme && !useFlatAssistantPresentation) {
                         Modifier.leftEdgeGlow(
                             alpha = 0.12f,
                             width = 28.dp,
@@ -493,7 +505,7 @@ fun MessageBubble(
                     } else Modifier
                 )
                 .combinedClickable(
-                    onClick = {},
+                    onClick = { showInlineActions = !showInlineActions },
                     onLongClick = {
                         // Buzz the instant the long-press registers — opening the
                         // action menu is the discoverability moment, so it gets the
@@ -528,7 +540,12 @@ fun MessageBubble(
                     }
                 )
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+            Column(
+                modifier = Modifier.padding(
+                    horizontal = if (useFlatAssistantPresentation) 4.dp else 14.dp,
+                    vertical = if (useFlatAssistantPresentation) 6.dp else 9.dp,
+                ),
+            ) {
                 val messageTextContent: @Composable () -> Unit = {
                     if (isUser || isSystem) {
                         // Plain text for user and system messages
@@ -771,23 +788,17 @@ fun MessageBubble(
                 // message routed over the relay proactive channel). Null on every
                 // ordinary chat message, which render nothing here.
                 message.deliveryStatus?.takeIf { isUser }?.let { status ->
-                    val label = stringResource(
-                        when (status) {
-                            MessageDeliveryStatus.SENDING -> R.string.msg_bubble_sending
-                            MessageDeliveryStatus.DELIVERED -> R.string.msg_bubble_delivered
-                            MessageDeliveryStatus.FAILED -> R.string.msg_bubble_not_sent
-                        }
-                    )
-                    val alpha = when (status) {
-                        MessageDeliveryStatus.SENDING -> 0.5f
-                        MessageDeliveryStatus.DELIVERED -> 0.5f
-                        MessageDeliveryStatus.FAILED -> 0.7f
-                    }
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = textColor.copy(alpha = alpha),
+                    MessageDeliveryIndicator(
+                        status = status,
+                        text = MessageDeliveryIndicatorText(
+                            sending = stringResource(R.string.msg_bubble_sending),
+                            queued = stringResource(R.string.msg_bubble_queued),
+                            steered = stringResource(R.string.msg_bubble_steered),
+                            delivered = stringResource(R.string.msg_bubble_delivered),
+                            failed = stringResource(R.string.msg_bubble_not_sent),
+                            tapToRetry = stringResource(R.string.chat_retry),
+                        ),
                     )
                 }
 
@@ -801,12 +812,108 @@ fun MessageBubble(
                 }
             }
         }
+        if (showInlineActions) {
+            MessageInlineActions(
+                showQuote = onQuoteMessage != null,
+                showSpeak = showSpeakAction,
+                showEdit = showEditAction,
+                onCopy = {
+                    showInlineActions = false
+                    onCopyMessage(message.content)
+                },
+                onQuote = {
+                    showInlineActions = false
+                    onQuoteMessage?.invoke(message.content)
+                },
+                onSpeak = {
+                    showInlineActions = false
+                    onSpeakMessage?.invoke(message.content)
+                },
+                onEdit = {
+                    showInlineActions = false
+                    onEditMessage?.invoke(message)
+                },
+            )
+        }
+        } // end Column (bubble + revealed actions)
         } // end Row (bubble + optional leading accent bar)
         } // end if (showBubble)
     } // end content Column
     } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
 }
+
+@Composable
+private fun MessageInlineActions(
+    showQuote: Boolean,
+    showSpeak: Boolean,
+    showEdit: Boolean,
+    onCopy: () -> Unit,
+    onQuote: () -> Unit,
+    onSpeak: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 2.dp,
+        modifier = Modifier.padding(top = 2.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 2.dp),
+        ) {
+            IconButton(onClick = onCopy, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.ContentCopy,
+                    contentDescription = stringResource(R.string.msg_bubble_copy),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            if (showQuote) {
+                IconButton(onClick = onQuote, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.FormatQuote,
+                        contentDescription = stringResource(R.string.msg_bubble_quote),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (showSpeak) {
+                IconButton(onClick = onSpeak, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = stringResource(R.string.msg_bubble_speak_response),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (showEdit) {
+                IconButton(onClick = onEdit, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = stringResource(R.string.msg_bubble_edit),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+internal fun shouldUseFlatAssistantPresentation(
+    message: ChatMessage,
+    inlineImageCount: Int,
+    showImageGeneration: Boolean,
+    isActionBubble: Boolean,
+): Boolean = message.role == MessageRole.ASSISTANT &&
+    !isActionBubble &&
+    message.cards.isEmpty() &&
+    message.attachments.isEmpty() &&
+    message.toolCalls.isEmpty() &&
+    inlineImageCount == 0 &&
+    !showImageGeneration &&
+    !message.content.contains("```")
 
 internal data class MessageSelectionTopologyKey(
     val renderer: String,

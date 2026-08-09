@@ -694,6 +694,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">Mostre suas mensagens recentes como chips tocáveis acima do editor para enviá-las novamente. Desativado por padrão.</string>
     <string name="chat_settings_keep_keyboard_open">Manter o teclado aberto ao enviar</string>
     <string name="chat_settings_keep_keyboard_open_desc">Permaneça no editor após enviar. Desative para fechar o teclado depois de cada mensagem enviada.</string>
+    <string name="chat_settings_physical_keyboard_enter">Tecla Enter do teclado físico</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">Escolha se Enter envia ou insere uma nova linha. Ctrl+Enter sempre envia.</string>
+    <string name="chat_settings_insert_newline">Inserir nova linha</string>
     <string name="chat_settings_notify_when_finishes">Alertas de chat em segundo plano</string>
     <string name="chat_settings_notify_when_finishes_desc">Notifique quando o Hermes precisar de uma resposta ou terminar em segundo plano</string>
     <string name="chat_settings_share_phone_status">Compartilhar o status do celular com o agente</string>
@@ -3726,4 +3729,10 @@
     <string name="support_bundle_copied">Informações de suporte copiadas</string>
     <string name="support_bundle_no_share">Informações de suporte copiadas — nenhum app encontrado para compartilhar</string>
     <string name="support_bundle_share_title">Compartilhar informações de suporte do Hermes-Relay</string>
+    <string name="chat_search_conversation">Pesquisar conversa</string>
+    <string name="chat_search_close">Fechar pesquisa</string>
+    <string name="chat_search_no_results">Nenhum resultado</string>
+    <string name="chat_search_result_count">%1$d de %2$d</string>
+    <string name="msg_bubble_queued">Na fila</string>
+    <string name="msg_bubble_steered">Correção enviada</string>
 </resources>

@@ -6,8 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android chat keeps work in context and makes live turns easier to read.** Draft text, edits, and attachments stay with their connection, profile, and session; conversation search and prompt-turn navigation jump by stable message identity; message actions are available on tap; assistant prose uses a flatter transcript style; thinking and tools share a compact expandable activity row; and pending attachments support preview, removal, and accessible reordering.
+
 ### Fixed
 
+- **Android chat matches standard keyboard, scrolling, and photo behavior.** Sentence capitalization is enabled, physical Enter can send or insert a newline according to a device-level setting, Ctrl/Command+Enter always submits, directional keys stay with the text caret, expanded thinking and tool content retains bottom-follow until the user scrolls away, and portrait attachments honor their EXIF orientation in previews and message viewers.
+- **Android distinguishes live-turn corrections from queued follow-ups.** The composer names its current action with visible text and accessible state, successful gateway redirects show a correction lifecycle marker, and attachment-bearing follow-ups always enter the session-owned queue because the upstream redirect operation is text-only.
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 

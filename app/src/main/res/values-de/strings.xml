@@ -736,6 +736,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">Letzte Nachrichten als antippbare Chips über dem Eingabefeld anzeigen, um sie erneut zu senden. Standardmäßig aus.</string>
     <string name="chat_settings_keep_keyboard_open">Tastatur nach dem Senden geöffnet lassen</string>
     <string name="chat_settings_keep_keyboard_open_desc">Nach dem Senden im Eingabefeld bleiben. Ausschalten, um die Tastatur nach jeder gesendeten Nachricht zu schließen.</string>
+    <string name="chat_settings_physical_keyboard_enter">Eingabetaste der physischen Tastatur</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">Wähle, ob die Eingabetaste sendet oder eine neue Zeile einfügt. Strg+Eingabetaste sendet immer.</string>
+    <string name="chat_settings_insert_newline">Neue Zeile einfügen</string>
     <string name="chat_settings_notify_when_finishes">Chat-Benachrichtigungen im Hintergrund</string>
     <string name="chat_settings_notify_when_finishes_desc">Benachrichtigen, wenn Hermes Eingaben benötigt oder im Hintergrund fertig wird</string>
     <string name="chat_settings_share_phone_status">Smartphone-Status mit Agent teilen</string>
@@ -3886,4 +3889,10 @@
     <string name="support_bundle_copied">Supportinformationen kopiert</string>
     <string name="support_bundle_no_share">Supportinformationen kopiert — keine App zum Teilen gefunden</string>
     <string name="support_bundle_share_title">Hermes-Relay-Supportinformationen teilen</string>
+    <string name="chat_search_conversation">Unterhaltung durchsuchen</string>
+    <string name="chat_search_close">Suche schließen</string>
+    <string name="chat_search_no_results">Keine Ergebnisse</string>
+    <string name="chat_search_result_count">%1$d von %2$d</string>
+    <string name="msg_bubble_queued">In Warteschlange</string>
+    <string name="msg_bubble_steered">Korrektur gesendet</string>
 </resources>

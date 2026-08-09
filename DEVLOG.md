@@ -1,5 +1,43 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-09 — Android chat experience and attachment polish
+
+The Android composer now declares sentence capitalization and a Send IME
+action. A device-level setting chooses whether unmodified physical Enter sends
+or inserts a newline; Shift+Enter remains a newline and Ctrl/Command+Enter
+always submits. Every submit route converges on the existing live-turn owner,
+so the current gateway state still decides whether content steers the active
+turn or queues behind it. Directional focus traversal is cancelled while the
+editor owns focus so hardware arrow keys continue to move the caret and
+selection.
+
+Conversation bottom-follow now remains owned when thinking or tool details
+expand. Only an actual drag ending above the bottom yields that ownership, and
+a chat first measured while the IME is already visible now captures the same
+resize-follow state as a keyboard opened after composition.
+
+Bitmap-backed attachment surfaces now apply EXIF rotation and reflection before
+display. Attachment reads and Base64 conversion also leave the UI thread, so
+selecting a larger photo no longer performs the full ingestion path inside the
+activity-result callback.
+
+Composer drafts now belong to the stable connection, profile, and session
+identity. Text, edit context, and pending attachments restore when returning to
+a chat without persisting attachment bytes. Pending attachments expose bounded,
+orientation-aware previews plus explicit remove and reorder controls.
+
+Conversation overflow now opens transcript search with previous/next matches
+and a prompt-turn rail, both keyed to the same stable UI identity as the message
+list. Ordinary assistant prose uses a flatter surface, while code, cards, media,
+and tool content retain stronger containers. Tapping a message reveals the
+existing copy, quote, speak, and edit actions with accessible targets.
+
+Thinking and top-level tools render as one expandable activity row with stable
+phase announcements. The composer also names Correction and Queue states with
+visible labels. Gateway redirects remain text-only: follow-ups with attachments
+are forced through the existing destination-owned queue so files cannot be left
+behind by a correction request.
+
 ## 2026-08-08 — Streaming reply tail follow
 
 Android's conversation-bottom follower now reads the current immutable message

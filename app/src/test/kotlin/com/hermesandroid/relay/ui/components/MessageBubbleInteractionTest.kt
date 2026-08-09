@@ -1,0 +1,91 @@
+package com.hermesandroid.relay.ui.components
+
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.MessageRole
+import org.junit.Assert.assertEquals
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+
+@RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [27], qualifiers = "w360dp-h720dp-xhdpi")
+class MessageBubbleInteractionTest {
+    @get:Rule
+    val compose = createComposeRule()
+
+    @Test
+    fun tapRevealsAccessibleActionsAndInvokesExistingCallbacks() {
+        val invocations = mutableListOf<String>()
+        val message = ChatMessage(
+            id = "assistant-actions",
+            role = MessageRole.ASSISTANT,
+            content = "A completed response.",
+            timestamp = 1_700_000_000_000L,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = message,
+                    onCopyMessage = { invocations += "copy:$it" },
+                    onQuoteMessage = { invocations += "quote:$it" },
+                    onSpeakMessage = { invocations += "speak:$it" },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("assistant message: ${message.content}").performClick()
+        val copyAction = compose.onNodeWithContentDescription("Copy")
+            .assertIsDisplayed()
+            .assertHasClickAction()
+        compose.onNodeWithContentDescription("Quote in reply").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithContentDescription("Speak response").assertIsDisplayed().assertHasClickAction()
+        copyAction.assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
+
+        compose.onNodeWithContentDescription("Quote in reply").performClick()
+
+        assertEquals(listOf("quote:${message.content}"), invocations)
+        compose.onNodeWithContentDescription("Copy").assertDoesNotExist()
+    }
+
+    @Test
+    fun longPressStillOpensTheExistingActionMenu() {
+        val message = ChatMessage(
+            id = "assistant-long-press",
+            role = MessageRole.ASSISTANT,
+            content = "Long press still works.",
+            timestamp = 1_700_000_000_000L,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = message,
+                    onQuoteMessage = {},
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("assistant message: ${message.content}")
+            .performTouchInput { longClick() }
+
+        compose.onNodeWithText("Copy").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithText("Quote in reply").assertIsDisplayed().assertHasClickAction()
+    }
+}
