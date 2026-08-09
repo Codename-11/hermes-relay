@@ -49,6 +49,10 @@ class DashboardManageDiskCacheTest {
                     title = "hermes-relay-pair",
                     subtitle = "Pairing helper",
                     meta = "enabled",
+                    profileModel = "anthropic / claude-sonnet-4-5",
+                    profileIsDefault = true,
+                    profileGatewayRunning = true,
+                    profileSkillCount = 18,
                     actions = listOf(
                         DashboardItemAction(
                             label = "Disable",
