@@ -81,6 +81,7 @@ import com.hermesandroid.relay.network.upstream.ApiModelRoutingException
 import com.hermesandroid.relay.network.upstream.ApiModelSelectionAck
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.isCurrentModelOptionsResponse
+import com.hermesandroid.relay.network.upstream.modelOptionsIdentityToPublish
 import com.hermesandroid.relay.network.upstream.parsePersonalityPrompts
 import com.hermesandroid.relay.network.upstream.sessionTurnModelHint
 import com.hermesandroid.relay.network.relay.ProactiveMessage
@@ -729,9 +730,13 @@ class ChatViewModel : ViewModel() {
      * Refresh the gateway's curated provider/model list (`model.options`).
      * Connects the gateway on demand. No-op without a gateway client.
      * [refresh] is the explicit upstream refresh path for dynamic/custom-provider catalogs;
-     * automatic picker opens stay on the cheap cached path.
+     * automatic picker opens stay on the cheap cached path. [catalogOnly] updates
+     * choices and capability metadata without publishing a model identity.
      */
-    fun refreshModelOptions(refresh: Boolean = false) {
+    fun refreshModelOptions(
+        refresh: Boolean = false,
+        catalogOnly: Boolean = false,
+    ) {
         val gateway = gatewayClient ?: run {
             android.util.Log.i("ChatViewModel", "refreshModelOptions: no gateway client")
             if (refresh) _modelOptionsRefreshing.value = false
@@ -759,13 +764,14 @@ class ChatViewModel : ViewModel() {
                     // identity. session.info/session.resume is canonical once a
                     // live session exists; do not let a profile/global catalog
                     // response repaint its controls.
-                    val sessionIdentity = gateway.serverModelIdentity.value
-                    if (hasLiveGatewaySession() && sessionIdentity != null) {
-                        _gatewayCurrentModel.value = sessionIdentity.model
-                        _gatewayCurrentProvider.value = sessionIdentity.provider
-                    } else {
-                        _gatewayCurrentModel.value = it.currentModel
-                        _gatewayCurrentProvider.value = it.currentProvider
+                    modelOptionsIdentityToPublish(
+                        catalogOnly = catalogOnly,
+                        hasLiveSession = hasLiveGatewaySession(),
+                        sessionIdentity = gateway.serverModelIdentity.value,
+                        options = it,
+                    )?.let { identity ->
+                        _gatewayCurrentModel.value = identity.model
+                        _gatewayCurrentProvider.value = identity.provider
                     }
                     refreshRelayReasoningCapabilities(refresh = refresh)
                     android.util.Log.i(

@@ -929,7 +929,7 @@ fun AgentInfoSheet(
     }
 
     LaunchedEffect(Unit) {
-        chatViewModel.refreshModelOptions()
+        chatViewModel.refreshModelOptions(catalogOnly = true)
         chatViewModel.refreshApprovalMode()
         chatViewModel.refreshPersonalities()
         chatViewModel.refreshModels()
@@ -1267,7 +1267,9 @@ fun AgentInfoSheet(
         AgentPassportPicker.Model -> ModelPickerSheet(
             options = passportModelOptions,
             refreshing = modelOptionsRefreshing,
-            onRefresh = { chatViewModel.refreshModelOptions(refresh = true) },
+            onRefresh = {
+                chatViewModel.refreshModelOptions(refresh = true, catalogOnly = true)
+            },
             onSelect = { option ->
                 activePicker = null
                 if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
@@ -2329,7 +2331,7 @@ private fun LegacyAgentInfoSheet(
 
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
-    LaunchedEffect(Unit) { chatViewModel.refreshModelOptions() }
+    LaunchedEffect(Unit) { chatViewModel.refreshModelOptions(catalogOnly = true) }
     LaunchedEffect(Unit) { chatViewModel.refreshApprovalMode() }
     // Re-pull server-supplied personalities (list + default + active) on open so
     // a server-side change shows without an app reload.

@@ -3789,7 +3789,9 @@ fun ChatScreen(
                 ModelPickerSheet(
                     options = modelPickerOptions,
                     refreshing = modelOptionsRefreshing,
-                    onRefresh = { chatViewModel.refreshModelOptions(refresh = true) },
+                    onRefresh = {
+                        chatViewModel.refreshModelOptions(refresh = true, catalogOnly = true)
+                    },
                     onSelect = { option ->
                         showModelSheet = false
                         if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
