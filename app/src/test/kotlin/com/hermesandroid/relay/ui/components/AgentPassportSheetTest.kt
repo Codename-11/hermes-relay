@@ -160,7 +160,7 @@ class AgentPassportSheetTest {
     }
 
     @Test
-    fun downwardGestureAtTop_dismissesSheet() {
+    fun boundaryGesture_doesNotCompeteWithFullHeightSheet() {
         var dismissals = 0
         compose.setContent {
             MaterialTheme {
@@ -176,7 +176,8 @@ class AgentPassportSheetTest {
         compose.onNodeWithTag(AGENT_PASSPORT_SCROLL_TAG)
             .performTouchInput { swipeDown() }
 
-        compose.waitUntil(timeoutMillis = 5_000) { dismissals == 1 }
+        compose.runOnIdle { assertEquals(0, dismissals) }
+        compose.onNodeWithTag(AGENT_PASSPORT_SHEET_TAG).assertIsDisplayed()
     }
 
     @Test

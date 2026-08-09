@@ -958,9 +958,6 @@ fun AgentInfoSheet(
                 presence = resolvedPresence,
                 hasSoul = resolvedProfile?.hasSoul == true,
                 skillCount = resolvedProfile?.skillCount ?: 0,
-                transportLabel = transportFriendlyName(sessionTransport.type),
-                sessionLabel = currentSessionId?.take(8) ?: "—",
-                contextLabel = contextLabel,
                 onProfileClick = { activePicker = AgentPassportPicker.Profile },
             )
 
@@ -1344,11 +1341,11 @@ internal fun AgentPassportSheetHost(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        // Use Material's gesture owner instead of custom pointer input. The
-        // verticalScroll child consumes downward movement until its top
-        // boundary, then hands the remainder to the sheet; Material also
-        // follows the platform animator scale for reduced-motion users.
-        sheetGesturesEnabled = true,
+        // A full-height sheet and its long verticalScroll child otherwise
+        // compete for the same drag at the content boundaries. On some devices
+        // that repeatedly settles/re-expands the sheet and produces a visible
+        // vibration at the bottom. Close and system Back remain explicit.
+        sheetGesturesEnabled = false,
     ) {
         Column(
             modifier = Modifier
@@ -1482,9 +1479,6 @@ private fun AgentPassportHeader(
     presence: ProfilePresence?,
     hasSoul: Boolean,
     skillCount: Int,
-    transportLabel: String,
-    sessionLabel: String,
-    contextLabel: String,
     onProfileClick: () -> Unit,
 ) {
     val brand = LocalBrand.current
@@ -1502,17 +1496,8 @@ private fun AgentPassportHeader(
         }
     }
     val identityMetadata = listOfNotNull(
-        providerLabel,
         stringResource(R.string.conn_info_soul).takeIf { hasSoul },
         stringResource(R.string.conn_info_skills_count, skillCount).takeIf { skillCount > 0 },
-    ).joinToString(" · ")
-    val connectionValue = listOf(
-        transportLabel,
-        if (connected) {
-            stringResource(R.string.conn_info_connected)
-        } else {
-            stringResource(R.string.conn_info_disconnected)
-        },
     ).joinToString(" · ")
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -1648,40 +1633,17 @@ private fun AgentPassportHeader(
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_model_title),
-                    value = modelLabel,
-                    modifier = Modifier.weight(1f),
-                )
-                PassportTechnicalDivider(height = 44.dp)
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_connection),
-                    value = connectionValue,
-                    valueColor = if (connected) brand.green else MaterialTheme.colorScheme.error,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_session_title),
-                    value = sessionLabel,
-                    modifier = Modifier.weight(1f),
-                )
-                PassportTechnicalDivider(height = 42.dp)
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_context),
-                    value = contextLabel,
-                    modifier = Modifier.weight(1f),
-                )
-                PassportTechnicalDivider(height = 42.dp)
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_transport),
-                    value = transportLabel,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+            PassportTechnicalField(
+                label = stringResource(R.string.voice_test_label_provider),
+                value = providerLabel ?: "—",
+                modifier = Modifier.fillMaxWidth(),
+            )
+            PassportTechnicalField(
+                label = stringResource(R.string.conn_info_model_title),
+                value = modelLabel,
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 2,
+            )
         }
     }
 }
@@ -1692,6 +1654,7 @@ private fun PassportTechnicalField(
     value: String,
     modifier: Modifier = Modifier,
     valueColor: Color = MaterialTheme.colorScheme.onSurface,
+    maxLines: Int = 1,
 ) {
     Column(
         modifier = modifier.padding(horizontal = 8.dp),
@@ -1707,20 +1670,10 @@ private fun PassportTechnicalField(
             text = value,
             style = MaterialTheme.typography.labelLarge,
             color = valueColor,
-            maxLines = 1,
+            maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
         )
     }
-}
-
-@Composable
-private fun PassportTechnicalDivider(height: Dp) {
-    Box(
-        modifier = Modifier
-            .height(height)
-            .widthIn(min = 1.dp, max = 1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-    )
 }
 
 @Composable
