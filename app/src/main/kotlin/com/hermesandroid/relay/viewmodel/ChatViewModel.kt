@@ -755,8 +755,18 @@ class ChatViewModel : ViewModel() {
                     }
                     modelOptionsByProfile[profileKey] = it
                     _modelProviders.value = it.providers
-                    _gatewayCurrentModel.value = it.currentModel
-                    _gatewayCurrentProvider.value = it.currentProvider
+                    // Opening a picker refreshes catalog metadata, not session
+                    // identity. session.info/session.resume is canonical once a
+                    // live session exists; do not let a profile/global catalog
+                    // response repaint its controls.
+                    val sessionIdentity = gateway.serverModelIdentity.value
+                    if (hasLiveGatewaySession() && sessionIdentity != null) {
+                        _gatewayCurrentModel.value = sessionIdentity.model
+                        _gatewayCurrentProvider.value = sessionIdentity.provider
+                    } else {
+                        _gatewayCurrentModel.value = it.currentModel
+                        _gatewayCurrentProvider.value = it.currentProvider
+                    }
                     refreshRelayReasoningCapabilities(refresh = refresh)
                     android.util.Log.i(
                         "ChatViewModel",

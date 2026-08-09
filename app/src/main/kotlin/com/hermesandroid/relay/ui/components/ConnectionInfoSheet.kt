@@ -771,6 +771,20 @@ fun AgentInfoSheet(
     val currentSession = remember(sessions, currentSessionId) {
         sessions.firstOrNull { it.sessionId == currentSessionId }
     }
+    val sessionModelState = resolveSessionModelUiState(
+        hasSession = currentSessionId != null,
+        pendingModel = selectedModel,
+        pendingProvider = selectedProvider,
+        gatewayModel = gatewayModel,
+        gatewayProvider = gatewayProvider,
+        persistedSessionModel = currentSession?.model,
+        profileDefaultModel = resolvedProfile?.model,
+        serverDefaultModel = serverModel,
+    )
+    val sessionPickerProvider = sessionModelState.pickerProvider
+        ?: sessionModelState.pickerModel?.let { model ->
+            modelProviders.singleOrNull { model in it.models }?.slug
+        }
     val agentName = AgentDisplay.agentName(
         profile = resolvedProfile,
         selectedPersonality = selectedPersonality,
@@ -782,25 +796,22 @@ fun AgentInfoSheet(
         AgentDisplay.profileDisplayName(it) ?: it.name
     } ?: stringResource(R.string.conn_info_server_default)
     val serverDefaultLabel = stringResource(R.string.conn_info_server_default)
-    val modelLabel = AgentDisplay.displayModelName(selectedModel ?: gatewayModel)
-        ?: AgentDisplay.displayModelName(resolvedProfile?.model)
-        ?: AgentDisplay.displayModelName(serverModel)
+    val modelLabel = AgentDisplay.displayModelName(sessionModelState.model)
         ?: serverDefaultLabel
     val serverDefaultModelLabel = AgentDisplay.displayModelName(serverModel)
         ?: AgentDisplay.displayModelName(resolvedProfile?.model)
     val providerLabel = modelProviders
-        .firstOrNull { it.slug.equals(gatewayProvider, ignoreCase = true) }
+        .firstOrNull { it.slug.equals(sessionModelState.provider, ignoreCase = true) }
         ?.name
         ?.takeIf { it.isNotBlank() }
-        ?: gatewayProvider.takeIf { it.isNotBlank() }
-    val sessionModelLabel = AgentDisplay.displayModelName(currentSession?.model)
-        ?: modelLabel
-    val sessionProviderLabel = currentSession?.model
+        ?: sessionModelState.provider
+    val sessionModelLabel = modelLabel
+    val sessionProviderLabel = sessionModelState.model
         ?.takeIf { it.isNotBlank() }
         ?.let { sessionModel ->
             modelProviders.firstOrNull { sessionModel in it.models }?.name
         }
-        ?: providerLabel.takeIf { currentSession?.model.isNullOrBlank() }
+        ?: providerLabel
     val connected = chatReady
     val resolvedPresence = resolvedProfile?.let {
         ProfilePresenceResolver.resolve(it, connected)
@@ -851,6 +862,8 @@ fun AgentInfoSheet(
         agentProfiles,
         selectedModel,
         selectedProvider,
+        sessionModelState,
+        sessionPickerProvider,
         modelLabel,
         unavailableModelLabel,
         modelNeedsSetupLabel,
@@ -871,7 +884,7 @@ fun AgentInfoSheet(
                     label = serverDefaultLabel,
                     value = null,
                     secondary = serverDefaultModelLabel,
-                    selected = selectedModel == null,
+                    selected = sessionModelState.inheritsProfileDefault,
                 ),
             )
             modelProviders
@@ -891,8 +904,8 @@ fun AgentInfoSheet(
                                         provider.warning ?: modelNeedsSetupLabel
                                     else -> null
                                 },
-                                selected = selectedModel == model &&
-                                    selectedProvider.equals(provider.slug, ignoreCase = true),
+                                selected = sessionModelState.pickerModel == model &&
+                                    sessionPickerProvider.equals(provider.slug, ignoreCase = true),
                                 enabled = !unavailable,
                             ),
                         )
@@ -908,7 +921,7 @@ fun AgentInfoSheet(
                             value = model.id,
                             group = "Routes",
                             secondary = model.routeDetail,
-                            selected = selectedModel == model.id,
+                            selected = sessionModelState.pickerModel == model.id,
                         ),
                     )
                 }
@@ -982,7 +995,7 @@ fun AgentInfoSheet(
                 ) {
                     Column {
                         Text(
-                            text = stringResource(R.string.conn_info_active_configuration),
+                            text = stringResource(R.string.conn_info_session_title),
                             modifier = Modifier.padding(
                                 start = 18.dp,
                                 top = 17.dp,
@@ -993,24 +1006,12 @@ fun AgentInfoSheet(
                             fontWeight = FontWeight.SemiBold,
                         )
                         PassportConfigRow(
-                            icon = Icons.Filled.Person,
-                            title = stringResource(R.string.conn_info_personality_title),
-                            value = AgentDisplay.personalityLabel(
-                                selectedPersonality,
-                                defaultPersonality,
-                            ),
-                            expanded = false,
-                            enabled = !isStreaming,
-                            onClick = { activePicker = AgentPassportPicker.Personality },
-                        )
-                        PassportDivider()
-                        PassportConfigRow(
                             icon = Icons.Filled.ViewInAr,
                             title = stringResource(R.string.conn_info_model_title),
-                            value = selectedModel ?: if (modelLabel == serverDefaultLabel) {
-                                serverDefaultLabel
-                            } else {
+                            value = if (sessionModelState.inheritsProfileDefault) {
                                 stringResource(R.string.conn_info_server_default_model, modelLabel)
+                            } else {
+                                modelLabel
                             },
                             expanded = false,
                             enabled = !isStreaming,
@@ -1031,6 +1032,44 @@ fun AgentInfoSheet(
                                 onClick = { activePicker = AgentPassportPicker.Reasoning },
                             )
                         }
+                    }
+                }
+
+                // Upstream personality changes persist to the active profile
+                // while also applying to the live session. Keep that control
+                // visibly separate from the session-only model/effort card so
+                // it cannot be mistaken for an ephemeral override.
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                    ),
+                ) {
+                    Column {
+                        Text(
+                            text = stringResource(R.string.conn_info_profile),
+                            modifier = Modifier.padding(
+                                start = 18.dp,
+                                top = 17.dp,
+                                end = 18.dp,
+                                bottom = 4.dp,
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        PassportConfigRow(
+                            icon = Icons.Filled.Person,
+                            title = stringResource(R.string.conn_info_personality_title),
+                            value = AgentDisplay.personalityLabel(
+                                selectedPersonality,
+                                defaultPersonality,
+                            ),
+                            expanded = false,
+                            enabled = !isStreaming,
+                            onClick = { activePicker = AgentPassportPicker.Personality },
+                        )
                     }
                 }
 

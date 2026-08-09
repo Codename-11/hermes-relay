@@ -128,6 +128,7 @@ import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import com.hermesandroid.relay.ui.components.reasoningEffortLabel
+import com.hermesandroid.relay.ui.components.resolveSessionModelUiState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -818,6 +819,23 @@ fun ChatScreen(
     val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
     val gatewayProjectName by chatViewModel.gatewayProjectName.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
+    val currentSession = remember(sessions, currentSessionId) {
+        sessions.firstOrNull { it.sessionId == currentSessionId }
+    }
+    val sessionModelState = resolveSessionModelUiState(
+        hasSession = currentSessionId != null,
+        pendingModel = selectedModelOverride,
+        pendingProvider = selectedProviderOverride,
+        gatewayModel = gatewayCurrentModel,
+        gatewayProvider = gatewayCurrentProvider,
+        persistedSessionModel = currentSession?.model,
+        profileDefaultModel = effectiveProfile?.model,
+        serverDefaultModel = serverModelName,
+    )
+    val sessionPickerProvider = sessionModelState.pickerProvider
+        ?: sessionModelState.pickerModel?.let { model ->
+            modelProviders.singleOrNull { model in it.models }?.slug
+        }
     val showThinking by connectionViewModel.showThinking.collectAsState()
     val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
@@ -2139,10 +2157,7 @@ fun ChatScreen(
                     // session.info model — so a mid-session switch shows here
                     // instead of a stale profile/global default. Profile model and
                     // /api/config's serverModelName are the fallbacks.
-                    val modelName = AgentDisplay.displayModelName(selectedModelOverride)
-                        ?: AgentDisplay.displayModelName(gatewayCurrentModel)
-                        ?: AgentDisplay.displayModelName(effectiveProfile?.model)
-                        ?: AgentDisplay.displayModelName(serverModelName)
+                    val modelName = AgentDisplay.displayModelName(sessionModelState.model)
                     // Subtext: a NON-default personality shown BEFORE the model
                     // (e.g. "Catgirl \u00B7 gpt-5.5"). A CLEARED overlay (default /
                     // none / neutral / blank) \u2014 or one that just matches the
@@ -3467,11 +3482,7 @@ fun ChatScreen(
                     listOfNotNull(AgentDisplay.requestModelName(selectedModelOverride)?.let { ApiModelOption(it) }))
                     .distinctBy { it.id }
             }
-            val currentModelForInput = apiModelOptions.firstOrNull { it.id == selectedModelOverride }?.id
-                ?: AgentDisplay.displayModelName(selectedModelOverride)
-                ?: AgentDisplay.displayModelName(gatewayCurrentModel)
-                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
-                ?: AgentDisplay.displayModelName(serverModelName)
+            val currentModelForInput = AgentDisplay.displayModelName(sessionModelState.model)
             val fallbackModelDetail = AgentDisplay.displayModelName(gatewayCurrentModel)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
                 ?: AgentDisplay.displayModelName(serverModelName)
@@ -3492,6 +3503,8 @@ fun ChatScreen(
                 sseModelOptions,
                 selectedModelOverride,
                 selectedProviderOverride,
+                sessionModelState,
+                sessionPickerProvider,
                 gatewayCurrentModel,
                 fallbackModelDetail,
                 serverDefaultModelDetail,
@@ -3506,7 +3519,7 @@ fun ChatScreen(
                                 label = serverDefaultLabel,
                                 value = null,
                                 secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it, modelDefaultLabel) },
-                                selected = selectedModelOverride == null,
+                                selected = sessionModelState.inheritsProfileDefault,
                             ),
                         )
                         if (modelProviders.any { it.models.isNotEmpty() }) {
@@ -3531,8 +3544,8 @@ fun ChatScreen(
                                                 !provider.authenticated -> provider.warning ?: needsSetupLabel
                                                 else -> null
                                             },
-                                            selected = selectedModelOverride == model &&
-                                                selectedProviderOverride.equals(provider.slug, ignoreCase = true),
+                                            selected = sessionModelState.pickerModel == model &&
+                                                sessionPickerProvider.equals(provider.slug, ignoreCase = true),
                                             enabled = !unavailable,
                                         ),
                                     )
@@ -3546,7 +3559,7 @@ fun ChatScreen(
                                         value = model.id,
                                         group = "Routes",
                                         secondary = model.routeDetail,
-                                        selected = selectedModelOverride == model.id,
+                                        selected = sessionModelState.pickerModel == model.id,
                                     ),
                                 )
                             }
@@ -3557,7 +3570,7 @@ fun ChatScreen(
                                         label = AgentDisplay.displayModelName(model.id) ?: model.id,
                                         value = model.id,
                                         secondary = model.routeDetail,
-                                        selected = selectedModelOverride == model.id,
+                                        selected = sessionModelState.pickerModel == model.id,
                                     ),
                                 )
                             }
