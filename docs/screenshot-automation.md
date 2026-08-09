@@ -123,9 +123,26 @@ Play 2:1 clipping), and only mock public-safe data.
 # Output: app/build/store-shots/<scene>.png  (1080x2160, exactly 2:1)
 ```
 
-Then promote into the committed pipeline (rename `01_landing -> 01_startup`, copy
-the rest by name into `assets/screenshots/`) and run the `export` + `validate`
-commands above.
+Then visually review all eight store candidates and promote them into the
+committed pipeline (rename `01_landing -> 01_startup`, copy the rest by name
+into `assets/screenshots/`). Run the `export` + `validate` commands above.
+
+The canonical marketing lineup intentionally exercises current product seams:
+
+- `02_chat` uses the grouped production bubble layout and code renderer rather
+  than the older long-answer fixture that could overflow its chrome, with the
+  real app-level `FloatingPetCompanion` layered over chat exactly as `RelayApp`
+  hosts it.
+- `03_voice` renders the real `VoiceModeOverlay` with a fixed sphere frame,
+  public-safe transcript, waveform, and session controls.
+- `04_sessions` renders the real `SessionDrawerContent` with deterministic
+  `ChatSession` fixtures, including pinned and Thread states.
+- `05_themes` renders the real Appearance preview and expanded customizer.
+- `07_connections` renders the real `ConnectionsSettingsScreen` with
+  deterministic connection and dashboard-status fixtures.
+- `08_appearance` renders the real floating-pet controls with a deterministic
+  one-frame fixture passed through `PetAvatar`; the fixture is generated under
+  `app/build/store-fixtures/` and is not a second source asset.
 
 ### Render any view going forward
 
@@ -174,10 +191,13 @@ compose.onNodeWithText("Solar").performScrollTo(); compose.onRoot().captureRoboI
   populated** and the shot tracks any layout change. Scenes `05`/`08` do this.
 - **Data-driven screens (Chat, Sessions, Connections, Manage)** — the real screen
   renders its real layout but **empty** with a fresh VM (no paired connection, no
-  messages). To get 1:1 *and* populated, feed mock data through a stubbed VM
-  (mockk the flows the screen collects). Until then those scenes use **curated
-  frames** built from real leaf components — pixel-faithful, but they can drift
-  from layout changes, so re-check them when the screen changes.
+  messages). Prefer direct deterministic input seams where the production
+  composable already exposes them: scenes `04_sessions` and `07_connections`
+  now render the real populated surfaces this way. Chat still uses production
+  chrome/leaf components plus the real app-level pet host; Manage remains a
+  curated production-component composition until its network-owned overview
+  state has a direct render seam. Those two must be visually re-checked when
+  their owning screen layout changes.
 
 ### Build notes (non-obvious)
 

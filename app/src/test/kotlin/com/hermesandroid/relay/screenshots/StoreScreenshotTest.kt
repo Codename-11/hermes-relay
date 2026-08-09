@@ -1,14 +1,16 @@
 package com.hermesandroid.relay.screenshots
 
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Color as AndroidColor
+import android.graphics.Paint as AndroidPaint
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
@@ -56,7 +58,11 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.DashboardConnectionStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.PetBehaviorPreferences
 import com.hermesandroid.relay.ui.components.ChatInputBar
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
@@ -66,11 +72,31 @@ import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.SphereReactivity
+import com.hermesandroid.relay.ui.components.VoiceModeOverlay
+import com.hermesandroid.relay.ui.components.FloatingPetCompanion
+import com.hermesandroid.relay.ui.components.SessionDrawerContent
+import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
+import com.hermesandroid.relay.ui.components.pet.PetPlacement
+import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.VoicePresentationMode
+import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.AvatarSource
+import com.hermesandroid.relay.ui.components.avatar.FrameSequenceClip
+import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
+import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
+import com.hermesandroid.relay.ui.components.avatar.PetAvatar
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
 import com.hermesandroid.relay.ui.components.SphereRegistry
+import com.hermesandroid.relay.viewmodel.InteractionMode
+import com.hermesandroid.relay.viewmodel.VoiceState
+import com.hermesandroid.relay.viewmodel.VoiceUiState
+import com.hermesandroid.relay.viewmodel.RelayUiState
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.res.painterResource
@@ -84,6 +110,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Deterministic, host-side marketing frames with Roborazzi.
@@ -93,7 +121,7 @@ import org.robolectric.annotation.GraphicsMode
  * ContextMeterBar, RelayModeStrip, ChatInputBar, RelayStatusStrip) and REAL
  * leaf components (MorphingSphere, MessageBubble) fed mock, public-safe data —
  * so what renders is the app's own UI, not a mock-up. The sphere is pinned with
- * fixedTime/fixedColorPhase for byte-identical renders; the same scene
+ * fixedTime/fixedColorPhase for pixel-identical renders; the same scene
  * re-renders in any theme by swapping appThemeId.
  *
  * Run: ./gradlew :app:testGooglePlayDebugUnitTest --tests "*StoreScreenshotTest*"
@@ -125,13 +153,32 @@ class StoreScreenshotTest {
     @Test fun s01_landing_nousBlue() = capture("01_landing_nous-blue", "nous-blue") { LandingScene() }
     @Test fun s01_landing_cyberpunk() = capture("01_landing_cyberpunk", "cyberpunk") { LandingScene() }
 
-    @Test fun s02_chat_brand() = capture("02_chat", "hermes-relay") { ChatScene() }
-    // "Blend" chat surface — wider bubbles + assistant avatar + grouped turns +
-    // a code block, in the Inter default. The self-verification frame for the
-    // chat UI refresh. Rendered in two themes to check dark + light contrast.
+    // The grouped chat scene is the canonical store frame: it exercises the
+    // current wider bubbles, assistant avatar, grouped turns, code rendering,
+    // model/effort controls, and the complete production chrome.
+    @Test fun s02_chat_brand() {
+        val pet = marketingPet()
+        capture("02_chat", "hermes-relay") { ChatWithPetScene(pet) }
+    }
+    // Keep a second filename plus a light-theme render as visual-regression
+    // diagnostics; only 02_chat is promoted to the store listing.
     @Test fun s09_blend_chat() = capture("09_blend_chat", "hermes-relay") { BlendChatScene() }
     @Test fun s09_blend_chat_light() = capture("09_blend_chat_nous-blue", "nous-blue") { BlendChatScene() }
-    @Test fun s03_voice() = capture("03_voice", "hermes-relay") { VoiceScene() }
+    @Test fun s03_voice() {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                CompositionLocalProvider(
+                    LocalSphereSkin provides SphereRegistry.Adaptive,
+                    LocalAgentAvatar provides FrozenMarketingSphere,
+                ) {
+                    VoiceScene()
+                }
+            }
+        }
+        compose.mainClock.advanceTimeByFrame()
+        compose.onRoot().captureRoboImage("build/store-shots/03_voice.png")
+    }
     // Real screen (1:1, auto-updates on layout changes). ConnectionViewModel
     // takes only an Application; Robolectric provides it. Renders every section
     // the production Appearance screen has — theme grid, mode, font, animation,
@@ -191,17 +238,65 @@ class StoreScreenshotTest {
     // Same real Appearance screen, scrolled to the avatar + sphere-skin sections.
     @Test fun s08_appearance() {
         val vm = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
+        val pet = marketingPet()
         compose.setContent {
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
-                CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
+                CompositionLocalProvider(
+                    LocalSphereSkin provides SphereRegistry.Adaptive,
+                    LocalAvailablePets provides listOf(pet),
+                    LocalFloatingPet provides pet,
+                ) {
                     AppearanceSettingsScreen(connectionViewModel = vm, onBack = {})
                 }
             }
         }
-        // Scroll to a skin card (unique to the skin grid, near the bottom) so the
-        // viewport frames the Agent avatar + Sphere skin sections together.
-        compose.onNodeWithText("Solar").performScrollTo()
+        // The earlier frame scrolled past the pet controls and showed only the
+        // sphere-skin grid. Frame the independently selected floating companion,
+        // its real PetAvatar preview, Petdex/import actions, and tuning controls.
+        compose.onNodeWithText("Browse Petdex").performScrollTo()
         compose.onRoot().captureRoboImage("build/store-shots/08_appearance.png")
+    }
+
+    /** Public-safe, deterministic one-frame pet rendered through PetAvatar. */
+    private fun marketingPet(): PetAvatar {
+        val output = File("build/store-fixtures/pixel-companion.png")
+        output.parentFile?.mkdirs()
+
+        val bitmap = Bitmap.createBitmap(192, 192, Bitmap.Config.ARGB_8888)
+        val canvas = AndroidCanvas(bitmap)
+        val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+
+        paint.color = AndroidColor.rgb(126, 87, 255)
+        canvas.drawRoundRect(36f, 48f, 156f, 154f, 34f, 34f, paint)
+        canvas.drawCircle(58f, 48f, 27f, paint)
+        canvas.drawCircle(134f, 48f, 27f, paint)
+        paint.color = AndroidColor.rgb(177, 196, 255)
+        canvas.drawOval(54f, 76f, 82f, 108f, paint)
+        canvas.drawOval(110f, 76f, 138f, 108f, paint)
+        paint.color = AndroidColor.rgb(8, 9, 14)
+        canvas.drawCircle(68f, 92f, 7f, paint)
+        canvas.drawCircle(124f, 92f, 7f, paint)
+        paint.strokeWidth = 7f
+        paint.style = AndroidPaint.Style.STROKE
+        canvas.drawArc(76f, 98f, 116f, 134f, 12f, 156f, false, paint)
+        paint.style = AndroidPaint.Style.FILL
+        paint.color = AndroidColor.rgb(87, 218, 136)
+        canvas.drawRoundRect(50f, 146f, 86f, 170f, 12f, 12f, paint)
+        canvas.drawRoundRect(106f, 146f, 142f, 170f, 12f, 12f, paint)
+
+        FileOutputStream(output).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+
+        val clip = FrameSequenceClip(files = listOf(output), fps = 1f)
+        val stateClips = SphereState.entries.associateWith { clip }
+        return PetAvatar(
+            id = "pixel-companion",
+            label = "Pixel",
+            description = "A public-safe custom companion fixture",
+            reactivity = SphereReactivity(voice = true, tools = true, intensity = true, gaze = false),
+            activityClips = stateClips,
+            workingClip = clip,
+        )
     }
 
     // Theme gallery — the same content-rich chat scene reskinned by every theme
@@ -378,31 +473,80 @@ private fun StoreSettings(title: String, content: @Composable androidx.compose.f
 // ════════════════════════════════════════════════════════════════════════════
 
 @Composable
-private fun VoiceScene() {
-    // Full-screen voice modal — sphere hero + transcript prompt + mic FAB.
-    Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(androidx.compose.material.icons.Icons.Filled.GraphicEq, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-            Text("  Voice", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            Text("   Realtime Agent / default profile", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Box(Modifier.size(300.dp).padding(top = 24.dp)) {
-            MorphingSphere(Modifier.fillMaxSize(), state = SphereState.Listening, intensity = 0.5f, voiceAmplitude = 0.4f, voiceMode = true, fixedTime = 5f, fixedColorPhase = 1.0f)
-        }
-        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-        Text("Tap the mic to speak", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Box(
-            Modifier.padding(vertical = 40.dp).size(76.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(androidx.compose.material.icons.Icons.Filled.Mic, "Mic", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(34.dp))
-        }
+private fun VoiceScene() = VoiceModeOverlay(
+    uiState = VoiceUiState(
+        voiceMode = true,
+        state = VoiceState.Speaking,
+        amplitude = 0.58f,
+        outputAudioActive = true,
+        interactionMode = InteractionMode.Continuous,
+    ),
+    onMicTap = {},
+    onMicRelease = {},
+    onInterrupt = {},
+    onDismiss = {},
+    onModeChange = {},
+    onClearError = {},
+    transcriptMessages = MockChat.voiceThread,
+    showThinking = true,
+    voiceEngineMode = "hermes_voice_output",
+    voiceOutputProvider = "OpenAI",
+    voiceOutputModel = "gpt-4o-mini-tts",
+    voiceOutputVoice = "alloy",
+    voiceProfileName = "default",
+    voiceOutputEnabled = true,
+    voiceOutputFallbackEnabled = true,
+    presentationMode = VoicePresentationMode.Focus,
+)
+
+/** The real sphere renderer pinned to one frame for pixel-identical marketing output. */
+private object FrozenMarketingSphere : AgentAvatar {
+    override val id = "marketing-sphere"
+    override val label = "Sphere"
+    override val description = "Deterministic marketing renderer"
+    override val source = AvatarSource.BUILT_IN
+    override val reactivity = SphereReactivity(voice = true, tools = true, intensity = true, gaze = false)
+
+    @Composable
+    override fun Render(state: AvatarRenderState, modifier: Modifier) {
+        MorphingSphere(
+            modifier = modifier,
+            state = state.state,
+            intensity = state.intensity,
+            toolCallBurst = state.toolCallBurst,
+            voiceAmplitude = state.voiceAmplitude,
+            voiceMode = state.voiceMode,
+            fixedTime = 5f,
+            fixedColorPhase = 1f,
+        )
+    }
+}
+
+/** Production chat chrome and production app-level companion layered exactly as RelayApp does. */
+@Composable
+private fun ChatWithPetScene(pet: AgentAvatar) {
+    Box(Modifier.fillMaxSize()) {
+        BlendChatScene()
+        FloatingPetCompanion(
+            pet = pet,
+            state = AvatarRenderState(state = SphereState.Idle, paused = true),
+            placement = PetPlacement(PetLogicalEdge.End, 0.63f),
+            roamingEnabled = false,
+            roamingAllowed = false,
+            behaviorPreferences = PetBehaviorPreferences(),
+            surfaceScrolling = false,
+            compact = false,
+            animationEnabled = false,
+            appForeground = true,
+            route = null,
+            visitRequest = null,
+            onVisitRequestConsumed = {},
+            onPlacementChanged = {},
+            onRoamingEnabledChanged = {},
+            onResetPlacement = {},
+            onHide = {},
+            onOpenAppearance = {},
+        )
     }
 }
 
@@ -480,26 +624,44 @@ private object MockChat {
         outputTokens = 206
     )
 
+    val voiceThread = listOf(
+        ChatMessage(
+            id = "voice-user",
+            role = MessageRole.USER,
+            content = "Give me the quick version of today's project changes.",
+            timestamp = 0L,
+        ),
+        ChatMessage(
+            id = "voice-assistant",
+            role = MessageRole.ASSISTANT,
+            content = "Appearance is more flexible, pets can roam safely, and voice now keeps the conversation visible while you work hands-free.",
+            timestamp = 0L,
+            agentName = "Hermes",
+            badges = listOf("Voice"),
+        ),
+    )
+
     // A grouped thread for the "Blend" capture: user → two-message assistant
     // group (avatar once, code block in the first) → user follow-up.
     val blendThread = listOf(
         ChatMessage(
             id = "bu1",
             role = MessageRole.USER,
-            content = "How do I deploy to prod? Walk me through it.",
+            content = "How should I handle a flaky network call?",
             timestamp = 0L,
         ),
         ChatMessage(
             id = "ba1",
             role = MessageRole.ASSISTANT,
             content = """
-                Run the deploy script — it stages the build, applies migrations, then ships. It's idempotent, so re-running after a failure is safe:
+                Use bounded exponential backoff and retry only transient failures:
 
-                ```bash
-                ./scripts/deploy.sh prod --yes
+                ```kotlin
+                val delayMs = minOf(1_000L shl attempt, 8_000L)
+                delay(delayMs)
                 ```
 
-                Use `--dry-run` first if you want to preview the migration plan.
+                Keep the retry budget small, add a timeout, and surface the final error clearly.
             """.trimIndent(),
             timestamp = 0L,
             agentName = "Hermes",
@@ -508,7 +670,7 @@ private object MockChat {
         ChatMessage(
             id = "ba2",
             role = MessageRole.ASSISTANT,
-            content = "Want me to tail the logs once it's live and ping you if anything errors?",
+            content = "Want me to adapt this to the networking layer in your project?",
             timestamp = 0L,
             inputTokens = 138_010,
             outputTokens = 212,
@@ -516,7 +678,7 @@ private object MockChat {
         ChatMessage(
             id = "bu2",
             role = MessageRole.USER,
-            content = "Yes please — keep an eye on the error rate.",
+            content = "Yes — keep cancellation and offline mode intact.",
             timestamp = 0L,
         ),
     )
@@ -528,133 +690,73 @@ private object MockChat {
 
 @Composable
 private fun SessionsScene() {
-    Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("Server default sessions", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-        Text("Connection: Hermes", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(vertical = 14.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.onPrimary)
-                Text("  New Chat", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.SemiBold)
-            }
-        }
-        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Search, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                Text("  Search sessions or id…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip("All", true); FilterChip("Pinned", false); FilterChip("Archive", false)
-        }
-        SessionRow("Morning focus tips", "Active 4m ago", "2 msgs")
-        SessionRow("Weekly report draft", "Active 18m ago", "11 msgs")
-        SessionRow("Trip planning", "Active 1h ago", "23 msgs")
-        SessionRow("Code review notes", "Active 3h ago", "6 msgs")
-        SessionRow("Recipe ideas", "Active 5h ago", "9 msgs")
-        SessionRow("Untitled", "Active yesterday", "1 msg")
+    // The production drawer intentionally caps itself at 320dp inside a 360dp
+    // phone. Keep the full app viewport as the capture root so Roborazzi does
+    // not shrink-wrap the image to the drawer's intrinsic width.
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim)) {
+        SessionDrawerContent(
+            sessions = marketingSessions,
+            currentSessionId = "morning-focus",
+            scopeTitle = "Hermes",
+            scopeSubtitle = "Server default sessions",
+            animationEnabled = false,
+            threadsCapabilityActive = true,
+            onNewThread = {},
+            onNewChat = {},
+            onSelectSession = {},
+            onDeleteSession = {},
+            onRenameSession = { _, _ -> },
+        )
     }
 }
 
 @Composable
-private fun FilterChip(label: String, selected: Boolean) {
-    Surface(
-        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(10.dp),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
-    }
-}
+private fun ConnectionsScene() = ConnectionsSettingsScreen(
+    connections = marketingConnections,
+    activeConnectionId = "home",
+    activeRelayUiState = RelayUiState.Connected,
+    onOpenConnection = {},
+    onAddConnection = {},
+    onBack = {},
+)
 
-@Composable
-private fun SessionRow(title: String, active: String, msgs: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("$active  ·  $msgs", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Icon(Icons.Filled.Star, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), modifier = Modifier.size(20.dp))
-        Icon(Icons.Filled.MoreVert, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 12.dp))
-    }
-}
+private val marketingSessions = listOf(
+    ChatSession("morning-focus", "Morning focus tips", "gpt-5.5", 8, lastActivityAt = 1_780_000_000_000, pinned = true),
+    ChatSession("android-polish", "Android appearance polish", "gpt-5.5", 23, lastActivityAt = 1_779_999_900_000, source = "phone"),
+    ChatSession("weekly-report", "Weekly report draft", "gpt-5.5", 11, lastActivityAt = 1_779_999_800_000),
+    ChatSession("voice-notes", "Voice workflow notes", "gpt-5.5", 17, lastActivityAt = 1_779_999_700_000),
+    ChatSession("trip-planning", "Trip planning", "gpt-5.5", 31, lastActivityAt = 1_779_999_600_000),
+)
 
-@Composable
-private fun ConnectionsScene() = StoreSettings("Connections") {
-    // Level-1 list: scannable connection cards, the active one badged, each
-    // with the capability timeline. Tapping opens the tabbed detail.
-    ConnCard(label = "Hermes", active = true, status = "Connected · Tailscale") {
-        FeatureRow("API", "Ready", true)
-        FeatureRow("Dashboard", "Signed in", true)
-        FeatureRow("Voice", "Ready", true)
-        FeatureRow("Relay", "Connected", true)
-    }
-    ConnCard(label = "Lab NAS", active = false, status = "Paired 2 days ago") {
-        FeatureRow("API", "Configured", false)
-        FeatureRow("Dashboard", "Unchecked", false)
-        FeatureRow("Voice", "Optional", false)
-        FeatureRow("Relay", "Paired", true)
-    }
-}
-
-@Composable
-private fun ConnCard(
-    label: String,
-    active: Boolean,
-    status: String,
-    rows: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
-) {
-    Surface(
-        color = if (active) {
-            RelayRefresh.ElectricMuted.copy(alpha = 0.42f)
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant
-        },
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f),
-                )
-                if (active) com.hermesandroid.relay.ui.components.RelayStatusPill("Active", active = true)
-                Icon(
-                    androidx.compose.material.icons.Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 4.dp),
-                )
-            }
-            Text(
-                status,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(vertical = 4.dp), content = rows)
-            }
-        }
-    }
-}
-
-@Composable
-private fun FeatureRow(name: String, status: String, ok: Boolean) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(if (ok) RelayRefresh.Green else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)))
-        Text("  $name", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-        Text(status, style = MaterialTheme.typography.labelMedium, color = if (ok) RelayRefresh.Green else MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
+private val marketingConnections = listOf(
+    Connection(
+        id = "home",
+        label = "Hermes",
+        apiServerUrl = "https://hermes.example.com:8642",
+        relayUrl = "wss://hermes.example.com:8767",
+        dashboardUrl = "https://hermes.example.com:9119",
+        tokenStoreKey = "marketing-home",
+        dashboardAuthRequired = true,
+        dashboardLastStatus = DashboardConnectionStatus(
+            reachable = true,
+            authenticated = true,
+            gatewayTicketAvailable = true,
+            gatewayMode = "gateway",
+            profiles = listOf("default", "work"),
+        ),
+        transportHint = "tailscale",
+        pairedAt = 1_779_900_000_000,
+    ),
+    Connection(
+        id = "lab",
+        label = "Lab server",
+        apiServerUrl = "https://lab.example.com:8642",
+        relayUrl = "wss://lab.example.com:8767",
+        dashboardUrl = "https://lab.example.com:9119",
+        tokenStoreKey = "marketing-lab",
+        pairedAt = 1_779_800_000_000,
+    ),
+)
 
 // NOTE: scenes 05 + 08 render the REAL AppearanceSettingsScreen (1:1, see the
 // s05_themes / s08_appearance test methods). The earlier hand-built theme/skin
