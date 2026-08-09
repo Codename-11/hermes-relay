@@ -1,13 +1,14 @@
 # Hermes-Relay — Dev Log
 
-## 2026-08-08 — Compact Android thinking status
+## 2026-08-08 — Standalone Android thinking status
 
-Blank streaming assistant rows now present one compact status stamp from the
-first frame: a narrower, slower animation above the visible `Still working…`
-label. The first answer token removes the entire stamp, while recovery retains
-the distinct `Reconnecting to your answer…` wording. The bubble owns one stable
-TalkBack description and suppresses animated child nodes, avoiding repeated
-announcements without claiming measurable progress.
+Blank streaming assistant rows now present the full-size working animation
+directly in the conversation lane above the visible `Still working…` label,
+without painting an empty assistant bubble around the status. The first answer
+token replaces that standalone state with the normal response bubble, while
+recovery retains the distinct `Reconnecting to your answer…` wording. The
+status owns one stable TalkBack description and suppresses animated child
+nodes, avoiding repeated announcements without claiming measurable progress.
 
 ## 2026-08-08 — Android text-share draft handoff
 

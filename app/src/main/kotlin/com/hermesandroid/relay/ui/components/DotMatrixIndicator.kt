@@ -36,10 +36,10 @@ enum class ThinkingIndicatorStyle { Dots, Matrix }
  * the picker chip text; [periodMillis] is one full loop of the motion.
  */
 enum class ThinkingMatrixPattern(val key: String, val label: String, val periodMillis: Int) {
-    Wave("wave", "Wave", 1500),
-    Pulse("pulse", "Pulse", 1700),
-    Bounce("bounce", "Bounce", 1500),
-    Sparkle("sparkle", "Sparkle", 1200),
+    Wave("wave", "Wave", 1100),
+    Pulse("pulse", "Pulse", 1300),
+    Bounce("bounce", "Bounce", 1100),
+    Sparkle("sparkle", "Sparkle", 850),
     ;
 
     companion object {
@@ -132,8 +132,8 @@ internal fun shouldAnimateDotMatrix(
  * `AmbientAnimation.kt`). When [animated] is false it paints a single still
  * frame — the avatar-agnostic reduced-motion / animations-off behavior.
  *
- * The compact pitch keeps the grid legible as one restrained status mark rather
- * than a second piece of content competing with the reply.
+ * The horizontal pitch ([columnSpacing]) is a touch wider than the vertical
+ * pitch ([rowSpacing]) so the grid reads wider than tall without growing taller.
  */
 @Composable
 fun DotMatrixIndicator(
@@ -142,10 +142,10 @@ fun DotMatrixIndicator(
     pattern: ThinkingMatrixPattern = ThinkingMatrixPattern.Wave,
     columns: Int = 5,
     rows: Int = 3,
-    dotRadius: Dp = 1.35.dp,
-    columnSpacing: Dp = 7.dp,
+    dotRadius: Dp = 1.6.dp,
+    columnSpacing: Dp = 11.dp,
     rowSpacing: Dp = 5.dp,
-    fps: Int = 24,
+    fps: Int = 30,
     animated: Boolean = true,
 ) {
     val motion = rememberAccessibleMotionState()
@@ -210,7 +210,7 @@ fun DotMatrixIndicator(
         for (c in 0 until columns) {
             for (rr in 0 until rows) {
                 val brightness = brightnessAt(c, rr).coerceIn(0f, 1f)
-                val alpha = 0.14f + 0.76f * brightness
+                val alpha = 0.18f + 0.82f * brightness
                 drawCircle(
                     color = color.copy(alpha = color.alpha * alpha),
                     radius = r,

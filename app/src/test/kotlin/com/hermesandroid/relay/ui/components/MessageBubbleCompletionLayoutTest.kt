@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -42,7 +43,9 @@ class MessageBubbleCompletionLayoutTest {
             }
         }
 
-        compose.onNodeWithContentDescription("assistant message: Still working…").assertExists()
+        compose.onNodeWithContentDescription("assistant message: Still working…")
+            .assertExists()
+            .assertHasNoClickAction()
 
         compose.runOnIdle { content.value = "The first answer token" }
         compose.waitForIdle()

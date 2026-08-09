@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- **Android assistant bubbles explain quiet startup work without visual noise.** A smaller, slower thinking mark now pairs with a stable reviewable status until the first answer text arrives, while recovery keeps its explicit reconnecting state.
+- **Android visibly explains quiet startup work without an empty chat bubble.** The full-size thinking animation now sits directly in the conversation lane with a stable reviewable status until the first answer text arrives, while recovery keeps its explicit reconnecting state.
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 

@@ -397,12 +397,21 @@ fun MessageBubble(
         // carries only thinking and/or tool calls (both rendered OUTSIDE
         // this Surface — the ThinkingBlock above, the tool pills as separate
         // rows) would otherwise paint a bare timestamp-only chip between the
-        // Thought-process block and the tool pill. Keep the bubble while
-        // streaming (StreamingDots is the live "working" indicator) and
-        // whenever there are cards/attachments to render inside it.
+        // Thought-process block and the tool pill. The first-token working state
+        // is rendered directly in the conversation
+        // lane below, without an opaque bubble. Cards and attachments still own
+        // a normal bubble even when response prose has not arrived yet.
+        streamingStatusLabel?.let { streamingStatus ->
+            StandaloneStreamingStatus(
+                status = streamingStatus,
+                accessibilityDescription = a11yDescription,
+                textColor = textColor,
+                modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 6.dp),
+            )
+        }
+
         val showBubble = isUser || isSystem ||
             message.content.isNotBlank() ||
-            message.isStreaming ||
             showImageGeneration ||
             message.cards.isNotEmpty() ||
             message.attachments.isNotEmpty() ||
@@ -704,49 +713,6 @@ fun MessageBubble(
                         }
                 }
 
-                // Streaming indicator — only while awaiting the first token. Once
-                // text starts flowing, the growing reply is itself the progress
-                // signal, so this compact status stamp leaves the bubble.
-                if (
-                    message.isStreaming &&
-                    message.content.isBlank() &&
-                    !showImageGeneration
-                ) {
-                    val thinkingIndicator = LocalThinkingIndicator.current
-                    val streamingStatus = requireNotNull(streamingStatusLabel)
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(3.dp),
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            // The clickable bubble parent announces the stable
-                            // status once; suppress the animated children so each
-                            // dot is not exposed as a separate accessibility node.
-                            .clearAndSetSemantics { },
-                    ) {
-                        when (thinkingIndicator.style) {
-                            ThinkingIndicatorStyle.Matrix -> DotMatrixIndicator(
-                                // Auto follows the bubble text color; accents
-                                // come from the brand palette. The grid modulates
-                                // its own alpha (idle dots ≈0.18, lit dots 1.0).
-                                color = thinkingIndicator.color.toColor(autoColor = textColor),
-                                pattern = thinkingIndicator.pattern,
-                                animated = thinkingIndicator.animated,
-                            )
-                            ThinkingIndicatorStyle.Dots -> StreamingDots(
-                                color = textColor.copy(alpha = 0.6f),
-                            )
-                        }
-                        Text(
-                            text = streamingStatus,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = textColor.copy(alpha = 0.68f),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-
                 // Timestamp — only on the LAST bubble of a same-author run so a
                 // burst of fragments doesn't stack three near-touching time labels.
                 // Grouping breaks on a >5min gap (ChatScreen), so every pause still
@@ -917,6 +883,42 @@ private fun MessagePathBadge(text: String, leadingIcon: ImageVector? = null) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/** First-token progress rendered in the conversation lane, not inside a message bubble. */
+@Composable
+private fun StandaloneStreamingStatus(
+    status: String,
+    accessibilityDescription: String,
+    textColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val thinkingIndicator = LocalThinkingIndicator.current
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = modifier.clearAndSetSemantics {
+            contentDescription = accessibilityDescription
+        },
+    ) {
+        when (thinkingIndicator.style) {
+            ThinkingIndicatorStyle.Matrix -> DotMatrixIndicator(
+                color = thinkingIndicator.color.toColor(autoColor = textColor),
+                pattern = thinkingIndicator.pattern,
+                animated = thinkingIndicator.animated,
+            )
+            ThinkingIndicatorStyle.Dots -> StreamingDots(
+                color = textColor.copy(alpha = 0.6f),
+            )
+        }
+        Text(
+            text = status,
+            style = MaterialTheme.typography.labelSmall,
+            color = textColor.copy(alpha = 0.68f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
