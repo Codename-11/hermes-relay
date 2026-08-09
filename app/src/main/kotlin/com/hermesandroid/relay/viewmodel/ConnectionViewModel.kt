@@ -1054,6 +1054,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun dashboardClientForActive(dashboardUrl: String): DashboardApiClient =
         upstreamTransport.dashboardClientForActive(dashboardUrl)
 
+    /**
+     * Stable client for a frozen editable target. Unlike [dashboardClientForActive],
+     * this does not silently follow a later connection switch while a profile
+     * defaults draft is open.
+     */
+    fun dashboardClientForConnection(connectionId: String, dashboardUrl: String): DashboardApiClient =
+        upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
+
     fun nativeDashboardAuthClientForActive(dashboardUrl: String): NativeDashboardAuthClient? =
         upstreamTransport.nativeDashboardAuthClientForActive(dashboardUrl)
 
