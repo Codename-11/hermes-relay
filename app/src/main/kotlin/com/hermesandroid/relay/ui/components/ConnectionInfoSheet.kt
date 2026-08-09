@@ -932,7 +932,7 @@ fun AgentInfoSheet(
         chatViewModel.refreshModelOptions(catalogOnly = true)
         chatViewModel.refreshApprovalMode()
         chatViewModel.refreshPersonalities()
-        chatViewModel.refreshModels()
+        chatViewModel.refreshModels(catalogOnly = true)
         connectionViewModel.refreshDashboardProfiles()
     }
 
@@ -2339,7 +2339,7 @@ private fun LegacyAgentInfoSheet(
     // Re-pull the SSE-fallback model list + skill catalog on open so server-side
     // changes surface without an app reload (gateway model groups are covered by
     // refreshModelOptions above; skills feed the command palette).
-    LaunchedEffect(Unit) { chatViewModel.refreshModels() }
+    LaunchedEffect(Unit) { chatViewModel.refreshModels(catalogOnly = true) }
     LaunchedEffect(Unit) { chatViewModel.refreshSkills() }
     // Pull the host's agent profiles from the dashboard so they appear in the
     // Profile picker even on a dashboard-only (non-relay) connection.

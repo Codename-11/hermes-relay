@@ -1019,7 +1019,10 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun fetchModels(userInitiated: Boolean = false) {
+    fun fetchModels(
+        userInitiated: Boolean = false,
+        catalogOnly: Boolean = false,
+    ) {
         val client = apiClient ?: return
         val generation = modelOptionsGeneration.incrementAndGet()
         val profileKey = modelOptionsProfileKey()
@@ -1044,8 +1047,15 @@ class ChatViewModel : ViewModel() {
                 )
                 modelOptionsByProfile[profileKey] = options
                 _modelProviders.value = options.providers
-                _gatewayCurrentModel.value = options.currentModel
-                _gatewayCurrentProvider.value = options.currentProvider
+                modelOptionsIdentityToPublish(
+                    catalogOnly = catalogOnly,
+                    hasLiveSession = hasLiveGatewaySession(),
+                    sessionIdentity = gatewayClient?.serverModelIdentity?.value,
+                    options = options,
+                )?.let { identity ->
+                    _gatewayCurrentModel.value = identity.model
+                    _gatewayCurrentProvider.value = identity.provider
+                }
                 // Keep OpenAI route aliases visible alongside authenticated
                 // provider inventory. An alias remains the request id while
                 // its root is used only to validate the provider route.
@@ -3347,8 +3357,11 @@ class ChatViewModel : ViewModel() {
      * groups refresh via [refreshModelOptions]; this covers [availableModels] used
      * when no gateway model.options groups exist. Fetched once otherwise.
      */
-    fun refreshModels(userInitiated: Boolean = false) {
-        fetchModels(userInitiated)
+    fun refreshModels(
+        userInitiated: Boolean = false,
+        catalogOnly: Boolean = false,
+    ) {
+        fetchModels(userInitiated, catalogOnly)
     }
 
     /** Clear server-owned catalogs before a different connection starts loading. */
