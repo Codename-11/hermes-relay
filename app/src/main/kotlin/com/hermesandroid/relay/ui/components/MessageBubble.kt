@@ -81,12 +81,15 @@ import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.components.pet.petVisitTargetSurface
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
+
+internal const val CHAT_PET_IDENTITY_OBSTACLE_PREFIX = "chat-message-identity:"
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -277,7 +280,12 @@ fun MessageBubble(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(bottom = 3.dp, start = 4.dp),
+                modifier = Modifier
+                    .padding(bottom = 3.dp, start = 4.dp)
+                    .petObstacleSurface(
+                        key = "$CHAT_PET_IDENTITY_OBSTACLE_PREFIX${message.uiKey}",
+                        routes = setOf("chat"),
+                    ),
             ) {
                 Surface(
                     // Decorative: the adjacent visible agent name already owns
