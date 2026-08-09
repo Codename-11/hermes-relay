@@ -106,6 +106,7 @@ import com.hermesandroid.relay.ui.components.pet.PetCompanionCoordinator
 import com.hermesandroid.relay.ui.components.pet.PetInteractionLayer
 import com.hermesandroid.relay.ui.components.pet.PetSafeAreaRegistry
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
+import com.hermesandroid.relay.ui.components.pet.platformModalOwnsPetLayer
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
 import com.hermesandroid.relay.ui.components.ChatTransportTier
@@ -747,6 +748,7 @@ fun RelayApp() {
     val activeFloatingPet = remember(floatingPetId, availablePets) {
         availablePets.firstOrNull { it.id == floatingPetId }
     }
+    var floatingPetMenuExpanded by remember(activeFloatingPet?.id) { mutableStateOf(false) }
     val activeBackgroundAvatar = remember(backgroundAvatarId, availablePets) {
         resolveBackgroundAvatar(backgroundAvatarId, availablePets)
     }
@@ -848,7 +850,10 @@ fun RelayApp() {
         // any route cannot remain visible beneath modal chrome.
         PetInteractionLayer(
             owner = "platform-modal-window",
-            active = !LocalWindowInfo.current.isWindowFocused,
+            active = platformModalOwnsPetLayer(
+                windowFocused = LocalWindowInfo.current.isWindowFocused,
+                petMenuExpanded = floatingPetMenuExpanded,
+            ),
         )
     HermesRelayTheme(
         appThemeId = appThemeId,
@@ -1678,9 +1683,9 @@ fun RelayApp() {
                 ) { backStackEntry ->
                     // Responsive bubble width based on screen width. The "Blend"
                     // chat look favors wider bubbles: on compact phones the cap is
-                    // raised so long turns fill most of the row (binding on the
-                    // available width minus the assistant avatar gutter) instead
-                    // of wrapping early in a narrow column.
+                    // raised so long turns fill most of the row instead of
+                    // wrapping early in a narrow column. Assistant identity
+                    // stays in the group header and does not reduce this cap.
                     val configuration = LocalConfiguration.current
                     val screenWidthDp = configuration.screenWidthDp.dp
                     val maxBubbleWidth = when {
@@ -2706,6 +2711,7 @@ fun RelayApp() {
                 onOpenAppearance = {
                     navController.navigate(Screen.AppearanceSettings.route) { launchSingleTop = true }
                 },
+                onMenuExpandedChanged = { floatingPetMenuExpanded = it },
                 onExitTerrainDebug = {
                     petTerrainOverlayScope.launch {
                         FeatureFlags.setPetTerrainOverlayEnabled(sphereContext, false)

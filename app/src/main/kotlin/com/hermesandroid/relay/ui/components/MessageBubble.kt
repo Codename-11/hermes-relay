@@ -266,52 +266,31 @@ fun MessageBubble(
     val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
 
     CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
-    // The active profile image is sender identity, distinct from both the
-    // floating pet companion and the ambient Sphere. Reserve one stable gutter
-    // for an assistant run and render the identity only on its first message.
-    Row(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top,
+        horizontalAlignment = alignment,
     ) {
-    if (!isUser && !isSystem) {
-        Box(
-            modifier = Modifier.width(40.dp),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            if (shouldShowMessageGroupAvatar(
-                    isUser = isUser,
-                    isSystem = isSystem,
-                    isFirstInGroup = isFirstInGroup,
-                    agentName = message.agentName,
-                )
+        // Keep sender identity in the first-message label rather than a
+        // persistent leading column. Long responses and every follow-up in the
+        // group therefore retain the full bubble-width allowance.
+        if (!isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(bottom = 3.dp, start = 4.dp),
             ) {
                 Surface(
                     // Decorative: the adjacent visible agent name already owns
                     // the identity announcement, avoiding duplicate TalkBack copy.
-                    modifier = Modifier.size(32.dp),
+                    modifier = Modifier.size(24.dp),
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.primary,
                 ) {
                     AgentAvatarFace(
                         name = message.agentName.orEmpty(),
-                        letterStyle = MaterialTheme.typography.labelMedium,
+                        letterStyle = MaterialTheme.typography.labelSmall,
                     )
                 }
-            }
-        }
-    }
-    Column(
-        modifier = Modifier.weight(1f),
-        horizontalAlignment = alignment
-    ) {
-        // Agent name label sits beside the first group identity avatar. Pet
-        // companions never enter this row.
-        if (!isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(bottom = 2.dp, start = 4.dp),
-            ) {
                 Text(
                     text = localizeAgentName(message.agentName),
                     style = MaterialTheme.typography.labelSmall,
@@ -871,7 +850,6 @@ fun MessageBubble(
         } // end Row (bubble + optional leading accent bar)
         } // end if (showBubble)
     } // end content Column
-    } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
 }
 

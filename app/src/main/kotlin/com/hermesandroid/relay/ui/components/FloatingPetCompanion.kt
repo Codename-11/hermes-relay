@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -490,10 +491,19 @@ fun FloatingPetCompanion(
     onResetPlacement: () -> Unit,
     onHide: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onMenuExpandedChanged: (Boolean) -> Unit = {},
     onExitTerrainDebug: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember(pet.id) { mutableStateOf(false) }
+    val latestOnMenuExpandedChanged by rememberUpdatedState(onMenuExpandedChanged)
+    fun setMenuExpanded(expanded: Boolean) {
+        menuExpanded = expanded
+        onMenuExpandedChanged(expanded)
+    }
+    DisposableEffect(pet.id) {
+        onDispose { latestOnMenuExpandedChanged(false) }
+    }
     var dragging by remember(pet.id) { mutableStateOf(false) }
     var draggedPoint by remember(pet.id) { mutableStateOf<PetPoint?>(null) }
     var pendingDrop by remember(pet.id) { mutableStateOf<PendingPetDrop?>(null) }
@@ -2392,7 +2402,7 @@ fun FloatingPetCompanion(
                     enabled = floatingPetAcceptsPointerInput(positioned, surfaceScrolling),
                 ) {
                     tapReactionNonce += 1
-                    menuExpanded = true
+                    setMenuExpanded(true)
                 }
                 .semantics(mergeDescendants = true) {
                     role = Role.Button
@@ -2473,7 +2483,7 @@ fun FloatingPetCompanion(
 
             DropdownMenu(
                 expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false },
+                onDismissRequest = { setMenuExpanded(false) },
             ) {
                 DropdownMenuItem(
                     text = { Text("${pet.label} · $stateLabel", color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -2490,28 +2500,28 @@ fun FloatingPetCompanion(
                         )
                     },
                     onClick = {
-                        menuExpanded = false
+                        setMenuExpanded(false)
                         onRoamingEnabledChanged(!roamingEnabled)
                     },
                 )
                 DropdownMenuItem(
                     text = { Text(resetLabel) },
                     onClick = {
-                        menuExpanded = false
+                        setMenuExpanded(false)
                         onResetPlacement()
                     },
                 )
                 DropdownMenuItem(
                     text = { Text(appearanceLabel) },
                     onClick = {
-                        menuExpanded = false
+                        setMenuExpanded(false)
                         onOpenAppearance()
                     },
                 )
                 DropdownMenuItem(
                     text = { Text(hideLabel) },
                     onClick = {
-                        menuExpanded = false
+                        setMenuExpanded(false)
                         onHide()
                     },
                 )
