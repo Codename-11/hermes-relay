@@ -222,8 +222,6 @@ fun MessageBubble(
     val timeFormat = remember(locale) { SimpleDateFormat("h:mm a", locale) }
     val quoteEnvelope = remember(message.content) { parseChatQuotedPrompt(message.content) }
     val visibleMessageContent = quoteEnvelope?.body ?: message.content
-    val a11yDescription =
-        "${message.role.name.lowercase()} message: ${visibleMessageContent.take(100)}"
     val isDarkTheme = LocalBrand.current.isDark
 
     // Pull generated/inline image links (`![alt](src)`) out of assistant
@@ -260,7 +258,7 @@ fun MessageBubble(
     val a11yDescription = buildString {
         append(message.role.name.lowercase())
         append(" message: ")
-        append(streamingStatusLabel ?: message.content.take(100))
+        append(streamingStatusLabel ?: visibleMessageContent.take(100))
     }
     val hasImageGenerationCall = remember(message.toolCalls) {
         message.toolCalls.any {
