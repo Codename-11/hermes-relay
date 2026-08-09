@@ -13,6 +13,7 @@ import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.BackgroundTaskPhase
 import com.hermesandroid.relay.data.BackgroundTaskState
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatComposerDraftStore
 import com.hermesandroid.relay.data.ChatQueuedMessageCheckpoint
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
@@ -24,6 +25,7 @@ import com.hermesandroid.relay.data.ChatTurnMoaReferenceCheckpoint
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.DataStoreChatTurnCheckpointStore
+import com.hermesandroid.relay.data.InMemoryChatComposerDraftStore
 import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
@@ -539,6 +541,9 @@ class ChatViewModel : ViewModel() {
     private val _pendingAttachments = MutableStateFlow<List<Attachment>>(emptyList())
     val pendingAttachments: StateFlow<List<Attachment>> = _pendingAttachments.asStateFlow()
 
+    /** Session-keyed composer state; intentionally memory-only for attachment privacy. */
+    val composerDraftStore: ChatComposerDraftStore = InMemoryChatComposerDraftStore()
+
     fun addAttachment(attachment: Attachment) {
         _pendingAttachments.update { it + attachment }
     }
@@ -546,6 +551,22 @@ class ChatViewModel : ViewModel() {
     fun removeAttachment(index: Int) {
         _pendingAttachments.update { list ->
             list.filterIndexed { i, _ -> i != index }
+        }
+    }
+
+    fun replacePendingAttachments(attachments: List<Attachment>) {
+        _pendingAttachments.value = attachments.toList()
+    }
+
+    fun moveAttachment(fromIndex: Int, toIndex: Int) {
+        _pendingAttachments.update { attachments ->
+            if (fromIndex !in attachments.indices || toIndex !in attachments.indices) {
+                attachments
+            } else {
+                attachments.toMutableList().apply {
+                    add(toIndex, removeAt(fromIndex))
+                }
+            }
         }
     }
 
@@ -3834,7 +3855,11 @@ class ChatViewModel : ViewModel() {
 
         // Mid-turn: redirect on the gateway transport, queue everywhere else.
         if (activeStream != null) {
-            if (_steerableTurn.value && streamingEndpoint == "gateway") {
+            if (
+                _steerableTurn.value &&
+                streamingEndpoint == "gateway" &&
+                _pendingAttachments.value.isEmpty()
+            ) {
                 steerActiveTurn(text.trim())
             } else {
                 enqueueMessage(text.trim())
@@ -3867,6 +3892,7 @@ class ChatViewModel : ViewModel() {
                             role = MessageRole.USER,
                             content = text,
                             timestamp = System.currentTimeMillis(),
+                            deliveryStatus = MessageDeliveryStatus.STEERED,
                         )
                     )
                 }

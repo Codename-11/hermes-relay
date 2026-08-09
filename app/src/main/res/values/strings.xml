@@ -133,6 +133,10 @@
 
     <!-- Chat screen UI chrome -->
     <string name="chat_share_conversation">Share conversation</string>
+    <string name="chat_search_conversation">Search conversation</string>
+    <string name="chat_search_close">Close search</string>
+    <string name="chat_search_no_results">No results</string>
+    <string name="chat_search_result_count">%1$d of %2$d</string>
     <string name="chat_retry">Retry</string>
     <string name="chat_dismiss">Dismiss</string>
     <string name="chat_open_settings">Open Settings</string>
@@ -755,6 +759,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">Show your recent messages as tappable chips above the composer to send them again. Off by default.</string>
     <string name="chat_settings_keep_keyboard_open">Keep keyboard open on send</string>
     <string name="chat_settings_keep_keyboard_open_desc">Stay in the composer after sending. Turn off to dismiss the keyboard after each sent message.</string>
+    <string name="chat_settings_physical_keyboard_enter">Physical keyboard Enter key</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">Choose whether Enter sends or inserts a new line. Ctrl+Enter always sends.</string>
+    <string name="chat_settings_insert_newline">Insert new line</string>
     <string name="chat_settings_notify_when_finishes">Background chat alerts</string>
     <string name="chat_settings_notify_when_finishes_desc">Notify when Hermes needs input or finishes while the app is in the background</string>
     <string name="chat_settings_share_phone_status">Share phone status with agent</string>
@@ -2896,6 +2903,8 @@
     <string name="msg_bubble_reconnecting">Reconnecting to your answer&#8230;</string>
     <string name="msg_bubble_still_working">Still working&#8230;</string>
     <string name="msg_bubble_sending">Sending&#8230;</string>
+    <string name="msg_bubble_queued">Queued</string>
+    <string name="msg_bubble_steered">Correction sent</string>
     <string name="msg_bubble_delivered">Delivered</string>
     <string name="msg_bubble_not_sent">Not sent</string>
 

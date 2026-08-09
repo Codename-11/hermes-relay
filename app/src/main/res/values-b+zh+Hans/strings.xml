@@ -736,6 +736,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">在输入栏上方显示最近消息为可点击的标签以便重发。默认关闭。</string>
     <string name="chat_settings_keep_keyboard_open">发送时保持键盘打开</string>
     <string name="chat_settings_keep_keyboard_open_desc">发送后留在输入栏。关闭则在每条消息发送后收起键盘。</string>
+    <string name="chat_settings_physical_keyboard_enter">实体键盘 Enter 键</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">选择按 Enter 是发送消息还是插入新行。Ctrl+Enter 始终发送。</string>
+    <string name="chat_settings_insert_newline">插入新行</string>
     <string name="chat_settings_notify_when_finishes">后台聊天提醒</string>
     <string name="chat_settings_notify_when_finishes_desc">Hermes 在后台需要输入或完成回复时通知</string>
     <string name="chat_settings_share_phone_status">与代理分享手机状态</string>
@@ -3814,4 +3817,10 @@
     <string name="support_bundle_copied">支持信息已复制</string>
     <string name="support_bundle_no_share">支持信息已复制 — 未找到可分享的应用</string>
     <string name="support_bundle_share_title">分享 Hermes-Relay 支持信息</string>
+    <string name="chat_search_conversation">搜索对话</string>
+    <string name="chat_search_close">关闭搜索</string>
+    <string name="chat_search_no_results">无结果</string>
+    <string name="chat_search_result_count">%1$d / %2$d</string>
+    <string name="msg_bubble_queued">已排队</string>
+    <string name="msg_bubble_steered">更正已发送</string>
 </resources>

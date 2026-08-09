@@ -704,6 +704,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">Показывать ваши недавние сообщения как нажимаемые чипы над композитором, чтобы отправить их снова. По умолчанию выключено.</string>
     <string name="chat_settings_keep_keyboard_open">Оставить клавиатуру открытой при отправке</string>
     <string name="chat_settings_keep_keyboard_open_desc">Оставаться в композиторе после отправки. Выключите, чтобы скрыть клавиатуру после каждого отправленного сообщения.</string>
+    <string name="chat_settings_physical_keyboard_enter">Клавиша Enter на физической клавиатуре</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">Выберите, отправляет ли Enter сообщение или добавляет новую строку. Ctrl+Enter всегда отправляет.</string>
+    <string name="chat_settings_insert_newline">Вставить новую строку</string>
     <string name="chat_settings_notify_when_finishes">Уведомления о фоновом чате</string>
     <string name="chat_settings_notify_when_finishes_desc">Уведомлять, когда Гермес требует ввода или заканчивает работу, когда приложение находится в фоновом режиме</string>
     <string name="chat_settings_share_phone_status">Поделиться статусом телефона с агентом</string>
@@ -3607,4 +3610,10 @@
     <string name="support_bundle_copied">Сведения для поддержки скопированы</string>
     <string name="support_bundle_no_share">Сведения для поддержки скопированы — приложение для отправки не найдено</string>
     <string name="support_bundle_share_title">Поделиться сведениями поддержки Hermes-Relay</string>
+    <string name="chat_search_conversation">Поиск по беседе</string>
+    <string name="chat_search_close">Закрыть поиск</string>
+    <string name="chat_search_no_results">Ничего не найдено</string>
+    <string name="chat_search_result_count">%1$d из %2$d</string>
+    <string name="msg_bubble_queued">В очереди</string>
+    <string name="msg_bubble_steered">Исправление отправлено</string>
 </resources>

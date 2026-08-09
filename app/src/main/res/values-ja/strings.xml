@@ -736,6 +736,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">最近のメッセージをコンポーザーの上にタップ可能なチップとして表示し、再送信します。デフォルトではオフです。</string>
     <string name="chat_settings_keep_keyboard_open">送信時にキーボードを開いたままにする</string>
     <string name="chat_settings_keep_keyboard_open_desc">送信後はコンポーザー内に留まります。メッセージを送信するたびにキーボードを閉じるには、オフにします。</string>
+    <string name="chat_settings_physical_keyboard_enter">物理キーボードの Enter キー</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">Enter で送信するか改行するかを選択します。Ctrl+Enter は常に送信します。</string>
+    <string name="chat_settings_insert_newline">改行を挿入</string>
     <string name="chat_settings_notify_when_finishes">バックグラウンドのチャット通知</string>
     <string name="chat_settings_notify_when_finishes_desc">バックグラウンドで Hermes が入力を必要としたとき、または完了したときに通知します</string>
     <string name="chat_settings_share_phone_status">電話のステータスをエージェントと共有する</string>
@@ -3885,4 +3888,10 @@
     <string name="support_bundle_copied">サポート情報をコピーしました</string>
     <string name="support_bundle_no_share">サポート情報をコピーしました — 共有できるアプリがありません</string>
     <string name="support_bundle_share_title">Hermes-Relay サポート情報を共有</string>
+    <string name="chat_search_conversation">会話を検索</string>
+    <string name="chat_search_close">検索を閉じる</string>
+    <string name="chat_search_no_results">結果なし</string>
+    <string name="chat_search_result_count">%1$d / %2$d</string>
+    <string name="msg_bubble_queued">キュー済み</string>
+    <string name="msg_bubble_steered">修正を送信しました</string>
 </resources>

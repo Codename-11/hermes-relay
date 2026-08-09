@@ -37,6 +37,8 @@ import com.hermesandroid.relay.data.DEFAULT_PET_SIZE_SCALE
 import com.hermesandroid.relay.data.PetBehaviorPreferences
 import com.hermesandroid.relay.data.PetBehaviorPreferencesRepository
 import com.hermesandroid.relay.data.PetTemperament
+import com.hermesandroid.relay.data.ChatInputPreferencesRepository
+import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
@@ -466,6 +468,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val petBehaviorPreferencesRepository =
         PetBehaviorPreferencesRepository(application)
+    private val chatInputPreferencesRepository =
+        ChatInputPreferencesRepository(application)
 
     // --- Core networking components ---
 
@@ -2050,6 +2054,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_KEEP_COMPOSER_FOCUSED_ON_SEND] = enabled
             }
+        }
+    }
+
+    val physicalKeyboardEnterBehavior: StateFlow<PhysicalKeyboardEnterBehavior> =
+        chatInputPreferencesRepository.physicalKeyboardEnterBehavior
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                PhysicalKeyboardEnterBehavior.SendMessage,
+            )
+
+    fun setPhysicalKeyboardEnterBehavior(behavior: PhysicalKeyboardEnterBehavior) {
+        viewModelScope.launch {
+            chatInputPreferencesRepository.setPhysicalKeyboardEnterBehavior(behavior)
         }
     }
 

@@ -5,7 +5,6 @@ package com.hermesandroid.relay.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.MutatePriority
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.background
@@ -52,6 +51,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
@@ -86,6 +86,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -100,7 +101,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.ClipEntry
@@ -156,16 +156,18 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.platform.LocalContext
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatComposerDraft
+import com.hermesandroid.relay.data.ChatComposerDraftContext
+import com.hermesandroid.relay.data.ChatComposerDraftKey
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
@@ -185,7 +187,6 @@ import com.hermesandroid.relay.ui.components.ModelPickerSheet
 import com.hermesandroid.relay.ui.components.OptionPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
-import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
 import com.hermesandroid.relay.ui.components.CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
@@ -197,6 +198,13 @@ import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.PendingAttachmentComposer
+import com.hermesandroid.relay.ui.components.AttachmentViewer
+import com.hermesandroid.relay.ui.components.TranscriptSearchNavigator
+import com.hermesandroid.relay.ui.components.TranscriptNavigatorStrings
+import com.hermesandroid.relay.ui.components.ToolActivityPhase
+import com.hermesandroid.relay.ui.components.ToolActivityStack
+import com.hermesandroid.relay.ui.components.ToolActivityState
 import com.hermesandroid.relay.ui.components.newestPetPerchUiKey
 import com.hermesandroid.relay.ui.components.newestPetVisitTargetUiKey
 import com.hermesandroid.relay.ui.components.petPerchUiKeys
@@ -223,7 +231,6 @@ import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.SubagentLane
-import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.isVisibleForToolDisplay
 import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
@@ -252,7 +259,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val DEFAULT_CHAR_LIMIT = 4096
 private const val CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE = "chat-scroll-to-bottom-obstacle"
@@ -811,6 +820,8 @@ fun ChatScreen(
     val closeDrawerOnSend by connectionViewModel.closeDrawerOnSend.collectAsState()
     val keepComposerFocusedOnSend by
         connectionViewModel.keepComposerFocusedOnSend.collectAsState()
+    val physicalKeyboardEnterBehavior by
+        connectionViewModel.physicalKeyboardEnterBehavior.collectAsState()
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
@@ -950,7 +961,62 @@ fun ChatScreen(
     )
 
     var inputText by remember { mutableStateOf("") }
+    val composerDraftKey = remember(
+        activeConnection?.id,
+        selectedProfile?.name,
+        currentSessionId,
+    ) {
+        ChatComposerDraftKey(
+            connectionId = activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline",
+            profileId = selectedProfile?.name?.takeIf(String::isNotBlank)
+                ?: ChatComposerDraftKey.DEFAULT_PROFILE_ID,
+            sessionId = currentSessionId?.takeIf(String::isNotBlank) ?: "new-session",
+        )
+    }
+    var activeComposerDraftKey by remember(chatViewModel) {
+        mutableStateOf<ChatComposerDraftKey?>(null)
+    }
+    var restoringComposerDraft by remember { mutableStateOf(false) }
+    LaunchedEffect(composerDraftKey) {
+        activeComposerDraftKey?.let { previousKey ->
+            chatViewModel.composerDraftStore.save(
+                previousKey,
+                ChatComposerDraft(
+                    text = inputText,
+                    selectionStart = inputText.length,
+                    selectionEnd = inputText.length,
+                    context = ChatComposerDraftContext(editingMessageId = editingMessage?.id),
+                    attachments = pendingAttachments,
+                ),
+            )
+        }
+        restoringComposerDraft = true
+        val restored = chatViewModel.composerDraftStore.snapshot(composerDraftKey)
+        inputText = restored.text.take(charLimit)
+        editingMessage = restored.context.editingMessageId?.let { messageId ->
+            messages.firstOrNull { it.id == messageId }
+        }
+        chatViewModel.replacePendingAttachments(restored.attachments)
+        activeComposerDraftKey = composerDraftKey
+        restoringComposerDraft = false
+    }
+    LaunchedEffect(inputText, editingMessage?.id, pendingAttachments, activeComposerDraftKey) {
+        val key = activeComposerDraftKey ?: return@LaunchedEffect
+        if (restoringComposerDraft) return@LaunchedEffect
+        chatViewModel.composerDraftStore.save(
+            key,
+            ChatComposerDraft(
+                text = inputText,
+                selectionStart = inputText.length,
+                selectionEnd = inputText.length,
+                context = ChatComposerDraftContext(editingMessageId = editingMessage?.id),
+                attachments = pendingAttachments,
+            ),
+        )
+    }
     var showCommandPalette by remember { mutableStateOf(false) }
+    var showTranscriptSearch by rememberSaveable { mutableStateOf(false) }
+    var pendingAttachmentPreview by remember { mutableStateOf<Attachment?>(null) }
     var showModelSheet by remember { mutableStateOf(false) }
     var showEffortSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
@@ -1041,6 +1107,7 @@ fun ChatScreen(
     val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
     val focusManager = LocalFocusManager.current
     val finishSuccessfulSend: () -> Unit = {
+        activeComposerDraftKey?.let(chatViewModel.composerDraftStore::remove)
         if (closeDrawerOnSend && drawerState.isOpen) {
             scope.launch { drawerState.close() }
         }
@@ -1233,8 +1300,10 @@ fun ChatScreen(
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        uris.forEach { uri ->
-            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        scope.launch {
+            uris.forEach { uri ->
+                ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+            }
         }
     }
 
@@ -1242,8 +1311,10 @@ fun ChatScreen(
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
-        uris.forEach { uri ->
-            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        scope.launch {
+            uris.forEach { uri ->
+                ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+            }
         }
     }
 
@@ -1258,7 +1329,9 @@ fun ChatScreen(
         val uri = pendingCameraUri
         pendingCameraUri = null
         if (success && uri != null) {
-            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+            scope.launch {
+                ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+            }
         }
     }
     val launchCamera: () -> Unit = {
@@ -1348,7 +1421,10 @@ fun ChatScreen(
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val latestImeBottomPx by rememberUpdatedState(imeBottomPx)
-    var previousImeBottomPx by remember(currentSessionId) { mutableStateOf(imeBottomPx) }
+    // Start from the closed state so a chat/session first composed while the
+    // keyboard is already visible still gets one ownership decision. Starting
+    // at the current non-zero inset left followImeResize false forever.
+    var previousImeBottomPx by remember(currentSessionId) { mutableStateOf(0) }
     var followImeResize by remember(currentSessionId) { mutableStateOf(false) }
     SideEffect {
         followImeResize = shouldFollowImeAfterInsetChange(
@@ -2299,6 +2375,16 @@ fun ChatScreen(
                                 }
                                 if (messages.isNotEmpty()) {
                                     DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.chat_search_conversation)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Search, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            showTranscriptSearch = true
+                                        },
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text(stringResource(R.string.chat_share_conversation)) },
                                         leadingIcon = {
                                             Icon(
@@ -2689,7 +2775,8 @@ fun ChatScreen(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 12.dp),
+                            .padding(horizontal = 12.dp)
+                            .padding(top = if (showTranscriptSearch) 112.dp else 0.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         item { Spacer(modifier = Modifier.height(8.dp).animateItem()) }
@@ -2733,6 +2820,21 @@ fun ChatScreen(
                             }
 
                             val hasBackgroundTask = message.backgroundTask != null
+                            val visiblePrimaryTools = message.toolCalls.filter { toolCall ->
+                                toolCall.taskIndex == null &&
+                                    !toolCall.showsImageGenerationPlaceholder() &&
+                                    toolDisplay != "off" &&
+                                    toolCall.isVisibleForToolDisplay(toolDisplay)
+                            }
+                            val showActivityStack = !hasBackgroundTask &&
+                                message.role == MessageRole.ASSISTANT &&
+                                (
+                                    visiblePrimaryTools.isNotEmpty() ||
+                                        (showThinking && (
+                                            message.thinkingContent.isNotBlank() ||
+                                                message.isThinkingStreaming
+                                        ))
+                                )
                             val shouldRenderBubble =
                                 !hasBackgroundTask ||
                                     message.content.isNotBlank() ||
@@ -2797,7 +2899,7 @@ fun ChatScreen(
                                         null
                                     },
                                     maxBubbleWidth = maxBubbleWidth,
-                                    showThinking = showThinking,
+                                    showThinking = showThinking && !showActivityStack,
                                     isFirstInGroup = isFirstInGroup,
                                     isLastInGroup = isLastInGroup,
                                     retainStreamingLayout = retainLiveLayout,
@@ -2891,33 +2993,26 @@ fun ChatScreen(
                                 // into lanes after the top-level tool cards;
                                 // the null group renders exactly as before.
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
-                                laneGroups[null]?.forEach { toolCall ->
-                                    // Image generation renders inside MessageBubble
-                                    // so the progress canvas and final media share
-                                    // one stable Surface and transition in place.
-                                    if (toolCall.showsImageGenerationPlaceholder()) {
-                                        return@forEach
-                                    }
-                                    if (!toolCall.isVisibleForToolDisplay(toolDisplay)) {
-                                        return@forEach
+                                if (showActivityStack) {
+                                    val activityPhase = when {
+                                        visiblePrimaryTools.any { !it.isComplete } ->
+                                            ToolActivityPhase.USING_TOOLS
+                                        visiblePrimaryTools.any { it.success == false } ->
+                                            ToolActivityPhase.FAILED
+                                        message.isThinkingStreaming -> ToolActivityPhase.THINKING
+                                        else -> ToolActivityPhase.COMPLETED
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    when (toolDisplay) {
-                                        "compact" -> CompactToolCall(toolCall = toolCall)
-                                        else -> ToolProgressCard(
-                                            toolCall = toolCall,
-                                            messageTimestamp = message.timestamp,
-                                            onExpandedChange = { expanded ->
-                                                // Expanding a live-tail card is reading intent,
-                                                // not new stream output. Yield bottom-follow so
-                                                // the row's height change stays under the user's
-                                                // finger instead of being scrolled away.
-                                                if (expanded && isStreaming) {
-                                                    userScrolledAway = true
-                                                }
-                                            },
-                                        )
-                                    }
+                                    ToolActivityStack(
+                                        state = ToolActivityState(
+                                            phase = activityPhase,
+                                            toolCalls = visiblePrimaryTools,
+                                            thinkingContent = message.thinkingContent
+                                                .takeIf { showThinking && it.isNotBlank() },
+                                        ),
+                                        activityKey = message.uiKey,
+                                        messageTimestamp = message.timestamp,
+                                    )
                                 }
                                 if (toolDisplay != "off") {
                                     laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
@@ -2945,6 +3040,33 @@ fun ChatScreen(
                         item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
                     } // CompositionLocalProvider(LocalRelayServerImageResolver)
+
+                    if (showTranscriptSearch) {
+                        TranscriptSearchNavigator(
+                            messages = messages,
+                            onJumpToMessage = { uiKey ->
+                                val messageIndex = messages.indexOfFirst { it.uiKey == uiKey }
+                                if (messageIndex >= 0) {
+                                    scope.launch { listState.animateScrollToItem(messageIndex + 1) }
+                                }
+                            },
+                            onClose = { showTranscriptSearch = false },
+                            strings = TranscriptNavigatorStrings(
+                                searchPlaceholder = stringResource(R.string.chat_search_conversation),
+                                previousMatch = stringResource(R.string.term_search_cd_previous),
+                                nextMatch = stringResource(R.string.term_search_cd_next),
+                                closeSearch = stringResource(R.string.chat_search_close),
+                                noResults = stringResource(R.string.chat_search_no_results),
+                                resultCount = { current, total ->
+                                    context.getString(R.string.chat_search_result_count, current, total)
+                                },
+                            ),
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .zIndex(10f),
+                        )
+                    }
 
                     ChatScrollTicker(
                         listState = listState,
@@ -3164,78 +3286,19 @@ fun ChatScreen(
                 }
             }
 
-            // Attachment preview strip
-            AnimatedVisibility(visible = pendingAttachments.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    pendingAttachments.forEachIndexed { index, attachment ->
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            tonalElevation = 2.dp,
-                            modifier = Modifier.height(56.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(start = 8.dp, end = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                if (attachment.isImage) {
-                                    // Decode and show thumbnail
-                                    val bitmap = remember(attachment.content) {
-                                        try {
-                                            val bytes = Base64.decode(attachment.content, Base64.DEFAULT)
-                                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                        } catch (_: Exception) { null }
-                                    }
-                                    if (bitmap != null) {
-                                        val imageBitmap = remember(bitmap) {
-                                            bitmap.asImageBitmap()
-                                        }
-                                        Image(
-                                            bitmap = imageBitmap,
-                                            contentDescription = attachment.fileName,
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(RoundedCornerShape(4.dp))
-                                        )
-                                    } else {
-                                        Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(24.dp))
-                                    }
-                                } else {
-                                    Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(24.dp))
-                                }
-                                Column(modifier = Modifier.widthIn(max = 100.dp)) {
-                                    Text(
-                                        text = attachment.fileName ?: stringResource(R.string.chat_attachment_file_fallback),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = formatFileSize(attachment.fileSize ?: 0),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { chatViewModel.removeAttachment(index) },
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Filled.Close,
-                                        contentDescription = stringResource(R.string.cd_remove),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+            PendingAttachmentComposer(
+                attachments = pendingAttachments,
+                onPreview = { attachment, _ -> pendingAttachmentPreview = attachment },
+                onRemove = chatViewModel::removeAttachment,
+                onMove = chatViewModel::moveAttachment,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            pendingAttachmentPreview?.let { attachment ->
+                AttachmentViewer(
+                    attachment = attachment,
+                    onDismiss = { pendingAttachmentPreview = null },
+                    initiallyRevealed = true,
+                )
             }
 
             // Edit-and-resend mode chip — cancelable; submitting rewinds the
@@ -3282,15 +3345,19 @@ fun ChatScreen(
             // long-press opens the CommandPalette (the dedicated "/" button
             // is gone — typing "/" still surfaces InlineAutocomplete).
             val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()
+            // Gateway redirect is text-only. Attachment-bearing follow-ups must
+            // retain their files in the session-owned queue instead of showing
+            // a correction action that cannot carry them.
+            val canSteerCurrentMessage = steerableTurn && pendingAttachments.isEmpty()
             val trailing = when {
                 !isStreaming && hasContent -> ChatInputTrailing.SEND
                 !isStreaming -> ChatInputTrailing.VOICE
                 isStreaming && !hasContent -> ChatInputTrailing.STOP
-                steerableTurn -> ChatInputTrailing.STEER
+                canSteerCurrentMessage -> ChatInputTrailing.STEER
                 else -> ChatInputTrailing.QUEUE
             }
             val inputCaption = when {
-                isStreaming && hasContent && steerableTurn ->
+                isStreaming && hasContent && canSteerCurrentMessage ->
                     stringResource(R.string.chat_sends_now)
                 isStreaming && hasContent -> stringResource(R.string.chat_delivered_after_turn)
                 isStreaming && steerNotice != null -> steerNotice
@@ -3298,7 +3365,7 @@ fun ChatScreen(
             }
             val inputPlaceholder = when {
                 editingMessage != null -> stringResource(R.string.chat_placeholder_edit)
-                isStreaming && steerableTurn -> stringResource(R.string.chat_placeholder_steer)
+                isStreaming && canSteerCurrentMessage -> stringResource(R.string.chat_placeholder_steer)
                 isStreaming -> stringResource(R.string.chat_placeholder_queue)
                 else -> stringResource(R.string.chat_placeholder_message)
             }
@@ -3567,6 +3634,8 @@ fun ChatScreen(
                 showVoiceHint = !voiceHintSeen && !conversationVoiceDockVisible,
                 onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },
                 isDarkTheme = isDarkTheme,
+                physicalEnterSends = physicalKeyboardEnterBehavior ==
+                    PhysicalKeyboardEnterBehavior.SendMessage,
                 modelControl = modelControl,
                 onModelOptionSelected = { option ->
                     if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
@@ -4284,7 +4353,7 @@ private fun formatFileSize(bytes: Long): String = when {
  * rather than throwing. [mimeOverride] lets clipboard paste supply the MIME
  * when the resolver can't (some providers don't resolve a type until read).
  */
-private fun ingestAttachmentFromUri(
+private suspend fun ingestAttachmentFromUri(
     context: android.content.Context,
     uri: Uri,
     maxAttachmentMb: Int,
@@ -4293,11 +4362,14 @@ private fun ingestAttachmentFromUri(
 ) {
     try {
         val resolver = context.contentResolver
-        val mimeType = mimeOverride ?: resolver.getType(uri) ?: "application/octet-stream"
-        val fileName = resolveDisplayName(resolver, uri)
-        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+        val source = withContext(Dispatchers.IO) {
+            val mimeType = mimeOverride ?: resolver.getType(uri) ?: "application/octet-stream"
+            val fileName = resolveDisplayName(resolver, uri)
+            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null
+            RawAttachmentSource(mimeType, fileName, bytes)
+        } ?: return
         val maxSize = maxAttachmentMb * 1024 * 1024
-        if (bytes.size > maxSize) {
+        if (source.bytes.size > maxSize) {
             Toast.makeText(
                 context,
                 context.getString(R.string.chat_file_too_large, maxAttachmentMb),
@@ -4305,19 +4377,27 @@ private fun ingestAttachmentFromUri(
             ).show()
             return
         }
-        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        val base64 = withContext(Dispatchers.Default) {
+            Base64.encodeToString(source.bytes, Base64.NO_WRAP)
+        }
         onAttachment(
             Attachment(
-                contentType = mimeType,
+                contentType = source.mimeType,
                 content = base64,
-                fileName = fileName,
-                fileSize = bytes.size.toLong(),
+                fileName = source.fileName,
+                fileSize = source.bytes.size.toLong(),
             )
         )
     } catch (e: Exception) {
         Toast.makeText(context, context.getString(R.string.chat_failed_read_file), Toast.LENGTH_SHORT).show()
     }
 }
+
+private data class RawAttachmentSource(
+    val mimeType: String,
+    val fileName: String,
+    val bytes: ByteArray,
+)
 
 /**
  * Resolve a human-readable file name for [uri]. Prefers the provider's
@@ -4355,7 +4435,7 @@ private fun resolveDisplayName(
  * user. Images ride the clipboard as content URIs; raw bitmaps aren't carried
  * in ClipData, so URI items are the only source.
  */
-private fun ingestClipboardImage(
+private suspend fun ingestClipboardImage(
     context: android.content.Context,
     clip: ClipData?,
     maxAttachmentMb: Int,

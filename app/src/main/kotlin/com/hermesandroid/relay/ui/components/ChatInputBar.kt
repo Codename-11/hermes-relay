@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -58,8 +60,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
@@ -84,6 +96,7 @@ enum class ChatInputTrailing { SEND, VOICE, STOP, STEER, QUEUE }
 
 private val ChatComposerShape = RoundedCornerShape(18.dp)
 private val ChatInputChipShape = RoundedCornerShape(12.dp)
+internal const val CHAT_INPUT_FIELD_TEST_TAG = "chat-input-field"
 
 data class ChatInputPickerOption(
     val label: String,
@@ -174,7 +187,14 @@ fun ChatInputBar(
     modifier: Modifier = Modifier,
     surfaceModifier: Modifier = Modifier,
     enabled: Boolean = true,
+    physicalEnterSends: Boolean = true,
 ) {
+    val canSubmit = enabled && trailing in setOf(
+        ChatInputTrailing.SEND,
+        ChatInputTrailing.STEER,
+        ChatInputTrailing.QUEUE,
+    )
+
     // Keep the last caption around so the AnimatedVisibility exit doesn't
     // flash an empty line while collapsing.
     var lastCaption by remember { mutableStateOf<String?>(null) }
@@ -203,18 +223,57 @@ fun ChatInputBar(
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // Caption row — correct/queue hinting, single line, no buttons.
+        // Correction and queueing are materially different actions. Keep the
+        // explanation, but lead with a visible state pill so the distinction
+        // does not depend on the trailing icon or accent color alone.
         AnimatedVisibility(visible = caption != null) {
-            Text(
-                text = caption ?: lastCaption.orEmpty(),
-                style = relayMetadataStyle(),
-                color = if (trailing == ChatInputTrailing.STEER) {
-                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f)
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
-            )
+            val detail = caption ?: lastCaption.orEmpty()
+            val actionLabel = when (trailing) {
+                ChatInputTrailing.STEER -> stringResource(R.string.chat_input_steer_response)
+                ChatInputTrailing.QUEUE -> stringResource(R.string.chat_input_queue_message)
+                else -> null
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 2.dp)
+                    .semantics {
+                        liveRegion = LiveRegionMode.Polite
+                        contentDescription = listOfNotNull(actionLabel, detail)
+                            .joinToString(separator = ". ")
+                    },
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (actionLabel != null) {
+                    Text(
+                        text = actionLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (trailing == ChatInputTrailing.STEER) {
+                            MaterialTheme.colorScheme.onTertiaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(
+                                if (trailing == ChatInputTrailing.STEER) {
+                                    MaterialTheme.colorScheme.tertiaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                },
+                            )
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
+                Text(
+                    text = detail,
+                    style = relayMetadataStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         // Voice hint pill — floats above the trailing button.
@@ -290,9 +349,44 @@ fun ChatInputBar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 34.dp)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            // Keep directional keys inside the editor. Compose's
+                            // BasicTextField owns normal caret/selection movement;
+                            // cancelling focus traversal prevents a boundary arrow
+                            // from jumping to a neighboring composer control.
+                            .focusProperties {
+                                left = FocusRequester.Cancel
+                                right = FocusRequester.Cancel
+                                up = FocusRequester.Cancel
+                                down = FocusRequester.Cancel
+                            }
+                            .onPreviewKeyEvent { event ->
+                                val native = event.nativeKeyEvent
+                                val isEnter = native.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                                    native.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+                                val isSubmitShortcut = native.isCtrlPressed || native.isMetaPressed
+                                if (native.action != android.view.KeyEvent.ACTION_DOWN || !isEnter) {
+                                    false
+                                } else if (isSubmitShortcut || (physicalEnterSends && !native.isShiftPressed)) {
+                                    if (canSubmit) onSend()
+                                    true
+                                } else {
+                                    // Shift+Enter always inserts a newline. When
+                                    // Enter is configured for newlines, the plain
+                                    // key also stays owned by BasicTextField.
+                                    false
+                                }
+                            }
+                            .testTag(CHAT_INPUT_FIELD_TEST_TAG),
                         maxLines = 5,
                         enabled = enabled,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Sentences,
+                            imeAction = ImeAction.Send,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onSend = { if (canSubmit) onSend() },
+                        ),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
                             color = MaterialTheme.colorScheme.onSurface,
                         ),
@@ -314,7 +408,7 @@ fun ChatInputBar(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 40.dp),
+                        .heightIn(min = 48.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -324,7 +418,7 @@ fun ChatInputBar(
                     Box {
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
+                                .size(48.dp)
                                 .clip(CircleShape)
                                 .combinedClickable(
                                     onClick = { attachMenuExpanded = true },

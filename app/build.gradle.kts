@@ -320,6 +320,7 @@ dependencies {
     // Coil 3 — async image loading for generated images in chat
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
+    implementation(libs.exifinterface)
 
     // QR Code scanning (ML Kit + CameraX)
     implementation(libs.mlkit.barcode)
