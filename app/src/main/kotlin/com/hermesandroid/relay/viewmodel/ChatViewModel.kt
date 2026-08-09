@@ -113,12 +113,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -2312,12 +2314,23 @@ class ChatViewModel : ViewModel() {
      * (`{type:"prefill"}` — e.g. `/undo`). ChatScreen collects and sets the
      * input text.
      */
-    private val _composerPrefill = MutableSharedFlow<String>(
-        replay = 0,
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    val composerPrefill: SharedFlow<String> = _composerPrefill.asSharedFlow()
+    private val _composerPrefill = Channel<String>(capacity = Channel.CONFLATED)
+    val composerPrefill = _composerPrefill.receiveAsFlow()
+
+    /**
+     * Open a fresh draft for text received through Android's sharesheet.
+     * The composer event is queued until Chat is composed and is never routed
+     * through [sendMessage]. Existing new-chat transport and background-turn
+     * ownership remain authoritative.
+     */
+    fun openSharedTextDraft(text: String): Boolean {
+        if (text.isBlank() || chatHandler == null) return false
+        val canCreateDraft =
+            (streamingEndpoint == "gateway" && gatewayClient != null) || apiClient != null
+        if (!canCreateDraft) return false
+        createNewChat()
+        return _composerPrefill.trySend(text).isSuccess
+    }
 
     // Navigation-safe draft handoff for explicit in-app workflows (for example,
     // custom-pet creation). StateFlow keeps the reviewed text until ChatScreen
@@ -3230,6 +3243,16 @@ class ChatViewModel : ViewModel() {
         selectedReasoningEffortConfirmedIdentity = null
         _reasoningDisplay.value = null
         _selectedPersonality.value = "default"
+        // Model/provider overrides are session-scoped too. This reset is owned
+        // by the context switch (not just activateGatewayProfile) so the SSE
+        // path cannot carry the previous profile's explicit model into the
+        // restored session or fresh draft.
+        modelOptionsGeneration.incrementAndGet()
+        _modelProviders.value = emptyList()
+        _apiModelOptions.value = emptyList()
+        _availableModels.value = emptyList()
+        _selectedModelOverride.value = null
+        _selectedProviderOverride.value = null
         // The agent display name was stamped above with the pre-reset persona —
         // recompute it now that the overlay is cleared so the header/bubbles read
         // the new profile's base identity, not the old persona.
@@ -4660,7 +4683,7 @@ class ChatViewModel : ViewModel() {
                     }
                     "prefill" -> {
                         result.stringValue("notice")?.let { handler.addSystemNotice(it) }
-                        result.stringValue("message")?.let { _composerPrefill.tryEmit(it) }
+                        result.stringValue("message")?.let { _composerPrefill.trySend(it) }
                     }
                     else ->
                         handler.addSystemNotice(result.stringValue("output") ?: "Command completed.")

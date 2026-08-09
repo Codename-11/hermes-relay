@@ -77,6 +77,59 @@ Queue states with visible labels. Gateway redirects remain text-only:
 follow-ups with attachments are forced through the existing destination-owned
 queue so files cannot be left behind by a correction request.
 
+## 2026-08-08 — Standalone Android thinking status
+
+Blank streaming assistant rows now present the full-size working animation
+directly in the conversation lane above the visible `Still working…` label,
+without painting an empty assistant bubble around the status. The first answer
+token replaces that standalone state with the normal response bubble, while
+recovery retains the distinct `Reconnecting to your answer…` wording. The
+status owns one stable TalkBack description and suppresses animated child
+nodes, avoiding repeated announcements without claiming measurable progress.
+
+## 2026-08-08 — Android text-share draft handoff
+
+The shared Android manifest now advertises a `text/*` `ACTION_SEND` target for
+both app flavors. `MainActivity` accepts only non-blank single-item text shares
+and places them in a process-local, identity-fenced handoff that survives cold
+Compose initialization. Once the configured chat context settles, the app root
+navigates to Chat and delegates draft creation and composer prefill to
+`ChatViewModel`.
+
+The ViewModel reuses the existing new-chat lifecycle, preserving Gateway
+background-turn reconciliation and the active connection/profile/transport
+namespace. Composer prefills use a one-consumer conflated channel so an intent
+received before Chat composition is delivered once. Shared text is never
+routed through message sending; the user must review and submit it explicitly.
+
+## 2026-08-08 — Android Profile Shelf and profile-context identity
+
+Chat profile selection now lives in a collapsible shelf directly below the top
+app bar. The header toggles the shelf, the active capsule opens Agent Passport,
+inactive 48 dp avatars switch context, and a pinned overflow opens the same full
+switcher used by Passport. Saved ordering and hidden state drive both surfaces;
+the selected hidden profile remains disclosed, while a one-identity shelf stays
+out of the layout. Long-press actions expose inspection, Passport, profile lock,
+and hiding without adding activity or presence claims.
+
+The shelf uses the chat surface instead of a second elevated toolbar. A neutral
+active capsule, 36 dp avatar artwork inside 48 dp targets, compact spacing, and
+a contained overflow affordance keep the row visually subordinate to Chat. When
+Server default resolves to a concrete profile, that profile's avatar remains
+the identity and a small home badge discloses its default routing role.
+Local avatar lookup remains keyed to the Server-default presentation identity,
+so an image customized while that row is selected appears consistently in both
+the Chat header and shelf rather than being re-keyed to whichever explicit
+profile is currently active.
+
+The Server-default sentinel is now distinct from a profile literally named
+`default`. Profile selection restores the last compatible connection/profile/
+transport session, otherwise leaves a fresh draft. Gateway turns detach and
+reconcile in their original session, live SSE turns keep switching disabled,
+and every profile transition clears session-scoped model, provider, personality,
+reasoning, approval, Fast, and YOLO state before the destination session seeds
+its own values. Server sticky-default state is never written.
+
 ## 2026-08-08 — Streaming reply tail follow
 
 Android's conversation-bottom follower now reads the current immutable message

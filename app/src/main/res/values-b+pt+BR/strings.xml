@@ -3758,4 +3758,13 @@
     <string name="chat_quote_hermes">Hermes</string>
     <string name="chat_quote_open">Abrir mensagem original de %1$s</string>
     <string name="chat_quote_remove">Remover citação</string>
+    <string name="profile_shelf_switch_agent">Trocar agente</string>
+    <string name="profile_shelf_all_profiles">Abrir todos os perfis de agente</string>
+    <string name="profile_shelf_open_passport">Abrir Passaporte do agente</string>
+    <string name="profile_shelf_switch_to">Trocar para este agente</string>
+    <string name="profile_shelf_locked_hint">A troca de perfil está bloqueada. Toque e segure o agente ativo para desbloquear.</string>
+    <string name="profile_shelf_inspect">Inspecionar perfil</string>
+    <string name="profile_shelf_hide">Ocultar da estante de perfis</string>
+    <string name="profile_shelf_expand">Expandir a estante de perfis</string>
+    <string name="profile_shelf_collapse">Recolher a estante de perfis</string>
 </resources>

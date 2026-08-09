@@ -3917,4 +3917,13 @@
     <string name="chat_quote_hermes">Hermes</string>
     <string name="chat_quote_open">%1$s の元のメッセージを開く</string>
     <string name="chat_quote_remove">引用を削除</string>
+    <string name="profile_shelf_switch_agent">エージェントを切り替え</string>
+    <string name="profile_shelf_all_profiles">すべてのエージェントプロフィールを開く</string>
+    <string name="profile_shelf_open_passport">エージェントパスポートを開く</string>
+    <string name="profile_shelf_switch_to">このエージェントに切り替え</string>
+    <string name="profile_shelf_locked_hint">プロフィールの切り替えはロックされています。解除するには、使用中のエージェントを長押ししてください。</string>
+    <string name="profile_shelf_inspect">プロフィールを確認</string>
+    <string name="profile_shelf_hide">プロフィールシェルフに表示しない</string>
+    <string name="profile_shelf_expand">プロフィールシェルフを展開</string>
+    <string name="profile_shelf_collapse">プロフィールシェルフを折りたたむ</string>
 </resources>

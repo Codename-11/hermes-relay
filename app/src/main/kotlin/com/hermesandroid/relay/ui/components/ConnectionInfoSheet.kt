@@ -684,7 +684,6 @@ fun RelayInfoSheet(
 // the Profile section footer spells out the override.
 
 private enum class AgentPassportPicker {
-    Profile,
     Personality,
     Model,
     Reasoning,
@@ -762,6 +761,7 @@ fun AgentInfoSheet(
 
     var selectedTab by remember { mutableStateOf(0) }
     var activePicker by remember { mutableStateOf<AgentPassportPicker?>(null) }
+    var showProfileSwitcher by remember { mutableStateOf(false) }
     var showIdentityEditor by remember { mutableStateOf(false) }
     var showProfileManager by remember { mutableStateOf(false) }
 
@@ -958,7 +958,7 @@ fun AgentInfoSheet(
                 presence = resolvedPresence,
                 hasSoul = resolvedProfile?.hasSoul == true,
                 skillCount = resolvedProfile?.skillCount ?: 0,
-                onProfileClick = { activePicker = AgentPassportPicker.Profile },
+                onProfileClick = { showProfileSwitcher = true },
             )
 
             if (showIdentityEditor) {
@@ -1191,49 +1191,6 @@ fun AgentInfoSheet(
     }
 
     when (activePicker) {
-        AgentPassportPicker.Profile -> {
-            val selectedProfileKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
-            val visibleProfileKeys = ProfilePresentationPolicy.visibleKeys(
-                profiles = agentProfiles,
-                presentation = profilePresentation,
-                selectedKey = selectedProfileKey,
-            )
-            val options = visibleProfileKeys.mapNotNull { profileKey ->
-                if (profileKey == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY) {
-                    ChatInputPickerOption(
-                        label = serverDefaultLabel,
-                        value = null,
-                        secondary = AgentDisplay.profileDisplayName(resolvedProfile),
-                        selected = selectedProfile == null,
-                        enabled = !isProfileLocked && profileSwitchEnabled,
-                    )
-                } else {
-                    agentProfiles.firstOrNull { it.name == profileKey }?.let { profile ->
-                        ChatInputPickerOption(
-                            label = AgentDisplay.profileDisplayName(profile)
-                                ?: profile.name.replaceFirstChar { it.uppercase() },
-                            value = profile.name,
-                            secondary = profile.model.takeIf { it.isNotBlank() },
-                            selected = selectedProfile?.name == profile.name,
-                            enabled = !isProfileLocked && profileSwitchEnabled,
-                        )
-                    }
-                }
-            }
-            OptionPickerSheet(
-                title = stringResource(R.string.conn_info_profile),
-                options = options,
-                onSelect = { option ->
-                    val profile = option.value?.let { name ->
-                        agentProfiles.firstOrNull { it.name == name }
-                    }
-                    connectionViewModel.selectProfile(profile)
-                    chatViewModel.activateGatewayProfile(profile)
-                    activePicker = null
-                },
-                onDismiss = { activePicker = null },
-            )
-        }
         AgentPassportPicker.Personality -> OptionPickerSheet(
             title = stringResource(R.string.conn_info_personality_title),
             options = buildList {
@@ -1310,6 +1267,31 @@ fun AgentInfoSheet(
             )
         }
         null -> Unit
+    }
+
+    if (showProfileSwitcher) {
+        ProfileSwitcherSheet(
+            connectionViewModel = connectionViewModel,
+            profiles = agentProfiles,
+            selectedProfile = selectedProfile,
+            resolvedProfile = resolvedProfile,
+            presentation = profilePresentation,
+            isProfileLocked = isProfileLocked,
+            switchEnabled = profileSwitchEnabled,
+            onSelect = { profile ->
+                if (AgentDisplay.profileSessionKey(profile?.name) !=
+                    AgentDisplay.profileSessionKey(selectedProfile?.name)
+                ) {
+                    connectionViewModel.selectProfile(profile)
+                    chatViewModel.activateGatewayProfile(profile)
+                }
+            },
+            onManageDisplay = {
+                showProfileSwitcher = false
+                showProfileManager = true
+            },
+            onDismiss = { showProfileSwitcher = false },
+        )
     }
 
     if (showProfileManager) {
@@ -1591,7 +1573,7 @@ private fun AgentPassportHeader(
             ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                     Text(
-                        text = stringResource(R.string.conn_info_active_profile).uppercase(),
+                        text = stringResource(R.string.profile_shelf_switch_agent).uppercase(),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -2497,7 +2479,7 @@ private fun LegacyAgentInfoSheet(
                 // "default" so "Server default" vs "default" would be
                 // otherwise indistinguishable.
                 val serverDefaultProfile = agentProfiles
-                    .firstOrNull { AgentDisplay.isServerDefaultAlias(it.name) }
+                    .firstOrNull { it.name.equals("default", ignoreCase = true) }
                 val selectedKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
                 val visibleProfileKeys = ProfilePresentationPolicy
                     .visibleKeys(agentProfiles, profilePresentation, selectedKey)
@@ -2520,8 +2502,7 @@ private fun LegacyAgentInfoSheet(
                     val lockedDisplayName = when {
                         lockedProfileName == null ->
                             stringResource(R.string.conn_info_server_default)
-                        AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
-                            lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
+                        lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
                             stringResource(R.string.conn_info_server_default)
                         else ->
                             agentProfiles
@@ -3609,7 +3590,7 @@ private fun LegacyAgentInfoSheet(
 // --- AgentInfoSheet helpers ----------------------------------------------
 
 @Composable
-private fun ProfileDisplayManagerDialog(
+internal fun ProfileDisplayManagerDialog(
     profiles: List<Profile>,
     presentation: ProfilePresentation,
     selectedProfileName: String?,

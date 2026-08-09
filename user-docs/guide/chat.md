@@ -157,6 +157,12 @@ like a live transcript:
 Disable it under **Settings → Chat → Smooth auto-scroll** if you'd rather scroll
 manually. It's on by default.
 
+Before the first answer text arrives, the conversation lane shows the working
+animation at full size with **Still working…** beneath it and no empty chat
+bubble around either. The status disappears as soon as reply text starts
+streaming; dropped-stream recovery uses
+**Reconnecting to your answer…** instead.
+
 ## Markdown
 
 Replies render with full markdown support:

@@ -23,6 +23,7 @@ import com.hermesandroid.relay.network.relay.RelayHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -181,7 +182,7 @@ class ProfileController(
             // Pending state still points at a previous connection mid-switch —
             // hold until this connection's restore re-stamps the pending name.
             pendingConnId != connId -> false
-            pendingName == null || AgentDisplay.isServerDefaultAlias(pendingName) ->
+            pendingName == null || pendingName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
                 serverDefaultSettled
             // Non-default name pending: settled once the profile list is present
             // (resolution attempted), even if the name turns out to be gone.
@@ -268,6 +269,13 @@ class ProfileController(
             profileIconStore.iconFlow(connectionId, profileName)
         }
     }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** Local icon for any profile identity on the active connection. */
+    fun profileIconFlow(profileName: String?): Flow<String?> = activeConnectionId
+        .flatMapLatest { connectionId ->
+            if (connectionId == null) flowOf(null)
+            else profileIconStore.iconFlow(connectionId, profileName)
+        }
 
     data class HostIconImportState(
         val loading: Boolean = false,
@@ -499,8 +507,8 @@ class ProfileController(
 
     /**
      * The stored lock-token for a (possibly null) profile. Server default —
-     * including the synthetic "default" alias — maps to
-     * [AgentDisplay.SERVER_DEFAULT_PROFILE_KEY]; everything else to its name.
+     * A null selection maps to [AgentDisplay.SERVER_DEFAULT_PROFILE_KEY]; a
+     * profile literally named `default`, like every named profile, maps to its name.
      * Mirrors [AgentDisplay.profileSessionKey] so the lock token and the
      * session/selection key for the same profile always agree.
      */
@@ -610,11 +618,6 @@ class ProfileController(
         }
         val current = _selectedProfile.value
         if (current != null) {
-            if (AgentDisplay.isServerDefaultAlias(current.name)) {
-                _selectedProfile.value = null
-                _pendingSelectedProfileName.value = null
-                return true
-            }
             val refreshed = list.firstOrNull { it.name == current.name }
             if (refreshed != null) {
                 if (refreshed != current) {
@@ -628,7 +631,7 @@ class ProfileController(
             return true
         }
         val pendingName = _pendingSelectedProfileName.value ?: return false
-        if (AgentDisplay.isServerDefaultAlias(pendingName)) {
+        if (pendingName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY) {
             _pendingSelectedProfileName.value = null
             _selectedProfile.value = null
             return true
@@ -652,9 +655,7 @@ class ProfileController(
      *    can name it and so a later list arrival can recover it.
      */
     private fun resolveLockedProfileFrom(token: String, list: List<Profile>): Boolean {
-        if (AgentDisplay.isServerDefaultAlias(token) ||
-            token == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
-        ) {
+        if (token == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY) {
             _pendingSelectedProfileName.value = null
             val changed = _selectedProfile.value != null
             _selectedProfile.value = null
@@ -678,22 +679,21 @@ class ProfileController(
     /**
      * Lock the active connection to [profile]. A `null` argument locks to
      * **Server default** (stored as the [AgentDisplay.SERVER_DEFAULT_PROFILE_KEY]
-     * sentinel so it's distinct from "unlocked"). Persists the lock, then forces
-     * the selection to the locked target via the normal [selectProfile] path so
+     * sentinel so it's distinct from "unlocked"). Forces the selection at the
+     * ViewModel boundary, then persists the lock so
      * the existing profile-switch machinery (fresh draft, gateway hot-swap, chat
      * API rebuild) runs. Locking to the already-selected profile is effectively
      * a no-op for the selection but still records the lock.
      */
-    suspend fun lockProfile(profile: Profile?) {
+    fun lockProfile(profile: Profile?) {
         val connectionId = activeConnectionId.value ?: return
         val normalizedProfile = AgentDisplay.normalizeSelection(profile)
         val token = lockTokenFor(normalizedProfile)
-        // Persist the lock first, then force-select via the un-gated body so the
-        // switch lands even when re-locking from a different target (the
-        // lockedProfileName StateFlow may still hold the previous token until the
-        // DataStore emission propagates).
-        profileLockStore.setLockedProfile(connectionId, token)
+        // Force-select synchronously so callers can immediately detach/clear the
+        // old Gateway session against the new profile identity. Persistence is
+        // serialized by DataStore and the lock StateFlow catches up afterward.
         applyProfileSelection(normalizedProfile)
+        scope.launch { profileLockStore.setLockedProfile(connectionId, token) }
     }
 
     /** Remove the lock for the active connection (back to free profile choice). */
@@ -729,7 +729,11 @@ class ProfileController(
         // current transport can't resume is exactly what forks a session
         // mid-conversation on a non-default profile.
         val transport = activeSessionTransport() ?: return
-        val sessionProfileName = resolveSessionProfileName(profileName)
+        // Persist the UI selection identity, not the resolved server route.
+        // Server default may currently route to a sticky profile named
+        // `default` (or any other name), but its last-session slot must remain
+        // distinct from explicitly selecting that named profile.
+        val sessionProfileName = profileName
         scope.launch {
             val profileScoped = profileSessionStore
                 .sessionIdFlow(connectionId, sessionProfileName, transport)
@@ -738,7 +742,7 @@ class ProfileController(
             // pre-transport (untransported) pointer is still resumable — surface
             // it as the fallback only for the server-default context.
             val legacyDefault = if (
-                sessionProfileName == null || AgentDisplay.isServerDefaultAlias(sessionProfileName)
+                sessionProfileName == null
             ) {
                 legacyDefaultSessionId()
             } else {

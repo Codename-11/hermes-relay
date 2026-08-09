@@ -3,10 +3,10 @@ package com.hermesandroid.relay.data
 /**
  * Shared profile/personality display and request identity helpers.
  *
- * A null profile name is the app's explicit "Server default" state. The
- * relay also advertises the root Hermes config as a synthetic profile named
- * "default"; for request/session identity that row is an alias of server
- * default so it does not split chat, voice, or session scope.
+ * A null profile name is the app's explicit "Server default" state. It is
+ * intentionally distinct from a real profile whose name is literally
+ * `default`: the former follows the server's sticky default, while the latter
+ * explicitly addresses the root profile.
  */
 object AgentDisplay {
     const val SERVER_DEFAULT_PROFILE_KEY: String = "__server_default__"
@@ -16,17 +16,16 @@ object AgentDisplay {
         "hermes agent",
     )
 
-    // Only an EXPLICIT pick drives request/session identity. The advertised
-    // "default" profile is an alias for server default, so falling back to it
-    // here would split chat, voice, or session scope.
+    // Only an explicit pick drives request identity. Server default is the null
+    // selection; a named `default` profile is an ordinary explicit pick.
     @Suppress("UNUSED_PARAMETER")
     fun effectiveProfile(
         selectedProfile: Profile?,
         profiles: List<Profile>,
     ): Profile? = selectedProfile
 
-    // Display can use the synthetic default profile's metadata without making
-    // it a request/session override. Verbose SOUL summaries are filtered by
+    // Display can use the root default profile's metadata without making it a
+    // request/session override. Verbose SOUL summaries are filtered by
     // profileDisplayName below, so this is safe for headers/cards.
     fun effectiveDisplayProfile(
         selectedProfile: Profile?,
@@ -39,7 +38,7 @@ object AgentDisplay {
             ?.let { activeName ->
                 profiles.firstOrNull { it.name.equals(activeName, ignoreCase = true) }
             }
-            ?: profiles.firstOrNull { isServerDefaultAlias(it.name) }
+            ?: profiles.firstOrNull { it.name.equals("default", ignoreCase = true) }
     }
 
     // The NAME goes in the name slot. Non-default profiles use their profile
@@ -48,7 +47,7 @@ object AgentDisplay {
     // verbose SOUL summary.
     fun profileDisplayName(profile: Profile?): String? {
         if (profile == null) return null
-        if (isServerDefaultAlias(profile.name)) {
+        if (profile.name.equals("default", ignoreCase = true)) {
             return defaultProfileDisplayName(profile)
         }
         return when {
@@ -135,22 +134,18 @@ object AgentDisplay {
             ?.takeIf { it.isNotEmpty() }
             ?.takeUnless { it.lowercase() in GENERIC_MODEL_ALIASES }
 
-    fun isServerDefaultAlias(profileName: String?): Boolean =
-        profileName?.trim()?.equals("default", ignoreCase = true) == true
-
-    fun normalizeSelection(profile: Profile?): Profile? =
-        if (isServerDefaultAlias(profile?.name)) null else profile
+    fun normalizeSelection(profile: Profile?): Profile? = profile
 
     fun profileRequestName(profileName: String?): String? =
         profileName
             ?.trim()
-            ?.takeIf { it.isNotEmpty() && !isServerDefaultAlias(it) }
+            ?.takeIf { it.isNotEmpty() && it != SERVER_DEFAULT_PROFILE_KEY }
 
     /**
      * The profile name that owns chat sessions for the current UI selection.
      *
-     * [selectedProfileName] is null (or the synthetic `default` alias) for the
-     * "Server default" row. That UI sentinel must remain distinct from the
+     * [selectedProfileName] is null for the "Server default" row. That UI
+     * sentinel must remain distinct from the
      * server's sticky active profile: a dashboard launched under the root home
      * may still report `active=victor`, in which case upstream Gateway and
      * dashboard session calls must explicitly target `victor`. The resolved

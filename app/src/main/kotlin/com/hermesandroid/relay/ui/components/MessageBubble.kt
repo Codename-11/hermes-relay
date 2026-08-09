@@ -50,7 +50,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -86,7 +85,6 @@ import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.components.pet.petVisitTargetSurface
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -244,6 +242,26 @@ fun MessageBubble(
         isStreaming = message.isStreaming,
         hasMediaResult = message.attachments.isNotEmpty() || inlineImages.isNotEmpty(),
     )
+    val streamingStatusLabel = if (
+        !isUser &&
+        !isSystem &&
+        message.isStreaming &&
+        message.content.isBlank() &&
+        !showImageGeneration
+    ) {
+        if (recoveringAnswer) {
+            stringResource(R.string.msg_bubble_reconnecting)
+        } else {
+            stringResource(R.string.msg_bubble_still_working)
+        }
+    } else {
+        null
+    }
+    val a11yDescription = buildString {
+        append(message.role.name.lowercase())
+        append(" message: ")
+        append(streamingStatusLabel ?: message.content.take(100))
+    }
     val hasImageGenerationCall = remember(message.toolCalls) {
         message.toolCalls.any {
             it.name.trim().lowercase() == "image_generate"
@@ -385,13 +403,22 @@ fun MessageBubble(
         // carries only thinking and/or tool calls (both rendered OUTSIDE
         // this Surface — the ThinkingBlock above, the tool pills as separate
         // rows) would otherwise paint a bare timestamp-only chip between the
-        // Thought-process block and the tool pill. Keep the bubble while
-        // streaming (StreamingDots is the live "working" indicator) and
-        // whenever there are cards/attachments to render inside it.
+        // Thought-process block and the tool pill. The first-token working state
+        // is rendered directly in the conversation
+        // lane below, without an opaque bubble. Cards and attachments still own
+        // a normal bubble even when response prose has not arrived yet.
+        streamingStatusLabel?.let { streamingStatus ->
+            StandaloneStreamingStatus(
+                status = streamingStatus,
+                accessibilityDescription = a11yDescription,
+                textColor = textColor,
+                modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 6.dp),
+            )
+        }
+
         val showBubble = isUser || isSystem ||
             visibleMessageContent.isNotBlank() ||
             quoteEnvelope != null ||
-            message.isStreaming ||
             showImageGeneration ||
             message.cards.isNotEmpty() ||
             message.attachments.isNotEmpty() ||
@@ -728,64 +755,6 @@ fun MessageBubble(
                         }
                 }
 
-                // Streaming indicator — only while awaiting the first token. Once
-                // text starts flowing, the growing reply is itself the progress
-                // signal, so the pulsing dots stop (Messenger/Telegram drop the
-                // typing bubble the moment content appears) instead of throbbing
-                // under the text for the whole turn.
-                if (
-                    message.isStreaming &&
-                    visibleMessageContent.isBlank() &&
-                    !showImageGeneration
-                ) {
-                    // After a few seconds with no content yet, escalate the bare
-                    // dots to a labeled "Still working…" so a slow first token
-                    // never reads as a hang on the SSE / sessions paths.
-                    val awaitingFirstToken = visibleMessageContent.isBlank()
-                    var showStillWorking by remember(message.id) { mutableStateOf(false) }
-                    LaunchedEffect(message.id, awaitingFirstToken) {
-                        showStillWorking = false
-                        if (awaitingFirstToken) {
-                            delay(4_000)
-                            showStillWorking = true
-                        }
-                    }
-                    val thinkingIndicator = LocalThinkingIndicator.current
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        when (thinkingIndicator.style) {
-                            ThinkingIndicatorStyle.Matrix -> DotMatrixIndicator(
-                                // Auto follows the bubble text color; accents
-                                // come from the brand palette. The grid modulates
-                                // its own alpha (idle dots ≈0.18, lit dots 1.0).
-                                color = thinkingIndicator.color.toColor(autoColor = textColor),
-                                pattern = thinkingIndicator.pattern,
-                                animated = thinkingIndicator.animated,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                            ThinkingIndicatorStyle.Dots -> StreamingDots(
-                                color = textColor.copy(alpha = 0.6f),
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                        // During dropped-stream answer recovery the label shows
-                        // immediately (the 4s escalation is for a slow first
-                        // token; a recovery is already known to be slow).
-                        if ((showStillWorking || recoveringAnswer) && awaitingFirstToken) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (recoveringAnswer) {
-                                    stringResource(R.string.msg_bubble_reconnecting)
-                                } else {
-                                    stringResource(R.string.msg_bubble_still_working)
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = textColor.copy(alpha = 0.6f),
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                    }
-                }
-
                 // Timestamp — only on the LAST bubble of a same-author run so a
                 // burst of fragments doesn't stack three near-touching time labels.
                 // Grouping breaks on a >5min gap (ChatScreen), so every pause still
@@ -1073,6 +1042,42 @@ private fun MessagePathBadge(text: String, leadingIcon: ImageVector? = null) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/** First-token progress rendered in the conversation lane, not inside a message bubble. */
+@Composable
+private fun StandaloneStreamingStatus(
+    status: String,
+    accessibilityDescription: String,
+    textColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val thinkingIndicator = LocalThinkingIndicator.current
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = modifier.clearAndSetSemantics {
+            contentDescription = accessibilityDescription
+        },
+    ) {
+        when (thinkingIndicator.style) {
+            ThinkingIndicatorStyle.Matrix -> DotMatrixIndicator(
+                color = thinkingIndicator.color.toColor(autoColor = textColor),
+                pattern = thinkingIndicator.pattern,
+                animated = thinkingIndicator.animated,
+            )
+            ThinkingIndicatorStyle.Dots -> StreamingDots(
+                color = textColor.copy(alpha = 0.6f),
+            )
+        }
+        Text(
+            text = status,
+            style = MaterialTheme.typography.labelSmall,
+            color = textColor.copy(alpha = 0.68f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

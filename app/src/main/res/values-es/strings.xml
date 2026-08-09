@@ -3603,4 +3603,13 @@
     <string name="chat_quote_hermes">Hermes</string>
     <string name="chat_quote_open">Abrir mensaje original de %1$s</string>
     <string name="chat_quote_remove">Quitar cita</string>
+    <string name="profile_shelf_switch_agent">Cambiar de agente</string>
+    <string name="profile_shelf_all_profiles">Abrir todos los perfiles de agente</string>
+    <string name="profile_shelf_open_passport">Abrir Pasaporte del agente</string>
+    <string name="profile_shelf_switch_to">Cambiar a este agente</string>
+    <string name="profile_shelf_locked_hint">El cambio de perfil está bloqueado. Mantén pulsado el agente activo para desbloquearlo.</string>
+    <string name="profile_shelf_inspect">Inspeccionar perfil</string>
+    <string name="profile_shelf_hide">Ocultar de la bandeja de perfiles</string>
+    <string name="profile_shelf_expand">Expandir la bandeja de perfiles</string>
+    <string name="profile_shelf_collapse">Contraer la bandeja de perfiles</string>
 </resources>

@@ -424,7 +424,6 @@ fun SettingsScreen(
             val lockedDisplayName: String? = when {
                 !isProfileLocked -> null
                 lockedProfileName == null ||
-                    AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
                     lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
                     serverDefaultLabel
                 else ->
@@ -1055,13 +1054,12 @@ private fun ProfileLockDialog(
     onUnlock: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // Selectable rows: a synthetic "Server default" sentinel + the advertised
-    // profiles, minus the synthetic "default" alias (folded into Server default).
-    val selectableProfiles = profiles.filterNot { AgentDisplay.isServerDefaultAlias(it.name) }
+    // Selectable rows: a synthetic "Server default" sentinel + every advertised
+    // profile, including a profile literally named `default`.
+    val selectableProfiles = profiles
 
-    // Is the stored lock target Server default (sentinel / "default" alias / null)?
+    // Is the stored lock target Server default (sentinel / null)?
     val lockedIsServerDefault = lockedProfileName == null ||
-        AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
         lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
     val lockedProfile = if (lockedIsServerDefault) {
         null

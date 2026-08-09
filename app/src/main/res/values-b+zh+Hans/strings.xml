@@ -3846,4 +3846,13 @@
     <string name="chat_quote_hermes">Hermes</string>
     <string name="chat_quote_open">打开 %1$s 的原始消息</string>
     <string name="chat_quote_remove">移除引用</string>
+    <string name="profile_shelf_switch_agent">切换智能体</string>
+    <string name="profile_shelf_all_profiles">打开所有智能体配置</string>
+    <string name="profile_shelf_open_passport">打开智能体护照</string>
+    <string name="profile_shelf_switch_to">切换到此智能体</string>
+    <string name="profile_shelf_locked_hint">配置切换已锁定。长按当前智能体即可解锁。</string>
+    <string name="profile_shelf_inspect">查看配置</string>
+    <string name="profile_shelf_hide">从配置架中隐藏</string>
+    <string name="profile_shelf_expand">展开配置架</string>
+    <string name="profile_shelf_collapse">收起配置架</string>
 </resources>

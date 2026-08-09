@@ -3918,4 +3918,13 @@
     <string name="chat_quote_hermes">Hermes</string>
     <string name="chat_quote_open">Ursprüngliche Nachricht von %1$s öffnen</string>
     <string name="chat_quote_remove">Zitat entfernen</string>
+    <string name="profile_shelf_switch_agent">Agent wechseln</string>
+    <string name="profile_shelf_all_profiles">Alle Agentenprofile öffnen</string>
+    <string name="profile_shelf_open_passport">Agentenpass öffnen</string>
+    <string name="profile_shelf_switch_to">Zu diesem Agenten wechseln</string>
+    <string name="profile_shelf_locked_hint">Der Profilwechsel ist gesperrt. Halten Sie den aktiven Agenten gedrückt, um die Sperre aufzuheben.</string>
+    <string name="profile_shelf_inspect">Profil prüfen</string>
+    <string name="profile_shelf_hide">Aus der Profilablage ausblenden</string>
+    <string name="profile_shelf_expand">Profilablage erweitern</string>
+    <string name="profile_shelf_collapse">Profilablage einklappen</string>
 </resources>

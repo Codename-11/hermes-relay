@@ -1560,6 +1560,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /** The active profile's local agent-icon path (client-side, never sent to Hermes). */
     val profileIcon: StateFlow<String?> get() = profileController.profileIcon
 
+    /** A local icon path for a specific profile identity on the active connection. */
+    fun profileIconFlow(profileName: String?) = profileController.profileIconFlow(profileName)
+
     val hostProfileIconImportState: StateFlow<ProfileController.HostIconImportState>
         get() = profileController.hostIconImportState
 
@@ -1585,7 +1588,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Lock the active connection to [profile] (null = Server default). */
     fun lockProfile(profile: Profile?) {
-        viewModelScope.launch { profileController.lockProfile(profile) }
+        profileController.lockProfile(profile)
     }
 
     /** Remove the active connection's profile lock. */
@@ -6501,7 +6504,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun saveLastSessionId(sessionId: String?) {
         _lastSessionId.value = sessionId
         val connectionId = activeConnectionId.value
-        val profileName = profileController.resolveSessionProfileName()
+        // Last-session persistence follows the selected UI profile identity.
+        // The null Server-default sentinel stays separate from whichever named
+        // profile the server's sticky default currently resolves to.
+        val profileName = profileController.selectedProfile.value?.name
         viewModelScope.launch {
             if (connectionId != null) {
                 if (sessionId != null) {
@@ -6533,7 +6539,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }
             }
-            if (profileName == null || AgentDisplay.isServerDefaultAlias(profileName)) {
+            if (profileName == null) {
                 getApplication<Application>().relayDataStore.edit { preferences ->
                     if (sessionId != null) {
                         preferences[KEY_LAST_SESSION_ID] = sessionId
