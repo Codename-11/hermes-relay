@@ -1,5 +1,18 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-09 — Gateway activity recovery and chat speech
+
+Successful Android Gateway turns now reconcile against their profile-owned,
+structured session history. This recovers persisted tool calls when an upstream
+Gateway completes a turn without emitting live tool lifecycle events; assistant
+prose is never inspected for inferred activity, and the recovered calls continue
+through the existing Off, Compact, and Detailed display policy.
+
+The Speak message action now follows configured voice readiness and idle output
+state instead of active Voice Mode or presentation style. A settled assistant
+reply can therefore be read aloud directly from chat, while live or provider
+playback still prevents overlapping output.
+
 ## 2026-08-09 — Quiet reasoning and grouped tool activity
 
 Android Chat now treats reasoning and routine tools as transcript scaffolding.

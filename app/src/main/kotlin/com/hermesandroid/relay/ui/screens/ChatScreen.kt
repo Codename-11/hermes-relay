@@ -657,10 +657,6 @@ fun ChatScreen(
     val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
     var voicePresentationOverride by remember { mutableStateOf<VoicePresentationMode?>(null) }
     val effectiveVoicePresentationMode = voicePresentationOverride ?: voicePresentationMode
-    val conversationVoiceResponseActionsEnabled =
-        voiceUiState.voiceMode &&
-            effectiveVoicePresentationMode == VoicePresentationMode.Conversation &&
-            voiceUiState.state == VoiceState.Idle
     val conversationVoiceDockVisible =
         voiceUiState.voiceMode &&
             effectiveVoicePresentationMode == VoicePresentationMode.Conversation
@@ -761,6 +757,8 @@ fun ChatScreen(
     // optional Relay voice routes. Gate the mic on either route being usable;
     // availability picks the actionable toast when neither is.
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
+    val chatSpeakResponseActionsEnabled =
+        shouldOfferChatSpeakAction(voiceReady, voiceUiState.state)
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val standardVoiceSignInRouteHint by
         connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
@@ -2966,10 +2964,7 @@ fun ChatScreen(
                                             scope.launch { listState.animateScrollToItem(targetIndex + 1) }
                                         }
                                     },
-                                    onSpeakMessage = if (
-                                        conversationVoiceResponseActionsEnabled &&
-                                        !isStreaming
-                                    ) {
+                                    onSpeakMessage = if (chatSpeakResponseActionsEnabled) {
                                         { text -> voiceViewModel.speakResponse(text) }
                                     } else {
                                         null
@@ -4691,3 +4686,8 @@ private fun shareConversation(
         android.content.Intent.createChooser(intent, context.getString(R.string.chat_share_conversation)),
     )
 }
+
+internal fun shouldOfferChatSpeakAction(
+    voiceReady: Boolean,
+    voiceState: VoiceState,
+): Boolean = voiceReady && voiceState == VoiceState.Idle

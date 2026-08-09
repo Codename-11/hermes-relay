@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android restores complete Gateway activity and makes settled replies speakable.** Successful Gateway turns reconcile structured persisted tool calls even when an upstream server omits live tool lifecycle events, and a configured voice can read a completed assistant reply from its message actions without requiring Voice Mode.
 - **Android chat matches standard keyboard, scrolling, and photo behavior.** Sentence capitalization is enabled, physical Enter can send or insert a newline according to a device-level setting, Ctrl/Command+Enter always submits, directional keys stay with the text caret, expanded thinking and tool content retains bottom-follow until the user scrolls away, and portrait attachments honor their EXIF orientation in previews and message viewers.
 - **Android distinguishes live-turn corrections from queued follow-ups.** The composer names its current action with visible text and accessible state, successful gateway redirects show a correction lifecycle marker, and attachment-bearing follow-ups always enter the session-owned queue because the upstream redirect operation is text-only.
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.

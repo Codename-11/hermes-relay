@@ -93,6 +93,11 @@ import com.hermesandroid.relay.data.VoiceAudioRoute
  */
 enum class VoiceState { Idle, Listening, Transcribing, Thinking, Speaking, Error }
 
+internal fun canSpeakSettledResponse(
+    state: VoiceUiState,
+    providerRealtimeAgentTurnActive: Boolean,
+): Boolean = state.state == VoiceState.Idle && !providerRealtimeAgentTurnActive
+
 private enum class StandardSpeechStreamState {
     Idle,
     Opening,
@@ -2338,16 +2343,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Replays a completed chat response through the currently selected voice
-     * output. The UI exposes this only in idle Conversation mode, but the
-     * state checks remain here so non-UI callers cannot overlap a live turn.
+     * output. This is intentionally independent of Voice Mode: a configured
+     * voice can read a settled chat reply directly from its message menu. The
+     * state checks remain here so non-UI callers cannot overlap live playback.
      */
     fun speakResponse(text: String): Boolean {
         val state = _uiState.value
-        if (
-            !state.voiceMode ||
-            state.state != VoiceState.Idle ||
-            providerRealtimeAgentTurnActive.get()
-        ) {
+        if (!canSpeakSettledResponse(state, providerRealtimeAgentTurnActive.get())) {
             return false
         }
 

@@ -160,17 +160,21 @@ data class ContextWindowUsage(
 /**
  * A successful Sessions SSE turn still needs the server-authoritative transcript
  * because that transport does not stream every persisted message boundary.
- * Gateway turns already deliver the assistant, reasoning, and tool lifecycle
- * directly; reloading their full transcript only republishes a healthy live turn.
- * A successful socket rejoin is the exception because events emitted during the
- * gap cannot be replayed.
+ * Gateway normally delivers the assistant, reasoning, and tool lifecycle
+ * directly, but upstream versions can persist tool calls without emitting the
+ * corresponding live lifecycle events. Inspect structured history after every
+ * successful Gateway turn, then reload only when activity is missing (or socket
+ * recovery requires it), so healthy turns keep their existing UI identity. This
+ * deliberately never infers tool activity from assistant text.
  */
 internal fun shouldReloadHistoryAfterSuccessfulTurn(
     actualTransport: String,
     gatewayReconcileRequired: Boolean,
+    missingPersistedToolActivity: Boolean,
 ): Boolean =
     actualTransport == "sessions" ||
-        (actualTransport == "gateway" && gatewayReconcileRequired)
+        (actualTransport == "gateway" &&
+            (gatewayReconcileRequired || missingPersistedToolActivity))
 
 internal fun shouldSuppressPassiveSessionError(context: String?, error: Throwable?): Boolean {
     if (context != "load_sessions" && context != "load_profile_sessions") return false
@@ -7112,13 +7116,11 @@ class ChatViewModel : ViewModel() {
                 refreshApprovalMode()
             }
 
-            // Sessions SSE does not stream every persisted message boundary, so it
-            // still needs the server-authoritative transcript after success. A healthy
-            // Gateway turn is already authoritative in memory through its structured
-            // assistant/reasoning/tool events; reloading the full transcript here would
-            // republish the entire visible list and cause a completion flash. A Gateway
-            // socket rejoin explicitly flags this completion for the same profile-aware
-            // history reconcile because events emitted during the gap may be missing.
+            // Stateful transports reconcile from server-authoritative history after
+            // success. Gateway usually streams every structured lifecycle event, but
+            // some upstream versions persist tool_calls without emitting tool.start /
+            // tool.complete. The structured reload recovers those calls without ever
+            // parsing assistant prose and retains the profile-aware history boundary.
             val sid = handler.currentSessionId.value
             // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
             // has NO assistant message persisted server-side, so reconciling the
@@ -7128,18 +7130,24 @@ class ChatViewModel : ViewModel() {
             // local error visible — but still refresh the drawer + drain the queue.
             if (sid != null && (completedTransport == "sessions" || completedTransport == "gateway")) {
                 viewModelScope.launch {
-                    if (!turnErrored && shouldReloadHistoryAfterSuccessfulTurn(
-                            completedTransport,
-                            gatewayHistoryReconcileRequired,
-                        )
-                    ) {
+                    if (!turnErrored) {
                         // Profile-aware read: a gateway turn on a non-default profile
                         // persists into THAT profile's own state.db, so the bare
                         // api_server `/api/sessions/{id}/messages` 404s → emptyList()
                         // → a silent wipe of the just-finished turn. loadSessionHistory
                         // prefers the `?profile=` dashboard loader on gateway connections.
                         val serverMessages = loadSessionHistory(sid)
-                        handler.loadMessageHistory(serverMessages)
+                        val missingPersistedToolActivity =
+                            completedTransport == "gateway" &&
+                                handler.hasMissingPersistedToolActivity(serverMessages)
+                        if (shouldReloadHistoryAfterSuccessfulTurn(
+                                actualTransport = completedTransport,
+                                gatewayReconcileRequired = gatewayHistoryReconcileRequired,
+                                missingPersistedToolActivity = missingPersistedToolActivity,
+                            )
+                        ) {
+                            handler.loadMessageHistory(serverMessages)
+                        }
                     }
                     // Re-sync the drawer now that the turn is persisted server-side.
                     // The only other auto-refresh fires ~160ms after session creation
