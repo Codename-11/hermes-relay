@@ -1,5 +1,47 @@
 # Design QA
 
+## Agent profile defaults
+
+- Source visual truth: `C:\Users\Bailey\.codex\visualizations\2026\08\09\019fe858-1fe7-7aa2-90f4-ca4938a5d69b\hermes-agent-profile-defaults-detail.png`
+- Rendered implementation: `C:\Users\Bailey\.codex\worktrees\ef68\hermes-relay\app\build\ui-regression\agent-profile-defaults-dark.png`
+- Combined comparison: `C:\Users\Bailey\.codex\worktrees\ef68\hermes-relay\app\build\ui-regression\agent-profile-defaults-comparison.png`
+- Viewport: 420 x 935 dp, dark theme, xhdpi (2.0 density)
+- Source pixels: 841 x 1870; normalized to 840 x 1870 for comparison
+- Implementation pixels: 840 x 1870
+- State: Hermes Home / Default profile; reasoning Medium and speed Normal staged as two unsaved changes
+
+The source includes generated Android system chrome while the Roborazzi implementation capture contains only app content. The system status bar was treated as non-product chrome; both app surfaces were otherwise compared at the same logical viewport and equal pixel density.
+
+The combined comparison verifies the same hierarchy and above-the-fold content: target header, editing-profile card, future-session warning, Model & behavior, Policy, Capabilities, and the fixed target/review footer. All rows, values, actions, and the two-change dirty state remain visible without scrolling or colliding with the footer. Typography uses the app's Material/brand scale, spacing and 12 dp radii follow the existing system, and semantic amber, green, cyan, navy, and purple tokens match the selected direction. Material vectors are used throughout; no placeholder assets are present. The equal-density combined artifact keeps every label, divider, icon, and footer control legible, so a focused crop was not required.
+
+### Comparison history
+
+1. Initial comparison — blocked.
+   - P2: the first 360 x 720 capture used a smaller logical viewport, making rows appear oversized and hiding Policy, Skills, and Memory behind the footer.
+   - P2: the warning and connected state used the wrong semantic colors.
+   - Fixes: normalized to 420 x 935 at xhdpi; compacted section rhythm; switched to amber and green semantic colors; staged two deterministic edits.
+2. Second comparison — blocked.
+   - P2: high-emphasis purple card borders and lighter surfaces diverged from the source's subdued navy cards.
+   - P3: the target icon and capability count copy differed.
+   - Fixes: used the native navy token with a low-contrast branded border, the shield target icon, and `18 enabled` copy.
+3. Final comparison — passed.
+   - Post-fix evidence: `app/build/ui-regression/agent-profile-defaults-comparison.png`.
+   - No actionable P0, P1, or P2 differences remain.
+
+### Residual P3 polish
+
+- The reference uses a soft gradient on the review button; the implementation keeps the app theme's solid Material primary button so pressed, disabled, and accessibility states remain native.
+- Font rasterization differs slightly because the reference is generated and the implementation is rendered by Android Compose.
+
+### Interactions verified
+
+- Frozen connection/profile identity renders through the production content.
+- Reasoning and speed drafts produce the two-change dirty state.
+- Review & save and Discard expose enabled semantics when dirty.
+- All capability rows remain visible above the persistent footer.
+
+final result: passed
+
 ## Agent Passport
 
 Status: **passed**

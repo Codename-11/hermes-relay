@@ -187,6 +187,7 @@ fun VoiceSettingsScreen(
     voiceClient: RelayVoiceClient?,
     selectedProfile: Profile? = null,
     displayProfile: Profile? = selectedProfile,
+    configurationProfileName: String? = null,
     standardVoiceAvailability: StandardVoiceAvailability = StandardVoiceAvailability.Unknown,
     /**
      * Non-null endpoint display label (e.g. "Tailscale") when the sign-in
@@ -218,6 +219,8 @@ fun VoiceSettingsScreen(
     val voiceSettings by prefsRepo.settings.collectAsState(initial = VoiceSettings())
     val currentEngine = VoiceEngineMode.fromStorage(voiceSettings.engineMode)
     val currentAudioRoute = VoiceAudioRoute.fromStorage(voiceSettings.audioRoute)
+    val serverConfigProfileName = configurationProfileName
+        ?: AgentDisplay.profileRequestName(displayProfile?.name)
 
     val bargeInPrefs by settingsViewModel.bargeInPrefs.collectAsState()
     val aecAvailable = settingsViewModel.aecAvailable
@@ -559,6 +562,7 @@ fun VoiceSettingsScreen(
                         } else {
                             StandardVoiceOutputOverview(
                                 client = dashboardConfigClient,
+                                profileName = serverConfigProfileName,
                                 availability = standardVoiceAvailability,
                                 onOpenManage = onOpenManage,
                                 voiceViewModel = voiceViewModel,
@@ -665,7 +669,7 @@ fun VoiceSettingsScreen(
                     if (dashboardConfigClient != null) {
                         StandardVoiceServerConfigCard(
                             client = dashboardConfigClient,
-                            profileName = AgentDisplay.profileRequestName(selectedProfile?.name),
+                            profileName = serverConfigProfileName,
                             onOpenManage = onOpenManage,
                             onMessage = { message ->
                                 scope.launch { snackbarHost.showSnackbar(message) }
@@ -4287,6 +4291,7 @@ private fun StandardVoiceServerConfigCard(
     val couldNotLoadMsg = stringResource(R.string.voice_settings_could_not_load_config)
     val voiceConfigSavedMsg = stringResource(R.string.voice_settings_voice_config_saved)
     val saveFailedMsg = stringResource(R.string.voice_settings_save_failed)
+    val configConflictMsg = stringResource(R.string.voice_settings_config_conflict)
     val signInRequiredMsg = stringResource(R.string.voice_settings_signin_required)
     val couldNotLoadConfigMsg = stringResource(R.string.voice_settings_could_not_load_config)
 
@@ -4294,8 +4299,8 @@ private fun StandardVoiceServerConfigCard(
         loading = true
         error = null
         signInRequired = false
-        val cfg = client.getConfig()
-        val sch = client.getConfigSchema()
+        val cfg = client.getConfig(profileName)
+        val sch = client.getConfigSchema(profileName)
         if (cfg.isSuccess && sch.isSuccess) {
             values = cfg.getOrNull()
             fields = voiceConfigFields(parseConfigSchema(sch.getOrNull() ?: JsonObject(emptyMap())))
@@ -4336,7 +4341,9 @@ private fun StandardVoiceServerConfigCard(
             fun current(key: String): JsonElement? = edits[key] ?: configValueAt(tree, key)
             fun currentString(key: String): String =
                 (current(key) as? JsonPrimitive)?.contentOrNull.orEmpty()
-            fun setEdit(key: String, value: JsonElement) { edits = edits + (key to value) }
+            fun setEdit(key: String, value: JsonElement) {
+                if (!saving) edits = edits + (key to value)
+            }
 
             val ttsProvider = currentString("tts.provider")
             val sttProvider = currentString("stt.provider")
@@ -4447,10 +4454,27 @@ private fun StandardVoiceServerConfigCard(
                         val pending = edits
                         saving = true
                         scope.launch {
-                            // GET-merged tree -> PUT whole document (upstream
-                            // save_config overwrites; a partial PUT would drop keys).
-                            val merged = applyConfigEdits(tree, pending)
-                            val result = client.updateConfig(merged, profile = null)
+                            // Refetch before writing so the full-tree
+                            // compatibility round-trip cannot silently clobber
+                            // another client's edits.
+                            val freshResult = client.getConfig(profileName)
+                            val fresh = freshResult.getOrNull()
+                            val conflicts = fresh?.let { latest ->
+                                pending.keys.filter { key ->
+                                    configValueAt(tree, key) != configValueAt(latest, key)
+                                }
+                            }.orEmpty()
+                            val merged = fresh?.let { applyConfigEdits(it, pending) }
+                            val result = when {
+                                freshResult.isFailure -> Result.failure(
+                                    freshResult.exceptionOrNull() ?: IllegalStateException(saveFailedMsg),
+                                )
+                                conflicts.isNotEmpty() -> Result.failure(
+                                    IllegalStateException(configConflictMsg),
+                                )
+                                merged == null -> Result.failure(IllegalStateException(saveFailedMsg))
+                                else -> client.updateConfig(merged, profile = profileName)
+                            }
                             saving = false
                             result.fold(
                                 onSuccess = {
@@ -5182,20 +5206,21 @@ private fun VoiceModePickerDialog(
 @Composable
 private fun StandardVoiceOutputOverview(
     client: DashboardApiClient?,
+    profileName: String?,
     availability: StandardVoiceAvailability,
     onOpenManage: (() -> Unit)?,
     voiceViewModel: VoiceViewModel,
 ) {
     val context = LocalContext.current
-    var values by remember(client) { mutableStateOf<JsonObject?>(null) }
-    var loading by remember(client) { mutableStateOf(client != null) }
-    LaunchedEffect(client) {
+    var values by remember(client, profileName) { mutableStateOf<JsonObject?>(null) }
+    var loading by remember(client, profileName) { mutableStateOf(client != null) }
+    LaunchedEffect(client, profileName) {
         if (client == null) {
             loading = false
             values = null
         } else {
             loading = true
-            values = client.getConfig().getOrNull()
+            values = client.getConfig(profileName).getOrNull()
             loading = false
         }
     }
