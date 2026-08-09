@@ -1022,6 +1022,15 @@ fun ChatScreen(
     var showAgentInfo by remember { mutableStateOf(false) }
     var showBackgroundProcesses by remember { mutableStateOf(false) }
 
+    val pendingComposerDraft by chatViewModel.pendingComposerDraft.collectAsState()
+    LaunchedEffect(pendingComposerDraft) {
+        pendingComposerDraft?.let { draft ->
+            editingMessage = null
+            inputText = draft.take(charLimit)
+            chatViewModel.consumeComposerDraft(draft)
+        }
+    }
+
     // A process inventory is scoped to one gateway session. Never leave a
     // sheet opened onto a different chat after a drawer/profile switch.
     LaunchedEffect(currentSessionId, selectedProfile?.name, activeConnection?.id) {

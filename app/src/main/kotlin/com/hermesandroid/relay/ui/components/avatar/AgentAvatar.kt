@@ -104,8 +104,8 @@ interface AgentAvatar {
 }
 
 /**
- * Legacy ambient-visualization seam. The app now provides [SphereAvatar] here;
- * floating companions are published through [LocalFloatingPet].
+ * Central/ambient visualization seam. The app provides the independently saved
+ * Sphere or pet-format background here; floating companions use [LocalFloatingPet].
  */
 val LocalAgentAvatar = staticCompositionLocalOf<AgentAvatar> { SphereAvatar }
 
@@ -117,13 +117,19 @@ val LocalAvailableAvatars = staticCompositionLocalOf<List<AgentAvatar>> { listOf
 
 /**
  * The optional floating pet companion. Unlike [LocalAgentAvatar], this does not
- * replace the ambient sphere or the active profile's identity image. `null`
- * means the user has not selected a companion.
+ * replace the independently selected central/background visualization or the
+ * active profile's identity image. `null` means no companion is selected.
  */
 val LocalFloatingPet = staticCompositionLocalOf<AgentAvatar?> { null }
 
 /** User-installed pets available to the companion picker (sphere excluded). */
 val LocalAvailablePets = staticCompositionLocalOf<List<AgentAvatar>> { emptyList() }
+
+/** Resolve a central visualization without ever coupling it to floating state. */
+internal fun resolveBackgroundAvatar(
+    selectedId: String,
+    availablePets: List<AgentAvatar>,
+): AgentAvatar = availablePets.firstOrNull { it.id == selectedId } ?: SphereAvatar
 
 /** Ambient sphere/background visibility, independent of the motion setting. */
 val LocalBackgroundVisualizationEnabled = staticCompositionLocalOf { true }

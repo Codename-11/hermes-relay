@@ -24,8 +24,11 @@ Android keeps these concepts separate:
 1. **Profile identity** — the profile image or letter fallback that identifies
    the speaking agent in the top bar and at the first assistant message in a
    group.
-2. **Background visualization** — Off or Sphere. Sphere skins apply only to this
-   visualization (see [`sphere-spec.md`](./sphere-spec.md)).
+2. **Background visualization** — Off, Sphere, or an independently selected
+   validated pet-format image/animation. Sphere skins apply only when Sphere is
+   selected (see [`sphere-spec.md`](./sphere-spec.md)). A pet-format background
+   reuses only rendering and agent-state clips; it never receives floating-pet
+   roaming, placement, size, or temperament behavior.
 3. **Floating pet** — None or one selected pet companion.
 
 Pick a companion in **Settings → Appearance → Floating pet**. One app-level host

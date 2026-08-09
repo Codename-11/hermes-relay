@@ -5,13 +5,19 @@ the others:
 
 1. **Profile identity** — the profile image or letter beside the agent name and
    the first assistant message in a group.
-2. **Background visualization** — Off or the animated **Sphere**, with an
-   optional Sphere skin.
+2. **Background visualization** — Off, the animated **Sphere** with an optional
+   skin, or an imported Relay pet-format image/animation.
 3. **Floating pet** — None or an installed bitmap companion that stays with you
    across the app.
 
 Profile identity is managed from the agent sheet. Sphere and pet controls live
 under **Settings → Appearance**.
+
+The background and floating-pet selections are saved independently. You can use
+the same installed pack in either role, choose different packs, or turn either
+one off. A background animation reacts on the central Chat, clean/ambient, and
+voice surfaces; it never roams, uses floating-pet placement, or inherits pet
+temperament.
 
 ## Profile badge image
 
@@ -60,6 +66,13 @@ An opposite native directional row is **Mirrored**; the legacy in-place
 
 When **Background visualization** is set to Sphere, the **Sphere skin** row changes the orb's colors (and, optionally, fine motion parameters). Pet selection does not affect it.
 
+To restore a custom central animation instead, tap **Import background
+animation** in that same Background visualization card. Pick a Relay pet ZIP or
+a single PNG/JPEG/GIF/WebP image. The app validates and copies it locally, then
+selects it as the central animation without changing the floating pet. Imported
+assets remain visible in both installed pickers so one local copy can be reused;
+the two saved selections and behaviors remain separate.
+
 Built-in skins include:
 
 | Skin | Look |
@@ -72,7 +85,14 @@ Built-in skins include:
 
 ### Add your own skin
 
-A custom skin is a single `*.json` file describing colors plus optional per-state overrides and motion params. Drop it into the app's external `spheres/` folder:
+A custom skin is a single `*.json` file describing colors plus optional
+per-state overrides and motion params. Open **Settings → Appearance → Background
+visualization**, enable **Sphere**, and tap **Import sphere skin**. The app
+validates and copies the file into device-local app storage, selects it, and
+refreshes the preview immediately. Sphere skins are pure data and cannot run
+code.
+
+ADB remains useful for development or bulk authoring:
 
 ```bash
 # sideload flavor shown
@@ -116,7 +136,17 @@ by `adb push` or a file manager. Reopen **Settings → Appearance → Floating p
 and the pack appears as a companion choice.
 
 ::: tip Easiest: import in the app
-You don't need `adb`. In **Settings → Appearance → Floating pet**, tap **Add a pet** and pick a Relay pet pack (`.zip`) or a single image, which becomes a one-frame static companion. You can also tap **Browse Petdex** to search the public gallery, review creator/source attribution, and explicitly install a supported pet. Petdex atlases download only after you tap Install and remain available offline afterward. Imported and Petdex pets appear in the same installed list.
+You don't need `adb`. In **Settings → Appearance → Floating pet**, tap **Add a
+pet** and pick a Relay pet pack (`.zip`) or a single image, which becomes a
+one-frame static companion. Tap **Create a custom pet** for a guided local-first
+workflow: choose static or animated, describe the character, review/copy the
+complete instructions, or place them into a fresh in-app chat. The chat is
+prefilled only—you review and submit it yourself. Generated files are not
+installed or shared automatically; inspect the returned image or ZIP, then
+import it explicitly. You can also tap **Browse Petdex** to search the public
+gallery, review creator/source attribution, and explicitly install a supported
+pet. Petdex atlases download only after you tap Install and remain available
+offline afterward. Imported and Petdex pets appear in the same installed list.
 :::
 
 ::: tip Authoring reference
@@ -405,10 +435,10 @@ When authoring a pet, make the first `idle` frame a good, legible still — that
 
 **My pet (or skin) doesn't show up in the picker.** Invalid or incomplete packs are simply skipped — they never appear, and one bad pack never breaks the picker for the rest. Check logcat for the skip reason: tag `PetLoader` for pets, `SphereSkinLoader` for sphere skins.
 
-**I pushed files but nothing changed.** Reopen Appearance to refresh pets. For
+**I pushed files but nothing changed.** Reopen Appearance to refresh pets and
+sphere skins. For
 reliable installation on devices where scoped storage stalls `adb push`, use
-**Add a pet** in the app. Sphere skins are still scanned at app start, so restart
-the app after pushing a skin.
+**Add a pet** or **Import sphere skin** in the app.
 
 **My pet appears but renders blank.** A file that exists but isn't a decodable image (a corrupt or mislabeled `.png`) passes the manifest check but can't be drawn. Confirm your images actually open before shipping a pack.
 

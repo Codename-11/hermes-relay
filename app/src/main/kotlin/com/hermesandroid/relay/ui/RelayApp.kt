@@ -97,6 +97,7 @@ import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.avatar.resolveBackgroundAvatar
 import com.hermesandroid.relay.ui.components.FloatingPetCompanion
 import com.hermesandroid.relay.ui.components.shouldCompactFloatingPet
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
@@ -137,6 +138,7 @@ import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
+import com.hermesandroid.relay.ui.screens.CustomPetGuideScreen
 import com.hermesandroid.relay.ui.screens.PetdexBrowseScreen
 import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
 import com.hermesandroid.relay.ui.screens.DiagnosticsScreen
@@ -467,6 +469,7 @@ sealed class Screen(
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
     data object PetdexBrowse : Screen("settings/appearance/petdex", "Petdex", Icons.Filled.Settings)
+    data object CustomPetGuide : Screen("settings/appearance/custom-pet", "Create a pet", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
     data object Diagnostics : Screen("settings/diagnostics", "Diagnostics", Icons.Filled.Settings)
     data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
@@ -700,16 +703,20 @@ fun RelayApp() {
     val appThemeId by connectionViewModel.appTheme.collectAsState()
     val fontScale by connectionViewModel.fontScale.collectAsState()
     val appFontId by connectionViewModel.appFont.collectAsState()
+    val appearanceAccent by connectionViewModel.appearanceAccent.collectAsState()
+    val appearanceShape by connectionViewModel.appearanceShape.collectAsState()
 
     // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
     // publish it + the full available set so every MorphingSphere picks it up
     // via LocalSphereSkin without per-call-site threading. Adaptive skins read
     // the brand lazily inside MorphingSphere, so this can sit outside the theme.
     val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
+    val appearanceAssetsRefreshTick by connectionViewModel.avatarsRefreshTick.collectAsState()
     val sphereContext = androidx.compose.ui.platform.LocalContext.current
     val availableSphereSkins by produceState(
         initialValue = SphereRegistry.builtIns,
         key1 = sphereContext,
+        key2 = appearanceAssetsRefreshTick,
     ) {
         value = SphereRegistry.builtIns +
             withContext(Dispatchers.IO) { SphereSkinLoader.loadUserSkins(sphereContext) }
@@ -722,14 +729,14 @@ fun RelayApp() {
         )
     }
 
-    // Ambient visualization and pet companionship are independent. Existing
-    // LocalAgentAvatar call sites keep rendering the sphere; a selected pet is
-    // published separately for the floating companion surface.
+    // Central/background visualization and pet companionship are independent.
+    // LocalAgentAvatar owns the central surfaces; LocalFloatingPet owns roaming.
     val floatingPetId by connectionViewModel.floatingPet.collectAsState()
+    val backgroundAvatarId by connectionViewModel.backgroundAvatar.collectAsState()
     // Re-scans the pets/ dir whenever the tick bumps (in-app import/delete, or the
     // Appearance screen opening), so newly added/removed pets appear everywhere
     // without an app restart.
-    val avatarsRefreshTick by connectionViewModel.avatarsRefreshTick.collectAsState()
+    val avatarsRefreshTick = appearanceAssetsRefreshTick
     val availablePets by produceState(
         initialValue = emptyList<AgentAvatar>(),
         key1 = sphereContext,
@@ -739,6 +746,9 @@ fun RelayApp() {
     }
     val activeFloatingPet = remember(floatingPetId, availablePets) {
         availablePets.firstOrNull { it.id == floatingPetId }
+    }
+    val activeBackgroundAvatar = remember(backgroundAvatarId, availablePets) {
+        resolveBackgroundAvatar(backgroundAvatarId, availablePets)
     }
     val petSpeed by connectionViewModel.petSpeed.collectAsState()
     val petStabilize by connectionViewModel.petStabilize.collectAsState()
@@ -820,7 +830,7 @@ fun RelayApp() {
     CompositionLocalProvider(
         LocalSphereSkin provides activeSphereSkin,
         LocalAvailableSphereSkins provides availableSphereSkins,
-        LocalAgentAvatar provides SphereAvatar,
+        LocalAgentAvatar provides activeBackgroundAvatar,
         // Compatibility list for the existing Appearance picker during the
         // transition; new companion UI consumes LocalAvailablePets.
         LocalAvailableAvatars provides listOf(SphereAvatar) + availablePets,
@@ -845,6 +855,8 @@ fun RelayApp() {
         themePreference = themePreference,
         fontScale = fontScale,
         appFontId = appFontId,
+        accentHex = appearanceAccent,
+        shapeId = appearanceShape,
     ) {
         // Surface a crash report from a previous session, if any. Renders a
         // platform Dialog (own window) so tree position is z-order-agnostic;
@@ -2484,12 +2496,27 @@ fun RelayApp() {
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() },
                         onBrowsePetdex = { navController.navigate(Screen.PetdexBrowse.route) },
+                        onCreatePet = { navController.navigate(Screen.CustomPetGuide.route) },
                     )
                 }
                 composable(Screen.PetdexBrowse.route) {
                     PetdexBrowseScreen(
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Screen.CustomPetGuide.route) {
+                    CustomPetGuideScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                        onStartNewChat = { prompt ->
+                            chatViewModel.createNewChat()
+                            chatViewModel.stageComposerDraft(prompt)
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                popUpTo(Screen.Chat.route) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        },
                     )
                 }
                 composable(Screen.Analytics.route) {
