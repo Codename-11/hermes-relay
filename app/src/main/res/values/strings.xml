@@ -2735,6 +2735,23 @@
     <string name="image_generation_rendering">Rendering image</string>
     <string name="tool_progress_cd_collapse">Collapse</string>
     <string name="tool_progress_cd_expand">Expand</string>
+    <string name="tool_progress_state_expanded">Expanded</string>
+    <string name="tool_progress_state_collapsed">Collapsed</string>
+    <string name="tool_run_preparing">Preparing %1$s</string>
+    <string name="tool_run_running">Running %1$s</string>
+    <string name="tool_run_finished">Finished %1$s</string>
+    <plurals name="tool_run_reading"><item quantity="one">Reading %d item</item><item quantity="other">Reading %d items</item></plurals>
+    <plurals name="tool_run_read"><item quantity="one">Read %d item</item><item quantity="other">Read %d items</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="one">Searching %d source</item><item quantity="other">Searching %d sources</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="one">Searched %d source</item><item quantity="other">Searched %d sources</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="one">Running %d command</item><item quantity="other">Running %d commands</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="one">Ran %d command</item><item quantity="other">Ran %d commands</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="one">Running %d browser action</item><item quantity="other">Running %d browser actions</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="one">Ran %d browser action</item><item quantity="other">Ran %d browser actions</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="one">Running %d device action</item><item quantity="other">Running %d device actions</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="one">Ran %d device action</item><item quantity="other">Ran %d device actions</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="one">Using %d tool</item><item quantity="other">Using %d tools</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="one">Used %d tool</item><item quantity="other">Used %d tools</item></plurals>
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Agent icon</string>
@@ -3601,6 +3618,7 @@
     </plurals>
     <string name="tool_preparing">Preparing tool…</string>
     <string name="thinking_title">Thought process</string>
+    <string name="thinking_settled">Thought</string>
     <string name="thinking_thinking">Thinking...</string>
     <string name="thinking_thinking_short">Thinking</string>
     <string name="task_background_prefix">Background task, </string>

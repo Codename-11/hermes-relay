@@ -408,7 +408,7 @@ Bottom navigation bar with 4 tabs:
 - **Agent sheet — Personality section** — personalities fetched from `GET /api/config` (`config.agent.personalities`). Shows server default (from `config.display.personality`) + all configured. Active personality name shown on assistant chat bubbles.
 - **Agent sheet — Approval controls** — gateway contract v3 exposes the profile-persisted `approvals.mode` policy (`manual` / `smart` / `off`) separately from YOLO. The launch/default profile gets the three-way control; multiplexed non-launch profiles reconcile `session.info.approval_mode` read-only until upstream config RPCs honor profile scope. The existing YOLO switch remains an explicit per-session override and never silently writes profile configuration. Older gateways keep chat and YOLO available while the profile control explains that an upstream update is required.
 - **Streaming dots** — animated pulsing 3-dot indicator replaces static "streaming..." text
-- Displays: streaming delta text, tool progress cards (auto-expand while running, auto-collapse on complete), thinking/reasoning blocks (collapsible), per-message token counts + cost
+- Displays: streaming delta text; quiet thinking/reasoning disclosures that open while live and collapse when settled; consecutive routine tool activity summarized as one live ticker or settled disclosure; standalone lifecycle surfaces for approvals, failures, generated media, file edits, and delegated work; per-message token counts + cost
 
 ### Terminal Tab
 - **Full-screen terminal emulator** (xterm.js in WebView)

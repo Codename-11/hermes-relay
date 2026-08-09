@@ -2560,6 +2560,23 @@
     <string name="image_generation_rendering">Bild wird erstellt</string>
     <string name="tool_progress_cd_collapse">Einklappen</string>
     <string name="tool_progress_cd_expand">Ausklappen</string>
+    <string name="tool_progress_state_expanded">Ausgeklappt</string>
+    <string name="tool_progress_state_collapsed">Eingeklappt</string>
+    <string name="tool_run_preparing">%1$s wird vorbereitet</string>
+    <string name="tool_run_running">%1$s wird ausgeführt</string>
+    <string name="tool_run_finished">%1$s abgeschlossen</string>
+    <plurals name="tool_run_reading"><item quantity="one">%d Element wird gelesen</item><item quantity="other">%d Elemente werden gelesen</item></plurals>
+    <plurals name="tool_run_read"><item quantity="one">%d Element gelesen</item><item quantity="other">%d Elemente gelesen</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="one">%d Quelle wird durchsucht</item><item quantity="other">%d Quellen werden durchsucht</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="one">%d Quelle durchsucht</item><item quantity="other">%d Quellen durchsucht</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="one">%d Befehl wird ausgeführt</item><item quantity="other">%d Befehle werden ausgeführt</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="one">%d Befehl ausgeführt</item><item quantity="other">%d Befehle ausgeführt</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="one">%d Browseraktion wird ausgeführt</item><item quantity="other">%d Browseraktionen werden ausgeführt</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="one">%d Browseraktion ausgeführt</item><item quantity="other">%d Browseraktionen ausgeführt</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="one">%d Geräteaktion wird ausgeführt</item><item quantity="other">%d Geräteaktionen werden ausgeführt</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="one">%d Geräteaktion ausgeführt</item><item quantity="other">%d Geräteaktionen ausgeführt</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="one">%d Werkzeug wird verwendet</item><item quantity="other">%d Werkzeuge werden verwendet</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="one">%d Werkzeug verwendet</item><item quantity="other">%d Werkzeuge verwendet</item></plurals>
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Agentensymbol</string>
@@ -3641,6 +3658,7 @@
     <string name="tool_name_android">Telefonaktion</string>
     <string name="timeline_no_checks">keine Prüfungen</string>
     <string name="thinking_title">Denkprozess</string>
+    <string name="thinking_settled">Gedanke</string>
     <string name="thinking_thinking_short">Denkt nach</string>
     <string name="thinking_thinking">Denkt nach…</string>
     <string name="task_status_working">In Arbeit</string>
