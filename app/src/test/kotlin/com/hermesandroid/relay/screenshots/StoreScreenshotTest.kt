@@ -78,6 +78,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -137,9 +138,37 @@ class StoreScreenshotTest {
     // avatar, and skins — not a hand-rebuilt slice.
     @Test fun s05_themes() {
         val vm = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
-        capture("05_themes", "hermes-relay") {
-            AppearanceSettingsScreen(connectionViewModel = vm, onBack = {})
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
+                    AppearanceSettingsScreen(
+                        connectionViewModel = vm,
+                        onBack = {},
+                        initialCustomizerExpanded = true,
+                    )
+                }
+            }
         }
+        compose.onRoot().captureRoboImage("build/store-shots/05_themes.png")
+    }
+
+    @Test fun s05_theme_customizer() {
+        val vm = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
+                    AppearanceSettingsScreen(
+                        connectionViewModel = vm,
+                        onBack = {},
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Customize Relay").performScrollTo()
+        compose.onNodeWithText("Customize Relay").performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithText("Shape").performScrollTo()
+        compose.onRoot().captureRoboImage("build/store-shots/05_theme_customizer.png")
     }
     @Test fun s06_manage() = capture("06_manage", "hermes-relay") { ManageScene() }
     @Test fun s04_sessions() = capture("04_sessions", "hermes-relay") { SessionsScene() }

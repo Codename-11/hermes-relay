@@ -7,6 +7,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 
 /**
  * Theme-scoped brand token bundle.
@@ -79,6 +80,41 @@ val LocalBrand = staticCompositionLocalOf { BrandPalettes.HermesDark }
 private fun Color.lighten(f: Float): Color = lerp(this, Color.White, f)
 private fun Color.darken(f: Float): Color = lerp(this, Color.Black, f)
 
+/** User-selectable accent seeds. Stored as stable RGB strings in DataStore. */
+val AccentSwatches = listOf(
+    "#356CFF", "#00B5A0", "#62C51E", "#ED4E8B", "#FF4B00",
+)
+
+fun normalizeAccentHex(value: String?): String? {
+    val normalized = value?.trim()?.uppercase()?.let { if (it.startsWith("#")) it else "#$it" }
+    return normalized?.takeIf { it.matches(Regex("#[0-9A-F]{6}")) }
+}
+
+fun accentColor(value: String?): Color? = normalizeAccentHex(value)?.let {
+    Color(0xFF000000L or it.drop(1).toLong(16))
+}
+
+fun contrastRatio(foreground: Color, background: Color): Float {
+    val light = maxOf(foreground.luminance(), background.luminance())
+    val dark = minOf(foreground.luminance(), background.luminance())
+    return (light + 0.05f) / (dark + 0.05f)
+}
+
+fun readableContentColor(background: Color): Color =
+    listOf(Color.Black, Color.White).maxBy { contrastRatio(it, background) }
+
+/** Apply one accent seed without changing surfaces or semantic status colors. */
+fun BrandPalette.withAccent(accentHex: String?): BrandPalette {
+    val accent = accentColor(accentHex) ?: return this
+    return copy(
+        relay = if (isDark) accent.lighten(0.34f) else accent.darken(0.08f),
+        electric = accent,
+        electricMuted = if (isDark) accent.lighten(0.18f) else accent.lighten(0.12f),
+        purple = lerp(accent, purple, 0.38f),
+        cyan = lerp(accent, cyan, 0.45f),
+    )
+}
+
 /**
  * Derive a complete Material 3 [ColorScheme] from the palette. Dark and light
  * palettes use distinct mappings; the "text on a deep accent chip" slots use
@@ -87,15 +123,15 @@ private fun Color.darken(f: Float): Color = lerp(this, Color.Black, f)
 fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
     darkColorScheme(
         primary = relay,
-        onPrimary = background,
+        onPrimary = readableContentColor(relay),
         primaryContainer = electric,
-        onPrimaryContainer = paper,
+        onPrimaryContainer = readableContentColor(electric),
         secondary = purple,
-        onSecondary = paper,
+        onSecondary = readableContentColor(purple),
         secondaryContainer = navy3,
         onSecondaryContainer = paper,
         tertiary = cyan,
-        onTertiary = background,
+        onTertiary = readableContentColor(cyan),
         tertiaryContainer = purple.copy(alpha = 0.42f),
         onTertiaryContainer = paper,
         background = background,
@@ -119,15 +155,15 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
 } else {
     lightColorScheme(
         primary = electric,
-        onPrimary = Color.White,
+        onPrimary = readableContentColor(electric),
         primaryContainer = relay.copy(alpha = 0.22f),
         onPrimaryContainer = electric.darken(0.32f),
         secondary = purple,
-        onSecondary = Color.White,
+        onSecondary = readableContentColor(purple),
         secondaryContainer = purple.copy(alpha = 0.16f),
         onSecondaryContainer = purple.darken(0.38f),
         tertiary = cyan,
-        onTertiary = Color.White,
+        onTertiary = readableContentColor(cyan),
         tertiaryContainer = cyan.copy(alpha = 0.16f),
         onTertiaryContainer = cyan.darken(0.42f),
         background = background,

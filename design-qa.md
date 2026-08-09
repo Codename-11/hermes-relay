@@ -72,6 +72,47 @@ copying the mock's illustrative app chrome.
 
 final result: blocked
 
+## Appearance customization and visual assets
+
+- Selected reference: `C:\Users\Bailey\.codex\generated_images\019fe6f7-920d-7be1-b287-608a0bc2ff49\exec-facb08cb-3d8f-400a-b6ff-6f1a11a74d95.png`
+- Reference pixels: 852 x 1843.
+- Final real-screen captures:
+  - `C:\Users\Bailey\.codex\worktrees\af0f\hermes-relay\app\build\store-shots\05_themes.png`
+  - `C:\Users\Bailey\.codex\worktrees\af0f\hermes-relay\app\build\store-shots\05_theme_customizer.png`
+  - `C:\Users\Bailey\.codex\worktrees\af0f\hermes-relay\app\build\store-shots\08_appearance.png`
+- Implementation pixels: 1080 x 2160, portrait Robolectric/Roborazzi capture of the production Compose screen at its 360 dp Android viewport.
+- Normalization: the selected reference was scaled to 1080 px wide and cropped to the same 2160 px viewport for the full-view comparison. The reference's taller aspect ratio remains visible as an expected viewport difference; the focused customizer capture verifies the below-fold editor content.
+- Comparison evidence:
+  - Initial full-view comparison: `C:\Users\Bailey\.codex\visualizations\2026\08\09\019fe6f7-920d-7be1-b287-608a0bc2ff49\appearance-reference-v-current.png`
+  - Final normalized full-view comparison: `C:\Users\Bailey\.codex\visualizations\2026\08\09\019fe6f7-920d-7be1-b287-608a0bc2ff49\appearance-reference-v-current-2.png`
+  - Focused customizer comparison: `C:\Users\Bailey\.codex\visualizations\2026\08\09\019fe6f7-920d-7be1-b287-608a0bc2ff49\appearance-customizer-reference-v-current.png`
+- State: Hermes Relay dark preset, customizer expanded. The focused capture expands the real control by click and scrolls its Shape row into view.
+
+### Comparison history
+
+- Iteration 1, blocked: the prior implementation was a card-heavy settings adaptation. Its preview was cropped and incomplete, presets sat inside an oversized explanatory card, mode and customization were disconnected containers, Shape was omitted, and Apply/Cancel were not anchored. These were P1 fidelity defects.
+- Iteration 2: replaced the top section with the mockup's composition: compact header/reset, contextual conversation preview, four-card preset rail, inline mode selector, integrated customizer, and fixed preview/apply bar. The preview now uses the real app mark and Sphere renderer rather than placeholder assets.
+- Iteration 3: normalized the 360 dp layout so all four preset cards remain visible, matched the six-color accent row, added the message gradient/timestamps/delivery state/tool metadata, and made Soft/Balanced/Sharp control the persisted Material shape system.
+
+### Required fidelity surfaces
+
+- **Typography:** current app typography is retained, with compact preview-specific optical sizes to match the reference hierarchy at 360 dp. The reference was authored at a wider/taller logical viewport, so line wrapping differs slightly without changing hierarchy.
+- **Spacing/layout:** region order, proportions, four-up preset rail, compact mode row, integrated editor, and anchored actions now match. On the shorter 2160 px capture, the editor body scrolls beneath the fixed action bar; the focused capture verifies it rather than compressing controls below accessible sizes.
+- **Colors/tokens:** deep neutral surfaces, violet selection, gradient user bubble, semantic green status, and six reference-aligned accent choices are mapped through the live Hermes palette.
+- **Image quality/assets:** the production splash mark and live Sphere renderer are used. No raster placeholders, emoji assets, or approximated logos remain.
+- **Copy/content:** preview prompt, times, response, tool/token metadata, composer, gateway/profile status, preset labels, shape labels, and Apply/Cancel/Reset actions follow the selected reference.
+- **Background/pet split:** the lower capture confirms that background animation import and Sphere skin import remain separate from floating-pet roaming and placement.
+
+### Verification
+
+- Focused accent, shape persistence, background migration/selection, importer, and guide tests passed (14 tests).
+- Sideload Kotlin compilation passed as part of the focused suite.
+- Top, clicked/expanded customizer, and background-import production-screen captures rendered successfully and were inspected at full resolution.
+
+No open P0, P1, or P2 findings.
+
+final result: passed
+
 ## Conversation voice dock
 
 - Reference: `C:\Users\Bailey\.codex\generated_images\019fba42-1e93-78e1-9cd6-6919fb52d5bc\exec-89feab69-9caf-4084-b107-6bff43e511d6.png`

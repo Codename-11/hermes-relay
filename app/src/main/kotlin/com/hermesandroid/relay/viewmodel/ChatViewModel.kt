@@ -2267,6 +2267,20 @@ class ChatViewModel : ViewModel() {
     )
     val composerPrefill: SharedFlow<String> = _composerPrefill.asSharedFlow()
 
+    // Navigation-safe draft handoff for explicit in-app workflows (for example,
+    // custom-pet creation). StateFlow keeps the reviewed text until ChatScreen
+    // is mounted; consuming it never sends the message.
+    private val _pendingComposerDraft = MutableStateFlow<String?>(null)
+    val pendingComposerDraft: StateFlow<String?> = _pendingComposerDraft.asStateFlow()
+
+    fun stageComposerDraft(text: String) {
+        _pendingComposerDraft.value = text.takeIf { it.isNotBlank() }
+    }
+
+    fun consumeComposerDraft(text: String) {
+        _pendingComposerDraft.compareAndSet(text, null)
+    }
+
     /**
      * One-shot request to open the personality picker — emitted when a bare
      * `/personality` (no argument) is sent. Picker commands aren't raw-forwarded
