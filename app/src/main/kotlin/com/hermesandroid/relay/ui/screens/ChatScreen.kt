@@ -164,6 +164,9 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatComposerDraft
 import com.hermesandroid.relay.data.ChatComposerDraftContext
 import com.hermesandroid.relay.data.ChatComposerDraftKey
+import com.hermesandroid.relay.data.ChatQuoteReference
+import com.hermesandroid.relay.data.buildChatQuotedPrompt
+import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
@@ -187,6 +190,7 @@ import com.hermesandroid.relay.ui.components.ModelPickerSheet
 import com.hermesandroid.relay.ui.components.OptionPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
+import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
 import com.hermesandroid.relay.ui.components.CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
@@ -200,11 +204,9 @@ import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.PendingAttachmentComposer
 import com.hermesandroid.relay.ui.components.AttachmentViewer
+import com.hermesandroid.relay.ui.components.ChatQuoteReferenceChip
 import com.hermesandroid.relay.ui.components.TranscriptSearchNavigator
 import com.hermesandroid.relay.ui.components.TranscriptNavigatorStrings
-import com.hermesandroid.relay.ui.components.ToolActivityPhase
-import com.hermesandroid.relay.ui.components.ToolActivityStack
-import com.hermesandroid.relay.ui.components.ToolActivityState
 import com.hermesandroid.relay.ui.components.newestPetPerchUiKey
 import com.hermesandroid.relay.ui.components.newestPetVisitTargetUiKey
 import com.hermesandroid.relay.ui.components.petPerchUiKeys
@@ -231,6 +233,7 @@ import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.SubagentLane
+import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.isVisibleForToolDisplay
 import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
@@ -895,6 +898,7 @@ fun ChatScreen(
     // Edit-and-resend mode: long-press a user bubble → "Edit & resend"
     // prefills the input; submit rewinds the conversation from that message.
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var quotedMessage by remember { mutableStateOf<ChatMessage?>(null) }
 
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
@@ -985,7 +989,10 @@ fun ChatScreen(
                     text = inputText,
                     selectionStart = inputText.length,
                     selectionEnd = inputText.length,
-                    context = ChatComposerDraftContext(editingMessageId = editingMessage?.id),
+                    context = ChatComposerDraftContext(
+                        quotedMessageId = quotedMessage?.id,
+                        editingMessageId = editingMessage?.id,
+                    ),
                     attachments = pendingAttachments,
                 ),
             )
@@ -996,11 +1003,20 @@ fun ChatScreen(
         editingMessage = restored.context.editingMessageId?.let { messageId ->
             messages.firstOrNull { it.id == messageId }
         }
+        quotedMessage = restored.context.quotedMessageId?.let { messageId ->
+            messages.firstOrNull { it.id == messageId }
+        }
         chatViewModel.replacePendingAttachments(restored.attachments)
         activeComposerDraftKey = composerDraftKey
         restoringComposerDraft = false
     }
-    LaunchedEffect(inputText, editingMessage?.id, pendingAttachments, activeComposerDraftKey) {
+    LaunchedEffect(
+        inputText,
+        editingMessage?.id,
+        quotedMessage?.id,
+        pendingAttachments,
+        activeComposerDraftKey,
+    ) {
         val key = activeComposerDraftKey ?: return@LaunchedEffect
         if (restoringComposerDraft) return@LaunchedEffect
         chatViewModel.composerDraftStore.save(
@@ -1009,7 +1025,10 @@ fun ChatScreen(
                 text = inputText,
                 selectionStart = inputText.length,
                 selectionEnd = inputText.length,
-                context = ChatComposerDraftContext(editingMessageId = editingMessage?.id),
+                context = ChatComposerDraftContext(
+                    quotedMessageId = quotedMessage?.id,
+                    editingMessageId = editingMessage?.id,
+                ),
                 attachments = pendingAttachments,
             ),
         )
@@ -1028,11 +1047,17 @@ fun ChatScreen(
         showBackgroundProcesses = false
     }
 
-    // Server command dispatch can ask the composer to prefill (e.g. /undo).
+    val currentMessagesForComposer by rememberUpdatedState(messages)
+    // Server command dispatch can ask the composer to prefill (e.g. /undo),
+    // and queued quoted replies restore as structured composer state.
     LaunchedEffect(chatViewModel) {
         chatViewModel.composerPrefill.collect { text ->
+            val envelope = parseChatQuotedPrompt(text)
             editingMessage = null
-            inputText = text.take(charLimit)
+            inputText = (envelope?.body ?: text).take(charLimit)
+            quotedMessage = envelope?.reference?.messageId?.let { messageId ->
+                currentMessagesForComposer.firstOrNull { it.id == messageId }
+            }
         }
     }
 
@@ -1108,6 +1133,7 @@ fun ChatScreen(
     val focusManager = LocalFocusManager.current
     val finishSuccessfulSend: () -> Unit = {
         activeComposerDraftKey?.let(chatViewModel.composerDraftStore::remove)
+        quotedMessage = null
         if (closeDrawerOnSend && drawerState.isOpen) {
             scope.launch { drawerState.close() }
         }
@@ -2820,21 +2846,6 @@ fun ChatScreen(
                             }
 
                             val hasBackgroundTask = message.backgroundTask != null
-                            val visiblePrimaryTools = message.toolCalls.filter { toolCall ->
-                                toolCall.taskIndex == null &&
-                                    !toolCall.showsImageGenerationPlaceholder() &&
-                                    toolDisplay != "off" &&
-                                    toolCall.isVisibleForToolDisplay(toolDisplay)
-                            }
-                            val showActivityStack = !hasBackgroundTask &&
-                                message.role == MessageRole.ASSISTANT &&
-                                (
-                                    visiblePrimaryTools.isNotEmpty() ||
-                                        (showThinking && (
-                                            message.thinkingContent.isNotBlank() ||
-                                                message.isThinkingStreaming
-                                        ))
-                                )
                             val shouldRenderBubble =
                                 !hasBackgroundTask ||
                                     message.content.isNotBlank() ||
@@ -2899,7 +2910,7 @@ fun ChatScreen(
                                         null
                                     },
                                     maxBubbleWidth = maxBubbleWidth,
-                                    showThinking = showThinking && !showActivityStack,
+                                    showThinking = showThinking,
                                     isFirstInGroup = isFirstInGroup,
                                     isLastInGroup = isLastInGroup,
                                     retainStreamingLayout = retainLiveLayout,
@@ -2923,22 +2934,25 @@ fun ChatScreen(
                                         !message.id.startsWith("steer-")
                                     ) {
                                         { msg ->
+                                            val envelope = parseChatQuotedPrompt(msg.content)
                                             editingMessage = msg
-                                            inputText = msg.content.take(charLimit)
+                                            inputText = (envelope?.body ?: msg.content).take(charLimit)
+                                            quotedMessage = envelope?.reference?.messageId?.let { id ->
+                                                messages.firstOrNull { it.id == id }
+                                            }
                                         }
                                     } else {
                                         null
                                     },
-                                    onQuoteMessage = { text ->
+                                    animationEnabled = animationEnabled,
+                                    onQuoteMessage = { quoted ->
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        val quoted = text.take(600)
-                                            .trim()
-                                            .lines()
-                                            .joinToString("\n") { line -> "> $line" }
-                                        inputText = if (inputText.isBlank()) {
-                                            "$quoted\n\n"
-                                        } else {
-                                            "$inputText\n$quoted\n\n"
+                                        quotedMessage = quoted
+                                    },
+                                    onNavigateToMessage = { messageId ->
+                                        val targetIndex = messages.indexOfFirst { it.id == messageId }
+                                        if (targetIndex >= 0) {
+                                            scope.launch { listState.animateScrollToItem(targetIndex + 1) }
                                         }
                                     },
                                     onSpeakMessage = if (
@@ -2993,26 +3007,28 @@ fun ChatScreen(
                                 // into lanes after the top-level tool cards;
                                 // the null group renders exactly as before.
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
-                                if (showActivityStack) {
-                                    val activityPhase = when {
-                                        visiblePrimaryTools.any { !it.isComplete } ->
-                                            ToolActivityPhase.USING_TOOLS
-                                        visiblePrimaryTools.any { it.success == false } ->
-                                            ToolActivityPhase.FAILED
-                                        message.isThinkingStreaming -> ToolActivityPhase.THINKING
-                                        else -> ToolActivityPhase.COMPLETED
+                                laneGroups[null]?.forEach { toolCall ->
+                                    // Image generation renders inside MessageBubble
+                                    // so progress and final media retain one surface.
+                                    if (toolCall.showsImageGenerationPlaceholder()) {
+                                        return@forEach
+                                    }
+                                    if (!toolCall.isVisibleForToolDisplay(toolDisplay)) {
+                                        return@forEach
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    ToolActivityStack(
-                                        state = ToolActivityState(
-                                            phase = activityPhase,
-                                            toolCalls = visiblePrimaryTools,
-                                            thinkingContent = message.thinkingContent
-                                                .takeIf { showThinking && it.isNotBlank() },
-                                        ),
-                                        activityKey = message.uiKey,
-                                        messageTimestamp = message.timestamp,
-                                    )
+                                    when (toolDisplay) {
+                                        "compact" -> CompactToolCall(toolCall = toolCall)
+                                        else -> ToolProgressCard(
+                                            toolCall = toolCall,
+                                            messageTimestamp = message.timestamp,
+                                            onExpandedChange = { expanded ->
+                                                if (expanded && isStreaming) {
+                                                    userScrolledAway = true
+                                                }
+                                            },
+                                        )
+                                    }
                                 }
                                 if (toolDisplay != "off") {
                                     laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
@@ -3286,6 +3302,44 @@ fun ChatScreen(
                 }
             }
 
+            val quoteYouLabel = stringResource(R.string.chat_quote_you)
+            val quoteHermesLabel = stringResource(R.string.chat_quote_hermes)
+            val activeQuoteReference = remember(
+                quotedMessage?.id,
+                quotedMessage?.content,
+                quotedMessage?.role,
+                quoteYouLabel,
+                quoteHermesLabel,
+            ) {
+                quotedMessage?.let { quoted ->
+                    val visibleContent = parseChatQuotedPrompt(quoted.content)?.body ?: quoted.content
+                    ChatQuoteReference(
+                        messageId = quoted.id,
+                        authorLabel = if (quoted.role == MessageRole.USER) {
+                            quoteYouLabel
+                        } else {
+                            quoteHermesLabel
+                        },
+                        excerpt = compactQuoteExcerpt(visibleContent),
+                    )
+                }
+            }
+            AnimatedVisibility(visible = activeQuoteReference != null) {
+                activeQuoteReference?.let { reference ->
+                    ChatQuoteReferenceChip(
+                        reference = reference,
+                        onOpenOriginal = {
+                            val index = messages.indexOfFirst { it.id == reference.messageId }
+                            if (index >= 0) {
+                                scope.launch { listState.animateScrollToItem(index + 1) }
+                            }
+                        },
+                        onRemove = { quotedMessage = null },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
+            }
+
             PendingAttachmentComposer(
                 attachments = pendingAttachments,
                 onPreview = { attachment, _ -> pendingAttachmentPreview = attachment },
@@ -3326,6 +3380,7 @@ fun ChatScreen(
                     IconButton(
                         onClick = {
                             editingMessage = null
+                            quotedMessage = null
                             inputText = ""
                         },
                         modifier = Modifier.size(24.dp),
@@ -3551,11 +3606,15 @@ fun ChatScreen(
                 trailing = trailing,
                 onSend = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    val outboundText = buildChatQuotedPrompt(
+                        inputText.ifBlank { attachmentPlaceholder },
+                        activeQuoteReference,
+                    )
                     val editing = editingMessage
                     if (editing != null) {
                         // Only drop the edit state once the rewind actually
                         // dispatched — a silent gate must not eat the text.
-                        if (chatViewModel.regenerateFromMessage(editing.id, inputText)) {
+                        if (chatViewModel.regenerateFromMessage(editing.id, outboundText)) {
                             editingMessage = null
                             inputText = ""
                             finishSuccessfulSend()
@@ -3569,7 +3628,7 @@ fun ChatScreen(
                             }
                         }
                     } else {
-                        chatViewModel.sendMessage(inputText.ifBlank { attachmentPlaceholder })
+                        chatViewModel.sendMessage(outboundText)
                         inputText = ""
                         finishSuccessfulSend()
                     }
@@ -4343,6 +4402,9 @@ private fun formatFileSize(bytes: Long): String = when {
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
     else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
 }
+
+private fun compactQuoteExcerpt(content: String): String =
+    content.trim().replace(Regex("\\s+"), " ").take(180)
 
 /**
  * Read an attachment from a content [uri], enforce the [maxAttachmentMb] cap,

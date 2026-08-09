@@ -2905,6 +2905,10 @@
     <string name="msg_bubble_sending">Sending&#8230;</string>
     <string name="msg_bubble_queued">Queued</string>
     <string name="msg_bubble_steered">Correction sent</string>
+    <string name="chat_quote_you">You</string>
+    <string name="chat_quote_hermes">Hermes</string>
+    <string name="chat_quote_open">Open original message from %1$s</string>
+    <string name="chat_quote_remove">Remove quote</string>
     <string name="msg_bubble_delivered">Delivered</string>
     <string name="msg_bubble_not_sent">Not sent</string>
 

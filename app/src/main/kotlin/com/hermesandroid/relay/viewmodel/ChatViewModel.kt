@@ -31,6 +31,7 @@ import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
@@ -511,7 +512,7 @@ class ChatViewModel : ViewModel() {
     val recentPrompts: StateFlow<List<String>> = _recentPrompts.asStateFlow()
 
     private fun recordRecentPrompt(text: String) {
-        val t = text.trim()
+        val t = (parseChatQuotedPrompt(text)?.body ?: text).trim()
         if (t.isBlank() || t.startsWith("/")) return // skip blanks + slash commands
         _recentPrompts.update { prev ->
             (listOf(t) + prev.filterNot { it == t }).take(RECENT_PROMPTS_LIMIT)
@@ -8424,7 +8425,9 @@ class ChatViewModel : ViewModel() {
 }
 
 private fun queuedPromptPreview(prompt: String, maxChars: Int = 96): String {
-    val compact = prompt.replace(Regex("\\s+"), " ").trim()
+    val compact = (parseChatQuotedPrompt(prompt)?.body ?: prompt)
+        .replace(Regex("\\s+"), " ")
+        .trim()
     return if (compact.length <= maxChars) compact else compact.take(maxChars - 1).trimEnd() + "…"
 }
 

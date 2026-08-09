@@ -14,7 +14,9 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatQuoteReference
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.buildChatQuotedPrompt
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -44,7 +46,7 @@ class MessageBubbleInteractionTest {
                 MessageBubble(
                     message = message,
                     onCopyMessage = { invocations += "copy:$it" },
-                    onQuoteMessage = { invocations += "quote:$it" },
+                    onQuoteMessage = { invocations += "quote:${it.content}" },
                     onSpeakMessage = { invocations += "speak:$it" },
                 )
             }
@@ -87,5 +89,41 @@ class MessageBubbleInteractionTest {
 
         compose.onNodeWithText("Copy").assertIsDisplayed().assertHasClickAction()
         compose.onNodeWithText("Quote in reply").assertIsDisplayed().assertHasClickAction()
+    }
+
+    @Test
+    fun quotedReplyRendersStructuredReferenceAndKeepsMarkupOutOfActions() {
+        var quotedContent: String? = null
+        val message = ChatMessage(
+            id = "quoted-reply",
+            role = MessageRole.USER,
+            content = buildChatQuotedPrompt(
+                body = "This is my reply.",
+                reference = ChatQuoteReference(
+                    messageId = "original-message",
+                    authorLabel = "Hermes",
+                    excerpt = "The original answer.",
+                ),
+            ),
+            timestamp = 1_700_000_000_000L,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = message,
+                    onQuoteMessage = { quotedContent = it.content },
+                )
+            }
+        }
+
+        compose.onNodeWithText("@Hermes").assertIsDisplayed()
+        compose.onNodeWithText("The original answer.").assertIsDisplayed()
+        compose.onNodeWithText("This is my reply.").assertIsDisplayed()
+        compose.onNodeWithText("Replying to", substring = true).assertDoesNotExist()
+
+        compose.onNodeWithContentDescription("user message: This is my reply.").performClick()
+        compose.onNodeWithContentDescription("Quote in reply").performClick()
+        compose.runOnIdle { assertEquals("This is my reply.", quotedContent) }
     }
 }
