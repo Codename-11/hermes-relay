@@ -39,6 +39,10 @@ active capsule, 36 dp avatar artwork inside 48 dp targets, compact spacing, and
 a contained overflow affordance keep the row visually subordinate to Chat. When
 Server default resolves to a concrete profile, that profile's avatar remains
 the identity and a small home badge discloses its default routing role.
+Local avatar lookup remains keyed to the Server-default presentation identity,
+so an image customized while that row is selected appears consistently in both
+the Chat header and shelf rather than being re-keyed to whichever explicit
+profile is currently active.
 
 The Server-default sentinel is now distinct from a profile literally named
 `default`. Profile selection restores the last compatible connection/profile/

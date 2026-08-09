@@ -59,12 +59,11 @@ class ProfileShelfPolicyTest {
     }
 
     @Test
-    fun serverDefaultUsesResolvedAvatarWithoutConflatingLiteralDefaultProfile() {
-        val resolved = Profile(name = "victor", model = "gpt-5.6-sol")
+    fun serverDefaultUsesItsPresentationIconWithoutConflatingLiteralDefaultProfile() {
         val serverDefault = ProfileChoice(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, null)
         val literalDefault = ProfileChoice("default", Profile(name = "default", model = "root"))
 
-        assertEquals(resolved, ProfileShelfPolicy.avatarProfile(serverDefault, resolved))
-        assertEquals(literalDefault.profile, ProfileShelfPolicy.avatarProfile(literalDefault, resolved))
+        assertEquals(null, ProfileShelfPolicy.iconProfileName(serverDefault))
+        assertEquals("default", ProfileShelfPolicy.iconProfileName(literalDefault))
     }
 }

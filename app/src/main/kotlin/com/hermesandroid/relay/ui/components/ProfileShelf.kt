@@ -99,8 +99,8 @@ object ProfileShelfPolicy {
     fun isSelected(choice: ProfileChoice, selectedProfileName: String?): Boolean =
         choice.key == AgentDisplay.profileSessionKey(selectedProfileName)
 
-    fun avatarProfile(choice: ProfileChoice, resolvedProfile: Profile?): Profile? =
-        choice.profile ?: resolvedProfile.takeIf { choice.isServerDefault }
+    /** Local presentation assets follow the selected choice key, not the sticky profile it resolves to. */
+    fun iconProfileName(choice: ProfileChoice): String? = choice.profile?.name
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -399,8 +399,8 @@ private fun ProfileChoiceAvatar(
     label: String,
     size: Int,
 ) {
-    val avatarProfile = ProfileShelfPolicy.avatarProfile(choice, resolvedProfile)
-    val iconPath by connectionViewModel.profileIconFlow(avatarProfile?.name).collectAsState(initial = null)
+    val iconProfileName = ProfileShelfPolicy.iconProfileName(choice)
+    val iconPath by connectionViewModel.profileIconFlow(iconProfileName).collectAsState(initial = null)
     Box(modifier = Modifier.size(size.dp)) {
         Surface(
             modifier = Modifier.fillMaxSize(),
@@ -418,7 +418,7 @@ private fun ProfileChoiceAvatar(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                avatarProfile == null && choice.isServerDefault -> Box(contentAlignment = Alignment.Center) {
+                resolvedProfile == null && choice.isServerDefault -> Box(contentAlignment = Alignment.Center) {
                     Icon(
                         Icons.Filled.Home,
                         contentDescription = null,
@@ -436,7 +436,7 @@ private fun ProfileChoiceAvatar(
                 }
             }
         }
-        if (choice.isServerDefault && avatarProfile != null) {
+        if (choice.isServerDefault && resolvedProfile != null) {
             Surface(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
