@@ -3991,4 +3991,25 @@
     <string name="support_bundle_copied">Support information copied</string>
     <string name="support_bundle_no_share">Support information copied — no app found to share to</string>
     <string name="support_bundle_share_title">Share Hermes-Relay support information</string>
+    <!-- Hermes Management progressive-disclosure overview -->
+    <string name="dashboard_server_fallback">Hermes server</string>
+    <string name="dashboard_more_actions">More actions</string>
+    <string name="dashboard_managing_server">Managing server</string>
+    <string name="dashboard_server_version">Hermes Dashboard %1$s</string>
+    <string name="dashboard_standard_dashboard">Standard Hermes Dashboard</string>
+    <string name="dashboard_switch_connection">Switch</string>
+    <string name="dashboard_server_scope_notice">Changes here can affect every client using this Hermes server.</string>
+    <string name="dashboard_group_agents">Agents</string>
+    <string name="dashboard_group_capabilities">Capabilities</string>
+    <string name="dashboard_group_operations">Operations</string>
+    <string name="dashboard_group_server_providers">Server &amp; providers</string>
+    <string name="dashboard_overview_browse">Browse</string>
+    <string name="dashboard_overview_advanced">Advanced</string>
+    <string name="dashboard_overview_loading">Loading…</string>
+    <string name="dashboard_overview_unavailable">Unavailable</string>
+    <string name="dashboard_overview_count">%1$d available</string>
+    <string name="dashboard_server_details">Server details</string>
+    <string name="dashboard_scope_profile">Profile</string>
+    <string name="dashboard_scope_secret">Secret</string>
+    <string name="dashboard_scope_server">Server</string>
 </resources>

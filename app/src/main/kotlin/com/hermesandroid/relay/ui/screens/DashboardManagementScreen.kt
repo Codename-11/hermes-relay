@@ -21,10 +21,12 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -43,12 +45,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Tune
@@ -69,9 +75,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -111,12 +116,9 @@ import com.hermesandroid.relay.network.upstream.DashboardComponentHealthRollup
 import com.hermesandroid.relay.network.upstream.DashboardStatus
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
-import com.hermesandroid.relay.ui.components.RelayMetricCard
-import com.hermesandroid.relay.ui.components.RelayNavTile
-import com.hermesandroid.relay.ui.components.RelayReturnStrip
-import com.hermesandroid.relay.ui.components.RelaySectionCaption
+import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.ui.theme.RelayRefresh
-import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import com.hermesandroid.relay.ui.theme.relayPanel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -403,6 +405,7 @@ fun DashboardManagementScreen(
     var showingDetail by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableStateOf(0) }
     var forceReloadKey by remember { mutableStateOf<String?>(null) }
+    var forceReloadOverview by remember { mutableStateOf(false) }
     // Process-lifetime cache (NOT remember{}) — see [DashboardPayloadCache].
     val payloadStates = DashboardPayloadCache.states
     val refreshingPayloads = DashboardPayloadCache.refreshing
@@ -451,6 +454,18 @@ fun DashboardManagementScreen(
         is DashboardPayloadState.Loaded -> state.session?.authenticated
         is DashboardPayloadState.Error -> false
         else -> null
+    }
+    val overviewLoadedState = managementSections.asSequence()
+        .mapNotNull { targetSection ->
+            payloadStates[payloadKeyFor(targetSection)] as? DashboardPayloadState.Loaded
+        }
+        .firstOrNull()
+    val overviewPayloadState: DashboardPayloadState = overviewLoadedState ?: payloadState
+    val overviewStatus = overviewLoadedState?.status ?: dashboardStatus
+    val overviewSession = overviewLoadedState?.session ?: dashboardSession
+    val overviewAuthenticated = when {
+        overviewLoadedState != null -> overviewLoadedState.session?.authenticated
+        else -> dashboardAuthenticated
     }
     val cookieStoreFactory = remember(context, connectionId) {
         {
@@ -785,7 +800,37 @@ fun DashboardManagementScreen(
         }
     }
 
-    LaunchedEffect(dashboardUrl, selectedTab, reloadNonce, activeConnection?.id, effectiveProfileName) {
+    LaunchedEffect(
+        dashboardUrl,
+        selectedTab,
+        reloadNonce,
+        activeConnection?.id,
+        effectiveProfileName,
+        showingDetail,
+    ) {
+        if (!showingDetail && forceReloadOverview && dashboardUrl.isNotBlank()) {
+            val currentLoaded = payloadState as? DashboardPayloadState.Loaded
+            val sharedPreamble = currentLoaded?.let {
+                DashboardPreamble(
+                    status = it.status,
+                    session = it.session,
+                    gatewayTicketAvailable = null,
+                )
+            }
+            managementSections.forEach { refreshSection ->
+                launch {
+                    loadDashboardSection(
+                        targetSection = refreshSection,
+                        targetKey = payloadKeyFor(refreshSection),
+                        foreground = refreshSection == section,
+                        force = true,
+                        preamble = sharedPreamble,
+                    )
+                }
+            }
+            forceReloadOverview = false
+            return@LaunchedEffect
+        }
         val forceCurrent = forceReloadKey == payloadKey
         loadDashboardSection(
             targetSection = section,
@@ -1144,46 +1189,39 @@ fun DashboardManagementScreen(
         )
     }
 
+    val managementConnectionLabel = activeConnection?.label
+        ?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.dashboard_server_fallback)
+    val managementTitle = if (showingDetail) {
+        manageTileSpec(section).title
+    } else {
+        stringResource(R.string.settings_hermes_management)
+    }
+    val managementStatus = if (showingDetail) dashboardStatus else overviewStatus
+    val managementAuthenticated = if (showingDetail) dashboardAuthenticated else overviewAuthenticated
+    val dashboardReady = managementStatus != null &&
+        !(managementStatus.authRequired && managementAuthenticated != true)
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.dashboard_title)) },
-                navigationIcon = {
-                    RelayChromeIconButton(
-                        icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.dashboard_back),
-                        onClick = onBack,
-                    )
+            ManagementTopBar(
+                title = managementTitle,
+                connectionLabel = managementConnectionLabel,
+                connected = dashboardReady,
+                onBack = {
+                    if (showingDetail) showingDetail = false else onBack()
                 },
-                actions = {
-                    RelayChromeIconButton(
-                        icon = Icons.Filled.Code,
-                        contentDescription = stringResource(R.string.dashboard_terminal),
-                        onClick = onNavigateToTerminal,
-                        modifier = Modifier.padding(end = 4.dp),
-                    )
-                    RelayChromeIconButton(
-                        icon = Icons.Filled.Tune,
-                        contentDescription = stringResource(R.string.dashboard_settings),
-                        onClick = onNavigateToSettings,
-                        modifier = Modifier.padding(end = 4.dp),
-                    )
-                    IconButton(
-                        onClick = {
-                            forceReloadKey = payloadKey
-                            reloadNonce += 1
-                        },
-                        enabled = !isRefreshing,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = stringResource(R.string.dashboard_refresh),
-                        )
+                onNavigateToTerminal = onNavigateToTerminal,
+                onNavigateToSettings = onNavigateToSettings,
+                onRefresh = {
+                    if (showingDetail) {
+                        forceReloadKey = payloadKey
+                    } else {
+                        forceReloadOverview = true
                     }
+                    reloadNonce += 1
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = RelayRefresh.Background.copy(alpha = 0.96f),
-                ),
+                refreshing = isRefreshing,
             )
         },
     ) { innerPadding ->
@@ -1191,16 +1229,14 @@ fun DashboardManagementScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(RelayRefresh.Background)
-                .relayGridTexture(alpha = 0.12f)
+                .background(MaterialTheme.colorScheme.background)
         ) {
-            if (dashboardUrl.isNotBlank()) {
+            if (showingDetail && dashboardUrl.isNotBlank()) {
                 ManageDashboardTargetLine(
                     dashboardUrl = dashboardUrl,
                     routeHint = dashboardRouteHint,
                 )
             }
-            val loadedCount = (payloadState as? DashboardPayloadState.Loaded)?.items?.size ?: 0
             AnimatedContent(
                 targetState = showingDetail,
                 modifier = Modifier.weight(1f),
@@ -1229,17 +1265,7 @@ fun DashboardManagementScreen(
                     Column(modifier = Modifier.fillMaxSize()) {
                         ManageSelectedSectionHeader(
                             section = section,
-                            onBackToOverview = { showingDetail = false },
                         )
-                        PrimaryScrollableTabRow(selectedTabIndex = selectedTab) {
-                            managementSections.forEachIndexed { index, tab ->
-                                Tab(
-                                    selected = selectedTab == index,
-                                    onClick = { selectedTab = index },
-                                    text = { Text(tab.displayLabel()) },
-                                )
-                            }
-                        }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
                         if (isRefreshing && payloadState !is DashboardPayloadState.Loading) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -1335,17 +1361,17 @@ fun DashboardManagementScreen(
                     }
                 } else {
                     ManageOverviewBody(
-                        loadedCount = loadedCount,
-                        section = section,
-                        payloadState = payloadState,
+                        payloadState = overviewPayloadState,
+                        sectionStates = managementSections.associateWith { targetSection ->
+                            payloadStates[payloadKeyFor(targetSection)] ?: DashboardPayloadState.Idle
+                        },
+                        connectionLabel = managementConnectionLabel,
                         dashboardUrl = dashboardUrl,
                         routeHint = dashboardRouteHint,
-                        status = dashboardStatus,
-                        session = dashboardSession,
-                        authenticated = dashboardAuthenticated,
+                        status = overviewStatus,
+                        session = overviewSession,
+                        authenticated = overviewAuthenticated,
                         lastCheckedAtMillis = activeConnection?.dashboardLastStatus?.checkedAtMillis,
-                        actionInFlight = actionInFlight,
-                        actionMessage = actionMessage,
                         onClearSession = { confirmClearDashboardSession = true },
                         onNavigateToSignIn = onNavigateToSignIn,
                         onNavigateToConnections = onNavigateToConnections,
@@ -1419,164 +1445,413 @@ private fun manageTileSpec(section: DashboardManagementSection): ManageTileSpec 
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManagementTopBar(
+    title: String,
+    connectionLabel: String,
+    connected: Boolean,
+    onBack: () -> Unit,
+    onNavigateToTerminal: () -> Unit,
+    onNavigateToSettings: () -> Unit,
+    onRefresh: () -> Unit,
+    refreshing: Boolean,
+) {
+    val brand = LocalBrand.current
+    var menuExpanded by remember { mutableStateOf(false) }
+    TopAppBar(
+        title = {
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    Text(
+                        text = connectionLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (connected) {
+                        Surface(
+                            modifier = Modifier.size(8.dp),
+                            shape = CircleShape,
+                            color = brand.green,
+                            content = {},
+                        )
+                    }
+                }
+            }
+        },
+        navigationIcon = {
+            RelayChromeIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = stringResource(R.string.dashboard_back),
+                onClick = onBack,
+            )
+        },
+        actions = {
+            IconButton(onClick = onRefresh, enabled = !refreshing) {
+                Icon(
+                    imageVector = Icons.Filled.Refresh,
+                    contentDescription = stringResource(R.string.dashboard_refresh),
+                )
+            }
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = stringResource(R.string.dashboard_more_actions),
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.dashboard_terminal)) },
+                        leadingIcon = { Icon(Icons.Filled.Code, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onNavigateToTerminal()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.dashboard_settings)) },
+                        leadingIcon = { Icon(Icons.Filled.Tune, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onNavigateToSettings()
+                        },
+                    )
+                }
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.background,
+        ),
+    )
+}
+
+@Composable
+private fun ManagementServerCard(
+    connectionLabel: String,
+    payloadState: DashboardPayloadState,
+    status: DashboardStatus?,
+    authenticated: Boolean?,
+    onSwitchConnection: () -> Unit,
+) {
+    val brand = LocalBrand.current
+    val signInNeeded = status?.authRequired == true && authenticated != true
+    val (statusLabel, statusColor) = when {
+        signInNeeded -> stringResource(R.string.dashboard_health_signin) to brand.amber
+        payloadState is DashboardPayloadState.Error && status == null ->
+            stringResource(R.string.dashboard_health_offline) to brand.danger
+        payloadState is DashboardPayloadState.Error ->
+            stringResource(R.string.dashboard_health_error) to brand.danger
+        payloadState is DashboardPayloadState.Idle || payloadState is DashboardPayloadState.Loading ->
+            stringResource(R.string.dashboard_status_checking) to brand.muted
+        else -> stringResource(R.string.dashboard_health_ready) to brand.green
+    }
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = brand.navy,
+        border = BorderStroke(1.dp, brand.lineStrong),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.dashboard_managing_server).uppercase(),
+                style = MaterialTheme.typography.labelLarge,
+                color = brand.relay,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                ManagementIcon(Icons.Filled.Link)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = connectionLabel,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = status?.version?.let {
+                            stringResource(R.string.dashboard_server_version, it)
+                        } ?: stringResource(R.string.dashboard_standard_dashboard),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                ManagementStatusPill(statusLabel, statusColor)
+                TextButton(
+                    onClick = onSwitchConnection,
+                    contentPadding = PaddingValues(horizontal = 5.dp),
+                ) {
+                    Text(stringResource(R.string.dashboard_switch_connection))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagementScopeNotice() {
+    val brand = LocalBrand.current
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = brand.amber.copy(alpha = if (brand.isDark) 0.14f else 0.09f),
+        border = BorderStroke(1.dp, brand.amber.copy(alpha = 0.48f)),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = brand.amber)
+            Text(
+                text = stringResource(R.string.dashboard_server_scope_notice),
+                style = MaterialTheme.typography.bodyMedium,
+                color = brand.amber,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ManagementGroupCard(
+    title: String,
+    sections: List<DashboardManagementSection>,
+    sectionStates: Map<DashboardManagementSection, DashboardPayloadState>,
+    onSelectSection: (DashboardManagementSection) -> Unit,
+) {
+    val brand = LocalBrand.current
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = brand.navy,
+        border = BorderStroke(1.dp, brand.lineStrong),
+    ) {
+        Column {
+            Text(
+                text = title.uppercase(),
+                style = MaterialTheme.typography.labelLarge,
+                color = brand.relay,
+                modifier = Modifier.padding(start = 14.dp, top = 12.dp, end = 14.dp, bottom = 4.dp),
+            )
+            sections.forEachIndexed { index, section ->
+                if (index > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                    )
+                }
+                ManagementOverviewRow(
+                    section = section,
+                    state = sectionStates[section] ?: DashboardPayloadState.Idle,
+                    onClick = { onSelectSection(section) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagementOverviewRow(
+    section: DashboardManagementSection,
+    state: DashboardPayloadState,
+    onClick: () -> Unit,
+) {
+    val spec = manageTileSpec(section)
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = spec.title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = managementOverviewValue(section, state),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 10.dp),
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 5.dp).size(18.dp),
+        )
+    }
+}
+
+@Composable
+private fun managementOverviewValue(
+    section: DashboardManagementSection,
+    state: DashboardPayloadState,
+): String {
+    if (section == DashboardManagementSection.Catalog && state is DashboardPayloadState.Loaded) {
+        return stringResource(R.string.dashboard_overview_browse)
+    }
+    if (section == DashboardManagementSection.Config && state is DashboardPayloadState.Loaded) {
+        return stringResource(R.string.dashboard_overview_advanced)
+    }
+    return when (state) {
+        DashboardPayloadState.Idle,
+        DashboardPayloadState.Loading -> stringResource(R.string.dashboard_overview_loading)
+        is DashboardPayloadState.Error -> stringResource(R.string.dashboard_overview_unavailable)
+        is DashboardPayloadState.Loaded ->
+            stringResource(R.string.dashboard_overview_count, state.items.size)
+    }
+}
+
+@Composable
+private fun ManagementServerDetailsCard(
+    expanded: Boolean,
+    version: String?,
+    onToggle: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val brand = LocalBrand.current
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = brand.navy,
+        border = BorderStroke(1.dp, brand.lineStrong),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle)
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.dashboard_server_details),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                version?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
+            if (expanded) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagementIcon(icon: ImageVector) {
+    val brand = LocalBrand.current
+    Surface(
+        modifier = Modifier.size(40.dp),
+        shape = RoundedCornerShape(11.dp),
+        color = brand.navy3,
+        border = BorderStroke(1.dp, brand.relay.copy(alpha = 0.4f)),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, tint = brand.relay, modifier = Modifier.size(21.dp))
+        }
+    }
+}
+
+@Composable
+private fun ManagementStatusPill(text: String, color: androidx.compose.ui.graphics.Color) {
+    Surface(
+        shape = RoundedCornerShape(7.dp),
+        color = color.copy(alpha = 0.14f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.42f)),
+    ) {
+        Text(
+            text = text.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun ManagementScopePill(section: DashboardManagementSection) {
+    val brand = LocalBrand.current
+    val (label, color) = when (section) {
+        DashboardManagementSection.Mcp,
+        DashboardManagementSection.Catalog ->
+            stringResource(R.string.dashboard_scope_profile) to brand.cyan
+        DashboardManagementSection.Keys ->
+            stringResource(R.string.dashboard_scope_secret) to brand.amber
+        else -> stringResource(R.string.dashboard_scope_server) to brand.relay
+    }
+    ManagementStatusPill(label, color)
+}
+
 @Composable
 private fun ManageOverviewBody(
-    loadedCount: Int,
-    section: DashboardManagementSection,
     payloadState: DashboardPayloadState,
+    sectionStates: Map<DashboardManagementSection, DashboardPayloadState>,
+    connectionLabel: String,
     dashboardUrl: String,
     routeHint: String?,
     status: DashboardStatus?,
     session: DashboardAuthSession?,
     authenticated: Boolean?,
     lastCheckedAtMillis: Long?,
-    actionInFlight: Boolean,
-    actionMessage: String?,
     onClearSession: () -> Unit,
     onNavigateToSignIn: () -> Unit,
     onNavigateToConnections: () -> Unit,
     onSelectSection: (DashboardManagementSection) -> Unit,
 ) {
+    var serverDetailsExpanded by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            RelaySectionCaption(
-                title = stringResource(R.string.dashboard_hub_title),
-                meta = stringResource(R.string.dashboard_hub_meta),
-            )
-        }
-        item {
-            // KPI strip — words, not glyphs. "ok / ... / ! / -" required the
-            // user to already know what each symbol meant; state words plus
-            // a tone color answer "is Manage healthy?" at a glance, and the
-            // server version confirms WHICH server answered (useful when
-            // routes roam between LAN and Tailscale hosts).
-            val signInNeeded = status?.authRequired == true && authenticated != true
-            val dashboardWord = when {
-                payloadState is DashboardPayloadState.Loading ||
-                    payloadState is DashboardPayloadState.Idle -> DashboardHealthWord.Loading
-                signInNeeded -> DashboardHealthWord.SignIn
-                payloadState is DashboardPayloadState.Error && status == null -> DashboardHealthWord.Offline
-                payloadState is DashboardPayloadState.Error -> DashboardHealthWord.Error
-                else -> DashboardHealthWord.Ready
-            }
-            val dashboardTone = when (dashboardWord) {
-                DashboardHealthWord.Ready -> RelayRefresh.Green
-                DashboardHealthWord.SignIn -> RelayRefresh.Amber
-                DashboardHealthWord.Offline, DashboardHealthWord.Error -> RelayRefresh.Danger
-                DashboardHealthWord.Loading -> RelayRefresh.Muted
-            }
-            val dashboardWordText = when (dashboardWord) {
-                DashboardHealthWord.Loading -> stringResource(R.string.dashboard_health_loading)
-                DashboardHealthWord.SignIn -> stringResource(R.string.dashboard_health_signin)
-                DashboardHealthWord.Offline -> stringResource(R.string.dashboard_health_offline)
-                DashboardHealthWord.Error -> stringResource(R.string.dashboard_health_error)
-                DashboardHealthWord.Ready -> stringResource(R.string.dashboard_health_ready)
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RelayMetricCard(
-                    value = if (loadedCount > 0) loadedCount.toString() else "—",
-                    label = section.lowercaseLabel(),
-                    modifier = Modifier.weight(1f),
-                )
-                RelayMetricCard(
-                    value = dashboardWordText,
-                    label = stringResource(R.string.dashboard_metric_dashboard),
-                    modifier = Modifier.weight(1f),
-                    valueColor = dashboardTone,
-                )
-                RelayMetricCard(
-                    value = status?.version ?: "—",
-                    label = stringResource(R.string.dashboard_metric_server),
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            DashboardConnectionHeader(
-                dashboardUrl = dashboardUrl,
-                routeHint = routeHint,
+            ManagementServerCard(
+                connectionLabel = connectionLabel,
+                payloadState = payloadState,
                 status = status,
-                session = session,
                 authenticated = authenticated,
-                lastCheckedAtMillis = lastCheckedAtMillis,
-                onClearSession = onClearSession,
+                onSwitchConnection = onNavigateToConnections,
             )
         }
-        if (status?.nousSessionValid == "terminal") {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                    ),
-                ) {
-                    Text(
-                        text = stringResource(R.string.dashboard_nous_terminal_warning),
-                        modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                    )
-                }
-            }
+        item {
+            ManagementScopeNotice()
         }
-        if (status?.gatewayMode != null || status?.profiles?.isNotEmpty() == true) {
-            item {
-                val mode = status.gatewayMode ?: "unknown"
-                val profiles = status.profiles.joinToString().ifBlank { "—" }
-                val ports = status.gateways.flatMap { gateway ->
-                    gateway.ports.map { (platform, port) -> "${gateway.profile}/$platform:$port" }
-                }.joinToString().ifBlank { "—" }
-                Text(
-                    text = stringResource(R.string.dashboard_gateway_topology, mode, profiles, ports),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
-            }
-        }
-        status?.componentHealth
-            ?.takeIf { it.supported }
-            ?.let { health ->
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        ),
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            RelaySectionCaption(
-                                title = stringResource(R.string.dashboard_metric_dashboard),
-                                meta = health.overall?.replaceFirstChar(Char::uppercase)
-                                    ?: stringResource(R.string.conn_label_status),
-                            )
-                            dashboardComponentHealthLines(
-                                health = health,
-                                connectedLabel = stringResource(R.string.dashboard_component_connected),
-                                serverErrorsLabel = stringResource(R.string.dashboard_component_server_errors_5m),
-                            ).forEach { line ->
-                                Text(
-                                    text = line,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         val signInStatus = status
         if (signInStatus?.authRequired == true && authenticated != true) {
             item {
@@ -1588,100 +1863,207 @@ private fun ManageOverviewBody(
             }
         }
         item {
-            RelayNavTile(
-                icon = Icons.Filled.Link,
-                title = stringResource(R.string.dashboard_nav_connections_title),
-                subtitle = stringResource(R.string.dashboard_nav_connections_sub),
-                onClick = onNavigateToConnections,
+            ManagementGroupCard(
+                title = stringResource(R.string.dashboard_group_agents),
+                sections = listOf(
+                    DashboardManagementSection.Profiles,
+                    DashboardManagementSection.Models,
+                ),
+                sectionStates = sectionStates,
+                onSelectSection = onSelectSection,
             )
         }
         item {
-            RelayNavTile(
-                icon = Icons.Filled.Person,
-                title = stringResource(R.string.dashboard_tile_profiles_title),
-                subtitle = stringResource(R.string.dashboard_tile_profiles_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Profiles) },
+            ManagementGroupCard(
+                title = stringResource(R.string.dashboard_group_capabilities),
+                sections = listOf(
+                    DashboardManagementSection.Skills,
+                    DashboardManagementSection.Mcp,
+                    DashboardManagementSection.Catalog,
+                ),
+                sectionStates = sectionStates,
+                onSelectSection = onSelectSection,
             )
         }
         item {
-            RelayNavTile(
-                icon = Icons.Filled.AutoAwesome,
-                title = stringResource(R.string.dashboard_tile_skills_title),
-                subtitle = stringResource(R.string.dashboard_tile_skills_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Skills) },
+            ManagementGroupCard(
+                title = stringResource(R.string.dashboard_group_operations),
+                sections = listOf(DashboardManagementSection.Cron),
+                sectionStates = sectionStates,
+                onSelectSection = onSelectSection,
             )
         }
         item {
-            RelayNavTile(
-                icon = Icons.Filled.Schedule,
-                title = stringResource(R.string.dashboard_tile_cron_title),
-                subtitle = stringResource(R.string.dashboard_tile_cron_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Cron) },
+            ManagementGroupCard(
+                title = stringResource(R.string.dashboard_group_server_providers),
+                sections = listOf(
+                    DashboardManagementSection.CustomEndpoints,
+                    DashboardManagementSection.Keys,
+                    DashboardManagementSection.Config,
+                ),
+                sectionStates = sectionStates,
+                onSelectSection = onSelectSection,
             )
         }
         item {
-            RelayNavTile(
-                icon = Icons.Filled.Code,
-                title = stringResource(R.string.dashboard_tile_mcp_title),
-                subtitle = stringResource(R.string.dashboard_tile_mcp_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Mcp) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.AutoAwesome,
-                title = stringResource(R.string.dashboard_tile_catalog_title),
-                subtitle = stringResource(R.string.dashboard_tile_catalog_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Catalog) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Tune,
-                title = stringResource(R.string.dashboard_tile_models_title),
-                subtitle = stringResource(R.string.dashboard_tile_models_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Models) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Link,
-                title = stringResource(R.string.dashboard_tile_custom_endpoints_title),
-                subtitle = stringResource(R.string.dashboard_tile_custom_endpoints_sub),
-                onClick = { onSelectSection(DashboardManagementSection.CustomEndpoints) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Key,
-                title = stringResource(R.string.dashboard_tile_keys_title),
-                subtitle = stringResource(R.string.dashboard_tile_keys_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Keys) },
-            )
+            ManagementServerDetailsCard(
+                expanded = serverDetailsExpanded,
+                version = status?.version,
+                onToggle = { serverDetailsExpanded = !serverDetailsExpanded },
+            ) {
+                DashboardConnectionHeader(
+                    dashboardUrl = dashboardUrl,
+                    routeHint = routeHint,
+                    status = status,
+                    session = session,
+                    authenticated = authenticated,
+                    lastCheckedAtMillis = lastCheckedAtMillis,
+                    onClearSession = onClearSession,
+                )
+                if (status?.nousSessionValid == "terminal") {
+                    Text(
+                        text = stringResource(R.string.dashboard_nous_terminal_warning),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LocalBrand.current.amber,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                }
+                if (status?.gatewayMode != null || status?.profiles?.isNotEmpty() == true) {
+                    val mode = status.gatewayMode ?: "unknown"
+                    val profiles = status.profiles.joinToString().ifBlank { "—" }
+                    val ports = status.gateways.flatMap { gateway ->
+                        gateway.ports.map { (platform, port) -> "${gateway.profile}/$platform:$port" }
+                    }.joinToString().ifBlank { "—" }
+                    Text(
+                        text = stringResource(R.string.dashboard_gateway_topology, mode, profiles, ports),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                }
+                status?.componentHealth?.takeIf { it.supported }?.let { health ->
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = health.overall?.replaceFirstChar(Char::uppercase)
+                                ?: stringResource(R.string.conn_label_status),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        dashboardComponentHealthLines(
+                            health = health,
+                            connectedLabel = stringResource(R.string.dashboard_component_connected),
+                            serverErrorsLabel = stringResource(R.string.dashboard_component_server_errors_5m),
+                        ).forEach { line ->
+                            Text(
+                                text = line,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
-/** Health-word enum backing the KPI strip; drives both the label and the tone. */
-private enum class DashboardHealthWord { Loading, SignIn, Offline, Error, Ready }
+/** Deterministic production-UI seam for visual regression coverage. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun DashboardManagementOverviewPreview() {
+    fun loaded(count: Int): DashboardPayloadState.Loaded = DashboardPayloadState.Loaded(
+        status = null,
+        session = null,
+        items = List(count) { index -> DashboardSummaryItem(title = "Item ${index + 1}") },
+        rawSummary = "",
+    )
+    val status = DashboardStatus(
+        authRequired = false,
+        version = "0.17.0",
+        profiles = listOf("default", "work", "research"),
+        gatewayMode = "embedded",
+    )
+    val sectionStates = mapOf(
+        DashboardManagementSection.Profiles to loaded(3),
+        DashboardManagementSection.Models to loaded(12),
+        DashboardManagementSection.Skills to loaded(18),
+        DashboardManagementSection.Mcp to loaded(4),
+        DashboardManagementSection.Catalog to loaded(24),
+        DashboardManagementSection.Cron to loaded(6),
+        DashboardManagementSection.CustomEndpoints to loaded(2),
+        DashboardManagementSection.Keys to loaded(5),
+        DashboardManagementSection.Config to loaded(24),
+    )
+    HermesRelayTheme(themePreference = "dark") {
+        Scaffold(
+            topBar = {
+                ManagementTopBar(
+                    title = stringResource(R.string.settings_hermes_management),
+                    connectionLabel = "Hermes Home",
+                    connected = true,
+                    onBack = {},
+                    onNavigateToTerminal = {},
+                    onNavigateToSettings = {},
+                    onRefresh = {},
+                    refreshing = false,
+                )
+            },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) { innerPadding ->
+            Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+                ManageOverviewBody(
+                    payloadState = sectionStates.getValue(DashboardManagementSection.Profiles),
+                    sectionStates = sectionStates,
+                    connectionLabel = "Hermes Home",
+                    dashboardUrl = "https://hermes.local",
+                    routeHint = "LAN",
+                    status = status,
+                    session = null,
+                    authenticated = true,
+                    lastCheckedAtMillis = null,
+                    onClearSession = {},
+                    onNavigateToSignIn = {},
+                    onNavigateToConnections = {},
+                    onSelectSection = {},
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun ManageSelectedSectionHeader(
     section: DashboardManagementSection,
-    onBackToOverview: () -> Unit,
 ) {
     val spec = manageTileSpec(section)
-    Column(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+    val brand = LocalBrand.current
+    Surface(
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = brand.navy,
+        border = BorderStroke(1.dp, brand.lineStrong),
     ) {
-        RelayReturnStrip(
-            icon = spec.icon,
-            title = spec.title,
-            subtitle = spec.subtitle,
-            onClick = onBackToOverview,
-            label = stringResource(R.string.dashboard_overview_label),
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ManagementIcon(spec.icon)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(spec.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    spec.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            ManagementScopePill(section)
+        }
     }
 }
 

@@ -96,6 +96,43 @@ copying the mock's illustrative app chrome.
 
 final result: blocked
 
+## Hermes Management grouped overview
+
+- Source visual truth: `C:\Users\Bailey\.codex\visualizations\2026\08\09\019fe858-1fe7-7aa2-90f4-ca4938a5d69b\hermes-agent-profile-defaults-detail.png`
+- Implementation screenshot: `C:\Users\Bailey\.codex\worktrees\manage-ui\hermes-relay\app\build\ui-regression\hermes-management-overview-dark.png`
+- Combined comparison: `C:\Users\Bailey\.codex\worktrees\manage-ui\hermes-relay\app\build\ui-regression\hermes-management-overview-comparison.png`
+- Viewport: Android Compose, 420 x 935 dp at xhdpi; dark Hermes theme.
+- Pixel dimensions: source 863 x 1823; implementation 840 x 1870. The source was proportionally normalized to the implementation height for the 1692 x 1869 side-by-side comparison; the 10 px gutter and 46 px labels are comparison-only.
+- State: connected standard Hermes Dashboard, Management overview, all sections loaded, diagnostics collapsed.
+
+### Full-view comparison
+
+The source is a profile-default detail state while the implementation is the parent Management overview, so row content and the persistent save bar intentionally differ. The implementation carries over the selected visual grammar: two-line title/connection identity, prominent target card, amber scope warning, deep navy grouped cards, uppercase blue section labels, right-aligned values, and consistent chevrons. The adaptation increases scan density appropriately for a navigation overview without introducing a second configuration surface.
+
+### Required fidelity surfaces
+
+- **Fonts and typography:** the production Hermes type scale preserves the source hierarchy and optical weight. Large title, muted connection subtitle, uppercase section labels, bold row names, secondary values, and status pills remain clearly distinct without truncation at 420 dp.
+- **Spacing and layout rhythm:** 14 dp page margins, 12 dp group gaps, 12 dp radii, compact row padding, dividers, and the collapsed diagnostics footer create the same steady vertical rhythm. The server card and warning retain the source's major-region proportions.
+- **Colors and tokens:** implementation uses live Hermes theme tokens rather than sampled hard-coded colors. Deep background/navy surfaces, violet-blue labels and outlines, green readiness, amber warning, and muted secondary text closely match the source's semantic palette and maintain readable contrast.
+- **Image quality and assets:** neither state uses imagery. The implementation uses Material vector icons from the existing app icon family; no placeholders, emoji, handcrafted SVGs, or raster approximations were introduced.
+- **Copy and content:** copy clearly distinguishes the server-wide target and risk (`Managing server`, `Changes here can affect every client`) from profile-scoped rows. Group names describe the actual upstream Management capabilities, and `Server details` makes diagnostics progressive rather than dominant.
+- **Accessibility and responsiveness:** rows and buttons remain native Compose semantics/tap targets, long secondary content is ellipsized, and the real LazyColumn scrolls to all groups at the tested mobile viewport.
+
+### Focused region comparison
+
+No separate crop was needed: both source and implementation are readable at full normalized resolution, there are no photo/logo assets to inspect, and the target card, warning, typography, dividers, icons, and row affordances are all clearly visible in the combined image.
+
+### Comparison history
+
+1. The first rendered implementation comparison found no actionable P0, P1, or P2 visual mismatch. The different screen purpose is an intentional IA adaptation: the mockup's detail styling now enhances the existing Management surface rather than duplicating it.
+2. Non-visual verification corrected the overview refresh to reload every visible summary and prevented a single section error from misrepresenting the whole Dashboard. A new production-Compose capture after those fixes is the implementation evidence above.
+
+### Findings
+
+No open P0, P1, or P2 findings. Base-language strings are complete; translated resource packs currently fall back to English for the new labels and can be localized separately without blocking the UI implementation.
+
+final result: passed
+
 ## Appearance customization and visual assets
 
 - Selected reference: `C:\Users\Bailey\.codex\generated_images\019fe6f7-920d-7be1-b287-608a0bc2ff49\exec-facb08cb-3d8f-400a-b6ff-6f1a11a74d95.png`
