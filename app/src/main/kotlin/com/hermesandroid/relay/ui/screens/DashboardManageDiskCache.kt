@@ -24,6 +24,10 @@ internal data class DashboardSummaryItem(
     val meta: String? = null,
     val profile: String? = null,
     val actions: List<DashboardItemAction> = emptyList(),
+    val profileModel: String? = null,
+    val profileIsDefault: Boolean = false,
+    val profileGatewayRunning: Boolean = false,
+    val profileSkillCount: Int? = null,
 )
 
 @Serializable

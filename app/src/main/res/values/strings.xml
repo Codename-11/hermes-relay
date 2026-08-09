@@ -1966,6 +1966,28 @@
     <!-- Section action buttons -->
     <string name="dashboard_section_action_change_main_model">Change main model</string>
     <string name="dashboard_section_action_new_profile">New profile</string>
+    <string name="dashboard_profiles_server_profiles">Server profiles</string>
+    <string name="dashboard_profiles_gateway_running">Gateway on</string>
+    <string name="dashboard_profiles_no_description">No profile description</string>
+    <string name="dashboard_profiles_model">Model</string>
+    <string name="dashboard_profiles_server_default">Server default</string>
+    <string name="dashboard_profiles_soul">SOUL</string>
+    <string name="dashboard_profiles_soul_open">View profile instructions</string>
+    <string name="dashboard_profiles_skills_tools">Skills &amp; tools</string>
+    <string name="dashboard_profiles_enabled_count">%1$d enabled</string>
+    <string name="dashboard_profiles_profile_actions">Profile actions</string>
+    <string name="dashboard_profiles_server_actions">Server actions</string>
+    <string name="dashboard_profiles_edit_description">Edit description</string>
+    <string name="dashboard_profiles_change_model">Change model</string>
+    <string name="dashboard_profiles_edit_description_subtitle">Update the profile description</string>
+    <string name="dashboard_profiles_change_model_subtitle">Select a different upstream model</string>
+    <string name="dashboard_profiles_edit_soul_subtitle">Review or update SOUL instructions</string>
+    <string name="dashboard_profiles_server_warning_title">Changes future launches</string>
+    <string name="dashboard_profiles_server_warning">Makes this the default for future CLI commands and gateways. Clients already connected to %1$s are not retargeted.</string>
+    <string name="dashboard_profiles_set_active">Set active</string>
+    <string name="dashboard_profiles_set_active_subtitle">Use as the default for future launches on %1$s</string>
+    <string name="dashboard_profiles_delete_profile">Delete profile</string>
+    <string name="dashboard_profiles_delete_subtitle">Permanently remove this profile</string>
     <string name="dashboard_section_action_browse_hub">Browse hub</string>
     <string name="dashboard_section_action_update_installed">Update installed</string>
 
@@ -2021,7 +2043,7 @@
 
     <!-- Confirm dialogs -->
     <string name="dashboard_make_default_title">Make %1$s the server default?</string>
-    <string name="dashboard_activate_profile_body">Sets %1$s as the server\'s active agent for every client — the persistent “hermes use” default. Switching agents in chat is per-conversation and doesn\'t change this.</string>
+    <string name="dashboard_activate_profile_body">Makes %1$s the sticky default for future CLI commands and gateways. It does not retarget the running dashboard, gateway, or existing chat sessions.</string>
     <string name="dashboard_generic_action_body">This changes server-side dashboard state for %1$s.</string>
     <string name="dashboard_set_default">Set default</string>
     <string name="dashboard_input_action_title">%1$s %2$s</string>

@@ -24,6 +24,53 @@ No ADB device is connected, so a real-dimension implementation capture cannot be
 
 final result: blocked
 
+## Hermes Management Profiles detail
+
+- Source visual truth: `C:\Users\Bailey\.codex\generated_images\019fe858-1fe7-7aa2-90f4-ca4938a5d69b\exec-0eb0eaba-aa25-42b3-9bf9-c1a0769944ba.png`
+- Implementation screenshot: `C:\Users\Bailey\.codex\worktrees\manage-profile-ui\hermes-relay\app\build\ui-regression\hermes-management-profiles-detail-dark.png`
+- Secondary interaction screenshot: `C:\Users\Bailey\.codex\worktrees\manage-profile-ui\hermes-relay\app\build\ui-regression\hermes-management-profiles-detail-work-dark.png`
+- Combined comparison: `C:\Users\Bailey\.codex\worktrees\manage-profile-ui\hermes-relay\app\build\ui-regression\hermes-management-profiles-detail-comparison.png`
+- Viewport: 390 x 844 dp, xhdpi (`780 x 1688` rendered pixels)
+- Source pixels: `853 x 1844`; implementation pixels: `780 x 1688`
+- Density normalization: the mockup-only outer RelayApp status footer was cropped by 76 px, then the source was resized to `780 x 1688` for the combined comparison. The production detail remains inside RelayApp, which owns the real footer.
+- States: Default profile selected at entry; Work profile selected and scrolled to Server actions.
+
+### Full-view comparison evidence
+
+The combined image verifies the selected composition: Profiles app bar, connection target, primary New profile action, horizontal profile selector, profile summary, grouped Profile actions, and explained Server actions. The implementation uses the existing Hermes Material typography, palette, icons, grid texture, and 48 dp minimum primary action height rather than copying generated raster styling.
+
+Intentional source deviations are contract-driven. `gateway_running` is labeled **Gateway on**, not **Active**; the upstream active-profile endpoint is a separate sticky default for future CLI commands and gateways, not a retargeting operation for connected clients. SOUL is a direct action without a fabricated presence/status, and Memory and session-count rows are omitted because standard `/api/profiles` does not supply them. Delete is omitted for the default profile because the upstream action is unavailable. The mockup footer is omitted from the isolated preview because RelayApp renders it in production.
+
+### Focused comparison evidence
+
+The default and Work captures were opened at original resolution. Text, Material icons, row dividers, selector borders/check state, semantic green/amber/red states, warning hierarchy, and chevrons were readable at that resolution, so separate enlarged crops were not required. The Work capture verifies the selected-card state plus Set active and Delete profile actions.
+
+### Required fidelity surfaces
+
+- **Fonts and typography:** existing app fonts and optical weights are retained; titles, subtitles, section labels, and warning text preserve the mockup hierarchy without generated-image font substitution or truncating the selected profile.
+- **Spacing and layout rhythm:** the second pass tightened button, row, icon, section, and selector spacing. All three profile choices fit at the entry viewport; detail rows retain practical Android touch dimensions and scroll normally.
+- **Colors and tokens:** existing Hermes navy, relay violet, semantic green, amber, and error tokens replace sampled one-off colors while preserving the reference contrast and hierarchy.
+- **Image quality and assets:** no raster placeholders, emoji, handcrafted SVG, or approximate artwork is used. All visible controls use the app's Material icon family.
+- **Copy and content:** action labels match the selected direction while runtime facts remain upstream-backed. Gateway process status, sticky active-profile mutation, default-profile delete availability, and unsupported profile summaries are not conflated.
+- **Accessibility and behavior:** the selector, primary action, editable rows, active-profile mutation, and delete action remain semantic Compose click targets. The focused test changes selection to Work, scrolls the tagged production list, and verifies both server actions.
+
+### Comparison history
+
+1. Initial render exposed three P2 issues: the Gateway running label wrapped, profile cards wasted horizontal space, and oversized vertical rhythm pushed Server actions below the comparable fold. It also exposed a correctness issue where gateway liveness was labeled Active.
+2. The implementation changed the status copy to Gateway on, kept Set active as the distinct future-default mutation, removed the unsupported SOUL-presence claim, compacted rows and section spacing, made selector widths content/state aware, aligned Edit description and Change model copy, and added the reference explanatory title/icon hierarchy.
+3. Post-fix evidence in the combined comparison and Work interaction capture shows the selected hierarchy, readable three-profile entry strip, complete action grouping, and safe server-action state. No actionable P0, P1, or P2 finding remains.
+
+### Verification
+
+- Roborazzi production-screen test passed at 390 x 844 dp for Default and Work states.
+- Focused Dashboard Manage parity and disk-cache suites passed; the cache round trip includes the new upstream profile summary fields.
+- Google Play debug Kotlin compilation passed as part of the focused suite.
+- `strings.xml` parsed successfully and `git diff --check` reported no whitespace errors.
+
+No open P0, P1, or P2 findings.
+
+final result: passed
+
 ## Agent Passport
 
 Status: **passed**
@@ -217,3 +264,9 @@ final result: passed
 Final same-viewport implementation captures and a combined reference/implementation comparison require user-positioned device states. UI review is intentionally user-driven.
 
 final result: blocked
+
+## Latest completed build QA
+
+The current Hermes Management Profiles-detail build is documented above under **Hermes Management Profiles detail**. Older blocked sections are retained as historical, unrelated audits.
+
+final result: passed
