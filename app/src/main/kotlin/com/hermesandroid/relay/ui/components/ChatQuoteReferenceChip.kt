@@ -1,6 +1,5 @@
 package com.hermesandroid.relay.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -14,9 +13,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -24,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -34,6 +34,20 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ChatQuoteReference
 
+internal data class ChatQuoteReferenceColors(
+    val background: Color,
+    val author: Color,
+    val excerpt: Color,
+    val accent: Color,
+)
+
+internal fun chatQuoteReferenceColors(colorScheme: ColorScheme) = ChatQuoteReferenceColors(
+    background = colorScheme.surfaceContainerHigh,
+    author = colorScheme.onSurface,
+    excerpt = colorScheme.onSurfaceVariant,
+    accent = colorScheme.primary,
+)
+
 /** Attachment-like quote reference used in both the composer and sent bubbles. */
 @Composable
 fun ChatQuoteReferenceChip(
@@ -43,14 +57,11 @@ fun ChatQuoteReferenceChip(
     onRemove: (() -> Unit)? = null,
 ) {
     val openDescription = stringResource(R.string.chat_quote_open, reference.authorLabel)
+    val colors = chatQuoteReferenceColors(MaterialTheme.colorScheme)
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.42f),
-        border = BorderStroke(
-            1.dp,
-            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f),
-        ),
+        shape = RoundedCornerShape(8.dp),
+        color = colors.background,
     ) {
         Row(
             modifier = Modifier
@@ -64,39 +75,31 @@ fun ChatQuoteReferenceChip(
                     } ?: Modifier,
                 )
                 .semantics { contentDescription = "$openDescription. ${reference.excerpt}" }
-                .padding(start = 8.dp),
+                .padding(start = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
                     .width(3.dp)
-                    .height(34.dp)
+                    .height(32.dp)
                     .clip(RoundedCornerShape(99.dp))
-                    .background(MaterialTheme.colorScheme.tertiary),
-            )
-            Icon(
-                imageVector = Icons.Filled.FormatQuote,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.tertiary,
-                modifier = Modifier
-                    .padding(horizontal = 8.dp)
-                    .size(16.dp),
+                    .background(colors.accent),
             )
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(vertical = 7.dp),
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
             ) {
                 Text(
                     text = "@${reference.authorLabel}",
                     style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.tertiary,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.author,
                 )
                 Text(
                     text = reference.excerpt,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = colors.excerpt,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -109,7 +112,7 @@ fun ChatQuoteReferenceChip(
                     Icon(
                         imageVector = Icons.Filled.Close,
                         contentDescription = stringResource(R.string.chat_quote_remove),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = colors.excerpt,
                         modifier = Modifier.size(18.dp),
                     )
                 }

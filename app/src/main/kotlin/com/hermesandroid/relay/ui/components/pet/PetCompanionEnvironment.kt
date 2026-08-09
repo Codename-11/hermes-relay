@@ -166,6 +166,12 @@ class PetCompanionCoordinator {
 
 private data class PetCompanionSurface(val scrolling: Boolean, val hidden: Boolean)
 
+/** A pet-owned popup may take window focus without becoming a competing modal. */
+internal fun platformModalOwnsPetLayer(
+    windowFocused: Boolean,
+    petMenuExpanded: Boolean,
+): Boolean = !windowFocused && !petMenuExpanded
+
 val LocalPetCompanionCoordinator = staticCompositionLocalOf { PetCompanionCoordinator() }
 
 /**

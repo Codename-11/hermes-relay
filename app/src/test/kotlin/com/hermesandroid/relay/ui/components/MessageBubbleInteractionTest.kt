@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.longClick
@@ -30,6 +31,31 @@ import org.robolectric.annotation.GraphicsMode
 class MessageBubbleInteractionTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun firstAssistantIdentityDoesNotNarrowMessageContent() {
+        val content = "A deliberately long assistant response that must use the full compact-phone bubble width."
+        val message = ChatMessage(
+            id = "assistant-with-identity",
+            role = MessageRole.ASSISTANT,
+            content = content,
+            timestamp = 1_700_000_000_000L,
+            agentName = "Hermes",
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = message,
+                    maxBubbleWidth = 340.dp,
+                    isFirstInGroup = true,
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("assistant message: $content")
+            .assertWidthIsEqualTo(340.dp)
+    }
 
     @Test
     fun tapRevealsAccessibleActionsAndInvokesExistingCallbacks() {

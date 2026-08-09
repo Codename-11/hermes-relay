@@ -10,6 +10,13 @@ import org.junit.Test
 class PetCompanionEnvironmentTest {
 
     @Test
+    fun `pet-owned menu popup does not trigger platform modal suppression`() {
+        assertTrue(platformModalOwnsPetLayer(windowFocused = false, petMenuExpanded = false))
+        assertFalse(platformModalOwnsPetLayer(windowFocused = false, petMenuExpanded = true))
+        assertFalse(platformModalOwnsPetLayer(windowFocused = true, petMenuExpanded = false))
+    }
+
+    @Test
     fun `settled history without a streaming edge creates no visit`() {
         val state = reducePetVisitRequestState(
             state = PetVisitRequestState(),

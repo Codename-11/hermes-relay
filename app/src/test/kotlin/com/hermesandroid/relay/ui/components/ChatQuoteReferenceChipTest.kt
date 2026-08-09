@@ -1,6 +1,9 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
@@ -25,6 +28,23 @@ import org.robolectric.annotation.GraphicsMode
 class ChatQuoteReferenceChipTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun `chip colors use semantic readable roles in light and dark themes`() {
+        listOf(
+            lightColorScheme(),
+            darkColorScheme(),
+            lightColorScheme(primary = Color.Yellow, onPrimary = Color.Black),
+            darkColorScheme(primary = Color.Magenta, onPrimary = Color.Black),
+        ).forEach { scheme ->
+            val colors = chatQuoteReferenceColors(scheme)
+
+            assertEquals(scheme.surfaceContainerHigh, colors.background)
+            assertEquals(scheme.onSurface, colors.author)
+            assertEquals(scheme.onSurfaceVariant, colors.excerpt)
+            assertEquals(scheme.primary, colors.accent)
+        }
+    }
 
     @Test
     fun `chip highlights author opens original and exposes accessible remove`() {
