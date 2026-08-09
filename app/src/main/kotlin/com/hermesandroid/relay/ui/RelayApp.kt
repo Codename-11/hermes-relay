@@ -1051,6 +1051,22 @@ fun RelayApp() {
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
+        // Android sharesheet handoff: wait until the configured chat context is
+        // settled, then ask ChatViewModel to own the new draft and composer
+        // prefill. Navigation is presentation-only; no composable writes chat
+        // stores or sends the shared text.
+        LaunchedEffect(navController, onboardingCompleted, initialChatSettled) {
+            if (!onboardingCompleted || !initialChatSettled) return@LaunchedEffect
+            com.hermesandroid.relay.util.SharedTextRequest.pending.collect { request ->
+                request ?: return@collect
+                if (chatViewModel.openSharedTextDraft(request.text)) {
+                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                        launchSingleTop = true
+                    }
+                    com.hermesandroid.relay.util.SharedTextRequest.consume(request.id)
+                }
+            }
+        }
         // The SAME readiness signal ChatScreen renders its "Connect Standard
         // Hermes" CTA from (chat client exists + reachable verdict). The gate
         // must release on this — releasing on the resolver's earlier

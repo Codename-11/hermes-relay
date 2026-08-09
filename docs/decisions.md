@@ -2721,3 +2721,38 @@ Passport stays focused on inspection and configuration. The shelf adds no fake
 activity indicator, hides for one visible identity, retains 48 dp touch targets,
 and exposes meaningful TalkBack actions in compact, large-font, light, and dark
 layouts.
+
+---
+
+## ADR 49 — Android text shares become reviewed chat drafts
+
+**Status:** Accepted (2026-08-08).
+
+**Context.** Android users can share selected text between apps, but Hermes
+Relay did not advertise a sharesheet target. Treating an external intent as a
+message send would bypass composer review, and handling draft/session state in
+`MainActivity` or Compose would split ownership from `ChatViewModel` and risk
+writing into whichever session happened to be visible during startup.
+
+**Decision.**
+
+- The shared manifest advertises `ACTION_SEND` with `text/*`, so Google Play and
+  sideload builds expose the same user-mediated entry point.
+- `MainActivity` accepts only non-blank `EXTRA_TEXT` from that contract. A
+  process-local identity-fenced handoff retains one pending share across cold
+  Compose initialization and prevents an older completion from clearing a
+  newer intent.
+- RelayApp waits for onboarding and initial chat-context settlement, then asks
+  `ChatViewModel` to create a new chat under the already active connection,
+  effective profile, and configured transport before navigating to Chat.
+- `ChatViewModel` reuses the existing new-chat lifecycle. Gateway turns retain
+  their detached background reconciliation; SSE keeps its existing exclusive
+  cancellation behavior. No profile, sticky default, or presentation store is
+  changed.
+- Composer prefill is a buffered one-consumer event. It may wait for Chat to
+  compose, is delivered once, and never calls `sendMessage`; submission always
+  requires an explicit user action.
+
+**Consequences.** Shared text lands in a fresh, reviewable draft without
+crossing profile/session namespaces or creating a new server-side integration.
+Non-text attachments and multi-item shares remain outside this contract.

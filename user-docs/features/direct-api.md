@@ -11,6 +11,13 @@ Phone (HTTP/SSE) → Hermes API Server (:8642)   [fallback — sessions / runs /
 
 Both paths are **vanilla upstream Hermes** surfaces. The dashboard gateway `/api/ws` is *not* the Hermes-Relay relay (`:8767`); it's a vanilla dashboard endpoint, reached with a short-lived ticket minted from your Manage dashboard session. The optional Relay plugin is never involved in chat — it only adds terminal, device control, media, and the like.
 
+## Share text into a new chat
+
+Hermes Relay appears as a target when another Android app shares text. Choosing
+it opens a new conversation for your currently active profile and places the
+shared text in the composer. Nothing is sent automatically: edit or discard the
+draft, then tap Send when it is ready.
+
 When it falls back, the app uses the Hermes `/api/sessions` REST API:
 
 | Method | Endpoint | Purpose |

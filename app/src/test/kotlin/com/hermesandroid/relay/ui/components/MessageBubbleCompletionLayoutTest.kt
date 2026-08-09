@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -23,6 +24,55 @@ import org.robolectric.annotation.GraphicsMode
 class MessageBubbleCompletionLayoutTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun `empty streaming reply exposes one stable working status until text arrives`() {
+        val content = mutableStateOf("")
+        val message = ChatMessage(
+            id = "assistant-working",
+            role = MessageRole.ASSISTANT,
+            content = "",
+            isStreaming = true,
+            timestamp = 1_700_000_000_000L,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(message = message.copy(content = content.value))
+            }
+        }
+
+        compose.onNodeWithContentDescription("assistant message: Still working…").assertExists()
+
+        compose.runOnIdle { content.value = "The first answer token" }
+        compose.waitForIdle()
+
+        compose.onNodeWithContentDescription("assistant message: Still working…").assertDoesNotExist()
+        compose.onNodeWithText("The first answer token").assertExists()
+    }
+
+    @Test
+    fun `stream recovery uses an honest reconnecting status`() {
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = ChatMessage(
+                        id = "assistant-recovering",
+                        role = MessageRole.ASSISTANT,
+                        content = "",
+                        isStreaming = true,
+                        timestamp = 1_700_000_000_000L,
+                    ),
+                    recoveringAnswer = true,
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription(
+            "assistant message: Reconnecting to your answer…",
+        ).assertExists()
+        compose.onNodeWithContentDescription("assistant message: Still working…").assertDoesNotExist()
+    }
 
     @Test
     fun `completion does not resize a retained live tail`() {

@@ -563,6 +563,13 @@ Key classes:
 - **ChatViewModel** — orchestrates send/stream/cancel lifecycle, slash command handling
 - **AppAnalytics** — singleton tracking TTFT, completion times, token usage, health latency, stream success rates
 
+Android also declares a system `ACTION_SEND` target for `text/*`. A share opens
+the configured Chat surface in a new conversation and copies `EXTRA_TEXT` into
+the composer. This is a draft-only handoff: it never calls the send path. The
+app-root intent coordinator retains a cold-start request until the chat context
+settles, while `ChatViewModel` owns the existing transport-aware new-chat
+lifecycle and the one-shot composer prefill.
+
 The relay server is **not involved** in chat streaming itself. It remains the home for bridge, terminal, and — as of 2026-04-11 — **inbound media delivery** (see 6.2a). As an optional compatibility enhancement, a paired phone may poll `GET /chat/image-activity?profile=<name>&session_id=<id>&since=<epoch>` during an active Standard Gateway turn. Relay reads the selected profile's Hermes `state.db` in read-only mode and reports persisted `image_generate` start/completion state. This fills only the animation lifecycle gap on upstream configurations that suppress tool progress; it does not proxy prompts, deltas, results, or chat control, and Android stops using it when the route is absent.
 
 ### 6.2a Inbound Media (Agent → Phone file delivery)

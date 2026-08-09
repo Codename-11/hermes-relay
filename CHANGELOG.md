@@ -8,10 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Android Profile Shelf makes agent switching immediate without mixing conversations.** The Chat header expands a compact, accessible shelf with ordered profile avatars, a distinct Server-default home identity, last-session restoration, display hiding, lock controls, and one full switcher shared with Agent Passport.
+- **Android Profile Shelf makes agent switching immediate without mixing conversations.** The Chat header expands a compact, accessible shelf with ordered profile avatars, a subtle Server-default home badge on the resolved identity, last-session restoration, display hiding, lock controls, and one full switcher shared with Agent Passport.
+- **Android accepts shared text as a new Chat draft.** Hermes Relay now appears in the system sharesheet for text, opens the active profile in a fresh conversation, and fills the composer for review without sending automatically.
 
 ### Fixed
 
+- **Android assistant bubbles explain quiet startup work without visual noise.** A smaller, slower thinking mark now pairs with a stable reviewable status until the first answer text arrives, while recovery keeps its explicit reconnecting state.
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 

@@ -48,6 +48,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- User-mediated text handoff. The app opens a fresh Chat draft
+                 and fills the composer; it never sends from an external intent. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
             <!-- The loopback native-PKCE result page uses this fixed, tokenless
                  link only to bring the installed flavor back to the foreground.
                  MainActivity intentionally does not interpret the URI as an auth

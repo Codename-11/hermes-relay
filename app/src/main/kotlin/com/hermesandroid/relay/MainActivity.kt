@@ -25,6 +25,8 @@ import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.NavRouteRequest
+import com.hermesandroid.relay.util.SharedTextRequest
+import com.hermesandroid.relay.util.extractSharedText
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
@@ -127,6 +129,7 @@ class MainActivity : AppCompatActivity() {
         // in RelayApp's NavRouteRequest collector — we just pump the request
         // into the SharedFlow here.
         consumeNavRouteIntent(intent)
+        consumeSharedTextIntent(intent)
         val consumedAssistantActivation =
             com.hermesandroid.relay.assistant.AssistantSessionProtocol.consumeActivation(
                 this,
@@ -153,6 +156,7 @@ class MainActivity : AppCompatActivity() {
         // instead of onCreate. RelayApp's collector handles both cases.
         setIntent(intent)
         consumeNavRouteIntent(intent)
+        consumeSharedTextIntent(intent)
         com.hermesandroid.relay.assistant.AssistantSessionProtocol.consumeActivation(this, intent)
         // === END PHASE3-safety-rails-followup ===
     }
@@ -161,6 +165,15 @@ class MainActivity : AppCompatActivity() {
         val route = intent?.getStringExtra(EXTRA_NAV_ROUTE) ?: return
         if (route.isBlank()) return
         NavRouteRequest.tryRequest(route)
+    }
+
+    private fun consumeSharedTextIntent(intent: Intent?) {
+        val sharedText = extractSharedText(
+            action = intent?.action,
+            mimeType = intent?.type,
+            text = intent?.getCharSequenceExtra(Intent.EXTRA_TEXT),
+        ) ?: return
+        SharedTextRequest.tryRequest(sharedText)
     }
 
     private fun configureAssistantWindow(intent: Intent?) {

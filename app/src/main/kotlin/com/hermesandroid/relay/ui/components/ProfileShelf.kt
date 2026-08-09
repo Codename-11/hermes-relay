@@ -98,6 +98,9 @@ object ProfileShelfPolicy {
 
     fun isSelected(choice: ProfileChoice, selectedProfileName: String?): Boolean =
         choice.key == AgentDisplay.profileSessionKey(selectedProfileName)
+
+    fun avatarProfile(choice: ProfileChoice, resolvedProfile: Profile?): Profile? =
+        choice.profile ?: resolvedProfile.takeIf { choice.isServerDefault }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -131,109 +134,142 @@ fun ProfileShelf(
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 56.dp)
-                .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Column {
             Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    .fillMaxWidth()
+                    .heightIn(min = 55.dp)
+                    .padding(start = 8.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                choices.forEach { choice ->
-                    val selected = ProfileShelfPolicy.isSelected(choice, selectedProfile?.name)
-                    val label = if (selected) {
-                        activeDisplayName
-                    } else {
-                        profileChoiceLabel(choice, resolvedProfile)
-                    }
-                    if (selected) {
-                        val openPassportDescription = stringResource(R.string.profile_shelf_open_passport)
-                        Surface(
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .widthIn(max = 190.dp)
-                                .combinedClickable(
-                                    role = Role.Button,
-                                    onClick = onOpenPassport,
-                                    onLongClick = { actionChoice = choice },
-                                )
-                                .semantics {
-                                    contentDescription = "$label. $openPassportDescription"
-                                },
-                            shape = RoundedCornerShape(24.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            border = BorderStroke(
-                                1.dp,
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                            ),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    choices.forEach { choice ->
+                        val selected = ProfileShelfPolicy.isSelected(choice, selectedProfile?.name)
+                        val label = if (selected) {
+                            activeDisplayName
+                        } else {
+                            profileChoiceLabel(choice, resolvedProfile)
+                        }
+                        if (selected) {
+                            val openPassportDescription = stringResource(R.string.profile_shelf_open_passport)
+                            Box(
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .widthIn(max = 190.dp)
+                                    .combinedClickable(
+                                        role = Role.Button,
+                                        onClick = onOpenPassport,
+                                        onLongClick = { actionChoice = choice },
+                                    )
+                                    .semantics {
+                                        contentDescription = "$label. $openPassportDescription"
+                                    },
+                                contentAlignment = Alignment.Center,
                             ) {
-                                ProfileChoiceAvatar(connectionViewModel, choice, label, 40)
-                                Text(
-                                    text = label,
-                                    modifier = Modifier.weight(1f, fill = false),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Icon(
-                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = stringResource(R.string.profile_shelf_open_passport),
-                                    modifier = Modifier.size(20.dp),
+                                Surface(
+                                    shape = RoundedCornerShape(22.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.72f),
+                                    ),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                    ) {
+                                        ProfileChoiceAvatar(
+                                            connectionViewModel,
+                                            choice,
+                                            resolvedProfile,
+                                            label,
+                                            36,
+                                        )
+                                        Text(
+                                            text = label,
+                                            modifier = Modifier.weight(1f, fill = false),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            val enabled = switchEnabled && !isProfileLocked
+                            val switchToDescription = stringResource(R.string.profile_shelf_switch_to)
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .combinedClickable(
+                                        enabled = true,
+                                        role = Role.Button,
+                                        onClick = { if (enabled) onSelect(choice.profile) },
+                                        onLongClick = { actionChoice = choice },
+                                    )
+                                    .semantics {
+                                        if (!enabled) disabled()
+                                        contentDescription = if (enabled) {
+                                            "$label. $switchToDescription"
+                                        } else {
+                                            label
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                ProfileChoiceAvatar(
+                                    connectionViewModel,
+                                    choice,
+                                    resolvedProfile,
+                                    label,
+                                    36,
                                 )
                             }
                         }
-                    } else {
-                        val enabled = switchEnabled && !isProfileLocked
-                        val switchToDescription = stringResource(R.string.profile_shelf_switch_to)
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .combinedClickable(
-                                    enabled = true,
-                                    role = Role.Button,
-                                    onClick = { if (enabled) onSelect(choice.profile) },
-                                    onLongClick = { actionChoice = choice },
-                                )
-                                .semantics {
-                                    if (!enabled) disabled()
-                                    contentDescription = if (enabled) {
-                                        "$label. $switchToDescription"
-                                    } else {
-                                        label
-                                    }
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            ProfileChoiceAvatar(connectionViewModel, choice, label, 42)
+                    }
+                }
+                IconButton(
+                    onClick = onOpenSwitcher,
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Surface(
+                        modifier = Modifier.size(40.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f),
+                        ),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Filled.MoreHoriz,
+                                contentDescription = stringResource(R.string.profile_shelf_all_profiles),
+                                modifier = Modifier.size(20.dp),
+                            )
                         }
                     }
                 }
             }
-            IconButton(
-                onClick = onOpenSwitcher,
-                modifier = Modifier.size(48.dp),
-            ) {
-                Icon(
-                    Icons.Filled.MoreHoriz,
-                    contentDescription = stringResource(R.string.profile_shelf_all_profiles),
-                )
-            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.32f))
         }
     }
 
@@ -331,7 +367,7 @@ fun ProfileSwitcherSheet(
                         null
                     },
                     leadingContent = {
-                        ProfileChoiceAvatar(connectionViewModel, choice, label, 42)
+                        ProfileChoiceAvatar(connectionViewModel, choice, resolvedProfile, label, 42)
                     },
                     trailingContent = if (selected) {
                         { Icon(Icons.Filled.Check, contentDescription = null) }
@@ -359,40 +395,64 @@ fun ProfileSwitcherSheet(
 private fun ProfileChoiceAvatar(
     connectionViewModel: ConnectionViewModel,
     choice: ProfileChoice,
+    resolvedProfile: Profile?,
     label: String,
     size: Int,
 ) {
-    val iconPath by connectionViewModel.profileIconFlow(choice.profile?.name).collectAsState(initial = null)
-    Surface(
-        modifier = Modifier.size(size.dp),
-        shape = CircleShape,
-        color = if (choice.isServerDefault) {
-            MaterialTheme.colorScheme.secondaryContainer
-        } else {
-            MaterialTheme.colorScheme.primary
-        },
-    ) {
-        when {
-            choice.isServerDefault -> Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Filled.Home,
+    val avatarProfile = ProfileShelfPolicy.avatarProfile(choice, resolvedProfile)
+    val iconPath by connectionViewModel.profileIconFlow(avatarProfile?.name).collectAsState(initial = null)
+    Box(modifier = Modifier.size(size.dp)) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primary,
+            border = BorderStroke(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+            ),
+        ) {
+            when {
+                !iconPath.isNullOrBlank() -> AsyncImage(
+                    model = File(iconPath.orEmpty()),
                     contentDescription = null,
-                    modifier = Modifier.size((size * 0.48f).dp),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
                 )
+                avatarProfile == null && choice.isServerDefault -> Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Filled.Home,
+                        contentDescription = null,
+                        modifier = Modifier.size((size * 0.48f).dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+                else -> Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = label.trim().firstOrNull()?.uppercase() ?: "H",
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
-            !iconPath.isNullOrBlank() -> AsyncImage(
-                model = File(iconPath.orEmpty()),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-            else -> Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = label.trim().firstOrNull()?.uppercase() ?: "H",
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
+        }
+        if (choice.isServerDefault && avatarProfile != null) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .size((size * 0.38f).dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.surface),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Filled.Home,
+                        contentDescription = null,
+                        modifier = Modifier.size((size * 0.22f).dp),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
         }
     }

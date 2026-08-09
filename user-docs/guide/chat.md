@@ -156,6 +156,11 @@ like a live transcript:
 Disable it under **Settings → Chat → Smooth auto-scroll** if you'd rather scroll
 manually. It's on by default.
 
+Before the first answer text arrives, the assistant bubble shows a compact
+working animation with **Still working…** beneath it. The status disappears as
+soon as reply text starts streaming; dropped-stream recovery uses
+**Reconnecting to your answer…** instead.
+
 ## Markdown
 
 Replies render with full markdown support:

@@ -40,7 +40,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -74,7 +73,6 @@ import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.components.pet.petVisitTargetSurface
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -204,7 +202,6 @@ fun MessageBubble(
     val alignment = if (isUser) Alignment.End else Alignment.Start
     val locale = LocalLocale.current.platformLocale
     val timeFormat = remember(locale) { SimpleDateFormat("h:mm a", locale) }
-    val a11yDescription = "${message.role.name.lowercase()} message: ${message.content.take(100)}"
     val isDarkTheme = LocalBrand.current.isDark
 
     // Pull generated/inline image links (`![alt](src)`) out of assistant
@@ -223,6 +220,26 @@ fun MessageBubble(
         isStreaming = message.isStreaming,
         hasMediaResult = message.attachments.isNotEmpty() || inlineImages.isNotEmpty(),
     )
+    val streamingStatusLabel = if (
+        !isUser &&
+        !isSystem &&
+        message.isStreaming &&
+        message.content.isBlank() &&
+        !showImageGeneration
+    ) {
+        if (recoveringAnswer) {
+            stringResource(R.string.msg_bubble_reconnecting)
+        } else {
+            stringResource(R.string.msg_bubble_still_working)
+        }
+    } else {
+        null
+    }
+    val a11yDescription = buildString {
+        append(message.role.name.lowercase())
+        append(" message: ")
+        append(streamingStatusLabel ?: message.content.take(100))
+    }
     val hasImageGenerationCall = remember(message.toolCalls) {
         message.toolCalls.any {
             it.name.trim().lowercase() == "image_generate"
@@ -689,28 +706,24 @@ fun MessageBubble(
 
                 // Streaming indicator — only while awaiting the first token. Once
                 // text starts flowing, the growing reply is itself the progress
-                // signal, so the pulsing dots stop (Messenger/Telegram drop the
-                // typing bubble the moment content appears) instead of throbbing
-                // under the text for the whole turn.
+                // signal, so this compact status stamp leaves the bubble.
                 if (
                     message.isStreaming &&
                     message.content.isBlank() &&
                     !showImageGeneration
                 ) {
-                    // After a few seconds with no content yet, escalate the bare
-                    // dots to a labeled "Still working…" so a slow first token
-                    // never reads as a hang on the SSE / sessions paths.
-                    val awaitingFirstToken = message.content.isBlank()
-                    var showStillWorking by remember(message.id) { mutableStateOf(false) }
-                    LaunchedEffect(message.id, awaitingFirstToken) {
-                        showStillWorking = false
-                        if (awaitingFirstToken) {
-                            delay(4_000)
-                            showStillWorking = true
-                        }
-                    }
                     val thinkingIndicator = LocalThinkingIndicator.current
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    val streamingStatus = requireNotNull(streamingStatusLabel)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            // The clickable bubble parent announces the stable
+                            // status once; suppress the animated children so each
+                            // dot is not exposed as a separate accessibility node.
+                            .clearAndSetSemantics { },
+                    ) {
                         when (thinkingIndicator.style) {
                             ThinkingIndicatorStyle.Matrix -> DotMatrixIndicator(
                                 // Auto follows the bubble text color; accents
@@ -719,29 +732,18 @@ fun MessageBubble(
                                 color = thinkingIndicator.color.toColor(autoColor = textColor),
                                 pattern = thinkingIndicator.pattern,
                                 animated = thinkingIndicator.animated,
-                                modifier = Modifier.padding(top = 4.dp),
                             )
                             ThinkingIndicatorStyle.Dots -> StreamingDots(
                                 color = textColor.copy(alpha = 0.6f),
-                                modifier = Modifier.padding(top = 4.dp),
                             )
                         }
-                        // During dropped-stream answer recovery the label shows
-                        // immediately (the 4s escalation is for a slow first
-                        // token; a recovery is already known to be slow).
-                        if ((showStillWorking || recoveringAnswer) && awaitingFirstToken) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (recoveringAnswer) {
-                                    stringResource(R.string.msg_bubble_reconnecting)
-                                } else {
-                                    stringResource(R.string.msg_bubble_still_working)
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = textColor.copy(alpha = 0.6f),
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
+                        Text(
+                            text = streamingStatus,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = textColor.copy(alpha = 0.68f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
 

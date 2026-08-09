@@ -1,5 +1,29 @@
 # Design QA
 
+## Profile Shelf refinement
+
+Status: **blocked**
+
+### Compared
+
+- Source: the selected compact Profile Shelf mock-up from the implementation task.
+- Implementation: native Compose dimensions, theme tokens, and interaction semantics in `ProfileShelf.kt`.
+- Target state: expanded shelf below the Chat app bar, Server default resolving to the active profile identity.
+
+### Source-level review
+
+- The shelf now shares Chat's base surface and uses only a subtle bottom divider.
+- The selected profile uses a 44 dp neutral capsule inside a 48 dp interaction target, with a restrained accent outline.
+- Profile artwork is 36 dp inside 48 dp targets; Server default keeps the resolved avatar and adds a small home badge.
+- Overflow is pinned in a contained 40 dp visual surface inside its 48 dp target.
+- Existing TalkBack labels, long-press actions, horizontal scrolling, switch gating, and full-switcher routing remain intact.
+
+### Blocker
+
+No ADB device is connected, so a real-dimension implementation capture cannot be compared with the selected mock-up. Source inspection and compiled tests do not substitute for visual device QA.
+
+final result: blocked
+
 ## Agent Passport
 
 Status: **passed**

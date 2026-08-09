@@ -57,4 +57,14 @@ class ProfileShelfPolicyTest {
         assertFalse(ProfileShelfPolicy.canSwitch(isStreaming = true, streamingEndpoint = "runs"))
         assertFalse(ProfileShelfPolicy.canSwitch(isStreaming = true, streamingEndpoint = "completions"))
     }
+
+    @Test
+    fun serverDefaultUsesResolvedAvatarWithoutConflatingLiteralDefaultProfile() {
+        val resolved = Profile(name = "victor", model = "gpt-5.6-sol")
+        val serverDefault = ProfileChoice(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, null)
+        val literalDefault = ProfileChoice("default", Profile(name = "default", model = "root"))
+
+        assertEquals(resolved, ProfileShelfPolicy.avatarProfile(serverDefault, resolved))
+        assertEquals(literalDefault.profile, ProfileShelfPolicy.avatarProfile(literalDefault, resolved))
+    }
 }

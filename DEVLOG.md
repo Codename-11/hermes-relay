@@ -1,5 +1,29 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-08 — Compact Android thinking status
+
+Blank streaming assistant rows now present one compact status stamp from the
+first frame: a narrower, slower animation above the visible `Still working…`
+label. The first answer token removes the entire stamp, while recovery retains
+the distinct `Reconnecting to your answer…` wording. The bubble owns one stable
+TalkBack description and suppresses animated child nodes, avoiding repeated
+announcements without claiming measurable progress.
+
+## 2026-08-08 — Android text-share draft handoff
+
+The shared Android manifest now advertises a `text/*` `ACTION_SEND` target for
+both app flavors. `MainActivity` accepts only non-blank single-item text shares
+and places them in a process-local, identity-fenced handoff that survives cold
+Compose initialization. Once the configured chat context settles, the app root
+navigates to Chat and delegates draft creation and composer prefill to
+`ChatViewModel`.
+
+The ViewModel reuses the existing new-chat lifecycle, preserving Gateway
+background-turn reconciliation and the active connection/profile/transport
+namespace. Composer prefills use a one-consumer conflated channel so an intent
+received before Chat composition is delivered once. Shared text is never
+routed through message sending; the user must review and submit it explicitly.
+
 ## 2026-08-08 — Android Profile Shelf and profile-context identity
 
 Chat profile selection now lives in a collapsible shelf directly below the top
@@ -9,6 +33,12 @@ switcher used by Passport. Saved ordering and hidden state drive both surfaces;
 the selected hidden profile remains disclosed, while a one-identity shelf stays
 out of the layout. Long-press actions expose inspection, Passport, profile lock,
 and hiding without adding activity or presence claims.
+
+The shelf uses the chat surface instead of a second elevated toolbar. A neutral
+active capsule, 36 dp avatar artwork inside 48 dp targets, compact spacing, and
+a contained overflow affordance keep the row visually subordinate to Chat. When
+Server default resolves to a concrete profile, that profile's avatar remains
+the identity and a small home badge discloses its default routing role.
 
 The Server-default sentinel is now distinct from a profile literally named
 `default`. Profile selection restores the last compatible connection/profile/
