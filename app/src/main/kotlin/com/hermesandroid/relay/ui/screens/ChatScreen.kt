@@ -208,6 +208,7 @@ import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.PetInteractionLayer
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import java.io.File
@@ -255,6 +256,8 @@ import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
 private const val CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE = "chat-scroll-to-bottom-obstacle"
+private const val CHAT_AUTOCOMPLETE_PET_OBSTACLE = "chat-autocomplete-obstacle"
+private const val CHAT_RECENT_PROMPTS_PET_OBSTACLE = "chat-recent-prompts-obstacle"
 private val CHAT_PET_ROUTES = setOf("chat")
 
 internal fun resolveSessionActivityStates(
@@ -995,24 +998,43 @@ fun ChatScreen(
         }
     }
     val listState = rememberLazyListState()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    PetInteractionLayer(
+        owner = "chat-interaction-layer",
+        active = shouldHideChatPet(
+            ambientMode = ambientMode,
+            voiceMode = voiceUiState.voiceMode,
+            drawerOpenOrMoving =
+                drawerState.currentValue != DrawerValue.Closed ||
+                    drawerState.targetValue != DrawerValue.Closed,
+            commandPaletteVisible = showCommandPalette,
+            modelSheetVisible = showModelSheet,
+            effortSheetVisible = showEffortSheet,
+            contextSheetVisible = showContextSheet,
+            backgroundProcessesVisible = showBackgroundProcesses,
+            agentInfoVisible = showAgentInfo,
+        ),
+    )
     // Publish only surface-local visibility signals. Live turn state is owned at
     // the app root so navigation cannot reset an in-flight companion to Idle.
+    // Modal Chat chrome owns the interaction layer while it is entering, open,
+    // or leaving. Suppress the root-hosted pet for the whole transition so it
+    // cannot render above the drawer scrim or a bottom sheet.
     val petCompanionCoordinator = LocalPetCompanionCoordinator.current
     LaunchedEffect(listState, petCompanionCoordinator) {
-        snapshotFlow { listState.isScrollInProgress to ambientMode }
+        snapshotFlow { listState.isScrollInProgress }
             .distinctUntilChanged()
-            .collect { (scrolling, hidden) ->
+            .collect { scrolling ->
                 petCompanionCoordinator.publishSurface(
                     owner = "chat",
                     scrolling = scrolling,
-                    hidden = hidden,
+                    hidden = false,
                 )
             }
     }
     DisposableEffect(petCompanionCoordinator) {
         onDispose { petCompanionCoordinator.clearSurface("chat") }
     }
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val copiedToClipboardMsg = stringResource(R.string.chat_copied_to_clipboard)
     val copySessionIdLabel = stringResource(R.string.chat_copy_session_id)
@@ -3028,7 +3050,12 @@ fun ChatScreen(
                         val base = cmd.command.split(" ").first()
                         inputText = if (cmd.command.contains(" ")) cmd.command + " " else "$base "
                     },
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .petObstacleSurface(
+                            key = CHAT_AUTOCOMPLETE_PET_OBSTACLE,
+                            routes = CHAT_PET_ROUTES,
+                        )
 
                 )
             }
@@ -3047,7 +3074,11 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                        .padding(horizontal = 20.dp, vertical = 2.dp)
+                        .petObstacleSurface(
+                            key = CHAT_RECENT_PROMPTS_PET_OBSTACLE,
+                            routes = CHAT_PET_ROUTES,
+                        ),
                 ) {
                     recentPrompts.take(6).forEach { prompt ->
                         AssistChip(
@@ -4377,6 +4408,27 @@ internal fun shouldShowCleanViewHint(
     ambientMode: Boolean,
     voiceMode: Boolean,
 ): Boolean = !hasMessages && !ambientMode && !voiceMode
+
+/** Chat overlays that temporarily own input and must not compete with the root pet host. */
+internal fun shouldHideChatPet(
+    ambientMode: Boolean = false,
+    voiceMode: Boolean = false,
+    drawerOpenOrMoving: Boolean = false,
+    commandPaletteVisible: Boolean = false,
+    modelSheetVisible: Boolean = false,
+    effortSheetVisible: Boolean = false,
+    contextSheetVisible: Boolean = false,
+    backgroundProcessesVisible: Boolean = false,
+    agentInfoVisible: Boolean = false,
+): Boolean = ambientMode ||
+    voiceMode ||
+    drawerOpenOrMoving ||
+    commandPaletteVisible ||
+    modelSheetVisible ||
+    effortSheetVisible ||
+    contextSheetVisible ||
+    backgroundProcessesVisible ||
+    agentInfoVisible
 
 private fun compactModelChipLabel(model: String?, defaultLabel: String): String {
     val raw = model?.trim().orEmpty()

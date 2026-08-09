@@ -163,6 +163,34 @@ class PetCompanionEnvironmentTest {
     }
 
     @Test
+    fun `interaction layer suppresses every route until its owner clears`() {
+        val coordinator = PetCompanionCoordinator()
+        coordinator.publishSurface(owner = "chat", scrolling = false, hidden = false)
+        coordinator.publishInteractionLayer(owner = "drawer", active = true)
+
+        assertTrue(coordinator.activityFor("chat").hidden)
+        assertTrue(coordinator.activityFor(null).hidden)
+        assertTrue(coordinator.activityFor("settings/voice").hidden)
+
+        coordinator.publishInteractionLayer(owner = "drawer", active = false)
+        assertFalse(coordinator.activityFor("chat").hidden)
+        assertFalse(coordinator.activityFor(null).hidden)
+    }
+
+    @Test
+    fun `clearing one interaction owner preserves another active owner`() {
+        val coordinator = PetCompanionCoordinator()
+        coordinator.publishInteractionLayer(owner = "drawer", active = true)
+        coordinator.publishInteractionLayer(owner = "platform-dialog", active = true)
+
+        coordinator.clearInteractionLayer("drawer")
+        assertTrue(coordinator.activityFor("chat").hidden)
+
+        coordinator.clearInteractionLayer("platform-dialog")
+        assertFalse(coordinator.activityFor("chat").hidden)
+    }
+
+    @Test
     fun `snapshot includes global and matching route surfaces only`() {
         val registry = PetSafeAreaRegistry()
         registry.updatePerch("global", Rect(0f, 80f, 100f, 100f), PetRouteScope())

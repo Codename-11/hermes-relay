@@ -45,10 +45,16 @@ The companion has a durable home and an optional autonomous roaming mode:
   normalized vertical position—not raw pixels. The placement therefore adapts to
   rotation, resizing, and RTL layouts. **Reset position** restores the default
   end-edge home near the lower-right Chat area in left-to-right layouts (and
-  mirrors correctly in right-to-left layouts).
+  mirrors correctly in right-to-left layouts). A paused Chat pet temporarily
+  uses the composer dock described below; dragging still updates which logical
+  edge/corner it uses and preserves the free-form home for other routes.
 - Tap the pet for a wave and its menu. The tap reaction is lower priority than
   active Hermes work and never interrupts a drag or drop. The menu can enable or
-  pause roaming, reset position, open Appearance, or hide the companion.
+  pause roaming, reset position, open Appearance, or hide the companion. In
+  Chat, pausing roaming docks the pet to the outer end of the live composer rail;
+  the dock follows composer and keyboard resizing so the pet remains visible
+  above the input instead of retaining a stale transcript coordinate. Other
+  routes retain the saved edge home described above.
 - **Walk around the interface** is opt-in and off by default. Screen owners
   explicitly register curated perches and obstacles using their live measured
   bounds; the app does not scan arbitrary UI elements or treat the accessibility
@@ -123,7 +129,8 @@ The companion has a durable home and an optional autonomous roaming mode:
   shadow, and a small landing squash. Ambient
   idle actions cycle through a hop, wave, and rest rather than repeating one
   animation continuously. TalkBack vertical moves intentionally pause roaming
-  before applying free-form placement.
+  before applying free-form placement on routes that use the saved edge home.
+  A paused Chat pet instead exposes start/end corner moves for its composer dock.
 - Only the pet-sized target consumes touch input; the root positioning layer is
   click-through. While a supported surface is actively scrolling, the target
   also yields direct gestures to the screen beneath it. Registered UI bounds
@@ -625,8 +632,14 @@ without re-docking, teleporting, or dimming the companion.
 With the keyboard open or on a short screen its base art compacts from 60 dp to
 50 dp before the persisted 60–120% scale is applied. Keyboard visibility does
 not dim or pause the pet: playback, roaming on valid compact terrain, taps, and
-dragging remain available while typing. Dialogs on
-supported Settings/Appearance/About routes suspend the companion entirely.
+dragging remain available while typing. Chat's session drawer, command palette,
+model/reasoning/context/process/agent sheets, and both full-screen Chat modes
+suspend the companion for their entire visible transition. At app scope, loss of
+the main window's focus to any Compose dialog or modal sheet suppresses even a
+dock-only pet on secondary routes until that modal window closes. Same-window
+interaction layers publish through the companion coordinator explicitly.
+Slash-command autocomplete and recent-prompt chips remain inline, measured
+obstacles rather than modal gates, so the planner keeps the pet off those controls.
 Temperament never overrides these gates. Author the first `idle` frame to be a
 good, legible still. The companion exposes its name and current state, plus
 non-drag move/reset/configure/hide accessibility actions.
@@ -656,6 +669,13 @@ fallback checks with a pack missing one or more optional rows:
 
 - [ ] With roaming enabled, the pet walks the composer end-to-end above the
   control without covering input text, buttons, or the scroll-to-bottom control.
+- [ ] With roaming paused in Chat, the pet stays at the outer composer corner;
+  opening and closing the keyboard moves that dock with the input rail without
+  hiding the pet or placing it over transcript content.
+- [ ] Opening or closing the session drawer, command palette, model/reasoning/
+  context/process/agent sheets, clean mode, or either voice presentation keeps
+  the pet absent until the owning surface has fully closed. Slash autocomplete
+  and recent-prompt chips remain usable and never become walkable terrain.
 - [ ] After a plain assistant response, it approaches through the outer gutter,
   jumps beside the bubble, walks across the raised top rail, waves, returns to
   the same edge, and drops to the composer without covering message text.
