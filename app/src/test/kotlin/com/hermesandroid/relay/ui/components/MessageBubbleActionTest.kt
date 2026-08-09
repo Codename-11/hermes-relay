@@ -10,57 +10,6 @@ import org.junit.Test
 
 class MessageBubbleActionTest {
     @Test
-    fun flatPresentation_isLimitedToOrdinaryAssistantProse() {
-        val prose = ChatMessage(
-            id = "assistant-prose",
-            role = MessageRole.ASSISTANT,
-            content = "A normal response.",
-            timestamp = 1L,
-        )
-
-        assertTrue(
-            shouldUseFlatAssistantPresentation(
-                message = prose,
-                inlineImageCount = 0,
-                showImageGeneration = false,
-                isActionBubble = false,
-            ),
-        )
-        assertFalse(
-            shouldUseFlatAssistantPresentation(
-                message = prose.copy(content = "```kotlin\nval answer = 42\n```"),
-                inlineImageCount = 0,
-                showImageGeneration = false,
-                isActionBubble = false,
-            ),
-        )
-        assertFalse(
-            shouldUseFlatAssistantPresentation(
-                message = prose,
-                inlineImageCount = 1,
-                showImageGeneration = false,
-                isActionBubble = false,
-            ),
-        )
-        assertFalse(
-            shouldUseFlatAssistantPresentation(
-                message = prose,
-                inlineImageCount = 0,
-                showImageGeneration = false,
-                isActionBubble = true,
-            ),
-        )
-        assertFalse(
-            shouldUseFlatAssistantPresentation(
-                message = prose.copy(role = MessageRole.USER),
-                inlineImageCount = 0,
-                showImageGeneration = false,
-                isActionBubble = false,
-            ),
-        )
-    }
-
-    @Test
     fun speakResponse_requiresHandlerAndCompletedAssistantText() {
         val assistant = ChatMessage(
             id = "assistant",

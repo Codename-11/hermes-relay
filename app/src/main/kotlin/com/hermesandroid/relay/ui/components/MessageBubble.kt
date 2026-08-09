@@ -1,6 +1,11 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -75,6 +80,7 @@ import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.components.pet.petVisitTargetSurface
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
@@ -100,10 +106,11 @@ fun MessageBubble(
     retainStreamingLayout: Boolean = false,
     onCopyMessage: (String) -> Unit = {},
     /**
-     * Quote this message into the input field. Null hides the Quote entry in
-     * the long-press menu, so legacy call sites keep the copy-only behavior.
+     * Select this message as a structured composer quote. Null hides Quote.
      */
-    onQuoteMessage: ((String) -> Unit)? = null,
+    onQuoteMessage: ((ChatMessage) -> Unit)? = null,
+    /** Navigate a rendered quote chip to its original message id. */
+    onNavigateToMessage: ((String) -> Unit)? = null,
     /**
      * Reads a completed assistant response through the active voice renderer.
      * Null hides the entry; the owning screen uses that to limit the action to
@@ -155,6 +162,7 @@ fun MessageBubble(
     imageGenerationRotationIndex: Int = 0,
     petVisitTargetKey: String? = null,
     petPerchKey: String? = null,
+    animationEnabled: Boolean = true,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -208,30 +216,27 @@ fun MessageBubble(
     val alignment = if (isUser) Alignment.End else Alignment.Start
     val locale = LocalLocale.current.platformLocale
     val timeFormat = remember(locale) { SimpleDateFormat("h:mm a", locale) }
-    val a11yDescription = "${message.role.name.lowercase()} message: ${message.content.take(100)}"
+    val quoteEnvelope = remember(message.content) { parseChatQuotedPrompt(message.content) }
+    val visibleMessageContent = quoteEnvelope?.body ?: message.content
+    val a11yDescription =
+        "${message.role.name.lowercase()} message: ${visibleMessageContent.take(100)}"
     val isDarkTheme = LocalBrand.current.isDark
 
     // Pull generated/inline image links (`![alt](src)`) out of assistant
     // content so they render as real images (remote URLs via Coil) or a
     // graceful inline notice — not the blank element the markdown renderer
     // emits for an image link. User/system bubbles keep their raw content.
-    val (markdownBody, inlineImages) = remember(message.content, isUser, isSystem) {
+    val (markdownBody, inlineImages) = remember(visibleMessageContent, isUser, isSystem) {
         if (isUser || isSystem) {
-            message.content to emptyList()
+            visibleMessageContent to emptyList()
         } else {
-            extractChatInlineImages(message.content)
+            extractChatInlineImages(visibleMessageContent)
         }
     }
     val showImageGeneration = shouldShowImageGenerationPlaceholder(
         toolCalls = message.toolCalls,
         isStreaming = message.isStreaming,
         hasMediaResult = message.attachments.isNotEmpty() || inlineImages.isNotEmpty(),
-    )
-    val useFlatAssistantPresentation = shouldUseFlatAssistantPresentation(
-        message = message,
-        inlineImageCount = inlineImages.size,
-        showImageGeneration = showImageGeneration,
-        isActionBubble = isActionBubble,
     )
     val hasImageGenerationCall = remember(message.toolCalls) {
         message.toolCalls.any {
@@ -394,7 +399,8 @@ fun MessageBubble(
         // streaming (StreamingDots is the live "working" indicator) and
         // whenever there are cards/attachments to render inside it.
         val showBubble = isUser || isSystem ||
-            message.content.isNotBlank() ||
+            visibleMessageContent.isNotBlank() ||
+            quoteEnvelope != null ||
             message.isStreaming ||
             showImageGeneration ||
             message.cards.isNotEmpty() ||
@@ -410,7 +416,7 @@ fun MessageBubble(
                     modifier = Modifier
                         .padding(top = 8.dp, bottom = 8.dp, end = 6.dp)
                         .width(3.dp)
-                        .height(if (message.content.isBlank()) 14.dp else 24.dp)
+                        .height(if (visibleMessageContent.isBlank()) 14.dp else 24.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f))
                 )
@@ -422,6 +428,9 @@ fun MessageBubble(
         var showMessageActions by remember { mutableStateOf(false) }
         var showInlineActions by remember(message.uiKey) { mutableStateOf(false) }
         val haptic = LocalHapticFeedback.current
+        val accessibleMotion = rememberAccessibleMotionState()
+        val animateInlineActions = animationEnabled && accessibleMotion.osAnimations &&
+            !accessibleMotion.touchExploration
         val showEditAction = onEditMessage != null && isUser
         val showSpeakAction = shouldShowSpeakResponseAction(message, onSpeakMessage != null)
         if (onQuoteMessage != null || showEditAction || showSpeakAction) {
@@ -433,7 +442,7 @@ fun MessageBubble(
                     text = { Text(stringResource(R.string.msg_bubble_copy)) },
                     onClick = {
                         showMessageActions = false
-                        onCopyMessage(message.content)
+                        onCopyMessage(visibleMessageContent)
                     },
                 )
                 if (onQuoteMessage != null) {
@@ -441,7 +450,7 @@ fun MessageBubble(
                         text = { Text(stringResource(R.string.msg_bubble_quote)) },
                         onClick = {
                             showMessageActions = false
-                            onQuoteMessage(message.content)
+                            onQuoteMessage(message.copy(content = visibleMessageContent))
                         },
                     )
                 }
@@ -456,7 +465,7 @@ fun MessageBubble(
                         },
                         onClick = {
                             showMessageActions = false
-                            onSpeakMessage?.invoke(message.content)
+                            onSpeakMessage?.invoke(visibleMessageContent)
                         },
                     )
                 }
@@ -473,7 +482,7 @@ fun MessageBubble(
         }
         Surface(
             shape = bubbleShape,
-            color = if (useFlatAssistantPresentation) Color.Transparent else backgroundColor,
+            color = backgroundColor,
             modifier = Modifier
                 .then(
                     if (!isUser && !isSystem &&
@@ -496,7 +505,7 @@ fun MessageBubble(
                     }
                 )
                 .then(
-                    if (!isUser && !isSystem && isDarkTheme && !useFlatAssistantPresentation) {
+                    if (!isUser && !isSystem && isDarkTheme) {
                         Modifier.leftEdgeGlow(
                             alpha = 0.12f,
                             width = 28.dp,
@@ -514,7 +523,7 @@ fun MessageBubble(
                         if (onQuoteMessage != null || showEditAction || showSpeakAction) {
                             showMessageActions = true
                         } else {
-                            onCopyMessage(message.content)
+                            onCopyMessage(visibleMessageContent)
                         }
                     }
                 )
@@ -541,16 +550,22 @@ fun MessageBubble(
                 )
         ) {
             Column(
-                modifier = Modifier.padding(
-                    horizontal = if (useFlatAssistantPresentation) 4.dp else 14.dp,
-                    vertical = if (useFlatAssistantPresentation) 6.dp else 9.dp,
-                ),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
             ) {
+                quoteEnvelope?.let { envelope ->
+                    ChatQuoteReferenceChip(
+                        reference = envelope.reference,
+                        onOpenOriginal = onNavigateToMessage?.let { navigate ->
+                            { navigate(envelope.reference.messageId) }
+                        },
+                        modifier = Modifier.padding(bottom = 7.dp),
+                    )
+                }
                 val messageTextContent: @Composable () -> Unit = {
                     if (isUser || isSystem) {
                         // Plain text for user and system messages
                         Text(
-                            text = message.content,
+                            text = visibleMessageContent,
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontSize = 15.sp,
                                 lineHeight = 21.sp,
@@ -711,13 +726,13 @@ fun MessageBubble(
                 // under the text for the whole turn.
                 if (
                     message.isStreaming &&
-                    message.content.isBlank() &&
+                    visibleMessageContent.isBlank() &&
                     !showImageGeneration
                 ) {
                     // After a few seconds with no content yet, escalate the bare
                     // dots to a labeled "Still working…" so a slow first token
                     // never reads as a hang on the SSE / sessions paths.
-                    val awaitingFirstToken = message.content.isBlank()
+                    val awaitingFirstToken = visibleMessageContent.isBlank()
                     var showStillWorking by remember(message.id) { mutableStateOf(false) }
                     LaunchedEffect(message.id, awaitingFirstToken) {
                         showStillWorking = false
@@ -812,28 +827,45 @@ fun MessageBubble(
                 }
             }
         }
-        if (showInlineActions) {
+        val inlineActions: @Composable () -> Unit = {
             MessageInlineActions(
                 showQuote = onQuoteMessage != null,
                 showSpeak = showSpeakAction,
                 showEdit = showEditAction,
                 onCopy = {
                     showInlineActions = false
-                    onCopyMessage(message.content)
+                    onCopyMessage(visibleMessageContent)
                 },
                 onQuote = {
                     showInlineActions = false
-                    onQuoteMessage?.invoke(message.content)
+                    onQuoteMessage?.invoke(message.copy(content = visibleMessageContent))
                 },
                 onSpeak = {
                     showInlineActions = false
-                    onSpeakMessage?.invoke(message.content)
+                    onSpeakMessage?.invoke(visibleMessageContent)
                 },
                 onEdit = {
                     showInlineActions = false
                     onEditMessage?.invoke(message)
                 },
             )
+        }
+        if (animateInlineActions) {
+            AnimatedVisibility(
+                visible = showInlineActions,
+                enter = fadeIn(tween(120)) + expandVertically(
+                    animationSpec = tween(180, easing = LinearOutSlowInEasing),
+                    expandFrom = Alignment.Top,
+                ),
+                exit = fadeOut(tween(90)) + shrinkVertically(
+                    animationSpec = tween(140),
+                    shrinkTowards = Alignment.Top,
+                ),
+            ) {
+                inlineActions()
+            }
+        } else if (showInlineActions) {
+            inlineActions()
         }
         } // end Column (bubble + revealed actions)
         } // end Row (bubble + optional leading accent bar)
@@ -900,20 +932,6 @@ private fun MessageInlineActions(
         }
     }
 }
-
-internal fun shouldUseFlatAssistantPresentation(
-    message: ChatMessage,
-    inlineImageCount: Int,
-    showImageGeneration: Boolean,
-    isActionBubble: Boolean,
-): Boolean = message.role == MessageRole.ASSISTANT &&
-    !isActionBubble &&
-    message.cards.isEmpty() &&
-    message.attachments.isEmpty() &&
-    message.toolCalls.isEmpty() &&
-    inlineImageCount == 0 &&
-    !showImageGeneration &&
-    !message.content.contains("```")
 
 internal data class MessageSelectionTopologyKey(
     val renderer: String,

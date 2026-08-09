@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Android chat keeps work in context and makes live turns easier to read.** Draft text, edits, and attachments stay with their connection, profile, and session; conversation search and prompt-turn navigation jump by stable message identity; message actions are available on tap; assistant prose uses a flatter transcript style; thinking and tools share a compact expandable activity row; and pending attachments support preview, removal, and accessible reordering.
+- **Android chat keeps work in context and makes live turns easier to read.** Draft text, edits, quotes, and attachments stay with their connection, profile, and session; conversation search and prompt-turn navigation jump by stable message identity; message actions reveal smoothly on tap; quoted replies use linked previews without placing markup in the composer; assistant replies retain their compact high-contrast bubbles; and pending attachments support preview, removal, and accessible reordering.
 
 ### Fixed
 

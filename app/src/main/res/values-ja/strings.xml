@@ -3894,4 +3894,8 @@
     <string name="chat_search_result_count">%1$d / %2$d</string>
     <string name="msg_bubble_queued">キュー済み</string>
     <string name="msg_bubble_steered">修正を送信しました</string>
+    <string name="chat_quote_you">あなた</string>
+    <string name="chat_quote_hermes">Hermes</string>
+    <string name="chat_quote_open">%1$s の元のメッセージを開く</string>
+    <string name="chat_quote_remove">引用を削除</string>
 </resources>

@@ -28,15 +28,20 @@ orientation-aware previews plus explicit remove and reorder controls.
 
 Conversation overflow now opens transcript search with previous/next matches
 and a prompt-turn rail, both keyed to the same stable UI identity as the message
-list. Ordinary assistant prose uses a flatter surface, while code, cards, media,
-and tool content retain stronger containers. Tapping a message reveals the
-existing copy, quote, speak, and edit actions with accessible targets.
+list. Assistant prose retains the compact bubble and subtle edge treatment that
+keeps it legible above the animated chat background. Tapping a message reveals
+the existing copy, quote, speak, and edit actions with reduced-motion-aware
+expansion and accessible targets.
 
-Thinking and top-level tools render as one expandable activity row with stable
-phase announcements. The composer also names Correction and Queue states with
-visible labels. Gateway redirects remain text-only: follow-ups with attachments
-are forced through the existing destination-owned queue so files cannot be left
-behind by a correction request.
+Quotes are composer-owned structured references instead of raw blockquote text.
+The composer and sent message render a linked, highlighted author preview; the
+transport remains ordinary Markdown so unmodified Desktop and TUI clients show
+a readable quoted reply. Thinking and top-level tools continue to use their
+independent compact thought bubbles and configured compact or full tool cards,
+without an aggregate completion card. The composer also names Correction and
+Queue states with visible labels. Gateway redirects remain text-only:
+follow-ups with attachments are forced through the existing destination-owned
+queue so files cannot be left behind by a correction request.
 
 ## 2026-08-08 — Streaming reply tail follow
 
