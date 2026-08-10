@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,6 +55,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Person
@@ -80,10 +83,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -126,9 +127,6 @@ import com.hermesandroid.relay.network.upstream.DashboardStatus
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayMetricCard
-import com.hermesandroid.relay.ui.components.RelayNavTile
-import com.hermesandroid.relay.ui.components.RelayReturnStrip
-import com.hermesandroid.relay.ui.components.RelaySectionCaption
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.ui.theme.RelayRefresh
@@ -198,8 +196,55 @@ private enum class DashboardManagementSection(val path: String) {
 
 private val managementSections: List<DashboardManagementSection> = DashboardManagementSection.entries
 
+/** Detail families mirror the mobile IA while retaining the existing section endpoints. */
+private enum class DashboardManageFamily {
+    Integrations,
+    Automations,
+    Profiles,
+    ServerConfiguration,
+}
+
+private val DashboardManagementSection.family: DashboardManageFamily
+    get() = when (this) {
+        DashboardManagementSection.Skills,
+        DashboardManagementSection.Mcp,
+        DashboardManagementSection.Catalog,
+        DashboardManagementSection.CustomEndpoints -> DashboardManageFamily.Integrations
+        DashboardManagementSection.Cron -> DashboardManageFamily.Automations
+        DashboardManagementSection.Profiles -> DashboardManageFamily.Profiles
+        DashboardManagementSection.Models,
+        DashboardManagementSection.Keys,
+        DashboardManagementSection.Config -> DashboardManageFamily.ServerConfiguration
+    }
+
+private val DashboardManageFamily.sections: List<DashboardManagementSection>
+    get() = when (this) {
+        DashboardManageFamily.Integrations -> listOf(
+            DashboardManagementSection.Skills,
+            DashboardManagementSection.Mcp,
+            DashboardManagementSection.Catalog,
+            DashboardManagementSection.CustomEndpoints,
+        )
+        DashboardManageFamily.Automations -> listOf(DashboardManagementSection.Cron)
+        DashboardManageFamily.Profiles -> listOf(DashboardManagementSection.Profiles)
+        DashboardManageFamily.ServerConfiguration -> listOf(
+            DashboardManagementSection.Models,
+            DashboardManagementSection.Keys,
+            DashboardManagementSection.Config,
+        )
+    }
+
 internal fun dashboardSectionRequestPath(path: String, profile: String?): String {
-    if (profile.isNullOrBlank() || path !in setOf("/api/mcp/servers", "/api/mcp/catalog")) return path
+    if (path == "/api/cron/jobs") return "$path?profile=all"
+    if (profile.isNullOrBlank() || path !in setOf(
+            "/api/skills",
+            "/api/mcp/servers",
+            "/api/mcp/catalog",
+            "/api/model/info",
+            "/api/env",
+            "/api/config/schema",
+        )
+    ) return path
     val encoded = java.net.URLEncoder.encode(profile, Charsets.UTF_8.name()).replace("+", "%20")
     return "$path?profile=$encoded"
 }
@@ -241,7 +286,15 @@ internal fun scopeDashboardManageItems(
     profile: String?,
     items: List<DashboardSummaryItem>,
 ): List<DashboardSummaryItem> =
-    if (sectionPath == "/api/mcp/servers" || sectionPath == "/api/mcp/catalog") {
+    if (sectionPath in setOf(
+            "/api/skills",
+            "/api/mcp/servers",
+            "/api/mcp/catalog",
+            "/api/model/info",
+            "/api/env",
+            "/api/config/schema",
+        )
+    ) {
         items.map { it.copy(profile = profile) }
     } else {
         items
@@ -417,6 +470,7 @@ fun DashboardManagementScreen(
     val supportedOAuthRoutes by oauthViewModel.supportedRoutes.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
     var showingDetail by remember { mutableStateOf(false) }
+    var showingServerDetails by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableStateOf(0) }
     var forceReloadKey by remember { mutableStateOf<String?>(null) }
     // Process-lifetime cache (NOT remember{}) — see [DashboardPayloadCache].
@@ -620,7 +674,7 @@ fun DashboardManagementScreen(
             val result = try {
                 withDashboardClient(clientFactory) { client ->
                     when (action.kind) {
-                        DashboardActionKind.SetEnvKey -> client.setEnvVar(id, value)
+                        DashboardActionKind.SetEnvKey -> client.setEnvVar(id, value, profile = item.profile)
                         DashboardActionKind.EditProfileDescription ->
                             client.setProfileDescription(id, value)
                         else -> Result.failure(IllegalStateException("Unsupported input action"))
@@ -665,7 +719,12 @@ fun DashboardManagementScreen(
                 withDashboardClient(clientFactory) { client ->
                     when (target) {
                         is ModelPickerTarget.Main ->
-                            client.setMainModel(provider, model, confirmExpensive)
+                            client.setMainModel(
+                                provider,
+                                model,
+                                confirmExpensive,
+                                profile = effectiveProfileName,
+                            )
                         is ModelPickerTarget.Profile ->
                             client.setProfileModel(target.name, provider, model)
                     }
@@ -683,7 +742,8 @@ fun DashboardManagementScreen(
                             target = target,
                             provider = provider,
                             model = model,
-                            warning = root.stringField("warning")
+                            warning = root.stringField("confirm_message")
+                                ?: root.stringField("warning")
                                 ?: context.getString(R.string.dashboard_expensive_model_default_warning),
                         )
                     } else {
@@ -756,7 +816,9 @@ fun DashboardManagementScreen(
         actionMessage = null
         scope.launch {
             val result = try {
-                withDashboardClient(clientFactory) { client -> client.updateSkillsHub() }
+                withDashboardClient(clientFactory) {
+                    client -> client.updateSkillsHub(profile = effectiveProfileName)
+                }
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -1046,6 +1108,7 @@ fun DashboardManagementScreen(
         ModelPickerDialog(
             target = target,
             clientFactory = clientFactory,
+            profileName = effectiveProfileName,
             actionInFlight = actionInFlight,
             onSelect = { provider, model -> applyModelSelection(target, provider, model) },
             onDismiss = { modelPickerTarget = null },
@@ -1064,6 +1127,7 @@ fun DashboardManagementScreen(
     if (showSkillsHub) {
         SkillsHubDialog(
             clientFactory = clientFactory,
+            profileName = effectiveProfileName,
             onPreview = { detail -> detailResult = detail },
             onMessage = { message -> actionMessage = message },
             onDismiss = { showSkillsHub = false },
@@ -1161,6 +1225,12 @@ fun DashboardManagementScreen(
     }
 
     val showingProfileDetail = showingDetail && section == DashboardManagementSection.Profiles
+    val detailTitle = if (showingServerDetails) stringResource(R.string.dashboard_hub_server_details) else when (section.family) {
+        DashboardManageFamily.Integrations -> stringResource(R.string.dashboard_hub_group_integrations)
+        DashboardManageFamily.Automations -> stringResource(R.string.dashboard_tile_cron_title)
+        DashboardManageFamily.Profiles -> stringResource(R.string.dashboard_tile_profiles_title)
+        DashboardManageFamily.ServerConfiguration -> stringResource(R.string.dashboard_hub_server_configuration)
+    }
     val managementConnectionLabel = activeConnection?.label
         ?.takeIf { it.isNotBlank() }
         ?: dashboardUrl
@@ -1170,11 +1240,7 @@ fun DashboardManagementScreen(
             TopAppBar(
                 title = {
                     Text(
-                        if (showingProfileDetail) {
-                            stringResource(R.string.dashboard_tile_profiles_title)
-                        } else {
-                            stringResource(R.string.dashboard_title)
-                        },
+                        if (showingDetail) detailTitle else stringResource(R.string.dashboard_title),
                     )
                 },
                 navigationIcon = {
@@ -1182,18 +1248,15 @@ fun DashboardManagementScreen(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = stringResource(R.string.dashboard_back),
                         onClick = {
-                            if (showingProfileDetail) showingDetail = false else onBack()
+                            if (showingDetail) {
+                                showingDetail = false
+                                showingServerDetails = false
+                            } else onBack()
                         },
                     )
                 },
                 actions = {
-                    if (!showingProfileDetail) {
-                        RelayChromeIconButton(
-                            icon = Icons.Filled.Code,
-                            contentDescription = stringResource(R.string.dashboard_terminal),
-                            onClick = onNavigateToTerminal,
-                            modifier = Modifier.padding(end = 4.dp),
-                        )
+                    if (!showingDetail) {
                         RelayChromeIconButton(
                             icon = Icons.Filled.Tune,
                             contentDescription = stringResource(R.string.dashboard_settings),
@@ -1203,8 +1266,25 @@ fun DashboardManagementScreen(
                     }
                     IconButton(
                         onClick = {
-                            forceReloadKey = payloadKey
-                            reloadNonce += 1
+                            if (!showingDetail) {
+                                managementSections.forEach { target ->
+                                    DashboardPayloadCache.states.remove(payloadKeyFor(target))
+                                    DashboardPayloadCache.refreshing.remove(payloadKeyFor(target))
+                                }
+                                scope.launch {
+                                    prewarmDashboardManage(
+                                        clientFactory = clientFactory,
+                                        connectionId = connectionId,
+                                        dashboardUrl = dashboardUrl,
+                                        effectiveProfileName = effectiveProfileName,
+                                        cacheDir = context.cacheDir,
+                                        context = context,
+                                    )
+                                }
+                            } else {
+                                forceReloadKey = payloadKey
+                                reloadNonce += 1
+                            }
                         },
                         enabled = !isRefreshing,
                     ) {
@@ -1227,12 +1307,6 @@ fun DashboardManagementScreen(
                 .background(RelayRefresh.Background)
                 .relayGridTexture(alpha = 0.12f)
         ) {
-            if (dashboardUrl.isNotBlank() && !showingProfileDetail) {
-                ManageDashboardTargetLine(
-                    dashboardUrl = dashboardUrl,
-                    routeHint = dashboardRouteHint,
-                )
-            }
             val loadedCount = (payloadState as? DashboardPayloadState.Loaded)?.items?.size ?: 0
             AnimatedContent(
                 targetState = showingDetail,
@@ -1260,21 +1334,19 @@ fun DashboardManagementScreen(
             ) { detailMode ->
                 if (detailMode) {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        if (!showingProfileDetail) {
-                            ManageSelectedSectionHeader(
-                                section = section,
-                                onBackToOverview = { showingDetail = false },
+                        if (showingServerDetails) {
+                            ServerDetailsBody(
+                                connectionLabel = managementConnectionLabel,
+                                dashboardUrl = dashboardUrl,
+                                routeHint = dashboardRouteHint,
+                                status = dashboardStatus,
+                                session = dashboardSession,
+                                authenticated = dashboardAuthenticated,
+                                lastCheckedAtMillis = activeConnection?.dashboardLastStatus?.checkedAtMillis,
+                                onClearSession = { confirmClearDashboardSession = true },
+                                onOpenTerminal = onNavigateToTerminal,
                             )
-                            PrimaryScrollableTabRow(selectedTabIndex = selectedTab) {
-                                managementSections.forEachIndexed { index, tab ->
-                                    Tab(
-                                        selected = selectedTab == index,
-                                        onClick = { selectedTab = index },
-                                        text = { Text(tab.displayLabel()) },
-                                    )
-                                }
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                            return@Column
                         }
                         if (isRefreshing && payloadState !is DashboardPayloadState.Loading) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -1309,6 +1381,7 @@ fun DashboardManagementScreen(
                                     section = section,
                                     state = state,
                                     connectionLabel = managementConnectionLabel,
+                                    effectiveProfileName = effectiveProfileName,
                                     actionInFlight = actionInFlight,
                                     actionMessage = actionMessage,
                                     onAction = { item, action ->
@@ -1363,6 +1436,11 @@ fun DashboardManagementScreen(
                                             }
                                         }
                                     },
+                                    onSelectSection = { targetSection ->
+                                        managementSections.indexOf(targetSection)
+                                            .takeIf { it >= 0 }
+                                            ?.let { selectedTab = it }
+                                    },
                                     mcpOAuthSupported = mcpOAuthStartAllowed,
                                 )
                             }
@@ -1370,6 +1448,9 @@ fun DashboardManagementScreen(
                         }
                     }
                 } else {
+                    val sectionSnapshots = managementSections.associateWith { target ->
+                        payloadStates[payloadKeyFor(target)] as? DashboardPayloadState.Loaded
+                    }
                     ManageOverviewBody(
                         loadedCount = loadedCount,
                         section = section,
@@ -1382,6 +1463,9 @@ fun DashboardManagementScreen(
                         lastCheckedAtMillis = activeConnection?.dashboardLastStatus?.checkedAtMillis,
                         actionInFlight = actionInFlight,
                         actionMessage = actionMessage,
+                        connectionLabel = managementConnectionLabel,
+                        effectiveProfileName = effectiveProfileName,
+                        sectionSnapshots = sectionSnapshots,
                         onClearSession = { confirmClearDashboardSession = true },
                         onNavigateToSignIn = onNavigateToSignIn,
                         onNavigateToConnections = onNavigateToConnections,
@@ -1390,69 +1474,19 @@ fun DashboardManagementScreen(
                                 .takeIf { it >= 0 }
                                 ?.let {
                                     selectedTab = it
+                                    showingServerDetails = false
                                     showingDetail = true
                                 }
+                        },
+                        onOpenServerDetails = {
+                            showingServerDetails = true
+                            showingDetail = true
                         },
                     )
                 }
             }
         }
     }
-}
-
-private data class ManageTileSpec(
-    val icon: ImageVector,
-    val title: String,
-    val subtitle: String,
-)
-
-@Composable
-private fun manageTileSpec(section: DashboardManagementSection): ManageTileSpec = when (section) {
-    DashboardManagementSection.Profiles -> ManageTileSpec(
-        icon = Icons.Filled.Person,
-        title = stringResource(R.string.dashboard_tile_profiles_title),
-        subtitle = stringResource(R.string.dashboard_tile_profiles_sub),
-    )
-    DashboardManagementSection.Skills -> ManageTileSpec(
-        icon = Icons.Filled.AutoAwesome,
-        title = stringResource(R.string.dashboard_tile_skills_title),
-        subtitle = stringResource(R.string.dashboard_tile_skills_sub),
-    )
-    DashboardManagementSection.Cron -> ManageTileSpec(
-        icon = Icons.Filled.Schedule,
-        title = stringResource(R.string.dashboard_tile_cron_title),
-        subtitle = stringResource(R.string.dashboard_tile_cron_sub),
-    )
-    DashboardManagementSection.Mcp -> ManageTileSpec(
-        icon = Icons.Filled.Code,
-        title = stringResource(R.string.dashboard_tile_mcp_title),
-        subtitle = stringResource(R.string.dashboard_tile_mcp_sub),
-    )
-    DashboardManagementSection.Catalog -> ManageTileSpec(
-        icon = Icons.Filled.AutoAwesome,
-        title = stringResource(R.string.dashboard_tile_catalog_title),
-        subtitle = stringResource(R.string.dashboard_tile_catalog_sub),
-    )
-    DashboardManagementSection.CustomEndpoints -> ManageTileSpec(
-        icon = Icons.Filled.Link,
-        title = stringResource(R.string.dashboard_tile_custom_endpoints_title),
-        subtitle = stringResource(R.string.dashboard_tile_custom_endpoints_sub),
-    )
-    DashboardManagementSection.Models -> ManageTileSpec(
-        icon = Icons.Filled.Tune,
-        title = stringResource(R.string.dashboard_tile_models_title),
-        subtitle = stringResource(R.string.dashboard_tile_models_sub),
-    )
-    DashboardManagementSection.Keys -> ManageTileSpec(
-        icon = Icons.Filled.Key,
-        title = stringResource(R.string.dashboard_tile_keys_title),
-        subtitle = stringResource(R.string.dashboard_tile_keys_sub),
-    )
-    DashboardManagementSection.Config -> ManageTileSpec(
-        icon = Icons.Filled.Tune,
-        title = stringResource(R.string.dashboard_tile_config_title),
-        subtitle = stringResource(R.string.dashboard_tile_config_sub),
-    )
 }
 
 @Composable
@@ -1468,71 +1502,366 @@ private fun ManageOverviewBody(
     lastCheckedAtMillis: Long?,
     actionInFlight: Boolean,
     actionMessage: String?,
+    connectionLabel: String,
+    effectiveProfileName: String?,
+    sectionSnapshots: Map<DashboardManagementSection, DashboardPayloadState.Loaded?>,
     onClearSession: () -> Unit,
     onNavigateToSignIn: () -> Unit,
     onNavigateToConnections: () -> Unit,
     onSelectSection: (DashboardManagementSection) -> Unit,
+    onOpenServerDetails: () -> Unit,
+) {
+    val profileName = effectiveProfileName?.takeIf(String::isNotBlank) ?: "default"
+    val dashboardReady = status != null && !(status.authRequired && authenticated != true)
+    val profiles = sectionSnapshots[DashboardManagementSection.Profiles]?.items
+    val models = sectionSnapshots[DashboardManagementSection.Models]?.items
+    val modelEntry = models?.firstOrNull { item ->
+        item.title.lowercase() in setOf("model", "model_id", "model_name", "current_model")
+    }
+    val modelId = modelEntry?.subtitle?.takeIf(String::isNotBlank)
+        ?: models?.firstOrNull()?.title?.takeIf(String::isNotBlank)
+    val provider = models?.firstOrNull { it.title.equals("provider", ignoreCase = true) }
+        ?.subtitle
+        ?.takeIf(String::isNotBlank)
+        ?: models?.firstOrNull()?.meta
+            ?.split(" · ")
+            ?.firstOrNull()
+            ?.takeUnless { it.lowercase() in setOf("active", "string", "object") }
+    val modelSummary = modelId?.let { id ->
+        provider?.takeUnless { it.equals(id, ignoreCase = true) }?.let { "$id · $it" } ?: id
+    } ?: stringResource(R.string.dashboard_hub_model_summary)
+    val installedSkillsNoun = stringResource(R.string.dashboard_hub_noun_installed_skills)
+    val automationsNoun = stringResource(R.string.dashboard_hub_noun_automations)
+    val serversNoun = stringResource(R.string.dashboard_hub_noun_servers)
+    val configuredNoun = stringResource(R.string.dashboard_hub_noun_configured)
+    val countSummaryFormat = stringResource(R.string.dashboard_hub_count_summary)
+    val countActiveSummaryFormat = stringResource(R.string.dashboard_hub_count_active_summary)
+    fun countSummary(target: DashboardManagementSection, noun: String): String {
+        val snapshot = sectionSnapshots[target] ?: return noun
+        return countSummaryFormat.format(snapshot.items.size, noun)
+    }
+    fun activeSummary(target: DashboardManagementSection, noun: String): String {
+        val snapshot = sectionSnapshots[target] ?: return noun
+        val active = snapshot.items.count { item ->
+            if (target == DashboardManagementSection.Cron) {
+                item.actions.none { it.kind == DashboardActionKind.ResumeCron }
+            } else {
+                val tokens = item.meta.orEmpty().lowercase().split(" · ").map(String::trim)
+                "enabled" in tokens || "active" in tokens || "connected" in tokens
+            }
+        }
+        return countActiveSummaryFormat.format(snapshot.items.size, noun, active)
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            ManageHubIdentityCard(
+                connectionLabel = connectionLabel,
+                version = status?.version,
+                dashboardReady = dashboardReady,
+                profileName = profileName,
+                modelSummary = modelSummary,
+            )
+        }
+        actionMessage?.let { message -> item { ActionMessageCard(message) } }
+        if (status?.authRequired == true && authenticated != true) {
+            item {
+                DashboardSignInGateCard(
+                    dashboardUrl = dashboardUrl,
+                    routeHint = routeHint,
+                    onSignIn = onNavigateToSignIn,
+                )
+            }
+        }
+        item {
+            HubGroupCard(stringResource(R.string.dashboard_hub_group_app)) {
+                HubNavigationRow(
+                    icon = Icons.Filled.Link,
+                    title = stringResource(R.string.dashboard_nav_connections_title),
+                    summary = routeHint?.let { stringResource(R.string.dashboard_hub_route_summary, it) }
+                        ?: stringResource(R.string.dashboard_hub_connection_summary),
+                    scope = stringResource(R.string.dashboard_scope_pill_app),
+                    onClick = onNavigateToConnections,
+                )
+            }
+        }
+        item {
+            HubGroupCard(stringResource(R.string.dashboard_hub_group_agent)) {
+                HubNavigationRow(
+                    icon = Icons.Filled.Person,
+                    title = stringResource(R.string.dashboard_tile_profiles_title),
+                    summary = profiles?.let {
+                        stringResource(R.string.dashboard_hub_profiles_summary, it.size, profileName)
+                    } ?: stringResource(R.string.dashboard_hub_profile_fallback, profileName),
+                    scope = stringResource(R.string.dashboard_scope_pill_server),
+                    onClick = { onSelectSection(DashboardManagementSection.Profiles) },
+                )
+            }
+        }
+        item {
+            HubGroupCard(stringResource(R.string.dashboard_hub_group_capabilities)) {
+                HubNavigationRow(
+                    icon = Icons.Filled.AutoAwesome,
+                    title = stringResource(R.string.dashboard_tile_skills_title),
+                    summary = countSummary(DashboardManagementSection.Skills, installedSkillsNoun),
+                    scope = stringResource(R.string.dashboard_scope_pill_profile),
+                    onClick = { onSelectSection(DashboardManagementSection.Skills) },
+                )
+                HubNavigationRow(
+                    icon = Icons.Filled.Schedule,
+                    title = stringResource(R.string.dashboard_tile_cron_title),
+                    summary = activeSummary(DashboardManagementSection.Cron, automationsNoun),
+                    scope = stringResource(R.string.dashboard_scope_pill_per_job),
+                    onClick = { onSelectSection(DashboardManagementSection.Cron) },
+                )
+            }
+        }
+        item {
+            HubGroupCard(stringResource(R.string.dashboard_hub_group_integrations)) {
+                HubNavigationRow(
+                    icon = Icons.Filled.Code,
+                    title = stringResource(R.string.dashboard_tile_mcp_title),
+                    summary = activeSummary(DashboardManagementSection.Mcp, serversNoun),
+                    scope = stringResource(R.string.dashboard_scope_pill_profile),
+                    onClick = { onSelectSection(DashboardManagementSection.Mcp) },
+                )
+                HubNavigationRow(
+                    icon = Icons.Filled.AutoAwesome,
+                    title = stringResource(R.string.dashboard_tile_catalog_title),
+                    summary = sectionSnapshots[DashboardManagementSection.Catalog]
+                        ?.let { stringResource(R.string.dashboard_hub_available_count, it.items.size) }
+                        ?: stringResource(R.string.dashboard_tile_catalog_sub),
+                    scope = stringResource(R.string.dashboard_scope_pill_profile),
+                    onClick = { onSelectSection(DashboardManagementSection.Catalog) },
+                )
+                HubNavigationRow(
+                    icon = Icons.Filled.Link,
+                    title = stringResource(R.string.dashboard_tile_custom_endpoints_title),
+                    summary = countSummary(DashboardManagementSection.CustomEndpoints, configuredNoun),
+                    scope = stringResource(R.string.dashboard_scope_pill_host),
+                    onClick = { onSelectSection(DashboardManagementSection.CustomEndpoints) },
+                )
+            }
+        }
+        item {
+            HubGroupCard(stringResource(R.string.dashboard_hub_group_server)) {
+                HubNavigationRow(
+                    icon = Icons.Filled.Tune,
+                    title = stringResource(R.string.dashboard_tile_models_title),
+                    summary = modelSummary,
+                    scope = stringResource(R.string.dashboard_scope_pill_profile),
+                    onClick = { onSelectSection(DashboardManagementSection.Models) },
+                )
+                HubNavigationRow(
+                    icon = Icons.Filled.Key,
+                    title = stringResource(R.string.dashboard_tile_keys_title),
+                    summary = sectionSnapshots[DashboardManagementSection.Keys]?.items?.let { keys ->
+                        val set = keys.count { item ->
+                            item.meta.orEmpty().lowercase().split(" · ").map(String::trim).firstOrNull() == "set"
+                        }
+                        stringResource(R.string.dashboard_hub_key_count, set, keys.size)
+                    } ?: stringResource(R.string.dashboard_hub_credentials_summary),
+                    scope = stringResource(R.string.dashboard_scope_pill_profile),
+                    onClick = { onSelectSection(DashboardManagementSection.Keys) },
+                )
+                HubNavigationRow(
+                    icon = Icons.Filled.Tune,
+                    title = stringResource(R.string.dashboard_tile_config_title),
+                    summary = stringResource(R.string.dashboard_hub_config_summary),
+                    scope = stringResource(R.string.dashboard_scope_pill_profile),
+                    onClick = { onSelectSection(DashboardManagementSection.Config) },
+                )
+                HubNavigationRow(
+                    icon = Icons.Filled.Shield,
+                    title = stringResource(R.string.dashboard_hub_server_details),
+                    summary = stringResource(R.string.dashboard_hub_server_details_subtitle),
+                    scope = stringResource(R.string.dashboard_scope_pill_server),
+                    onClick = onOpenServerDetails,
+                )
+            }
+        }
+        item { Spacer(Modifier.height(8.dp)) }
+    }
+}
+
+@Composable
+private fun ManageHubIdentityCard(
+    connectionLabel: String,
+    version: String?,
+    dashboardReady: Boolean,
+    profileName: String,
+    modelSummary: String,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.38f)),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                modifier = Modifier.size(56.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        connectionLabel,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = LocalBrand.current.green.copy(alpha = 0.14f),
+                    ) {
+                        Text(
+                            if (dashboardReady) {
+                                stringResource(R.string.dashboard_hub_dashboard_ready)
+                            } else {
+                                stringResource(R.string.dashboard_status_checking)
+                            },
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (dashboardReady) LocalBrand.current.green else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                Text(
+                    listOfNotNull(
+                        version?.let { stringResource(R.string.dashboard_hub_hermes_version, it) },
+                        stringResource(R.string.dashboard_hub_profile_status, profileName),
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    modelSummary,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HubGroupCard(
+    label: String,
+    content: @Composable () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            label,
+            modifier = Modifier.padding(start = 8.dp),
+            style = relayMetadataStyle(),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+        ) {
+            Column { content() }
+        }
+    }
+}
+
+@Composable
+private fun HubNavigationRow(
+    icon: ImageVector,
+    title: String,
+    summary: String,
+    scope: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Surface(
+            modifier = Modifier.size(40.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+        ) {
+            Text(
+                scope,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+}
+
+@Composable
+private fun ServerDetailsBody(
+    connectionLabel: String,
+    dashboardUrl: String,
+    routeHint: String?,
+    status: DashboardStatus?,
+    session: DashboardAuthSession?,
+    authenticated: Boolean?,
+    lastCheckedAtMillis: Long?,
+    onClearSession: () -> Unit,
+    onOpenTerminal: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            RelaySectionCaption(
-                title = stringResource(R.string.dashboard_hub_title),
-                meta = stringResource(R.string.dashboard_hub_meta),
+            ManageDetailTargetCard(
+                connectionLabel,
+                stringResource(R.string.dashboard_scope_pill_server_wide),
             )
-        }
-        item {
-            // KPI strip — words, not glyphs. "ok / ... / ! / -" required the
-            // user to already know what each symbol meant; state words plus
-            // a tone color answer "is Manage healthy?" at a glance, and the
-            // server version confirms WHICH server answered (useful when
-            // routes roam between LAN and Tailscale hosts).
-            val signInNeeded = status?.authRequired == true && authenticated != true
-            val dashboardWord = when {
-                payloadState is DashboardPayloadState.Loading ||
-                    payloadState is DashboardPayloadState.Idle -> DashboardHealthWord.Loading
-                signInNeeded -> DashboardHealthWord.SignIn
-                payloadState is DashboardPayloadState.Error && status == null -> DashboardHealthWord.Offline
-                payloadState is DashboardPayloadState.Error -> DashboardHealthWord.Error
-                else -> DashboardHealthWord.Ready
-            }
-            val dashboardTone = when (dashboardWord) {
-                DashboardHealthWord.Ready -> RelayRefresh.Green
-                DashboardHealthWord.SignIn -> RelayRefresh.Amber
-                DashboardHealthWord.Offline, DashboardHealthWord.Error -> RelayRefresh.Danger
-                DashboardHealthWord.Loading -> RelayRefresh.Muted
-            }
-            val dashboardWordText = when (dashboardWord) {
-                DashboardHealthWord.Loading -> stringResource(R.string.dashboard_health_loading)
-                DashboardHealthWord.SignIn -> stringResource(R.string.dashboard_health_signin)
-                DashboardHealthWord.Offline -> stringResource(R.string.dashboard_health_offline)
-                DashboardHealthWord.Error -> stringResource(R.string.dashboard_health_error)
-                DashboardHealthWord.Ready -> stringResource(R.string.dashboard_health_ready)
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RelayMetricCard(
-                    value = if (loadedCount > 0) loadedCount.toString() else "—",
-                    label = section.lowercaseLabel(),
-                    modifier = Modifier.weight(1f),
-                )
-                RelayMetricCard(
-                    value = dashboardWordText,
-                    label = stringResource(R.string.dashboard_metric_dashboard),
-                    modifier = Modifier.weight(1f),
-                    valueColor = dashboardTone,
-                )
-                RelayMetricCard(
-                    value = status?.version ?: "—",
-                    label = stringResource(R.string.dashboard_metric_server),
-                    modifier = Modifier.weight(1f),
-                )
-            }
         }
         item {
             DashboardConnectionHeader(
@@ -1545,179 +1874,67 @@ private fun ManageOverviewBody(
                 onClearSession = onClearSession,
             )
         }
+        item {
+            OutlinedButton(
+                onClick = onOpenTerminal,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Filled.Code, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.dashboard_terminal))
+            }
+        }
+        item {
+            ProfileDetailSectionCard {
+                ProfileDetailSectionLabel(stringResource(R.string.dashboard_hub_gateway_topology))
+                val mode = status?.gatewayMode ?: stringResource(R.string.dashboard_hub_unknown_value)
+                val profiles = status?.profiles?.joinToString().orEmpty()
+                    .ifBlank { stringResource(R.string.dashboard_hub_unavailable_value) }
+                val ports = status?.gateways.orEmpty().flatMap { gateway ->
+                    gateway.ports.map { (platform, port) -> "${gateway.profile}/$platform:$port" }
+                }.joinToString().ifBlank { stringResource(R.string.dashboard_hub_unavailable_value) }
+                Text(
+                    stringResource(R.string.dashboard_gateway_topology, mode, profiles, ports),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        status?.componentHealth?.takeIf { it.supported }?.let { health ->
+            item {
+                ProfileDetailSectionCard {
+                    ProfileDetailSectionLabel(stringResource(R.string.dashboard_hub_component_health))
+                    dashboardComponentHealthLines(
+                        health = health,
+                        connectedLabel = stringResource(R.string.dashboard_component_connected),
+                        serverErrorsLabel = stringResource(R.string.dashboard_component_server_errors_5m),
+                    ).forEach { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
         if (status?.nousSessionValid == "terminal") {
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                    ),
+                Surface(
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                    shape = RoundedCornerShape(12.dp),
                 ) {
                     Text(
-                        text = stringResource(R.string.dashboard_nous_terminal_warning),
-                        modifier = Modifier.padding(12.dp),
+                        stringResource(R.string.dashboard_nous_terminal_warning),
+                        modifier = Modifier.padding(14.dp),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
                 }
             }
         }
-        if (status?.gatewayMode != null || status?.profiles?.isNotEmpty() == true) {
-            item {
-                val mode = status.gatewayMode ?: "unknown"
-                val profiles = status.profiles.joinToString().ifBlank { "—" }
-                val ports = status.gateways.flatMap { gateway ->
-                    gateway.ports.map { (platform, port) -> "${gateway.profile}/$platform:$port" }
-                }.joinToString().ifBlank { "—" }
-                Text(
-                    text = stringResource(R.string.dashboard_gateway_topology, mode, profiles, ports),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
-            }
-        }
-        status?.componentHealth
-            ?.takeIf { it.supported }
-            ?.let { health ->
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        ),
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            RelaySectionCaption(
-                                title = stringResource(R.string.dashboard_metric_dashboard),
-                                meta = health.overall?.replaceFirstChar(Char::uppercase)
-                                    ?: stringResource(R.string.conn_label_status),
-                            )
-                            dashboardComponentHealthLines(
-                                health = health,
-                                connectedLabel = stringResource(R.string.dashboard_component_connected),
-                                serverErrorsLabel = stringResource(R.string.dashboard_component_server_errors_5m),
-                            ).forEach { line ->
-                                Text(
-                                    text = line,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        val signInStatus = status
-        if (signInStatus?.authRequired == true && authenticated != true) {
-            item {
-                DashboardSignInGateCard(
-                    dashboardUrl = dashboardUrl,
-                    routeHint = routeHint,
-                    onSignIn = onNavigateToSignIn,
-                )
-            }
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Link,
-                title = stringResource(R.string.dashboard_nav_connections_title),
-                subtitle = stringResource(R.string.dashboard_nav_connections_sub),
-                onClick = onNavigateToConnections,
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Person,
-                title = stringResource(R.string.dashboard_tile_profiles_title),
-                subtitle = stringResource(R.string.dashboard_tile_profiles_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Profiles) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.AutoAwesome,
-                title = stringResource(R.string.dashboard_tile_skills_title),
-                subtitle = stringResource(R.string.dashboard_tile_skills_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Skills) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Schedule,
-                title = stringResource(R.string.dashboard_tile_cron_title),
-                subtitle = stringResource(R.string.dashboard_tile_cron_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Cron) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Code,
-                title = stringResource(R.string.dashboard_tile_mcp_title),
-                subtitle = stringResource(R.string.dashboard_tile_mcp_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Mcp) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.AutoAwesome,
-                title = stringResource(R.string.dashboard_tile_catalog_title),
-                subtitle = stringResource(R.string.dashboard_tile_catalog_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Catalog) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Tune,
-                title = stringResource(R.string.dashboard_tile_models_title),
-                subtitle = stringResource(R.string.dashboard_tile_models_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Models) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Link,
-                title = stringResource(R.string.dashboard_tile_custom_endpoints_title),
-                subtitle = stringResource(R.string.dashboard_tile_custom_endpoints_sub),
-                onClick = { onSelectSection(DashboardManagementSection.CustomEndpoints) },
-            )
-        }
-        item {
-            RelayNavTile(
-                icon = Icons.Filled.Key,
-                title = stringResource(R.string.dashboard_tile_keys_title),
-                subtitle = stringResource(R.string.dashboard_tile_keys_sub),
-                onClick = { onSelectSection(DashboardManagementSection.Keys) },
-            )
-        }
-    }
-}
-
-/** Health-word enum backing the KPI strip; drives both the label and the tone. */
-private enum class DashboardHealthWord { Loading, SignIn, Offline, Error, Ready }
-
-@Composable
-private fun ManageSelectedSectionHeader(
-    section: DashboardManagementSection,
-    onBackToOverview: () -> Unit,
-) {
-    val spec = manageTileSpec(section)
-    Column(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        RelayReturnStrip(
-            icon = spec.icon,
-            title = spec.title,
-            subtitle = spec.subtitle,
-            onClick = onBackToOverview,
-            label = stringResource(R.string.dashboard_overview_label),
-        )
     }
 }
 
@@ -2230,14 +2447,16 @@ private fun LoadedBody(
     section: DashboardManagementSection,
     state: DashboardPayloadState.Loaded,
     connectionLabel: String,
+    effectiveProfileName: String?,
     actionInFlight: Boolean,
     actionMessage: String?,
     onAction: (DashboardSummaryItem, DashboardItemAction) -> Unit,
     onSectionAction: (DashboardSectionAction) -> Unit = {},
+    onSelectSection: (DashboardManagementSection) -> Unit = {},
     mcpOAuthSupported: Boolean = true,
 ) {
-    if (section == DashboardManagementSection.Profiles) {
-        ProfilesManagementDetailBody(
+    when (section.family) {
+        DashboardManageFamily.Profiles -> ProfilesManagementDetailBody(
             items = state.items,
             connectionLabel = connectionLabel,
             actionInFlight = actionInFlight,
@@ -2245,93 +2464,555 @@ private fun LoadedBody(
             onCreateProfile = { onSectionAction(DashboardSectionAction.CreateProfile) },
             onAction = onAction,
         )
-        return
+        DashboardManageFamily.Integrations -> IntegrationsManagementDetailBody(
+            section = section,
+            items = state.items,
+            rawSummary = state.rawSummary,
+            connectionLabel = connectionLabel,
+            effectiveProfileName = effectiveProfileName,
+            actionInFlight = actionInFlight,
+            actionMessage = actionMessage,
+            mcpOAuthSupported = mcpOAuthSupported,
+            onSelectSection = onSelectSection,
+            onSectionAction = onSectionAction,
+            onAction = onAction,
+        )
+        DashboardManageFamily.Automations -> AutomationsManagementDetailBody(
+            items = state.items,
+            rawSummary = state.rawSummary,
+            connectionLabel = connectionLabel,
+            effectiveProfileName = effectiveProfileName,
+            actionInFlight = actionInFlight,
+            actionMessage = actionMessage,
+            onAction = onAction,
+        )
+        DashboardManageFamily.ServerConfiguration -> ServerConfigurationDetailBody(
+            section = section,
+            items = state.items,
+            rawSummary = state.rawSummary,
+            connectionLabel = connectionLabel,
+            effectiveProfileName = effectiveProfileName,
+            actionInFlight = actionInFlight,
+            actionMessage = actionMessage,
+            onSelectSection = onSelectSection,
+            onSectionAction = onSectionAction,
+            onAction = onAction,
+        )
     }
-    // Pre-resolve action labels outside LazyColumn's non-Composable lambda
-    val actionLabelChangeMainModel = stringResource(R.string.dashboard_section_action_change_main_model)
-    val actionLabelNewProfile = stringResource(R.string.dashboard_section_action_new_profile)
-    val actionLabelBrowseHub = stringResource(R.string.dashboard_section_action_browse_hub)
-    val actionLabelUpdateInstalled = stringResource(R.string.dashboard_section_action_update_installed)
-    val actionLabelAddEndpoint = stringResource(R.string.dashboard_custom_endpoint_add)
+}
+
+@Composable
+private fun IntegrationsManagementDetailBody(
+    section: DashboardManagementSection,
+    items: List<DashboardSummaryItem>,
+    rawSummary: String,
+    connectionLabel: String,
+    effectiveProfileName: String?,
+    actionInFlight: Boolean,
+    actionMessage: String?,
+    mcpOAuthSupported: Boolean,
+    onSelectSection: (DashboardManagementSection) -> Unit,
+    onSectionAction: (DashboardSectionAction) -> Unit,
+    onAction: (DashboardSummaryItem, DashboardItemAction) -> Unit,
+) {
+    val renderedItems = if (!mcpOAuthSupported) {
+        items.map { item ->
+            item.copy(actions = item.actions.filterNot { it.kind == DashboardActionKind.AuthenticateMcp })
+        }
+    } else items
+    val profileScoped = section != DashboardManagementSection.CustomEndpoints
+    val targetProfile = effectiveProfileName?.takeIf(String::isNotBlank)
+        ?: stringResource(R.string.status_profile_default)
+    val scopeLabel = if (profileScoped) {
+        stringResource(R.string.dashboard_hub_profile_status, targetProfile)
+    } else {
+        stringResource(R.string.dashboard_scope_pill_server_wide)
+    }
+    val activeCount = renderedItems.count { item ->
+        val meta = item.meta.orEmpty().lowercase()
+        "enabled" in meta || "connected" in meta || "installed" in meta || "active" in meta
+    }
+    val browseLabel = stringResource(R.string.dashboard_section_action_browse_hub)
+    val updateLabel = stringResource(R.string.dashboard_section_action_update_installed)
+    val addEndpointLabel = stringResource(R.string.dashboard_custom_endpoint_add)
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            horizontal = 16.dp,
-            vertical = 12.dp,
-        ),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        actionMessage?.let { message ->
-            item {
-                ActionMessageCard(message)
-            }
+        item { ManageDetailTargetCard(connectionLabel, scopeLabel) }
+        item {
+            ManageFamilyTabs(
+                sections = DashboardManageFamily.Integrations.sections,
+                selected = section,
+                onSelect = onSelectSection,
+            )
         }
-        val sectionActions: List<Pair<DashboardSectionAction, String>> = when (section) {
-            DashboardManagementSection.Models -> listOf(
-                DashboardSectionAction.ChangeMainModel to actionLabelChangeMainModel,
+        item {
+            ManageDetailStatsCard(
+                primaryValue = renderedItems.size.toString(),
+                primaryLabel = if (section == DashboardManagementSection.Mcp) {
+                    stringResource(R.string.dashboard_hub_noun_servers)
+                } else {
+                    section.lowercaseLabel()
+                },
+                secondaryValue = activeCount.toString(),
+                secondaryLabel = if (section == DashboardManagementSection.Catalog) {
+                    stringResource(R.string.dashboard_hub_available_summary)
+                } else stringResource(R.string.dashboard_hub_active_summary),
+                footer = if (profileScoped) {
+                    stringResource(R.string.dashboard_hub_profile_items_notice, targetProfile)
+                } else {
+                    stringResource(R.string.dashboard_hub_server_items_notice)
+                },
             )
-            DashboardManagementSection.Profiles -> listOf(
-                DashboardSectionAction.CreateProfile to actionLabelNewProfile,
-            )
-            DashboardManagementSection.Skills -> listOf(
-                DashboardSectionAction.BrowseSkillsHub to actionLabelBrowseHub,
-                DashboardSectionAction.UpdateSkillsHub to actionLabelUpdateInstalled,
-            )
-            DashboardManagementSection.CustomEndpoints -> listOf(
-                DashboardSectionAction.AddCustomEndpoint to actionLabelAddEndpoint,
-            )
-            else -> emptyList()
         }
-        if (sectionActions.isNotEmpty()) {
+        if (section == DashboardManagementSection.Skills ||
+            section == DashboardManagementSection.CustomEndpoints
+        ) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    sectionActions.forEach { (sectionAction, label) ->
-                        OutlinedButton(
-                            onClick = { onSectionAction(sectionAction) },
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (section == DashboardManagementSection.Skills) {
+                        Button(
+                            onClick = { onSectionAction(DashboardSectionAction.BrowseSkillsHub) },
                             enabled = !actionInFlight,
-                        ) {
-                            Text(label)
-                        }
+                        ) { Text(browseLabel) }
+                        OutlinedButton(
+                            onClick = { onSectionAction(DashboardSectionAction.UpdateSkillsHub) },
+                            enabled = !actionInFlight,
+                        ) { Text(updateLabel) }
+                    } else {
+                        Button(
+                            onClick = { onSectionAction(DashboardSectionAction.AddCustomEndpoint) },
+                            enabled = !actionInFlight,
+                        ) { Text(addEndpointLabel) }
                     }
                 }
             }
         }
-        if (state.items.isEmpty()) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
+        actionMessage?.let { message -> item { ActionMessageCard(message) } }
+        if (renderedItems.isEmpty()) {
+            item { ManagementEmptyCard(section, rawSummary) }
+        } else {
+            itemsIndexed(renderedItems) { index, item ->
+                ManagementDetailItemCard(
+                    item = item,
+                    initialExpanded = index == 0,
+                    icon = when (section) {
+                        DashboardManagementSection.Skills,
+                        DashboardManagementSection.Catalog -> Icons.Filled.AutoAwesome
+                        DashboardManagementSection.Mcp -> Icons.Filled.Code
+                        DashboardManagementSection.CustomEndpoints -> Icons.Filled.Link
+                        else -> Icons.Filled.Code
+                    },
+                    actionInFlight = actionInFlight,
+                    onAction = { action -> onAction(item, action) },
+                )
+            }
+        }
+    }
+}
+
+private enum class AutomationFilter { All, Active, Paused }
+
+@Composable
+private fun AutomationsManagementDetailBody(
+    items: List<DashboardSummaryItem>,
+    rawSummary: String,
+    connectionLabel: String,
+    effectiveProfileName: String?,
+    actionInFlight: Boolean,
+    actionMessage: String?,
+    onAction: (DashboardSummaryItem, DashboardItemAction) -> Unit,
+) {
+    var filter by rememberSaveable { mutableStateOf(AutomationFilter.All) }
+    fun isPaused(item: DashboardSummaryItem): Boolean =
+        item.actions.any { it.kind == DashboardActionKind.ResumeCron }
+    val pausedCount = items.count(::isPaused)
+    val filtered = items.filter { item ->
+        val paused = isPaused(item)
+        when (filter) {
+            AutomationFilter.All -> true
+            AutomationFilter.Active -> !paused
+            AutomationFilter.Paused -> paused
+        }
+    }
+    val payloadProfiles = items.mapNotNull { it.profile?.takeIf(String::isNotBlank) }.distinct()
+    val scopeLabel = when {
+        payloadProfiles.size == 1 -> stringResource(R.string.dashboard_hub_profile_status, payloadProfiles.single())
+        payloadProfiles.size > 1 -> stringResource(R.string.dashboard_hub_multiple_profiles)
+        else -> stringResource(R.string.dashboard_scope_pill_server_wide)
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item { ManageDetailTargetCard(connectionLabel, scopeLabel) }
+        item {
+            ManageDetailStatsCard(
+                primaryValue = items.size.toString(),
+                primaryLabel = stringResource(R.string.dashboard_hub_automations_summary),
+                secondaryValue = (items.size - pausedCount).toString(),
+                secondaryLabel = stringResource(R.string.dashboard_hub_active_summary),
+                footer = effectiveProfileName?.takeIf(String::isNotBlank)?.let {
+                    stringResource(R.string.dashboard_hub_automation_scope_notice, it)
+                },
+            )
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AutomationFilter.entries.forEach { option ->
+                    if (filter == option) {
+                        Button(onClick = { filter = option }) { Text(option.name) }
+                    } else {
+                        OutlinedButton(onClick = { filter = option }) { Text(option.name) }
+                    }
+                }
+            }
+        }
+        actionMessage?.let { message -> item { ActionMessageCard(message) } }
+        if (filtered.isEmpty()) {
+            item { ManagementEmptyCard(DashboardManagementSection.Cron, rawSummary) }
+        } else {
+            itemsIndexed(filtered) { index, item ->
+                ManagementDetailItemCard(
+                    item = item,
+                    initialExpanded = index == 0,
+                    icon = Icons.Filled.Schedule,
+                    actionInFlight = actionInFlight,
+                    onAction = { action -> onAction(item, action) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerConfigurationDetailBody(
+    section: DashboardManagementSection,
+    items: List<DashboardSummaryItem>,
+    rawSummary: String,
+    connectionLabel: String,
+    effectiveProfileName: String? = null,
+    actionInFlight: Boolean,
+    actionMessage: String?,
+    onSelectSection: (DashboardManagementSection) -> Unit,
+    onSectionAction: (DashboardSectionAction) -> Unit,
+    onAction: (DashboardSummaryItem, DashboardItemAction) -> Unit,
+) {
+    val changeModelLabel = stringResource(R.string.dashboard_section_action_change_main_model)
+    val configuredCount = items.count { item ->
+        val tokens = item.meta.orEmpty().lowercase().split(" · ").map(String::trim)
+        "set" in tokens || "active" in tokens || "current" in tokens
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            ManageDetailTargetCard(
+                connectionLabel,
+                stringResource(
+                    R.string.dashboard_hub_profile_status,
+                    effectiveProfileName?.takeIf(String::isNotBlank)
+                        ?: stringResource(R.string.status_profile_default),
+                ),
+            )
+        }
+        item {
+            ManageFamilyTabs(
+                sections = DashboardManageFamily.ServerConfiguration.sections,
+                selected = section,
+                onSelect = onSelectSection,
+            )
+        }
+        item {
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f),
+                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, LocalBrand.current.amber.copy(alpha = 0.62f)),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
+                    Icon(Icons.Filled.Warning, contentDescription = null, tint = LocalBrand.current.amber)
+                    Text(
+                        if (section == DashboardManagementSection.Config) {
+                            stringResource(R.string.dashboard_config_read_only_notice)
+                        } else {
+                            stringResource(R.string.dashboard_hub_server_change_notice)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+        item {
+            ManageDetailStatsCard(
+                primaryValue = items.size.toString(),
+                primaryLabel = section.lowercaseLabel(),
+                secondaryValue = configuredCount.toString(),
+                secondaryLabel = stringResource(R.string.dashboard_hub_configured_summary),
+                footer = if (section == DashboardManagementSection.Config) {
+                    stringResource(R.string.dashboard_config_unknown_fields_preserved)
+                } else null,
+            )
+        }
+        if (section == DashboardManagementSection.Models) {
+            item {
+                Button(
+                    onClick = { onSectionAction(DashboardSectionAction.ChangeMainModel) },
+                    enabled = !actionInFlight,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(changeModelLabel) }
+            }
+        }
+        actionMessage?.let { message -> item { ActionMessageCard(message) } }
+        if (items.isEmpty()) {
+            item { ManagementEmptyCard(section, rawSummary) }
+        } else {
+            itemsIndexed(items) { index, item ->
+                ManagementDetailItemCard(
+                    item = item,
+                    initialExpanded = index == 0,
+                    icon = when (section) {
+                        DashboardManagementSection.Keys -> Icons.Filled.Key
+                        else -> Icons.Filled.Tune
+                    },
+                    actionInFlight = actionInFlight,
+                    onAction = { action -> onAction(item, action) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManageDetailTargetCard(connectionLabel: String, scopeLabel: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(Icons.Filled.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Text(
+                connectionLabel,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = if (scopeLabel.startsWith("Server")) {
+                    LocalBrand.current.amber.copy(alpha = 0.16f)
+                } else MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                border = BorderStroke(
+                    1.dp,
+                    if (scopeLabel.startsWith("Server")) LocalBrand.current.amber.copy(alpha = 0.55f)
+                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                ),
+            ) {
+                Text(
+                    scopeLabel,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (scopeLabel.startsWith("Server")) LocalBrand.current.amber
+                    else MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManageFamilyTabs(
+    sections: List<DashboardManagementSection>,
+    selected: DashboardManagementSection,
+    onSelect: (DashboardManagementSection) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(start = 2.dp, end = 28.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(sections) { section ->
+            if (section == selected) {
+                Button(onClick = { onSelect(section) }) { Text(section.displayLabel()) }
+            } else {
+                OutlinedButton(onClick = { onSelect(section) }) { Text(section.displayLabel()) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManageDetailStatsCard(
+    primaryValue: String,
+    primaryLabel: String,
+    secondaryValue: String,
+    secondaryLabel: String,
+    footer: String?,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f)),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                RelayMetricCard(primaryValue, primaryLabel, Modifier.weight(1f))
+                RelayMetricCard(secondaryValue, secondaryLabel, Modifier.weight(1f))
+            }
+            footer?.let {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                Text(
+                    it,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ManagementDetailItemCard(
+    item: DashboardSummaryItem,
+    initialExpanded: Boolean = false,
+    icon: ImageVector = Icons.Filled.Code,
+    actionInFlight: Boolean,
+    onAction: (DashboardItemAction) -> Unit,
+) {
+    var expanded by rememberSaveable(item.id) { mutableStateOf(initialExpanded) }
+    val safeActions = item.actions.filterNot { it.destructive }
+    val destructiveActions = item.actions.filter { it.destructive }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    item.subtitle?.let {
                         Text(
-                            text = stringResource(R.string.dashboard_empty_section, section.lowercaseLabel()),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Text(
-                            text = state.rawSummary,
+                            it,
                             style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = if (expanded) 3 else 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    item.meta?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                    item.profile?.takeIf(String::isNotBlank)?.let { profile ->
+                        Text(
+                            stringResource(R.string.dashboard_hub_profile_status, profile),
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontFamily = FontFamily.Monospace,
                         )
                     }
                 }
-            }
-        } else {
-            items(state.items) { item ->
-                val renderedItem = if (!mcpOAuthSupported) {
-                    item.copy(actions = item.actions.filterNot { it.kind == DashboardActionKind.AuthenticateMcp })
-                } else item
-                DashboardSummaryCard(
-                    item = renderedItem,
-                    actionInFlight = actionInFlight,
-                    onAction = { action -> onAction(renderedItem, action) },
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (expanded && item.actions.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        safeActions.forEach { action ->
+                            OutlinedButton(
+                                onClick = { onAction(action) },
+                                enabled = !actionInFlight,
+                            ) { Text(dashboardActionLabel(action)) }
+                        }
+                    }
+                    if (destructiveActions.isNotEmpty()) {
+                        Text(
+                            stringResource(R.string.dashboard_hub_dangerous_actions),
+                            style = relayMetadataStyle(),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        destructiveActions.forEach { action ->
+                            OutlinedButton(
+                                onClick = { onAction(action) },
+                                enabled = !actionInFlight,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error,
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.55f)),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(dashboardActionLabel(action)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagementEmptyCard(section: DashboardManagementSection, rawSummary: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                stringResource(R.string.dashboard_empty_section, section.lowercaseLabel()),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                rawSummary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+            )
         }
     }
 }
@@ -2845,6 +3526,275 @@ internal fun DashboardProfilesDetailPreview() {
                     onAction = { _, _ -> },
                 )
             }
+        }
+    }
+}
+
+/** Deterministic production-UI seam for the selected integrations detail design. */
+@Composable
+internal fun DashboardIntegrationsDetailPreview() {
+    val servers = listOf(
+        DashboardSummaryItem(
+            id = "github",
+            title = "GitHub",
+            subtitle = "HTTP transport",
+            meta = "enabled · connected · oauth",
+            profile = "default",
+            actions = listOf(
+                DashboardItemAction("Test", DashboardActionKind.TestMcp),
+                DashboardItemAction("Authenticate", DashboardActionKind.AuthenticateMcp),
+                DashboardItemAction("Disable", DashboardActionKind.DisableMcp),
+                DashboardItemAction("Remove", DashboardActionKind.RemoveMcp, destructive = true),
+            ),
+        ),
+        DashboardSummaryItem(
+            id = "filesystem",
+            title = "Filesystem",
+            subtitle = "Local process",
+            meta = "enabled · connected",
+            profile = "default",
+            actions = listOf(
+                DashboardItemAction("Test", DashboardActionKind.TestMcp),
+                DashboardItemAction("Disable", DashboardActionKind.DisableMcp),
+                DashboardItemAction("Remove", DashboardActionKind.RemoveMcp, destructive = true),
+            ),
+        ),
+        DashboardSummaryItem(
+            id = "browser-tools",
+            title = "Browser tools",
+            subtitle = "Needs authentication",
+            meta = "disabled · oauth",
+            profile = "default",
+            actions = listOf(
+                DashboardItemAction("Enable", DashboardActionKind.EnableMcp),
+                DashboardItemAction("Authenticate", DashboardActionKind.AuthenticateMcp),
+                DashboardItemAction("Remove", DashboardActionKind.RemoveMcp, destructive = true),
+            ),
+        ),
+    )
+    DashboardManagePreviewScaffold(title = stringResource(R.string.dashboard_tile_skills_title)) {
+        IntegrationsManagementDetailBody(
+            section = DashboardManagementSection.Mcp,
+            items = servers,
+            rawSummary = "3 servers",
+            connectionLabel = "Hermes Home",
+            effectiveProfileName = "default",
+            actionInFlight = false,
+            actionMessage = null,
+            mcpOAuthSupported = true,
+            onSelectSection = {},
+            onSectionAction = {},
+            onAction = { _, _ -> },
+        )
+    }
+}
+
+/** Deterministic production-UI seam for the selected automations detail design. */
+@Composable
+internal fun DashboardAutomationsDetailPreview() {
+    val actions = listOf(
+        DashboardItemAction("Runs", DashboardActionKind.ViewCronRuns),
+        DashboardItemAction("Pause", DashboardActionKind.PauseCron),
+        DashboardItemAction("Run now", DashboardActionKind.TriggerCron),
+        DashboardItemAction("Delete", DashboardActionKind.DeleteCron, destructive = true),
+    )
+    val automations = listOf(
+        DashboardSummaryItem(
+            id = "morning-brief",
+            title = "Morning brief",
+            subtitle = "Weekdays at 8:00 AM",
+            meta = "active · next run tomorrow",
+            profile = "default",
+            actions = actions,
+        ),
+        DashboardSummaryItem(
+            id = "inbox-review",
+            title = "Inbox review",
+            subtitle = "Every 2 hours",
+            meta = "active",
+            profile = "default",
+            actions = actions,
+        ),
+        DashboardSummaryItem(
+            id = "weekly-cleanup",
+            title = "Weekly cleanup",
+            subtitle = "Sundays at 2:00 AM",
+            meta = "paused",
+            profile = "default",
+            actions = actions.map { action ->
+                if (action.kind == DashboardActionKind.PauseCron) {
+                    DashboardItemAction("Resume", DashboardActionKind.ResumeCron)
+                } else action
+            },
+        ),
+    )
+    DashboardManagePreviewScaffold(title = stringResource(R.string.dashboard_tile_cron_title)) {
+        AutomationsManagementDetailBody(
+            items = automations,
+            rawSummary = "3 automations",
+            connectionLabel = "Hermes Home",
+            effectiveProfileName = "default",
+            actionInFlight = false,
+            actionMessage = null,
+            onAction = { _, _ -> },
+        )
+    }
+}
+
+/** Deterministic production-UI seam for the selected server configuration detail design. */
+@Composable
+internal fun DashboardServerConfigurationDetailPreview() {
+    val configRows = listOf(
+        DashboardSummaryItem(
+            id = "model",
+            title = "Model routing",
+            subtitle = "Main model and provider defaults used by agents.",
+            meta = "gpt-5.6-sol · openai",
+        ),
+        DashboardSummaryItem(
+            id = "agent",
+            title = "Agent defaults",
+            subtitle = "Reasoning, personality, and approvals",
+            meta = "object",
+        ),
+        DashboardSummaryItem(
+            id = "voice",
+            title = "Voice",
+            subtitle = "Speech and audio defaults",
+            meta = "object",
+        ),
+        DashboardSummaryItem(
+            id = "tools",
+            title = "Tools",
+            subtitle = "Execution and access",
+            meta = "object",
+        ),
+        DashboardSummaryItem(
+            id = "advanced",
+            title = "Advanced",
+            subtitle = "Diagnostics and low-level options",
+            meta = "object",
+        ),
+    )
+    DashboardManagePreviewScaffold(title = stringResource(R.string.dashboard_hub_server_configuration)) {
+        ServerConfigurationDetailBody(
+            section = DashboardManagementSection.Config,
+            items = configRows,
+            rawSummary = "5 categories",
+            connectionLabel = "Hermes Home",
+            actionInFlight = false,
+            actionMessage = null,
+            onSelectSection = {},
+            onSectionAction = {},
+            onAction = { _, _ -> },
+        )
+    }
+}
+
+/** Deterministic production-UI seam for the selected Manage hub design. */
+@Composable
+internal fun DashboardManagementHubPreview() {
+    fun loaded(items: List<DashboardSummaryItem>) = DashboardPayloadState.Loaded(
+        status = null,
+        session = null,
+        items = items,
+        rawSummary = "preview",
+    )
+    val snapshots = mapOf(
+        DashboardManagementSection.Profiles to loaded(
+            listOf(DashboardSummaryItem("default", "default", profileModel = "gpt-5.6-sol")),
+        ),
+        DashboardManagementSection.Skills to loaded(
+            listOf(
+                DashboardSummaryItem("browser", "Browser tools", meta = "enabled"),
+                DashboardSummaryItem("files", "Filesystem", meta = "enabled"),
+            ),
+        ),
+        DashboardManagementSection.Cron to loaded(
+            listOf(
+                DashboardSummaryItem("brief", "Morning brief", meta = "active", profile = "default"),
+                DashboardSummaryItem("cleanup", "Weekly cleanup", meta = "paused", profile = "default"),
+            ),
+        ),
+        DashboardManagementSection.Mcp to loaded(
+            listOf(
+                DashboardSummaryItem("github", "GitHub", meta = "enabled · connected", profile = "default"),
+                DashboardSummaryItem("filesystem", "Filesystem", meta = "enabled · connected", profile = "default"),
+            ),
+        ),
+        DashboardManagementSection.Catalog to loaded(emptyList()),
+        DashboardManagementSection.CustomEndpoints to loaded(
+            listOf(DashboardSummaryItem("local", "Local endpoint", meta = "active")),
+        ),
+        DashboardManagementSection.Models to loaded(
+            listOf(DashboardSummaryItem("main", "gpt-5.6-sol", meta = "openai · active")),
+        ),
+        DashboardManagementSection.Keys to loaded(
+            listOf(
+                DashboardSummaryItem("OPENAI_API_KEY", "OPENAI_API_KEY", meta = "set"),
+                DashboardSummaryItem("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY", meta = "not set"),
+            ),
+        ),
+        DashboardManagementSection.Config to loaded(emptyList()),
+    )
+    DashboardManagePreviewScaffold(title = stringResource(R.string.dashboard_title)) {
+        ManageOverviewBody(
+            loadedCount = 2,
+            section = DashboardManagementSection.Profiles,
+            payloadState = snapshots.getValue(DashboardManagementSection.Profiles),
+            dashboardUrl = "https://hermes.local",
+            routeHint = "Hermes Home",
+            status = DashboardStatus(authRequired = false, version = "0.17.0"),
+            session = null,
+            authenticated = true,
+            lastCheckedAtMillis = null,
+            actionInFlight = false,
+            actionMessage = null,
+            connectionLabel = "Hermes Home",
+            effectiveProfileName = "default",
+            sectionSnapshots = snapshots,
+            onClearSession = {},
+            onNavigateToSignIn = {},
+            onNavigateToConnections = {},
+            onSelectSection = {},
+            onOpenServerDetails = {},
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DashboardManagePreviewScaffold(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    HermesRelayTheme(themePreference = "dark") {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(title) },
+                    navigationIcon = {
+                        RelayChromeIconButton(
+                            icon = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.dashboard_back),
+                            onClick = {},
+                        )
+                    },
+                    actions = {
+                        IconButton(onClick = {}) {
+                            Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.dashboard_refresh))
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = RelayRefresh.Background.copy(alpha = 0.96f),
+                    ),
+                )
+            },
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier.fillMaxSize().padding(innerPadding)
+                    .background(RelayRefresh.Background).relayGridTexture(alpha = 0.12f),
+            ) { content() }
         }
     }
 }
@@ -3446,6 +4396,7 @@ internal fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
 private fun ModelPickerDialog(
     target: ModelPickerTarget,
     clientFactory: () -> DashboardApiClient,
+    profileName: String?,
     actionInFlight: Boolean,
     onSelect: (provider: String, model: String) -> Unit,
     onDismiss: () -> Unit,
@@ -3463,7 +4414,9 @@ private fun ModelPickerDialog(
         error = null
         scope.launch {
             val result = try {
-                withDashboardClient(clientFactory) { client -> client.getModelOptions(refresh = refresh) }
+                withDashboardClient(clientFactory) {
+                    client -> client.getModelOptions(refresh = refresh, profile = profileName)
+                }
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -3480,7 +4433,7 @@ private fun ModelPickerDialog(
         }
     }
 
-    LaunchedEffect(target) {
+    LaunchedEffect(target, profileName) {
         loadOptions()
     }
 
@@ -3644,6 +4597,7 @@ private fun parseSkillHubSearch(
 @Composable
 private fun SkillsHubDialog(
     clientFactory: () -> DashboardApiClient,
+    profileName: String?,
     onPreview: (DashboardDetailResult) -> Unit,
     onMessage: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -3662,9 +4616,11 @@ private fun SkillsHubDialog(
     // Pre-search content: configured sources + featured skills from the
     // centralized index, so the dialog isn't a blank search box on open.
     // Best-effort — failures stay silent (search still works without it).
-    LaunchedEffect(Unit) {
+    LaunchedEffect(profileName) {
         val sources = try {
-            withDashboardClient(clientFactory) { client -> client.getSkillsHubSources() }
+            withDashboardClient(clientFactory) {
+                client -> client.getSkillsHubSources(profile = profileName)
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -3690,7 +4646,9 @@ private fun SkillsHubDialog(
         error = null
         scope.launch {
             val result = try {
-                withDashboardClient(clientFactory) { client -> client.searchSkillsHub(term) }
+                withDashboardClient(clientFactory) {
+                    client -> client.searchSkillsHub(term, profile = profileName)
+                }
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -3815,7 +4773,10 @@ private fun SkillsHubDialog(
                                         scope.launch {
                                             val previewResult = try {
                                                 withDashboardClient(clientFactory) { client ->
-                                                    client.previewSkillsHub(result.identifier)
+                                                    client.previewSkillsHub(
+                                                        result.identifier,
+                                                        profile = profileName,
+                                                    )
                                                 }
                                             } catch (e: Exception) {
                                                 Result.failure(e)
@@ -3848,7 +4809,10 @@ private fun SkillsHubDialog(
                                             scope.launch {
                                                 val uninstall = try {
                                                     withDashboardClient(clientFactory) { client ->
-                                                        client.uninstallSkillsHub(result.installedName)
+                                                        client.uninstallSkillsHub(
+                                                            result.installedName,
+                                                            profile = profileName,
+                                                        )
                                                     }
                                                 } catch (e: Exception) {
                                                     Result.failure(e)
@@ -3875,7 +4839,10 @@ private fun SkillsHubDialog(
                                             scope.launch {
                                                 val install = try {
                                                     withDashboardClient(clientFactory) { client ->
-                                                        client.installSkillsHub(result.identifier)
+                                                        client.installSkillsHub(
+                                                            result.identifier,
+                                                            profile = profileName,
+                                                        )
                                                     }
                                                 } catch (e: Exception) {
                                                     Result.failure(e)
@@ -4326,6 +5293,7 @@ private fun summarizeObjectItem(
     val status = obj.stringField("status") ?: obj.stringField("state")
     val meta = listOfNotNull(
         enabled?.let { if (it) "enabled" else "disabled" },
+        obj.booleanField("paused")?.let { if (it) "paused" else "active" },
         obj.booleanField("installed")?.let { if (it) "installed" else "not installed" },
         obj.booleanField("needs_install")?.let { if (it) "bootstrap install" else null },
         status,
@@ -4655,8 +5623,8 @@ private suspend fun DashboardApiClient.runDashboardAction(
 ): Result<JsonObject> {
     val id = item.id.ifBlank { item.title }
     return when (action.kind) {
-        DashboardActionKind.EnableSkill -> toggleSkill(id, enabled = true)
-        DashboardActionKind.DisableSkill -> toggleSkill(id, enabled = false)
+        DashboardActionKind.EnableSkill -> toggleSkill(id, enabled = true, profile = item.profile)
+        DashboardActionKind.DisableSkill -> toggleSkill(id, enabled = false, profile = item.profile)
         DashboardActionKind.ViewCronRuns -> getCronJobRuns(id, profile = item.profile)
         DashboardActionKind.PauseCron -> pauseCronJob(id, profile = item.profile)
         DashboardActionKind.ResumeCron -> resumeCronJob(id, profile = item.profile)
@@ -4675,8 +5643,8 @@ private suspend fun DashboardApiClient.runDashboardAction(
         DashboardActionKind.ActivateCustomEndpoint -> activateCustomEndpoint(id)
         DashboardActionKind.DeleteCustomEndpoint ->
             deleteCustomEndpoint(id).map { JsonObject(emptyMap()) }
-        DashboardActionKind.RevealEnvKey -> revealEnvVar(id)
-        DashboardActionKind.ClearEnvKey -> deleteEnvVar(id)
+        DashboardActionKind.RevealEnvKey -> revealEnvVar(id, profile = item.profile)
+        DashboardActionKind.ClearEnvKey -> deleteEnvVar(id, profile = item.profile)
         // Input-backed kinds are intercepted at the onAction layer and routed
         // to dialogs; reaching here means a wiring bug, not a server problem.
         DashboardActionKind.SetEnvKey,
