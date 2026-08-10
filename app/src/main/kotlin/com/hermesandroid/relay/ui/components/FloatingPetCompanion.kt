@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -319,6 +320,31 @@ internal fun shouldDockFloatingPet(
     roamingAllowed: Boolean,
 ): Boolean = !roamingEnabled || !roamingAllowed
 
+/**
+ * Chat gives a deliberately paused companion one stable home: the live
+ * composer rail. Other routes retain the user's saved free-form edge home, and
+ * active roaming keeps its richer settled-chat habitat hierarchy.
+ */
+internal fun floatingPetHomePoint(
+    route: String?,
+    roamingEnabled: Boolean,
+    roamingAllowed: Boolean,
+    manualHomePoint: PetPoint,
+    roamingHomePoint: PetPoint?,
+    pausedChatDockPoint: PetPoint?,
+): PetPoint = when {
+    route == "chat" && roamingAllowed && !roamingEnabled && pausedChatDockPoint != null -> {
+        pausedChatDockPoint
+    }
+    roamingEnabled && roamingAllowed -> roamingHomePoint ?: manualHomePoint
+    else -> manualHomePoint
+}
+
+internal fun floatingPetAllowsVerticalMoveActions(
+    route: String?,
+    roamingEnabled: Boolean,
+): Boolean = route != "chat" || roamingEnabled
+
 internal fun petRailSupportingPoint(
     rails: Iterable<PetRoamingRail>,
     point: PetPoint,
@@ -465,10 +491,19 @@ fun FloatingPetCompanion(
     onResetPlacement: () -> Unit,
     onHide: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onMenuExpandedChanged: (Boolean) -> Unit = {},
     onExitTerrainDebug: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember(pet.id) { mutableStateOf(false) }
+    val latestOnMenuExpandedChanged by rememberUpdatedState(onMenuExpandedChanged)
+    fun setMenuExpanded(expanded: Boolean) {
+        menuExpanded = expanded
+        onMenuExpandedChanged(expanded)
+    }
+    DisposableEffect(pet.id) {
+        onDispose { latestOnMenuExpandedChanged(false) }
+    }
     var dragging by remember(pet.id) { mutableStateOf(false) }
     var draggedPoint by remember(pet.id) { mutableStateOf<PetPoint?>(null) }
     var pendingDrop by remember(pet.id) { mutableStateOf<PendingPetDrop?>(null) }
@@ -834,30 +869,47 @@ fun FloatingPetCompanion(
         val requested = placement.sanitized().resolve(safeBounds, petLayoutDirection)
         projectIntoSafeBounds(requested, safeBounds, registeredObstacles) ?: requested
     }
-    val homeRail = remember(roamingRails, manualHomePoint, settledHabitat) {
+    val composerHomeRail = remember(composerRails, manualHomePoint) {
+        val distanceToHome: (PetRoamingRail) -> Float = { rail ->
+            rail.bounds.clamp(manualHomePoint).distanceSquaredTo(manualHomePoint)
+        }
+        composerRails.minByOrNull(distanceToHome)
+    }
+    val homeRail = remember(roamingRails, manualHomePoint, settledHabitat, composerHomeRail) {
         val distanceToHome: (PetRoamingRail) -> Float = { rail ->
             rail.bounds.clamp(manualHomePoint).distanceSquaredTo(manualHomePoint)
         }
         settledHabitat?.rail
-            ?: roamingRails.filter { it.perchKey == CHAT_PET_WALK_REGION }.minByOrNull(distanceToHome)
+            ?: composerHomeRail
             ?: roamingRails.minByOrNull(distanceToHome)
     }
+    fun pointAtPlacementEdge(rail: PetSafeBounds): PetPoint {
+        val xAtEdge = if (
+            (placement.edge == PetLogicalEdge.Start) == (petLayoutDirection == PetLayoutDirection.Ltr)
+        ) rail.left else rail.right
+        return PetPoint(xAtEdge, rail.top)
+    }
     val roamingHomePoint = remember(placement.edge, homeRail, petLayoutDirection) {
-        homeRail?.bounds?.let { rail ->
+        homeRail?.bounds?.let(::pointAtPlacementEdge)
+    }
+    val pausedChatDockPoint = remember(placement.edge, composerHomeRail, petLayoutDirection) {
+        composerHomeRail?.bounds?.let { rail ->
             val xAtEdge = if (
                 (placement.edge == PetLogicalEdge.Start) == (petLayoutDirection == PetLayoutDirection.Ltr)
             ) rail.left else rail.right
             PetPoint(xAtEdge, rail.top)
         }
     }
-    // Enabling roaming explicitly docks onto the screen-owned safe rail. A
-    // manual drag or vertical accessibility action pauses roaming first, so the
-    // persisted free-form placement remains visible and authoritative.
-    val homePoint = if (roamingEnabled && roamingAllowed) {
-        roamingHomePoint ?: manualHomePoint
-    } else {
-        manualHomePoint
-    }
+    // Active roaming uses screen-owned terrain. Paused Chat deliberately uses
+    // the composer rail; other routes retain the persisted free-form edge home.
+    val homePoint = floatingPetHomePoint(
+        route = route,
+        roamingEnabled = roamingEnabled,
+        roamingAllowed = roamingAllowed,
+        manualHomePoint = manualHomePoint,
+        roamingHomePoint = roamingHomePoint,
+        pausedChatDockPoint = pausedChatDockPoint,
+    )
 
     val heldProgress by animateFloatAsState(
         targetValue = if (dragging) 1f else 0f,
@@ -1606,7 +1658,7 @@ fun FloatingPetCompanion(
     // Chat roaming owns a measured composer rail. Publishing before that rail
     // exists lets initialization race route registration and can strand the
     // pet on transient fallback geometry until direct manipulation.
-    val initialTerrainReady = route != "chat" || !roamingEnabled || !roamingAllowed ||
+    val initialTerrainReady = route != "chat" || !roamingAllowed ||
         composerRails.isNotEmpty()
     LaunchedEffect(
         pet.id,
@@ -2350,31 +2402,43 @@ fun FloatingPetCompanion(
                     enabled = floatingPetAcceptsPointerInput(positioned, surfaceScrolling),
                 ) {
                     tapReactionNonce += 1
-                    menuExpanded = true
+                    setMenuExpanded(true)
                 }
                 .semantics(mergeDescendants = true) {
                     role = Role.Button
                     contentDescription = companionDescription
                     stateDescription = stateLabel
-                    customActions = listOf(
-                        CustomAccessibilityAction(moveStartLabel) {
+                    customActions = buildList {
+                        add(CustomAccessibilityAction(moveStartLabel) {
                             onPlacementChanged(placement.copy(edge = PetLogicalEdge.Start)); true
-                        },
-                        CustomAccessibilityAction(moveEndLabel) {
+                        })
+                        add(CustomAccessibilityAction(moveEndLabel) {
                             onPlacementChanged(placement.copy(edge = PetLogicalEdge.End)); true
-                        },
-                        CustomAccessibilityAction(moveUpLabel) {
-                            if (roamingEnabled) onRoamingEnabledChanged(false)
-                            onPlacementChanged(placement.copy(verticalFraction = placement.verticalFraction - 0.15f)); true
-                        },
-                        CustomAccessibilityAction(moveDownLabel) {
-                            if (roamingEnabled) onRoamingEnabledChanged(false)
-                            onPlacementChanged(placement.copy(verticalFraction = placement.verticalFraction + 0.15f)); true
-                        },
-                        CustomAccessibilityAction(resetLabel) { onResetPlacement(); true },
-                        CustomAccessibilityAction(appearanceLabel) { onOpenAppearance(); true },
-                        CustomAccessibilityAction(hideLabel) { onHide(); true },
-                    )
+                        })
+                        // A paused Chat pet has no meaningful vertical free-form
+                        // coordinate: it is deliberately attached to the composer.
+                        // Do not expose TalkBack actions that would appear to do
+                        // nothing; start/end still choose the dock corner.
+                        if (floatingPetAllowsVerticalMoveActions(route, roamingEnabled)) {
+                            add(CustomAccessibilityAction(moveUpLabel) {
+                                if (roamingEnabled) onRoamingEnabledChanged(false)
+                                onPlacementChanged(
+                                    placement.copy(verticalFraction = placement.verticalFraction - 0.15f),
+                                )
+                                true
+                            })
+                            add(CustomAccessibilityAction(moveDownLabel) {
+                                if (roamingEnabled) onRoamingEnabledChanged(false)
+                                onPlacementChanged(
+                                    placement.copy(verticalFraction = placement.verticalFraction + 0.15f),
+                                )
+                                true
+                            })
+                        }
+                        add(CustomAccessibilityAction(resetLabel) { onResetPlacement(); true })
+                        add(CustomAccessibilityAction(appearanceLabel) { onOpenAppearance(); true })
+                        add(CustomAccessibilityAction(hideLabel) { onHide(); true })
+                    }
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -2419,7 +2483,7 @@ fun FloatingPetCompanion(
 
             DropdownMenu(
                 expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false },
+                onDismissRequest = { setMenuExpanded(false) },
             ) {
                 DropdownMenuItem(
                     text = { Text("${pet.label} · $stateLabel", color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -2436,28 +2500,28 @@ fun FloatingPetCompanion(
                         )
                     },
                     onClick = {
-                        menuExpanded = false
+                        setMenuExpanded(false)
                         onRoamingEnabledChanged(!roamingEnabled)
                     },
                 )
                 DropdownMenuItem(
                     text = { Text(resetLabel) },
                     onClick = {
-                        menuExpanded = false
+                        setMenuExpanded(false)
                         onResetPlacement()
                     },
                 )
                 DropdownMenuItem(
                     text = { Text(appearanceLabel) },
                     onClick = {
-                        menuExpanded = false
+                        setMenuExpanded(false)
                         onOpenAppearance()
                     },
                 )
                 DropdownMenuItem(
                     text = { Text(hideLabel) },
                     onClick = {
-                        menuExpanded = false
+                        setMenuExpanded(false)
                         onHide()
                     },
                 )

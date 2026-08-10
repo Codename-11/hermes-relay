@@ -1,16 +1,16 @@
 # Profiles
 
-A **profile** in Hermes-Relay is an upstream-Hermes agent directory — an isolated Hermes instance on your server with its own config, model, and identity. When you pair with a server, the phone auto-discovers every profile on that server and exposes them in the **agent sheet** — a bottom sheet that opens when you tap the agent name in the Chat top bar.
+A **profile** in Hermes-Relay is an upstream-Hermes agent directory — an isolated Hermes instance on your server with its own config, model, and identity. When you connect to a server, Android discovers its profiles and exposes them in the **Profile Shelf** directly below the Chat top bar.
 
 ## The three layers
 
 | Layer | What it picks | Scope | Where it lives |
 |---|---|---|---|
 | **Connection** | Which Hermes server | One pairing per server | Top-bar chip on the left (hidden with a single connection) |
-| **Profile** | Which agent *on that server* | Per chat turn, clears on Connection switch | Agent sheet — tap the agent name in the top bar |
-| **Personality** | Which system-prompt preset | Per chat turn | Agent sheet — same sheet, below Profile |
+| **Profile** | Which agent *on that server* | Persisted per Connection, with sessions isolated by transport | Profile Shelf — tap the agent name in the top bar |
+| **Personality** | Which system-prompt preset | Per active session | Agent Passport |
 
-Pick in order: the server (top bar), then the agent + persona (agent sheet). Switching either Profile or Personality shows a toast confirming the new selection.
+Pick the server, then the agent from the Profile Shelf. Agent Passport remains the place to inspect identity, model, personality, reasoning, and safety configuration.
 
 ## Where profiles come from
 
@@ -54,13 +54,17 @@ hermes -p mizu platform start api --port 8643
 
 Then make sure the relay advertises that API server in the profile metadata, or add that gateway as a separate **Connection** on the phone. Each routed profile API has its own sessions, memory, and state because it is a distinct gateway.
 
-## Picker behaviour
+## Profile Shelf behaviour
 
-- **Hidden when empty.** If the server has no `~/.hermes/profiles/*/` entries (and just the default root config), the Profile section of the agent sheet doesn't render.
-- **"Default"** option at the top of the Profile list. Selecting it clears the override and uses the server's `config.yaml/model.default`.
-- **Disabled mid-stream.** You can't switch profile during an in-flight chat turn.
+- **Collapsible and compact.** Tap the avatar/name in the Chat header to expand or collapse the shelf. The hamburger still opens only the active profile's Session Drawer.
+- **Active capsule.** The active avatar/name/chevron opens Agent Passport. Inactive agents are 48 dp avatar targets; the fixed overflow opens the same full switcher used by Passport's **Switch agent** control.
+- **Hidden for one effective identity.** The shelf takes no space when only one visible identity remains. Saved ordering and hidden preferences are honored, but a hidden active profile stays visible until you switch away.
+- **Server default is distinct.** The home-glyph **Server default** choice follows the server's sticky default without changing it. A profile literally named `default` is a separate explicit profile with its own session and presentation state.
+- **Transport-safe switching.** Gateway turns can continue in the background and reconcile to their original conversation, so profile switching remains available. SSE switching is disabled only while an SSE turn is live.
+- **No live-session hot swap.** Switching restores the destination profile's last compatible Gateway or SSE session, or opens a fresh draft. It never changes the agent inside the conversation currently on screen.
+- **Session controls reset.** Model, personality, reasoning, approval, Fast, and YOLO choices from the old session do not leak into the new profile.
 - **Persisted per Connection (v0.7.0).** Your pick survives app restart and follows the Connection it was made on — switching to Connection B brings up B's last-selected profile (or its default if never set), switching back to A restores A's selection. Removing a Connection also clears its remembered pick.
-- **Jump from Settings.** The "Active agent" card at the top of Settings summarizes the current Connection / Profile / Personality and navigates straight to Chat with the agent sheet pre-opened.
+- **Long press for management.** Inspect the profile, open Passport, pin or unlock the profile, or hide it from the shelf. Display ordering and unhide controls remain under **Manage profile display**.
 
 ## Runtime metadata (v0.7.0)
 
@@ -98,10 +102,10 @@ Very large files (SOUL or a memory entry) are still truncated server-side; when 
 
 #### Picker naming
 
-The Profile picker in the **Agent sheet** (Chat top-bar → tap the agent name) uses these conventions:
+The Profile Shelf and its canonical full switcher use these conventions:
 
-- **Server default** — the no-override row at the top. Clears any active profile pick and lets the server use its `config.yaml/model.default`. Renamed from "Default" in v0.7.1 so a profile literally named `default` doesn't collide with this row.
-- Actual profiles show their description as the primary label when present (readable names like "Victor" rather than directory names), with the profile key as a tertiary caption. A "• Running" or "• Idle" text label accompanies the existing green/grey status dot, and screen readers announce "Gateway running" / "Gateway idle" on the dot itself.
+- **Server default** — the no-override row with a home glyph. It follows the server's current sticky default without changing that setting.
+- Actual profiles use their configured display description when available, then their profile name. A local agent icon wins over the display initial, and the full switcher can show the profile's model without inventing presence or activity state.
 - When the server emits a `profiles.updated` push (profile added, renamed, or removed on the server side), the app applies the new list immediately and shows a brief "Profiles updated" snackbar. A profile you had selected that the server then removes falls back to Server default automatically.
 
 The Settings card is visible whether or not a profile is currently active; when there's no active profile, the card renders at half opacity with "No active agent" and does nothing when tapped.

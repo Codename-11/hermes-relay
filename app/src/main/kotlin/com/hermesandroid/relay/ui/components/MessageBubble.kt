@@ -1,6 +1,11 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -32,7 +37,12 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatQuote
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,7 +50,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -71,12 +80,15 @@ import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.parseChatQuotedPrompt
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.components.pet.petVisitTargetSurface
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
+
+internal const val CHAT_PET_IDENTITY_OBSTACLE_PREFIX = "chat-message-identity:"
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -96,16 +108,19 @@ fun MessageBubble(
     retainStreamingLayout: Boolean = false,
     onCopyMessage: (String) -> Unit = {},
     /**
-     * Quote this message into the input field. Null hides the Quote entry in
-     * the long-press menu, so legacy call sites keep the copy-only behavior.
+     * Select this message as a structured composer quote. Null hides Quote.
      */
-    onQuoteMessage: ((String) -> Unit)? = null,
+    onQuoteMessage: ((ChatMessage) -> Unit)? = null,
+    /** Navigate a rendered quote chip to its original message id. */
+    onNavigateToMessage: ((String) -> Unit)? = null,
     /**
      * Reads a completed assistant response through the active voice renderer.
      * Null hides the entry; the owning screen uses that to limit the action to
      * idle Conversation voice sessions.
      */
     onSpeakMessage: ((String) -> Unit)? = null,
+    /** Stops a message-context narration currently owned by the voice pipeline. */
+    onStopSpeaking: (() -> Unit)? = null,
     /**
      * Invoked when the user taps a FAILED inbound attachment card.
      * `attachmentIndex` is the position in [ChatMessage.attachments] so the
@@ -151,6 +166,7 @@ fun MessageBubble(
     imageGenerationRotationIndex: Int = 0,
     petVisitTargetKey: String? = null,
     petPerchKey: String? = null,
+    animationEnabled: Boolean = true,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -204,18 +220,19 @@ fun MessageBubble(
     val alignment = if (isUser) Alignment.End else Alignment.Start
     val locale = LocalLocale.current.platformLocale
     val timeFormat = remember(locale) { SimpleDateFormat("h:mm a", locale) }
-    val a11yDescription = "${message.role.name.lowercase()} message: ${message.content.take(100)}"
+    val quoteEnvelope = remember(message.content) { parseChatQuotedPrompt(message.content) }
+    val visibleMessageContent = quoteEnvelope?.body ?: message.content
     val isDarkTheme = LocalBrand.current.isDark
 
     // Pull generated/inline image links (`![alt](src)`) out of assistant
     // content so they render as real images (remote URLs via Coil) or a
     // graceful inline notice — not the blank element the markdown renderer
     // emits for an image link. User/system bubbles keep their raw content.
-    val (markdownBody, inlineImages) = remember(message.content, isUser, isSystem) {
+    val (markdownBody, inlineImages) = remember(visibleMessageContent, isUser, isSystem) {
         if (isUser || isSystem) {
-            message.content to emptyList()
+            visibleMessageContent to emptyList()
         } else {
-            extractChatInlineImages(message.content)
+            extractChatInlineImages(visibleMessageContent)
         }
     }
     val showImageGeneration = shouldShowImageGenerationPlaceholder(
@@ -223,6 +240,26 @@ fun MessageBubble(
         isStreaming = message.isStreaming,
         hasMediaResult = message.attachments.isNotEmpty() || inlineImages.isNotEmpty(),
     )
+    val streamingStatusLabel = if (
+        !isUser &&
+        !isSystem &&
+        message.isStreaming &&
+        message.content.isBlank() &&
+        !showImageGeneration
+    ) {
+        if (recoveringAnswer) {
+            stringResource(R.string.msg_bubble_reconnecting)
+        } else {
+            stringResource(R.string.msg_bubble_still_working)
+        }
+    } else {
+        null
+    }
+    val a11yDescription = buildString {
+        append(message.role.name.lowercase())
+        append(" message: ")
+        append(streamingStatusLabel ?: visibleMessageContent.take(100))
+    }
     val hasImageGenerationCall = remember(message.toolCalls) {
         message.toolCalls.any {
             it.name.trim().lowercase() == "image_generate"
@@ -251,52 +288,36 @@ fun MessageBubble(
     val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
 
     CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
-    // The active profile image is sender identity, distinct from both the
-    // floating pet companion and the ambient Sphere. Reserve one stable gutter
-    // for an assistant run and render the identity only on its first message.
-    Row(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top,
+        horizontalAlignment = alignment,
     ) {
-    if (!isUser && !isSystem) {
-        Box(
-            modifier = Modifier.width(40.dp),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            if (shouldShowMessageGroupAvatar(
-                    isUser = isUser,
-                    isSystem = isSystem,
-                    isFirstInGroup = isFirstInGroup,
-                    agentName = message.agentName,
-                )
+        // Keep sender identity in the first-message label rather than a
+        // persistent leading column. Long responses and every follow-up in the
+        // group therefore retain the full bubble-width allowance.
+        if (!isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .padding(bottom = 3.dp, start = 4.dp)
+                    .petObstacleSurface(
+                        key = "$CHAT_PET_IDENTITY_OBSTACLE_PREFIX${message.uiKey}",
+                        routes = setOf("chat"),
+                    ),
             ) {
                 Surface(
                     // Decorative: the adjacent visible agent name already owns
                     // the identity announcement, avoiding duplicate TalkBack copy.
-                    modifier = Modifier.size(32.dp),
+                    modifier = Modifier.size(24.dp),
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.primary,
                 ) {
                     AgentAvatarFace(
                         name = message.agentName.orEmpty(),
-                        letterStyle = MaterialTheme.typography.labelMedium,
+                        letterStyle = MaterialTheme.typography.labelSmall,
                     )
                 }
-            }
-        }
-    }
-    Column(
-        modifier = Modifier.weight(1f),
-        horizontalAlignment = alignment
-    ) {
-        // Agent name label sits beside the first group identity avatar. Pet
-        // companions never enter this row.
-        if (!isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(bottom = 2.dp, start = 4.dp),
-            ) {
                 Text(
                     text = localizeAgentName(message.agentName),
                     style = MaterialTheme.typography.labelSmall,
@@ -331,7 +352,7 @@ fun MessageBubble(
         }
 
         // Thinking block (above the bubble, only for assistant messages)
-        if (!isUser && showThinking && message.thinkingContent.isNotEmpty()) {
+        if (!isUser && showThinking && message.thinkingContent.isNotBlank()) {
             ThinkingBlock(
                 thinkingContent = message.thinkingContent,
                 isStreaming = message.isThinkingStreaming,
@@ -380,12 +401,22 @@ fun MessageBubble(
         // carries only thinking and/or tool calls (both rendered OUTSIDE
         // this Surface — the ThinkingBlock above, the tool pills as separate
         // rows) would otherwise paint a bare timestamp-only chip between the
-        // Thought-process block and the tool pill. Keep the bubble while
-        // streaming (StreamingDots is the live "working" indicator) and
-        // whenever there are cards/attachments to render inside it.
+        // Thought-process block and the tool pill. The first-token working state
+        // is rendered directly in the conversation
+        // lane below, without an opaque bubble. Cards and attachments still own
+        // a normal bubble even when response prose has not arrived yet.
+        streamingStatusLabel?.let { streamingStatus ->
+            StandaloneStreamingStatus(
+                status = streamingStatus,
+                accessibilityDescription = a11yDescription,
+                textColor = textColor,
+                modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 6.dp),
+            )
+        }
+
         val showBubble = isUser || isSystem ||
-            message.content.isNotBlank() ||
-            message.isStreaming ||
+            visibleMessageContent.isNotBlank() ||
+            quoteEnvelope != null ||
             showImageGeneration ||
             message.cards.isNotEmpty() ||
             message.attachments.isNotEmpty() ||
@@ -400,19 +431,25 @@ fun MessageBubble(
                     modifier = Modifier
                         .padding(top = 8.dp, bottom = 8.dp, end = 6.dp)
                         .width(3.dp)
-                        .height(if (message.content.isBlank()) 14.dp else 24.dp)
+                        .height(if (visibleMessageContent.isBlank()) 14.dp else 24.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f))
                 )
             }
-        // Long-press opens a compact action menu when a quote handler is
-        // wired; with copy as the only action it stays a direct copy so the
-        // one-action case doesn't pay a menu tap.
+        Column(horizontalAlignment = alignment) {
+        // A normal tap reveals the compact action strip. Long-press preserves
+        // the existing overflow menu (or direct-copy shortcut when Copy is the
+        // only available action).
         var showMessageActions by remember { mutableStateOf(false) }
+        var showInlineActions by remember(message.uiKey) { mutableStateOf(false) }
         val haptic = LocalHapticFeedback.current
+        val accessibleMotion = rememberAccessibleMotionState()
+        val animateInlineActions = animationEnabled && accessibleMotion.osAnimations &&
+            !accessibleMotion.touchExploration
         val showEditAction = onEditMessage != null && isUser
         val showSpeakAction = shouldShowSpeakResponseAction(message, onSpeakMessage != null)
-        if (onQuoteMessage != null || showEditAction || showSpeakAction) {
+        val showStopSpeakingAction = shouldShowStopSpeakingAction(message, onStopSpeaking != null)
+        if (onQuoteMessage != null || showEditAction || showSpeakAction || showStopSpeakingAction) {
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
@@ -421,7 +458,7 @@ fun MessageBubble(
                     text = { Text(stringResource(R.string.msg_bubble_copy)) },
                     onClick = {
                         showMessageActions = false
-                        onCopyMessage(message.content)
+                        onCopyMessage(visibleMessageContent)
                     },
                 )
                 if (onQuoteMessage != null) {
@@ -429,7 +466,7 @@ fun MessageBubble(
                         text = { Text(stringResource(R.string.msg_bubble_quote)) },
                         onClick = {
                             showMessageActions = false
-                            onQuoteMessage(message.content)
+                            onQuoteMessage(message.copy(content = visibleMessageContent))
                         },
                     )
                 }
@@ -444,7 +481,22 @@ fun MessageBubble(
                         },
                         onClick = {
                             showMessageActions = false
-                            onSpeakMessage?.invoke(message.content)
+                            onSpeakMessage?.invoke(visibleMessageContent)
+                        },
+                    )
+                }
+                if (showStopSpeakingAction) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.msg_bubble_stop_speaking)) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Stop,
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            showMessageActions = false
+                            onStopSpeaking?.invoke()
                         },
                     )
                 }
@@ -493,16 +545,19 @@ fun MessageBubble(
                     } else Modifier
                 )
                 .combinedClickable(
-                    onClick = {},
+                    onClick = { showInlineActions = !showInlineActions },
                     onLongClick = {
                         // Buzz the instant the long-press registers — opening the
                         // action menu is the discoverability moment, so it gets the
                         // same tactile confirm every chat app fires.
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (onQuoteMessage != null || showEditAction || showSpeakAction) {
+                        if (
+                            onQuoteMessage != null || showEditAction || showSpeakAction ||
+                            showStopSpeakingAction
+                        ) {
                             showMessageActions = true
                         } else {
-                            onCopyMessage(message.content)
+                            onCopyMessage(visibleMessageContent)
                         }
                     }
                 )
@@ -528,12 +583,23 @@ fun MessageBubble(
                     }
                 )
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+            ) {
+                quoteEnvelope?.let { envelope ->
+                    ChatQuoteReferenceChip(
+                        reference = envelope.reference,
+                        onOpenOriginal = onNavigateToMessage?.let { navigate ->
+                            { navigate(envelope.reference.messageId) }
+                        },
+                        modifier = Modifier.padding(bottom = 7.dp),
+                    )
+                }
                 val messageTextContent: @Composable () -> Unit = {
                     if (isUser || isSystem) {
                         // Plain text for user and system messages
                         Text(
-                            text = message.content,
+                            text = visibleMessageContent,
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontSize = 15.sp,
                                 lineHeight = 21.sp,
@@ -559,7 +625,7 @@ fun MessageBubble(
                 // a live Text node becomes a Markdown tree, or settled
                 // Markdown content changes its node topology, so a handle
                 // cannot keep pointing at a removed selectable.
-                if (showSpeakAction) {
+                if (showSpeakAction || showStopSpeakingAction) {
                     DisableSelection { messageTextContent() }
                 } else {
                     key(
@@ -687,64 +753,6 @@ fun MessageBubble(
                         }
                 }
 
-                // Streaming indicator — only while awaiting the first token. Once
-                // text starts flowing, the growing reply is itself the progress
-                // signal, so the pulsing dots stop (Messenger/Telegram drop the
-                // typing bubble the moment content appears) instead of throbbing
-                // under the text for the whole turn.
-                if (
-                    message.isStreaming &&
-                    message.content.isBlank() &&
-                    !showImageGeneration
-                ) {
-                    // After a few seconds with no content yet, escalate the bare
-                    // dots to a labeled "Still working…" so a slow first token
-                    // never reads as a hang on the SSE / sessions paths.
-                    val awaitingFirstToken = message.content.isBlank()
-                    var showStillWorking by remember(message.id) { mutableStateOf(false) }
-                    LaunchedEffect(message.id, awaitingFirstToken) {
-                        showStillWorking = false
-                        if (awaitingFirstToken) {
-                            delay(4_000)
-                            showStillWorking = true
-                        }
-                    }
-                    val thinkingIndicator = LocalThinkingIndicator.current
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        when (thinkingIndicator.style) {
-                            ThinkingIndicatorStyle.Matrix -> DotMatrixIndicator(
-                                // Auto follows the bubble text color; accents
-                                // come from the brand palette. The grid modulates
-                                // its own alpha (idle dots ≈0.18, lit dots 1.0).
-                                color = thinkingIndicator.color.toColor(autoColor = textColor),
-                                pattern = thinkingIndicator.pattern,
-                                animated = thinkingIndicator.animated,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                            ThinkingIndicatorStyle.Dots -> StreamingDots(
-                                color = textColor.copy(alpha = 0.6f),
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                        // During dropped-stream answer recovery the label shows
-                        // immediately (the 4s escalation is for a slow first
-                        // token; a recovery is already known to be slow).
-                        if ((showStillWorking || recoveringAnswer) && awaitingFirstToken) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (recoveringAnswer) {
-                                    stringResource(R.string.msg_bubble_reconnecting)
-                                } else {
-                                    stringResource(R.string.msg_bubble_still_working)
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = textColor.copy(alpha = 0.6f),
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                    }
-                }
-
                 // Timestamp — only on the LAST bubble of a same-author run so a
                 // burst of fragments doesn't stack three near-touching time labels.
                 // Grouping breaks on a >5min gap (ChatScreen), so every pause still
@@ -771,23 +779,17 @@ fun MessageBubble(
                 // message routed over the relay proactive channel). Null on every
                 // ordinary chat message, which render nothing here.
                 message.deliveryStatus?.takeIf { isUser }?.let { status ->
-                    val label = stringResource(
-                        when (status) {
-                            MessageDeliveryStatus.SENDING -> R.string.msg_bubble_sending
-                            MessageDeliveryStatus.DELIVERED -> R.string.msg_bubble_delivered
-                            MessageDeliveryStatus.FAILED -> R.string.msg_bubble_not_sent
-                        }
-                    )
-                    val alpha = when (status) {
-                        MessageDeliveryStatus.SENDING -> 0.5f
-                        MessageDeliveryStatus.DELIVERED -> 0.5f
-                        MessageDeliveryStatus.FAILED -> 0.7f
-                    }
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = textColor.copy(alpha = alpha),
+                    MessageDeliveryIndicator(
+                        status = status,
+                        text = MessageDeliveryIndicatorText(
+                            sending = stringResource(R.string.msg_bubble_sending),
+                            queued = stringResource(R.string.msg_bubble_queued),
+                            steered = stringResource(R.string.msg_bubble_steered),
+                            delivered = stringResource(R.string.msg_bubble_delivered),
+                            failed = stringResource(R.string.msg_bubble_not_sent),
+                            tapToRetry = stringResource(R.string.chat_retry),
+                        ),
                     )
                 }
 
@@ -801,11 +803,125 @@ fun MessageBubble(
                 }
             }
         }
+        val inlineActions: @Composable () -> Unit = {
+            MessageInlineActions(
+                showQuote = onQuoteMessage != null,
+                showSpeak = showSpeakAction,
+                showStopSpeaking = showStopSpeakingAction,
+                showEdit = showEditAction,
+                onCopy = {
+                    showInlineActions = false
+                    onCopyMessage(visibleMessageContent)
+                },
+                onQuote = {
+                    showInlineActions = false
+                    onQuoteMessage?.invoke(message.copy(content = visibleMessageContent))
+                },
+                onSpeak = {
+                    showInlineActions = false
+                    onSpeakMessage?.invoke(visibleMessageContent)
+                },
+                onStopSpeaking = {
+                    showInlineActions = false
+                    onStopSpeaking?.invoke()
+                },
+                onEdit = {
+                    showInlineActions = false
+                    onEditMessage?.invoke(message)
+                },
+            )
+        }
+        if (animateInlineActions) {
+            AnimatedVisibility(
+                visible = showInlineActions,
+                enter = fadeIn(tween(120)) + expandVertically(
+                    animationSpec = tween(180, easing = LinearOutSlowInEasing),
+                    expandFrom = Alignment.Top,
+                ),
+                exit = fadeOut(tween(90)) + shrinkVertically(
+                    animationSpec = tween(140),
+                    shrinkTowards = Alignment.Top,
+                ),
+            ) {
+                inlineActions()
+            }
+        } else if (showInlineActions) {
+            inlineActions()
+        }
+        } // end Column (bubble + revealed actions)
         } // end Row (bubble + optional leading accent bar)
         } // end if (showBubble)
     } // end content Column
-    } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
+}
+
+@Composable
+private fun MessageInlineActions(
+    showQuote: Boolean,
+    showSpeak: Boolean,
+    showStopSpeaking: Boolean,
+    showEdit: Boolean,
+    onCopy: () -> Unit,
+    onQuote: () -> Unit,
+    onSpeak: () -> Unit,
+    onStopSpeaking: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 2.dp,
+        modifier = Modifier.padding(top = 2.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 2.dp),
+        ) {
+            IconButton(onClick = onCopy, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.ContentCopy,
+                    contentDescription = stringResource(R.string.msg_bubble_copy),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            if (showQuote) {
+                IconButton(onClick = onQuote, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.FormatQuote,
+                        contentDescription = stringResource(R.string.msg_bubble_quote),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (showSpeak) {
+                IconButton(onClick = onSpeak, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = stringResource(R.string.msg_bubble_speak_response),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (showStopSpeaking) {
+                IconButton(onClick = onStopSpeaking, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Stop,
+                        contentDescription = stringResource(R.string.msg_bubble_stop_speaking),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (showEdit) {
+                IconButton(onClick = onEdit, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = stringResource(R.string.msg_bubble_edit),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 internal data class MessageSelectionTopologyKey(
@@ -881,6 +997,15 @@ internal fun shouldShowSpeakResponseAction(
         !message.isStreaming &&
         message.content.isNotBlank()
 
+internal fun shouldShowStopSpeakingAction(
+    message: ChatMessage,
+    handlerAvailable: Boolean,
+): Boolean =
+    handlerAvailable &&
+        message.role == MessageRole.ASSISTANT &&
+        !message.isStreaming &&
+        message.content.isNotBlank()
+
 internal fun shouldShowMessageGroupAvatar(
     isUser: Boolean,
     isSystem: Boolean,
@@ -915,6 +1040,42 @@ private fun MessagePathBadge(text: String, leadingIcon: ImageVector? = null) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/** First-token progress rendered in the conversation lane, not inside a message bubble. */
+@Composable
+private fun StandaloneStreamingStatus(
+    status: String,
+    accessibilityDescription: String,
+    textColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val thinkingIndicator = LocalThinkingIndicator.current
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = modifier.clearAndSetSemantics {
+            contentDescription = accessibilityDescription
+        },
+    ) {
+        when (thinkingIndicator.style) {
+            ThinkingIndicatorStyle.Matrix -> DotMatrixIndicator(
+                color = thinkingIndicator.color.toColor(autoColor = textColor),
+                pattern = thinkingIndicator.pattern,
+                animated = thinkingIndicator.animated,
+            )
+            ThinkingIndicatorStyle.Dots -> StreamingDots(
+                color = textColor.copy(alpha = 0.6f),
+            )
+        }
+        Text(
+            text = status,
+            style = MaterialTheme.typography.labelSmall,
+            color = textColor.copy(alpha = 0.68f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

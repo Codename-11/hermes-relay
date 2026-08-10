@@ -89,14 +89,15 @@ calls render based on **Settings → Chat → Tool call display**:
 
 | Mode | Behavior |
 |------|----------|
-| **Off** | Tool calls hidden |
-| **Compact** | Inline one-line display with tool name and status |
-| **Detailed** | Full progress cards with icons, arguments, duration, results |
+| **Off** | Routine activity hidden; approvals, failures, media, file changes, risks, and delegations remain visible |
+| **Compact** | Consecutive routine calls share one summary with compact rows on demand |
+| **Detailed** | The same clean summaries disclose full arguments, duration, and results |
 
-In Detailed mode, a card first shows a quiet **"preparing…"** state while the
-model writes the tool's arguments, then fills in live as the tool runs and
-auto-collapses when it completes. Each card carries a right-aligned timestamp and
-duration (e.g. `3.1s · 5:32 PM`). Tap to expand/collapse manually.
+A live activity run keeps one summary plus one latest-activity line. Once it
+settles, the whole run becomes one collapsed summary. Tap the run to inspect its
+identity-preserving tool rows; in Detailed mode those rows expose arguments,
+results, timestamps, and duration. Calls requiring attention or delivering the
+requested result stay independent instead of being buried in a run.
 
 ### Subagent lanes
 
@@ -156,6 +157,12 @@ like a live transcript:
 Disable it under **Settings → Chat → Smooth auto-scroll** if you'd rather scroll
 manually. It's on by default.
 
+Before the first answer text arrives, the conversation lane shows the working
+animation at full size with **Still working…** beneath it and no empty chat
+bubble around either. The status disappears as soon as reply text starts
+streaming; dropped-stream recovery uses
+**Reconnecting to your answer…** instead.
+
 ## Markdown
 
 Replies render with full markdown support:
@@ -167,8 +174,9 @@ Replies render with full markdown support:
 
 ## Reasoning display
 
-When the agent uses extended thinking, a collapsible **Thinking** block appears
-above the reply and streams live as the model reasons. Toggle it under
+When the agent uses extended thinking, a quiet **Thinking…** disclosure opens
+above the reply while reasoning streams, then settles to a collapsed **Thought**
+row unless you explicitly chose its state. Toggle reasoning visibility under
 **Settings → Chat → Show reasoning**.
 
 ## Copying messages

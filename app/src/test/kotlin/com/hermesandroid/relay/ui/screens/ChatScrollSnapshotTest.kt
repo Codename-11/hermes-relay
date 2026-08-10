@@ -248,6 +248,37 @@ class ChatScrollSnapshotTest {
     }
 
     @Test
+    fun `keyboard already open on first chat layout captures bottom ownership`() {
+        assertEquals(
+            true,
+            shouldFollowImeAfterInsetChange(
+                wasFollowing = false,
+                previousImeBottomPx = 0,
+                currentImeBottomPx = 480,
+                wasAtBottom = true,
+                userDragging = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `expanded tail remeasurement follows while keyboard ownership is retained`() {
+        val previous = viewportSnapshot(
+            tailSizePx = 320,
+            viewportHeightPx = 680,
+            visibleBottomDistancePx = 0,
+            followTailGrowth = false,
+            followViewportResize = true,
+        )
+        val expanded = previous.copy(
+            tailSizePx = 620,
+            visibleBottomDistancePx = 300,
+        )
+
+        assertEquals(300, ownedBottomFollowScroll(previous, expanded))
+    }
+
+    @Test
     fun `keyboard follow survives animation and clears on close or drag`() {
         assertEquals(
             true,

@@ -12,6 +12,8 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 
@@ -100,6 +102,7 @@ class PetCompanionCoordinator {
     private var renderState by mutableStateOf(AvatarRenderState(SphereState.Idle))
     private var visitRequestState by mutableStateOf(PetVisitRequestState())
     private val surfaces = mutableStateMapOf<String, PetCompanionSurface>()
+    private val interactionLayers = mutableStateMapOf<String, Boolean>()
 
     val pendingVisitRequest: PetVisitRequest?
         get() = visitRequestState.pending
@@ -141,19 +144,48 @@ class PetCompanionCoordinator {
         surfaces.remove(owner)
     }
 
+    /** App-wide UI ownership gate for drawers and other same-window overlays. */
+    fun publishInteractionLayer(owner: String, active: Boolean) {
+        require(owner.isNotBlank()) { "Pet interaction-layer owner must not be blank." }
+        if (active) interactionLayers[owner] = true else interactionLayers.remove(owner)
+    }
+
+    fun clearInteractionLayer(owner: String) {
+        interactionLayers.remove(owner)
+    }
+
     fun activityFor(owner: String?): PetCompanionActivity {
         val surface = owner?.let(surfaces::get)
         return PetCompanionActivity(
             renderState = renderState,
             scrolling = surface?.scrolling == true,
-            hidden = surface?.hidden == true,
+            hidden = surface?.hidden == true || interactionLayers.values.any { it },
         )
     }
 }
 
 private data class PetCompanionSurface(val scrolling: Boolean, val hidden: Boolean)
 
+/** A pet-owned popup may take window focus without becoming a competing modal. */
+internal fun platformModalOwnsPetLayer(
+    windowFocused: Boolean,
+    petMenuExpanded: Boolean,
+): Boolean = !windowFocused && !petMenuExpanded
+
 val LocalPetCompanionCoordinator = staticCompositionLocalOf { PetCompanionCoordinator() }
+
+/**
+ * Declares that a same-window interaction layer currently owns input. Platform
+ * dialogs and modal sheets are covered separately by root window-focus state.
+ */
+@Composable
+fun PetInteractionLayer(owner: String, active: Boolean) {
+    val coordinator = LocalPetCompanionCoordinator.current
+    SideEffect { coordinator.publishInteractionLayer(owner, active) }
+    DisposableEffect(coordinator, owner) {
+        onDispose { coordinator.clearInteractionLayer(owner) }
+    }
+}
 
 /**
  * Explicit UI surfaces measured by their owners. Their top edges become

@@ -13,6 +13,7 @@ import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.BackgroundTaskPhase
 import com.hermesandroid.relay.data.BackgroundTaskState
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatComposerDraftStore
 import com.hermesandroid.relay.data.ChatQueuedMessageCheckpoint
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
@@ -24,11 +25,13 @@ import com.hermesandroid.relay.data.ChatTurnMoaReferenceCheckpoint
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.DataStoreChatTurnCheckpointStore
+import com.hermesandroid.relay.data.InMemoryChatComposerDraftStore
 import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
@@ -78,6 +81,7 @@ import com.hermesandroid.relay.network.upstream.ApiModelRoutingException
 import com.hermesandroid.relay.network.upstream.ApiModelSelectionAck
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.isCurrentModelOptionsResponse
+import com.hermesandroid.relay.network.upstream.modelOptionsIdentityToPublish
 import com.hermesandroid.relay.network.upstream.parsePersonalityPrompts
 import com.hermesandroid.relay.network.upstream.sessionTurnModelHint
 import com.hermesandroid.relay.network.relay.ProactiveMessage
@@ -109,12 +113,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -157,17 +163,21 @@ data class ContextWindowUsage(
 /**
  * A successful Sessions SSE turn still needs the server-authoritative transcript
  * because that transport does not stream every persisted message boundary.
- * Gateway turns already deliver the assistant, reasoning, and tool lifecycle
- * directly; reloading their full transcript only republishes a healthy live turn.
- * A successful socket rejoin is the exception because events emitted during the
- * gap cannot be replayed.
+ * Gateway normally delivers the assistant, reasoning, and tool lifecycle
+ * directly, but upstream versions can persist tool calls without emitting the
+ * corresponding live lifecycle events. Inspect structured history after every
+ * successful Gateway turn, then reload only when activity is missing (or socket
+ * recovery requires it), so healthy turns keep their existing UI identity. This
+ * deliberately never infers tool activity from assistant text.
  */
 internal fun shouldReloadHistoryAfterSuccessfulTurn(
     actualTransport: String,
     gatewayReconcileRequired: Boolean,
+    missingPersistedToolActivity: Boolean,
 ): Boolean =
     actualTransport == "sessions" ||
-        (actualTransport == "gateway" && gatewayReconcileRequired)
+        (actualTransport == "gateway" &&
+            (gatewayReconcileRequired || missingPersistedToolActivity))
 
 internal fun shouldSuppressPassiveSessionError(context: String?, error: Throwable?): Boolean {
     if (context != "load_sessions" && context != "load_profile_sessions") return false
@@ -509,7 +519,7 @@ class ChatViewModel : ViewModel() {
     val recentPrompts: StateFlow<List<String>> = _recentPrompts.asStateFlow()
 
     private fun recordRecentPrompt(text: String) {
-        val t = text.trim()
+        val t = (parseChatQuotedPrompt(text)?.body ?: text).trim()
         if (t.isBlank() || t.startsWith("/")) return // skip blanks + slash commands
         _recentPrompts.update { prev ->
             (listOf(t) + prev.filterNot { it == t }).take(RECENT_PROMPTS_LIMIT)
@@ -539,6 +549,9 @@ class ChatViewModel : ViewModel() {
     private val _pendingAttachments = MutableStateFlow<List<Attachment>>(emptyList())
     val pendingAttachments: StateFlow<List<Attachment>> = _pendingAttachments.asStateFlow()
 
+    /** Session-keyed composer state; intentionally memory-only for attachment privacy. */
+    val composerDraftStore: ChatComposerDraftStore = InMemoryChatComposerDraftStore()
+
     fun addAttachment(attachment: Attachment) {
         _pendingAttachments.update { it + attachment }
     }
@@ -546,6 +559,22 @@ class ChatViewModel : ViewModel() {
     fun removeAttachment(index: Int) {
         _pendingAttachments.update { list ->
             list.filterIndexed { i, _ -> i != index }
+        }
+    }
+
+    fun replacePendingAttachments(attachments: List<Attachment>) {
+        _pendingAttachments.value = attachments.toList()
+    }
+
+    fun moveAttachment(fromIndex: Int, toIndex: Int) {
+        _pendingAttachments.update { attachments ->
+            if (fromIndex !in attachments.indices || toIndex !in attachments.indices) {
+                attachments
+            } else {
+                attachments.toMutableList().apply {
+                    add(toIndex, removeAt(fromIndex))
+                }
+            }
         }
     }
 
@@ -703,9 +732,13 @@ class ChatViewModel : ViewModel() {
      * Refresh the gateway's curated provider/model list (`model.options`).
      * Connects the gateway on demand. No-op without a gateway client.
      * [refresh] is the explicit upstream refresh path for dynamic/custom-provider catalogs;
-     * automatic picker opens stay on the cheap cached path.
+     * automatic picker opens stay on the cheap cached path. [catalogOnly] updates
+     * choices and capability metadata without publishing a model identity.
      */
-    fun refreshModelOptions(refresh: Boolean = false) {
+    fun refreshModelOptions(
+        refresh: Boolean = false,
+        catalogOnly: Boolean = false,
+    ) {
         val gateway = gatewayClient ?: run {
             android.util.Log.i("ChatViewModel", "refreshModelOptions: no gateway client")
             if (refresh) _modelOptionsRefreshing.value = false
@@ -729,8 +762,19 @@ class ChatViewModel : ViewModel() {
                     }
                     modelOptionsByProfile[profileKey] = it
                     _modelProviders.value = it.providers
-                    _gatewayCurrentModel.value = it.currentModel
-                    _gatewayCurrentProvider.value = it.currentProvider
+                    // Opening a picker refreshes catalog metadata, not session
+                    // identity. session.info/session.resume is canonical once a
+                    // live session exists; do not let a profile/global catalog
+                    // response repaint its controls.
+                    modelOptionsIdentityToPublish(
+                        catalogOnly = catalogOnly,
+                        hasLiveSession = hasLiveGatewaySession(),
+                        sessionIdentity = gateway.serverModelIdentity.value,
+                        options = it,
+                    )?.let { identity ->
+                        _gatewayCurrentModel.value = identity.model
+                        _gatewayCurrentProvider.value = identity.provider
+                    }
                     refreshRelayReasoningCapabilities(refresh = refresh)
                     android.util.Log.i(
                         "ChatViewModel",
@@ -977,7 +1021,10 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun fetchModels(userInitiated: Boolean = false) {
+    fun fetchModels(
+        userInitiated: Boolean = false,
+        catalogOnly: Boolean = false,
+    ) {
         val client = apiClient ?: return
         val generation = modelOptionsGeneration.incrementAndGet()
         val profileKey = modelOptionsProfileKey()
@@ -1002,8 +1049,15 @@ class ChatViewModel : ViewModel() {
                 )
                 modelOptionsByProfile[profileKey] = options
                 _modelProviders.value = options.providers
-                _gatewayCurrentModel.value = options.currentModel
-                _gatewayCurrentProvider.value = options.currentProvider
+                modelOptionsIdentityToPublish(
+                    catalogOnly = catalogOnly,
+                    hasLiveSession = hasLiveGatewaySession(),
+                    sessionIdentity = gatewayClient?.serverModelIdentity?.value,
+                    options = options,
+                )?.let { identity ->
+                    _gatewayCurrentModel.value = identity.model
+                    _gatewayCurrentProvider.value = identity.provider
+                }
                 // Keep OpenAI route aliases visible alongside authenticated
                 // provider inventory. An alias remains the request id while
                 // its root is used only to validate the provider route.
@@ -2260,12 +2314,37 @@ class ChatViewModel : ViewModel() {
      * (`{type:"prefill"}` — e.g. `/undo`). ChatScreen collects and sets the
      * input text.
      */
-    private val _composerPrefill = MutableSharedFlow<String>(
-        replay = 0,
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    val composerPrefill: SharedFlow<String> = _composerPrefill.asSharedFlow()
+    private val _composerPrefill = Channel<String>(capacity = Channel.CONFLATED)
+    val composerPrefill = _composerPrefill.receiveAsFlow()
+
+    /**
+     * Open a fresh draft for text received through Android's sharesheet.
+     * The composer event is queued until Chat is composed and is never routed
+     * through [sendMessage]. Existing new-chat transport and background-turn
+     * ownership remain authoritative.
+     */
+    fun openSharedTextDraft(text: String): Boolean {
+        if (text.isBlank() || chatHandler == null) return false
+        val canCreateDraft =
+            (streamingEndpoint == "gateway" && gatewayClient != null) || apiClient != null
+        if (!canCreateDraft) return false
+        createNewChat()
+        return _composerPrefill.trySend(text).isSuccess
+    }
+
+    // Navigation-safe draft handoff for explicit in-app workflows (for example,
+    // custom-pet creation). StateFlow keeps the reviewed text until ChatScreen
+    // is mounted; consuming it never sends the message.
+    private val _pendingComposerDraft = MutableStateFlow<String?>(null)
+    val pendingComposerDraft: StateFlow<String?> = _pendingComposerDraft.asStateFlow()
+
+    fun stageComposerDraft(text: String) {
+        _pendingComposerDraft.value = text.takeIf { it.isNotBlank() }
+    }
+
+    fun consumeComposerDraft(text: String) {
+        _pendingComposerDraft.compareAndSet(text, null)
+    }
 
     /**
      * One-shot request to open the personality picker — emitted when a bare
@@ -3164,6 +3243,16 @@ class ChatViewModel : ViewModel() {
         selectedReasoningEffortConfirmedIdentity = null
         _reasoningDisplay.value = null
         _selectedPersonality.value = "default"
+        // Model/provider overrides are session-scoped too. This reset is owned
+        // by the context switch (not just activateGatewayProfile) so the SSE
+        // path cannot carry the previous profile's explicit model into the
+        // restored session or fresh draft.
+        modelOptionsGeneration.incrementAndGet()
+        _modelProviders.value = emptyList()
+        _apiModelOptions.value = emptyList()
+        _availableModels.value = emptyList()
+        _selectedModelOverride.value = null
+        _selectedProviderOverride.value = null
         // The agent display name was stamped above with the pre-reset persona —
         // recompute it now that the overlay is cleared so the header/bubbles read
         // the new profile's base identity, not the old persona.
@@ -3291,8 +3380,11 @@ class ChatViewModel : ViewModel() {
      * groups refresh via [refreshModelOptions]; this covers [availableModels] used
      * when no gateway model.options groups exist. Fetched once otherwise.
      */
-    fun refreshModels(userInitiated: Boolean = false) {
-        fetchModels(userInitiated)
+    fun refreshModels(
+        userInitiated: Boolean = false,
+        catalogOnly: Boolean = false,
+    ) {
+        fetchModels(userInitiated, catalogOnly)
     }
 
     /** Clear server-owned catalogs before a different connection starts loading. */
@@ -3834,7 +3926,11 @@ class ChatViewModel : ViewModel() {
 
         // Mid-turn: redirect on the gateway transport, queue everywhere else.
         if (activeStream != null) {
-            if (_steerableTurn.value && streamingEndpoint == "gateway") {
+            if (
+                _steerableTurn.value &&
+                streamingEndpoint == "gateway" &&
+                _pendingAttachments.value.isEmpty()
+            ) {
                 steerActiveTurn(text.trim())
             } else {
                 enqueueMessage(text.trim())
@@ -3867,6 +3963,7 @@ class ChatViewModel : ViewModel() {
                             role = MessageRole.USER,
                             content = text,
                             timestamp = System.currentTimeMillis(),
+                            deliveryStatus = MessageDeliveryStatus.STEERED,
                         )
                     )
                 }
@@ -4586,7 +4683,7 @@ class ChatViewModel : ViewModel() {
                     }
                     "prefill" -> {
                         result.stringValue("notice")?.let { handler.addSystemNotice(it) }
-                        result.stringValue("message")?.let { _composerPrefill.tryEmit(it) }
+                        result.stringValue("message")?.let { _composerPrefill.trySend(it) }
                     }
                     else ->
                         handler.addSystemNotice(result.stringValue("output") ?: "Command completed.")
@@ -7071,13 +7168,11 @@ class ChatViewModel : ViewModel() {
                 refreshApprovalMode()
             }
 
-            // Sessions SSE does not stream every persisted message boundary, so it
-            // still needs the server-authoritative transcript after success. A healthy
-            // Gateway turn is already authoritative in memory through its structured
-            // assistant/reasoning/tool events; reloading the full transcript here would
-            // republish the entire visible list and cause a completion flash. A Gateway
-            // socket rejoin explicitly flags this completion for the same profile-aware
-            // history reconcile because events emitted during the gap may be missing.
+            // Stateful transports reconcile from server-authoritative history after
+            // success. Gateway usually streams every structured lifecycle event, but
+            // some upstream versions persist tool_calls without emitting tool.start /
+            // tool.complete. The structured reload recovers those calls without ever
+            // parsing assistant prose and retains the profile-aware history boundary.
             val sid = handler.currentSessionId.value
             // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
             // has NO assistant message persisted server-side, so reconciling the
@@ -7087,18 +7182,24 @@ class ChatViewModel : ViewModel() {
             // local error visible — but still refresh the drawer + drain the queue.
             if (sid != null && (completedTransport == "sessions" || completedTransport == "gateway")) {
                 viewModelScope.launch {
-                    if (!turnErrored && shouldReloadHistoryAfterSuccessfulTurn(
-                            completedTransport,
-                            gatewayHistoryReconcileRequired,
-                        )
-                    ) {
+                    if (!turnErrored) {
                         // Profile-aware read: a gateway turn on a non-default profile
                         // persists into THAT profile's own state.db, so the bare
                         // api_server `/api/sessions/{id}/messages` 404s → emptyList()
                         // → a silent wipe of the just-finished turn. loadSessionHistory
                         // prefers the `?profile=` dashboard loader on gateway connections.
                         val serverMessages = loadSessionHistory(sid)
-                        handler.loadMessageHistory(serverMessages)
+                        val missingPersistedToolActivity =
+                            completedTransport == "gateway" &&
+                                handler.hasMissingPersistedToolActivity(serverMessages)
+                        if (shouldReloadHistoryAfterSuccessfulTurn(
+                                actualTransport = completedTransport,
+                                gatewayReconcileRequired = gatewayHistoryReconcileRequired,
+                                missingPersistedToolActivity = missingPersistedToolActivity,
+                            )
+                        ) {
+                            handler.loadMessageHistory(serverMessages)
+                        }
                     }
                     // Re-sync the drawer now that the turn is persisted server-side.
                     // The only other auto-refresh fires ~160ms after session creation
@@ -8398,7 +8499,9 @@ class ChatViewModel : ViewModel() {
 }
 
 private fun queuedPromptPreview(prompt: String, maxChars: Int = 96): String {
-    val compact = prompt.replace(Regex("\\s+"), " ").trim()
+    val compact = (parseChatQuotedPrompt(prompt)?.body ?: prompt)
+        .replace(Regex("\\s+"), " ")
+        .trim()
     return if (compact.length <= maxChars) compact else compact.take(maxChars - 1).trimEnd() + "…"
 }
 

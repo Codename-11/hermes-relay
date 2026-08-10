@@ -661,6 +661,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">Muestre sus mensajes recientes como chips que se pueden tocar encima del redactor para enviarlos nuevamente. Desactivado de forma predeterminada.</string>
     <string name="chat_settings_keep_keyboard_open">Mantener el teclado abierto al enviar</string>
     <string name="chat_settings_keep_keyboard_open_desc">Permanece en el compositor después del envío. Desactívelo para descartar el teclado después de cada mensaje enviado.</string>
+    <string name="chat_settings_physical_keyboard_enter">Tecla Intro del teclado físico</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">Elige si Intro envía o inserta una línea nueva. Ctrl+Intro siempre envía.</string>
+    <string name="chat_settings_insert_newline">Insertar línea nueva</string>
     <string name="chat_settings_notify_when_finishes">Alertas de chat en segundo plano</string>
     <string name="chat_settings_notify_when_finishes_desc">Notificar cuando Hermes necesite información o termine en segundo plano</string>
     <string name="chat_settings_share_phone_status">Compartir el estado del teléfono con el agente</string>
@@ -2330,6 +2333,23 @@
     <string name="image_generation_rendering">Generando imagen</string>
     <string name="tool_progress_cd_collapse">Colapsar</string>
     <string name="tool_progress_cd_expand">Expandir</string>
+    <string name="tool_progress_state_expanded">Expandido</string>
+    <string name="tool_progress_state_collapsed">Contraído</string>
+    <string name="tool_run_preparing">Preparando %1$s</string>
+    <string name="tool_run_running">Ejecutando %1$s</string>
+    <string name="tool_run_finished">%1$s finalizado</string>
+    <plurals name="tool_run_reading"><item quantity="one">Leyendo %d elemento</item><item quantity="other">Leyendo %d elementos</item></plurals>
+    <plurals name="tool_run_read"><item quantity="one">Se leyó %d elemento</item><item quantity="other">Se leyeron %d elementos</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="one">Buscando en %d fuente</item><item quantity="other">Buscando en %d fuentes</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="one">Se buscó en %d fuente</item><item quantity="other">Se buscó en %d fuentes</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="one">Ejecutando %d comando</item><item quantity="other">Ejecutando %d comandos</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="one">Se ejecutó %d comando</item><item quantity="other">Se ejecutaron %d comandos</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="one">Ejecutando %d acción del navegador</item><item quantity="other">Ejecutando %d acciones del navegador</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="one">Se ejecutó %d acción del navegador</item><item quantity="other">Se ejecutaron %d acciones del navegador</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="one">Ejecutando %d acción del dispositivo</item><item quantity="other">Ejecutando %d acciones del dispositivo</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="one">Se ejecutó %d acción del dispositivo</item><item quantity="other">Se ejecutaron %d acciones del dispositivo</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="one">Usando %d herramienta</item><item quantity="other">Usando %d herramientas</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="one">Se usó %d herramienta</item><item quantity="other">Se usaron %d herramientas</item></plurals>
     <string name="agent_icon_title">Icono de agente</string>
     <string name="agent_icon_set">Elegir archivo</string>
     <string name="agent_icon_change">Elegir archivo</string>
@@ -3323,6 +3343,7 @@
     <string name="tool_name_android">Acción en el teléfono</string>
     <string name="timeline_no_checks">sin comprobaciones</string>
     <string name="thinking_title">Proceso de pensamiento</string>
+    <string name="thinking_settled">Pensamiento</string>
     <string name="thinking_thinking_short">Pensando</string>
     <string name="thinking_thinking">Pensando…</string>
     <string name="task_status_working">Trabajando</string>
@@ -3453,6 +3474,7 @@
     <string name="voice_overlay_attachment_ready">Adjunto listo</string>
     <string name="conn_info_active_profile">Perfil activo</string>
     <string name="msg_bubble_speak_response">Leer respuesta</string>
+    <string name="msg_bubble_stop_speaking">Detener lectura</string>
     <string name="voice_overlay_engine_standard">Modo estándar</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Abrir Hermes</string>
@@ -3571,4 +3593,81 @@
     <string name="support_bundle_copied">Información de soporte copiada</string>
     <string name="support_bundle_no_share">Información de soporte copiada — no se encontró una aplicación para compartir</string>
     <string name="support_bundle_share_title">Compartir información de soporte de Hermes-Relay</string>
+    <string name="chat_search_conversation">Buscar en la conversación</string>
+    <string name="chat_search_close">Cerrar búsqueda</string>
+    <string name="chat_search_no_results">Sin resultados</string>
+    <string name="chat_search_result_count">%1$d de %2$d</string>
+    <string name="msg_bubble_queued">En cola</string>
+    <string name="msg_bubble_steered">Corrección enviada</string>
+    <string name="chat_quote_you">Tú</string>
+    <string name="chat_quote_hermes">Hermes</string>
+    <string name="chat_quote_open">Abrir mensaje original de %1$s</string>
+    <string name="chat_quote_remove">Quitar cita</string>
+    <string name="profile_shelf_switch_agent">Cambiar de agente</string>
+    <string name="profile_shelf_all_profiles">Abrir todos los perfiles de agente</string>
+    <string name="profile_shelf_open_passport">Abrir Pasaporte del agente</string>
+    <string name="profile_shelf_switch_to">Cambiar a este agente</string>
+    <string name="profile_shelf_locked_hint">El cambio de perfil está bloqueado. Mantén pulsado el agente activo para desbloquearlo.</string>
+    <string name="profile_shelf_inspect">Inspeccionar perfil</string>
+    <string name="profile_shelf_hide">Ocultar de la bandeja de perfiles</string>
+    <string name="profile_shelf_expand">Expandir la bandeja de perfiles</string>
+    <string name="profile_shelf_collapse">Contraer la bandeja de perfiles</string>
+    <string name="appearance_intro">Elige un ajuste predefinido y míralo al instante en la vista previa.</string>
+    <string name="appearance_preset_gallery">Galería de ajustes</string>
+    <string name="appearance_preview_relay">Vista previa · Relay</string>
+    <string name="appearance_preview_user_message">Dame tres consejos rápidos para una mañana productiva.</string>
+    <string name="appearance_preview_agent">Hermes</string>
+    <string name="appearance_preview_agent_message">1. Elige un logro real antes de revisar tus novedades.\n2. Reserva los primeros 45–90 minutos.\n3. Empieza con un ritual de preparación, no con «motivación».</string>
+    <string name="appearance_preview_time">19:00</string>
+    <string name="appearance_preview_voice">Voz</string>
+    <string name="appearance_preview_tool_meta">tool_executor  ·  206 tokens  ·  137,2K</string>
+    <string name="appearance_preview_message_placeholder">Mensaje…</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / perfil: predeterminado</string>
+    <string name="appearance_preview_live_note">Esta vista previa se actualiza al instante con el ajuste, modo, fuente y aspecto de Sphere.</string>
+    <string name="appearance_customize_theme">Personalizar %1$s</string>
+    <string name="appearance_accent_preset">Color de acento predefinido</string>
+    <string name="appearance_accent_custom">Color de acento personalizado aplicado</string>
+    <string name="appearance_accent_preview_only">Los cambios permanecen en la vista previa hasta que los apliques.</string>
+    <string name="appearance_accent_preview_only_short">Solo vista previa</string>
+    <string name="appearance_apply_changes">Aplicar cambios</string>
+    <string name="appearance_customize_summary">Acento, superficies, forma y densidad</string>
+    <string name="appearance_shape">Forma</string>
+    <string name="appearance_shape_soft">Suave</string>
+    <string name="appearance_shape_balanced">Equilibrada</string>
+    <string name="appearance_shape_sharp">Angular</string>
+    <string name="appearance_contrast_passes">El contraste es suficiente</string>
+    <string name="appearance_contrast_fails">El contraste necesita mejoras</string>
+    <string name="appearance_contrast_aa">AA para texto normal</string>
+    <string name="appearance_typography_density">Tipografía y densidad</string>
+    <string name="appearance_readability">Legibilidad</string>
+    <string name="appearance_default">Predeterminado</string>
+    <string name="appearance_font_normal_summary">Tamaño de fuente: Normal</string>
+    <string name="appearance_reset_draft">Restablecer borrador</string>
+    <string name="appearance_accent">Color de acento</string>
+    <string name="appearance_contrast_status">Contraste legible · %1$.1f:1</string>
+    <string name="appearance_typography_density_summary">La tipografía y la densidad usan los controles específicos de Fuente y Tamaño de fuente de abajo.</string>
+    <string name="appearance_readability_summary">Ajusta aquí la densidad del texto; elige la tipografía en la sección Fuente de abajo.</string>
+    <string name="appearance_reset">Restablecer</string>
+    <string name="appearance_apply">Aplicar</string>
+    <string name="appearance_background_installed">Animaciones instaladas</string>
+    <string name="appearance_import_background">Importar animación de fondo</string>
+    <string name="appearance_import_background_desc">Importa el mismo ZIP seguro de mascota de Relay o formato de imagen única, pero lo usa solo para la visualización central o de fondo. No activa el movimiento ni cambia tu mascota flotante.</string>
+    <string name="appearance_import_sphere">Importar aspecto de Sphere</string>
+    <string name="appearance_create_pet">Crear una mascota personalizada</string>
+    <string name="pet_creator_title">Crear una mascota personalizada</string>
+    <string name="pet_creator_intro">Describe a tu acompañante, revisa las instrucciones generadas y elige dónde crearlo. No se envía nada hasta que tú mismo envíes el nuevo chat.</string>
+    <string name="pet_creator_step_idea">Elegir la idea</string>
+    <string name="pet_creator_name">Nombre de la mascota</string>
+    <string name="pet_creator_description">Dirección del personaje</string>
+    <string name="pet_creator_description_hint">Describe el personaje, materiales, colores, ambiente y cualquier imagen de referencia que quieras adjuntar.</string>
+    <string name="pet_creator_animated">Paquete animado</string>
+    <string name="pet_creator_static">Imagen estática</string>
+    <string name="pet_creator_step_create">Revisar y crear</string>
+    <string name="pet_creator_review_copy">Estas instrucciones completas incluyen el formato actual de mascotas y los límites de validación, privacidad y revisión.</string>
+    <string name="pet_creator_copy">Copiar</string>
+    <string name="pet_creator_copied">Instrucciones copiadas</string>
+    <string name="pet_creator_new_chat">Nuevo chat</string>
+    <string name="pet_creator_step_review">Revisar e importar</string>
+    <string name="pet_creator_review_desc">Inspecciona primero la imagen o el ZIP recibido. Al importar se copian los archivos validados al almacenamiento de la aplicación; no se publican.</string>
+    <string name="pet_creator_import">Importar mascota terminada</string>
 </resources>

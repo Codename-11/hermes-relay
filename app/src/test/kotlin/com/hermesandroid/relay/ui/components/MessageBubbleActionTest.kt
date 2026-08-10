@@ -41,6 +41,31 @@ class MessageBubbleActionTest {
     }
 
     @Test
+    fun stopSpeaking_requiresHandlerAndCompletedAssistantText() {
+        val assistant = ChatMessage(
+            id = "assistant",
+            role = MessageRole.ASSISTANT,
+            content = "A response being narrated.",
+            timestamp = 1L,
+        )
+
+        assertTrue(shouldShowStopSpeakingAction(assistant, handlerAvailable = true))
+        assertFalse(shouldShowStopSpeakingAction(assistant, handlerAvailable = false))
+        assertFalse(
+            shouldShowStopSpeakingAction(
+                assistant.copy(isStreaming = true),
+                handlerAvailable = true,
+            ),
+        )
+        assertFalse(
+            shouldShowStopSpeakingAction(
+                assistant.copy(role = MessageRole.USER),
+                handlerAvailable = true,
+            ),
+        )
+    }
+
+    @Test
     fun partialSelection_resetsOnlyWhenSelectableTopologyChanges() {
         val initialLive = messageSelectionTopologyKey(
             isPlainText = false,

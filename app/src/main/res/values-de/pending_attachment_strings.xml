@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pending_attachment_preview_named">Vorschau für %1$s</string>
+    <string name="pending_attachment_remove">%1$s entfernen</string>
+    <string name="pending_attachment_move_left">%1$s nach links verschieben</string>
+    <string name="pending_attachment_move_right">%1$s nach rechts verschieben</string>
+    <string name="pending_attachment_status_loading">Vorschau wird vorbereitet</string>
+    <string name="pending_attachment_status_ready">Bereit</string>
+    <string name="pending_attachment_status_failed">Vorschau nicht verfügbar</string>
+</resources>

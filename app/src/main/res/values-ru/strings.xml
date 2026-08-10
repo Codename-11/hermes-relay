@@ -704,6 +704,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">Показывать ваши недавние сообщения как нажимаемые чипы над композитором, чтобы отправить их снова. По умолчанию выключено.</string>
     <string name="chat_settings_keep_keyboard_open">Оставить клавиатуру открытой при отправке</string>
     <string name="chat_settings_keep_keyboard_open_desc">Оставаться в композиторе после отправки. Выключите, чтобы скрыть клавиатуру после каждого отправленного сообщения.</string>
+    <string name="chat_settings_physical_keyboard_enter">Клавиша Enter на физической клавиатуре</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">Выберите, отправляет ли Enter сообщение или добавляет новую строку. Ctrl+Enter всегда отправляет.</string>
+    <string name="chat_settings_insert_newline">Вставить новую строку</string>
     <string name="chat_settings_notify_when_finishes">Уведомления о фоновом чате</string>
     <string name="chat_settings_notify_when_finishes_desc">Уведомлять, когда Гермес требует ввода или заканчивает работу, когда приложение находится в фоновом режиме</string>
     <string name="chat_settings_share_phone_status">Поделиться статусом телефона с агентом</string>
@@ -2533,6 +2536,23 @@
     <string name="image_generation_rendering">Рендеринг изображения</string>
     <string name="tool_progress_cd_collapse">Свернуть</string>
     <string name="tool_progress_cd_expand">Развернуть</string>
+    <string name="tool_progress_state_expanded">Развернуто</string>
+    <string name="tool_progress_state_collapsed">Свернуто</string>
+    <string name="tool_run_preparing">Подготовка: %1$s</string>
+    <string name="tool_run_running">Выполняется: %1$s</string>
+    <string name="tool_run_finished">Завершено: %1$s</string>
+    <plurals name="tool_run_reading"><item quantity="one">Чтение %d элемента</item><item quantity="few">Чтение %d элементов</item><item quantity="many">Чтение %d элементов</item><item quantity="other">Чтение %d элементов</item></plurals>
+    <plurals name="tool_run_read"><item quantity="one">Прочитан %d элемент</item><item quantity="few">Прочитано %d элемента</item><item quantity="many">Прочитано %d элементов</item><item quantity="other">Прочитано %d элементов</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="one">Поиск в %d источнике</item><item quantity="few">Поиск в %d источниках</item><item quantity="many">Поиск в %d источниках</item><item quantity="other">Поиск в %d источниках</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="one">Выполнен поиск в %d источнике</item><item quantity="few">Выполнен поиск в %d источниках</item><item quantity="many">Выполнен поиск в %d источниках</item><item quantity="other">Выполнен поиск в %d источниках</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="one">Выполняется %d команда</item><item quantity="few">Выполняется %d команды</item><item quantity="many">Выполняется %d команд</item><item quantity="other">Выполняется %d команд</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="one">Выполнена %d команда</item><item quantity="few">Выполнено %d команды</item><item quantity="many">Выполнено %d команд</item><item quantity="other">Выполнено %d команд</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="one">Выполняется %d действие браузера</item><item quantity="few">Выполняется %d действия браузера</item><item quantity="many">Выполняется %d действий браузера</item><item quantity="other">Выполняется %d действий браузера</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="one">Выполнено %d действие браузера</item><item quantity="few">Выполнено %d действия браузера</item><item quantity="many">Выполнено %d действий браузера</item><item quantity="other">Выполнено %d действий браузера</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="one">Выполняется %d действие устройства</item><item quantity="few">Выполняется %d действия устройства</item><item quantity="many">Выполняется %d действий устройства</item><item quantity="other">Выполняется %d действий устройства</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="one">Выполнено %d действие устройства</item><item quantity="few">Выполнено %d действия устройства</item><item quantity="many">Выполнено %d действий устройства</item><item quantity="other">Выполнено %d действий устройства</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="one">Используется %d инструмент</item><item quantity="few">Используется %d инструмента</item><item quantity="many">Используется %d инструментов</item><item quantity="other">Используется %d инструментов</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="one">Использован %d инструмент</item><item quantity="few">Использовано %d инструмента</item><item quantity="many">Использовано %d инструментов</item><item quantity="other">Использовано %d инструментов</item></plurals>
     <string name="agent_icon_title">Иконка агента</string>
     <string name="agent_icon_set">Выбрать файл</string>
     <string name="agent_icon_change">Выбрать файл</string>
@@ -3263,6 +3283,7 @@
     </plurals>
     <string name="tool_preparing">Подготовка инструмента…</string>
     <string name="thinking_title">Ход мыслей</string>
+    <string name="thinking_settled">Мысль</string>
     <string name="thinking_thinking">Обдумывает...</string>
     <string name="thinking_thinking_short">Обдумывает</string>
     <string name="task_background_prefix">Фоновая задача, </string>
@@ -3491,6 +3512,7 @@
     <string name="voice_overlay_attachment_ready">Вложение готово</string>
     <string name="conn_info_active_profile">Активный профиль</string>
     <string name="msg_bubble_speak_response">Озвучить ответ</string>
+    <string name="msg_bubble_stop_speaking">Остановить озвучивание</string>
     <string name="voice_overlay_engine_standard">Стандартный режим</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Открыть Hermes</string>
@@ -3607,4 +3629,81 @@
     <string name="support_bundle_copied">Сведения для поддержки скопированы</string>
     <string name="support_bundle_no_share">Сведения для поддержки скопированы — приложение для отправки не найдено</string>
     <string name="support_bundle_share_title">Поделиться сведениями поддержки Hermes-Relay</string>
+    <string name="chat_search_conversation">Поиск по беседе</string>
+    <string name="chat_search_close">Закрыть поиск</string>
+    <string name="chat_search_no_results">Ничего не найдено</string>
+    <string name="chat_search_result_count">%1$d из %2$d</string>
+    <string name="msg_bubble_queued">В очереди</string>
+    <string name="msg_bubble_steered">Исправление отправлено</string>
+    <string name="chat_quote_you">Вы</string>
+    <string name="chat_quote_hermes">Hermes</string>
+    <string name="chat_quote_open">Открыть исходное сообщение от %1$s</string>
+    <string name="chat_quote_remove">Убрать цитату</string>
+    <string name="profile_shelf_switch_agent">Сменить агента</string>
+    <string name="profile_shelf_all_profiles">Открыть все профили агентов</string>
+    <string name="profile_shelf_open_passport">Открыть паспорт агента</string>
+    <string name="profile_shelf_switch_to">Переключиться на этого агента</string>
+    <string name="profile_shelf_locked_hint">Переключение профилей заблокировано. Нажмите и удерживайте активного агента, чтобы снять блокировку.</string>
+    <string name="profile_shelf_inspect">Просмотреть профиль</string>
+    <string name="profile_shelf_hide">Скрыть с полки профилей</string>
+    <string name="profile_shelf_expand">Развернуть полку профилей</string>
+    <string name="profile_shelf_collapse">Свернуть полку профилей</string>
+    <string name="appearance_intro">Выберите шаблон и сразу посмотрите результат.</string>
+    <string name="appearance_preset_gallery">Галерея шаблонов</string>
+    <string name="appearance_preview_relay">Предпросмотр · Relay</string>
+    <string name="appearance_preview_user_message">Дай три коротких совета для продуктивного утра.</string>
+    <string name="appearance_preview_agent">Hermes</string>
+    <string name="appearance_preview_agent_message">1. Выберите одну реальную цель до просмотра ленты.\n2. Выделите первые 45–90 минут.\n3. Начните с ритуала подготовки, а не с «мотивации».</string>
+    <string name="appearance_preview_time">19:00</string>
+    <string name="appearance_preview_voice">Голос</string>
+    <string name="appearance_preview_tool_meta">tool_executor  ·  206 токенов  ·  137,2 тыс.</string>
+    <string name="appearance_preview_message_placeholder">Сообщение…</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / профиль: по умолчанию</string>
+    <string name="appearance_preview_live_note">Предпросмотр сразу обновляется при изменении шаблона, режима, шрифта и оформления Sphere.</string>
+    <string name="appearance_customize_theme">Настроить %1$s</string>
+    <string name="appearance_accent_preset">Предустановленный акцент</string>
+    <string name="appearance_accent_custom">Пользовательский акцент применён</string>
+    <string name="appearance_accent_preview_only">Изменения остаются в предпросмотре, пока вы их не примените.</string>
+    <string name="appearance_accent_preview_only_short">Только предпросмотр</string>
+    <string name="appearance_apply_changes">Применить изменения</string>
+    <string name="appearance_customize_summary">Акцент, поверхности, форма и плотность</string>
+    <string name="appearance_shape">Форма</string>
+    <string name="appearance_shape_soft">Мягкая</string>
+    <string name="appearance_shape_balanced">Сбалансированная</string>
+    <string name="appearance_shape_sharp">Угловатая</string>
+    <string name="appearance_contrast_passes">Контраст достаточный</string>
+    <string name="appearance_contrast_fails">Контраст нужно улучшить</string>
+    <string name="appearance_contrast_aa">AA для обычного текста</string>
+    <string name="appearance_typography_density">Типографика и плотность</string>
+    <string name="appearance_readability">Читаемость</string>
+    <string name="appearance_default">По умолчанию</string>
+    <string name="appearance_font_normal_summary">Размер шрифта: обычный</string>
+    <string name="appearance_reset_draft">Сбросить черновик</string>
+    <string name="appearance_accent">Цвет акцента</string>
+    <string name="appearance_contrast_status">Читаемый контраст · %1$.1f:1</string>
+    <string name="appearance_typography_density_summary">Типографика и плотность используют отдельные настройки шрифта и его размера ниже.</string>
+    <string name="appearance_readability_summary">Настройте здесь плотность текста, а гарнитуру выберите в разделе «Шрифт» ниже.</string>
+    <string name="appearance_reset">Сбросить</string>
+    <string name="appearance_apply">Применить</string>
+    <string name="appearance_background_installed">Установленные анимации</string>
+    <string name="appearance_import_background">Импортировать фоновую анимацию</string>
+    <string name="appearance_import_background_desc">Импортирует тот же безопасный ZIP питомца Relay или одно изображение, но использует его только для центральной или фоновой визуализации. Это не включает перемещение и не меняет плавающего питомца.</string>
+    <string name="appearance_import_sphere">Импортировать оформление Sphere</string>
+    <string name="appearance_create_pet">Создать своего питомца</string>
+    <string name="pet_creator_title">Создать своего питомца</string>
+    <string name="pet_creator_intro">Опишите спутника, проверьте созданные инструкции и выберите, где его создать. Ничего не отправляется, пока вы сами не отправите новый чат.</string>
+    <string name="pet_creator_step_idea">Выбрать идею</string>
+    <string name="pet_creator_name">Имя питомца</string>
+    <string name="pet_creator_description">Образ персонажа</string>
+    <string name="pet_creator_description_hint">Опишите персонажа, материалы, цвета, настроение и изображения-образцы, которые планируете прикрепить.</string>
+    <string name="pet_creator_animated">Анимированный пакет</string>
+    <string name="pet_creator_static">Статичное изображение</string>
+    <string name="pet_creator_step_create">Проверить и создать</string>
+    <string name="pet_creator_review_copy">Эти полные инструкции включают текущий формат питомца, проверку, конфиденциальность и границы проверки.</string>
+    <string name="pet_creator_copy">Копировать</string>
+    <string name="pet_creator_copied">Инструкции скопированы</string>
+    <string name="pet_creator_new_chat">Новый чат</string>
+    <string name="pet_creator_step_review">Проверить и импортировать</string>
+    <string name="pet_creator_review_desc">Сначала проверьте полученное изображение или ZIP. При импорте проверенные файлы копируются в хранилище приложения и не публикуются.</string>
+    <string name="pet_creator_import">Импортировать готового питомца</string>
 </resources>

@@ -1,6 +1,41 @@
 {
  "versions": [
   {
+   "version": "1.8.0",
+   "title": "Conversations with more context",
+   "date": "2026-08-09",
+   "sections": [
+    {
+     "header": "Keep the whole turn together",
+     "bullets": [
+      "Quote, edit, search, and attach or reorder files without losing the active connection, profile, or session.",
+      "Share text from another Android app into a fresh Chat draft for review before sending."
+     ]
+    },
+    {
+     "header": "See the work without the clutter",
+     "bullets": [
+      "Live thinking settles into a compact Thought disclosure, while routine tool activity groups into concise runs.",
+      "Approvals, failures, generated media, file changes, risks, and delegated work remain clearly distinct."
+     ]
+    },
+    {
+     "header": "Switch agents, not identities",
+     "bullets": [
+      "The Profile Shelf switches agents from Chat while restoring each profile's last session.",
+      "Agent Passport model and reasoning controls remain scoped to the active session instead of rewriting server defaults."
+     ]
+    },
+    {
+     "header": "Make it yours",
+     "bullets": [
+      "Preview theme accents and shapes, Sphere skins, and pets in one Appearance workflow.",
+      "Message speech controls, pet touch targets, scrolling terrain, image rotation, and edge-to-edge settings layout are more reliable."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.7.1",
    "title": "Safer, steadier conversations",
    "date": "2026-08-08",

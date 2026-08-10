@@ -89,14 +89,13 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.7.1 - Safer, steadier conversations
+v1.8.0 - Conversations with more context
 
-* Growing replies stay visible without overriding intentional scrollback.
-* Completed Markdown renders immediately and queued follow-ups stay with their chat.
-* Session pins and archives persist across restarts.
-* Approval cards require an explicit decision.
-* Hosted Hermes setup follows the official Dashboard sign-in flow.
-* Reliable Focus Voice controls and recovered chat rows.
+* Quote, edit, search, and attach files without losing chat context.
+* Switch profiles quickly while each agent keeps its own session.
+* Cleaner thinking and grouped tool activity.
+* Speak or stop completed replies from message actions.
+* Live theme, Sphere, and pet previews.
 ```
 
 ## Category

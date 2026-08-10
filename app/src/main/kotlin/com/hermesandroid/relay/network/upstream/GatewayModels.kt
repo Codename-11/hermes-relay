@@ -504,6 +504,21 @@ internal fun isCurrentModelOptionsResponse(
     requestGeneration == currentGeneration && requestProfileKey == currentProfileKey
 
 /**
+ * Selects the identity a model-options response may publish into chat UI state.
+ * Catalog-only requests populate picker choices without changing session identity.
+ */
+internal fun modelOptionsIdentityToPublish(
+    catalogOnly: Boolean,
+    hasLiveSession: Boolean,
+    sessionIdentity: GatewayModelIdentity?,
+    options: GatewayModelOptions,
+): GatewayModelIdentity? = when {
+    catalogOnly -> null
+    hasLiveSession && sessionIdentity != null -> sessionIdentity
+    else -> GatewayModelIdentity(options.currentModel, options.currentProvider)
+}
+
+/**
  * The explicit in-chat overrides to bind onto a gateway `session.create` as the
  * new session's PER-SESSION overrides. Matches the upstream desktop client,
  * whose `session.create` carries `model`/`provider`/`reasoning_effort`/`fast`

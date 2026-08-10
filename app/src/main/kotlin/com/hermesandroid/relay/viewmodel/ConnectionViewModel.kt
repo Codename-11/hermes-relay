@@ -14,10 +14,14 @@ import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppThemes
+import com.hermesandroid.relay.ui.theme.normalizeAccentHex
+import com.hermesandroid.relay.ui.theme.AppearanceShape
 import com.hermesandroid.relay.ui.components.avatar.PetImporter
 import com.hermesandroid.relay.ui.components.avatar.PetImportResult
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.SphereSkinImportResult
+import com.hermesandroid.relay.ui.components.SphereSkinImporter
 import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.auth.PairedDeviceInfo
@@ -37,6 +41,8 @@ import com.hermesandroid.relay.data.DEFAULT_PET_SIZE_SCALE
 import com.hermesandroid.relay.data.PetBehaviorPreferences
 import com.hermesandroid.relay.data.PetBehaviorPreferencesRepository
 import com.hermesandroid.relay.data.PetTemperament
+import com.hermesandroid.relay.data.ChatInputPreferencesRepository
+import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
@@ -343,6 +349,11 @@ internal fun profileApiCredential(
     connectionKey: String,
 ): String = if (usesMultiplexProfileKey) profileKey.orEmpty() else connectionKey
 
+internal fun migratedBackgroundAvatar(
+    storedBackgroundAvatar: String?,
+    legacyAgentAvatar: String?,
+): String = storedBackgroundAvatar ?: legacyAgentAvatar ?: SphereAvatar.id
+
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
     private val ctx: Context get() = getApplication()
@@ -396,6 +407,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected app theme id (palette/personality). Orthogonal to KEY_THEME,
         // which is the light/dark/auto mode axis honored by BOTH-mode themes.
         private val KEY_APP_THEME = stringPreferencesKey("app_theme")
+        // Optional RGB accent override applied on top of the selected preset.
+        // Null means the preset's authored accent remains authoritative.
+        private val KEY_APPEARANCE_ACCENT = stringPreferencesKey("appearance_accent")
+        private val KEY_APPEARANCE_SHAPE = stringPreferencesKey("appearance_shape")
         // Selected app font id (body typeface). Resolved against AppFont at the
         // Compose theme root; defaults to Inter. Orthogonal to KEY_FONT_SCALE
         // (which scales sizes); this picks the family.
@@ -403,12 +418,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
         // active theme's preferred skin; any other id pins a specific skin.
         private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
-        // Legacy combined sphere/pet choice. Read for one release so existing
-        // users keep their selected pet when the concepts split.
+        // Legacy combined sphere/pet choice. Read during migration so existing
+        // users retain both their prior central visual and companion choice.
         private val KEY_AGENT_AVATAR = stringPreferencesKey("agent_avatar")
         // Optional floating companion id. The explicit sentinel distinguishes
         // "no pet" from a preference that has not yet been migrated.
         private val KEY_FLOATING_PET = stringPreferencesKey("floating_pet")
+        // Central visualization selection, independent from the floating pet.
+        private val KEY_BACKGROUND_AVATAR = stringPreferencesKey("background_avatar")
         // Reserved storage sentinel. Pet ids may legitimately be ordinary words
         // such as "none", so keep the no-selection marker outside that space.
         private const val NO_FLOATING_PET = "__none__"
@@ -466,6 +483,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val petBehaviorPreferencesRepository =
         PetBehaviorPreferencesRepository(application)
+    private val chatInputPreferencesRepository =
+        ChatInputPreferencesRepository(application)
 
     // --- Core networking components ---
 
@@ -1302,6 +1321,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppThemes.DEFAULT_ID)
 
+    val appearanceAccent: StateFlow<String?> = application.relayDataStore.data
+        .map { preferences -> normalizeAccentHex(preferences[KEY_APPEARANCE_ACCENT]) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val appearanceShape: StateFlow<String> = application.relayDataStore.data
+        .map { preferences -> AppearanceShape.fromId(preferences[KEY_APPEARANCE_SHAPE]).id }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppearanceShape.DEFAULT.id)
+
     // Selected app font id (body typeface). Defaults to Inter. Resolved against
     // AppFont.byId at the Compose theme root, which rebuilds Typography so the
     // whole app re-themes live when this changes.
@@ -1319,8 +1346,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 
-    // Optional floating companion. For one release, an absent new key reads the
-    // legacy combined selection: sphere -> no companion; a pet id -> companion.
+    // Optional floating companion. An absent split key reads the legacy combined
+    // selection: sphere -> no companion; a pet id -> companion.
     val floatingPet: StateFlow<String?> = application.relayDataStore.data
         .map { preferences ->
             val selected = preferences[KEY_FLOATING_PET]
@@ -1329,6 +1356,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             selected.takeUnless { it == NO_FLOATING_PET || it == SphereAvatar.id }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Sphere or a validated pet-format asset rendered on central/ambient surfaces. */
+    val backgroundAvatar: StateFlow<String> = application.relayDataStore.data
+        .map { preferences ->
+            migratedBackgroundAvatar(
+                storedBackgroundAvatar = preferences[KEY_BACKGROUND_AVATAR],
+                legacyAgentAvatar = preferences[KEY_AGENT_AVATAR],
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SphereAvatar.id)
 
     /** Whether the selected companion may autonomously move between safe perches. */
     val petRoamingEnabled: StateFlow<Boolean> = application.relayDataStore.data
@@ -1523,6 +1560,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /** The active profile's local agent-icon path (client-side, never sent to Hermes). */
     val profileIcon: StateFlow<String?> get() = profileController.profileIcon
 
+    /** A local icon path for a specific profile identity on the active connection. */
+    fun profileIconFlow(profileName: String?) = profileController.profileIconFlow(profileName)
+
     val hostProfileIconImportState: StateFlow<ProfileController.HostIconImportState>
         get() = profileController.hostIconImportState
 
@@ -1548,7 +1588,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Lock the active connection to [profile] (null = Server default). */
     fun lockProfile(profile: Profile?) {
-        viewModelScope.launch { profileController.lockProfile(profile) }
+        profileController.lockProfile(profile)
     }
 
     /** Remove the active connection's profile lock. */
@@ -1811,14 +1851,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     init {
-        // Materialize the split preference once. Keeping the legacy read above
-        // for one release also covers interrupted upgrades and older backups.
+        // Materialize the independent central and floating preferences. Legacy
+        // users retain the prior visual in both roles until they choose otherwise.
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 if (preferences[KEY_FLOATING_PET] == null) {
                     preferences[KEY_FLOATING_PET] = preferences[KEY_AGENT_AVATAR]
                         ?.takeUnless { it == SphereAvatar.id }
                         ?: NO_FLOATING_PET
+                }
+                if (preferences[KEY_BACKGROUND_AVATAR] == null) {
+                    preferences[KEY_BACKGROUND_AVATAR] = migratedBackgroundAvatar(
+                        storedBackgroundAvatar = null,
+                        legacyAgentAvatar = preferences[KEY_AGENT_AVATAR],
+                    )
                 }
                 // Before presence and motion were split, animation_enabled also
                 // controlled whether the Sphere was shown. Preserve that choice
@@ -1950,6 +1996,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun setBackgroundAvatar(avatarId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_BACKGROUND_AVATAR] = avatarId.ifBlank { SphereAvatar.id }
+                preferences[KEY_BACKGROUND_VISUALIZATION_ENABLED] = true
+            }
+        }
+    }
+
     fun setImageGenerationStyle(value: String) {
         val normalized = value.takeIf {
             it in setOf("rotate", "grid", "sphere", "nodes")
@@ -2050,6 +2105,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_KEEP_COMPOSER_FOCUSED_ON_SEND] = enabled
             }
+        }
+    }
+
+    val physicalKeyboardEnterBehavior: StateFlow<PhysicalKeyboardEnterBehavior> =
+        chatInputPreferencesRepository.physicalKeyboardEnterBehavior
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                PhysicalKeyboardEnterBehavior.SendMessage,
+            )
+
+    fun setPhysicalKeyboardEnterBehavior(behavior: PhysicalKeyboardEnterBehavior) {
+        viewModelScope.launch {
+            chatInputPreferencesRepository.setPhysicalKeyboardEnterBehavior(behavior)
         }
     }
 
@@ -6435,7 +6504,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun saveLastSessionId(sessionId: String?) {
         _lastSessionId.value = sessionId
         val connectionId = activeConnectionId.value
-        val profileName = profileController.resolveSessionProfileName()
+        // Last-session persistence follows the selected UI profile identity.
+        // The null Server-default sentinel stays separate from whichever named
+        // profile the server's sticky default currently resolves to.
+        val profileName = profileController.selectedProfile.value?.name
         viewModelScope.launch {
             if (connectionId != null) {
                 if (sessionId != null) {
@@ -6467,7 +6539,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }
             }
-            if (profileName == null || AgentDisplay.isServerDefaultAlias(profileName)) {
+            if (profileName == null) {
                 getApplication<Application>().relayDataStore.edit { preferences ->
                     if (sessionId != null) {
                         preferences[KEY_LAST_SESSION_ID] = sessionId
@@ -6594,6 +6666,59 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /** Apply or reset the local accent override. Invalid values safely reset. */
+    fun setAppearanceAccent(accentHex: String?) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                val normalized = normalizeAccentHex(accentHex)
+                if (normalized == null) preferences.remove(KEY_APPEARANCE_ACCENT)
+                else preferences[KEY_APPEARANCE_ACCENT] = normalized
+            }
+        }
+    }
+
+    fun setAppearanceShape(shapeId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_APPEARANCE_SHAPE] = AppearanceShape.fromId(shapeId).id
+            }
+        }
+    }
+
+    /** Import one declarative sphere-skin JSON file, select it, then hot-refresh Appearance. */
+    fun importSphereSkin(uri: Uri) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                SphereSkinImporter.importUri(getApplication<Application>(), uri)
+            }
+            when (result) {
+                is SphereSkinImportResult.Success -> {
+                    setSphereSkin(result.id)
+                    refreshAgentAvatars()
+                    _avatarEvents.tryEmit("Imported “${result.label}”")
+                }
+                is SphereSkinImportResult.Failure -> _avatarEvents.tryEmit(result.reason)
+            }
+        }
+    }
+
+    /** Import a validated pet-format asset for the central/background renderer. */
+    fun importBackgroundAnimation(uri: Uri) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                PetImporter.importUri(getApplication<Application>(), uri)
+            }
+            when (result) {
+                is PetImportResult.Success -> {
+                    setBackgroundAvatar(result.id)
+                    refreshAgentAvatars()
+                    _avatarEvents.tryEmit("Imported background “${result.label}”")
+                }
+                is PetImportResult.Failure -> _avatarEvents.tryEmit(result.reason)
+            }
+        }
+    }
+
     /** Delete a user pet by id; clear it if it was the selected companion. */
     fun deleteUserAvatar(avatarId: String, label: String) {
         viewModelScope.launch {
@@ -6602,6 +6727,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
             if (deleted) {
                 if (floatingPet.value == avatarId) setFloatingPet(null)
+                if (backgroundAvatar.value == avatarId) setBackgroundAvatar(SphereAvatar.id)
                 refreshAgentAvatars()
                 _avatarEvents.tryEmit("Removed “$label”")
             } else {

@@ -112,12 +112,11 @@ data class ChatMessage(
      */
     val clientOnly: Boolean = false,
     /**
-     * Delivery state for a message the user sends into an agent **Thread** over
-     * the relay proactive channel ([com.hermesandroid.relay.viewmodel.ChatViewModel]
-     * routes `source=phone` sessions here instead of the normal chat send).
-     * `SENDING` until the relay acks (`proactive.reply.ack`) → `DELIVERED`;
-     * `FAILED` on a send error. Null for ordinary chat messages — those render
-     * no status affix.
+     * Delivery state for a user-authored message. Agent **Thread** replies use
+     * `SENDING` until the relay acks (`proactive.reply.ack`) → `DELIVERED`,
+     * with `FAILED` on a send error. Ordinary chat may additionally use
+     * `QUEUED` and `STEERED` to make active-turn routing visible. Null keeps the
+     * legacy behavior of rendering no status affix.
      */
     val deliveryStatus: MessageDeliveryStatus? = null,
     /**
@@ -388,15 +387,17 @@ enum class MessageRole {
 }
 
 /**
- * Delivery state of a user reply sent into an agent Thread over the relay
- * proactive channel. Only set on Thread replies; ordinary chat messages leave
- * it null and show no status affix.
+ * Delivery state of a user-authored message. Thread replies use the relay ack
+ * lifecycle; ordinary chat can additionally expose queue and steer outcomes.
+ * Null preserves the legacy behavior of rendering no status affix.
  *
  * - [SENDING]   handed to the relay; awaiting the per-reply ack.
+ * - [QUEUED]    held client-side until the active turn completes.
+ * - [STEERED]   accepted as a correction to the active turn.
  * - [DELIVERED] the relay acked (`proactive.reply.ack`) — buffered for the agent.
  * - [FAILED]    the send errored (e.g. relay disconnected).
  */
-enum class MessageDeliveryStatus { SENDING, DELIVERED, FAILED }
+enum class MessageDeliveryStatus { SENDING, QUEUED, STEERED, DELIVERED, FAILED }
 
 data class ChatSession(
     val sessionId: String,

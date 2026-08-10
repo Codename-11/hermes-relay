@@ -10,6 +10,7 @@ const manifestPath = resolve(repositoryRoot, 'docs/media/screenshots.json');
 const productAssets = [
   { sceneId: '02_chat', destination: 'chat.png' },
   { sceneId: '03_voice', destination: 'voice.png' },
+  { sceneId: '01_voice_conversation', destination: 'voice-conversation.png' },
   { sceneId: '06_manage', destination: 'manage.png' },
 ];
 
@@ -19,7 +20,10 @@ if (!['check', 'sync'].includes(mode)) {
   process.exitCode = 2;
 } else {
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  const scenes = new Map(manifest.scenes.map((scene) => [scene.id, scene]));
+  const scenes = new Map(
+    [...manifest.scenes, ...(manifest.supplementalScenes ?? [])]
+      .map((scene) => [scene.id, scene]),
+  );
   const destinationDir = resolve(websiteRoot, 'public/product');
   const failures = [];
 

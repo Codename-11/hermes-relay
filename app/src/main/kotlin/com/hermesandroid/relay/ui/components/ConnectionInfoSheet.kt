@@ -684,7 +684,6 @@ fun RelayInfoSheet(
 // the Profile section footer spells out the override.
 
 private enum class AgentPassportPicker {
-    Profile,
     Personality,
     Model,
     Reasoning,
@@ -762,6 +761,7 @@ fun AgentInfoSheet(
 
     var selectedTab by remember { mutableStateOf(0) }
     var activePicker by remember { mutableStateOf<AgentPassportPicker?>(null) }
+    var showProfileSwitcher by remember { mutableStateOf(false) }
     var showIdentityEditor by remember { mutableStateOf(false) }
     var showProfileManager by remember { mutableStateOf(false) }
 
@@ -771,6 +771,20 @@ fun AgentInfoSheet(
     val currentSession = remember(sessions, currentSessionId) {
         sessions.firstOrNull { it.sessionId == currentSessionId }
     }
+    val sessionModelState = resolveSessionModelUiState(
+        hasSession = currentSessionId != null,
+        pendingModel = selectedModel,
+        pendingProvider = selectedProvider,
+        gatewayModel = gatewayModel,
+        gatewayProvider = gatewayProvider,
+        persistedSessionModel = currentSession?.model,
+        profileDefaultModel = resolvedProfile?.model,
+        serverDefaultModel = serverModel,
+    )
+    val sessionPickerProvider = sessionModelState.pickerProvider
+        ?: sessionModelState.pickerModel?.let { model ->
+            modelProviders.singleOrNull { model in it.models }?.slug
+        }
     val agentName = AgentDisplay.agentName(
         profile = resolvedProfile,
         selectedPersonality = selectedPersonality,
@@ -782,25 +796,22 @@ fun AgentInfoSheet(
         AgentDisplay.profileDisplayName(it) ?: it.name
     } ?: stringResource(R.string.conn_info_server_default)
     val serverDefaultLabel = stringResource(R.string.conn_info_server_default)
-    val modelLabel = AgentDisplay.displayModelName(selectedModel ?: gatewayModel)
-        ?: AgentDisplay.displayModelName(resolvedProfile?.model)
-        ?: AgentDisplay.displayModelName(serverModel)
+    val modelLabel = AgentDisplay.displayModelName(sessionModelState.model)
         ?: serverDefaultLabel
     val serverDefaultModelLabel = AgentDisplay.displayModelName(serverModel)
         ?: AgentDisplay.displayModelName(resolvedProfile?.model)
     val providerLabel = modelProviders
-        .firstOrNull { it.slug.equals(gatewayProvider, ignoreCase = true) }
+        .firstOrNull { it.slug.equals(sessionModelState.provider, ignoreCase = true) }
         ?.name
         ?.takeIf { it.isNotBlank() }
-        ?: gatewayProvider.takeIf { it.isNotBlank() }
-    val sessionModelLabel = AgentDisplay.displayModelName(currentSession?.model)
-        ?: modelLabel
-    val sessionProviderLabel = currentSession?.model
+        ?: sessionModelState.provider
+    val sessionModelLabel = modelLabel
+    val sessionProviderLabel = sessionModelState.model
         ?.takeIf { it.isNotBlank() }
         ?.let { sessionModel ->
             modelProviders.firstOrNull { sessionModel in it.models }?.name
         }
-        ?: providerLabel.takeIf { currentSession?.model.isNullOrBlank() }
+        ?: providerLabel
     val connected = chatReady
     val resolvedPresence = resolvedProfile?.let {
         ProfilePresenceResolver.resolve(it, connected)
@@ -851,6 +862,8 @@ fun AgentInfoSheet(
         agentProfiles,
         selectedModel,
         selectedProvider,
+        sessionModelState,
+        sessionPickerProvider,
         modelLabel,
         unavailableModelLabel,
         modelNeedsSetupLabel,
@@ -871,7 +884,7 @@ fun AgentInfoSheet(
                     label = serverDefaultLabel,
                     value = null,
                     secondary = serverDefaultModelLabel,
-                    selected = selectedModel == null,
+                    selected = sessionModelState.inheritsProfileDefault,
                 ),
             )
             modelProviders
@@ -891,8 +904,8 @@ fun AgentInfoSheet(
                                         provider.warning ?: modelNeedsSetupLabel
                                     else -> null
                                 },
-                                selected = selectedModel == model &&
-                                    selectedProvider.equals(provider.slug, ignoreCase = true),
+                                selected = sessionModelState.pickerModel == model &&
+                                    sessionPickerProvider.equals(provider.slug, ignoreCase = true),
                                 enabled = !unavailable,
                             ),
                         )
@@ -908,7 +921,7 @@ fun AgentInfoSheet(
                             value = model.id,
                             group = "Routes",
                             secondary = model.routeDetail,
-                            selected = selectedModel == model.id,
+                            selected = sessionModelState.pickerModel == model.id,
                         ),
                     )
                 }
@@ -916,10 +929,10 @@ fun AgentInfoSheet(
     }
 
     LaunchedEffect(Unit) {
-        chatViewModel.refreshModelOptions()
+        chatViewModel.refreshModelOptions(catalogOnly = true)
         chatViewModel.refreshApprovalMode()
         chatViewModel.refreshPersonalities()
-        chatViewModel.refreshModels()
+        chatViewModel.refreshModels(catalogOnly = true)
         connectionViewModel.refreshDashboardProfiles()
     }
 
@@ -945,10 +958,7 @@ fun AgentInfoSheet(
                 presence = resolvedPresence,
                 hasSoul = resolvedProfile?.hasSoul == true,
                 skillCount = resolvedProfile?.skillCount ?: 0,
-                transportLabel = transportFriendlyName(sessionTransport.type),
-                sessionLabel = currentSessionId?.take(8) ?: "—",
-                contextLabel = contextLabel,
-                onProfileClick = { activePicker = AgentPassportPicker.Profile },
+                onProfileClick = { showProfileSwitcher = true },
             )
 
             if (showIdentityEditor) {
@@ -982,7 +992,7 @@ fun AgentInfoSheet(
                 ) {
                     Column {
                         Text(
-                            text = stringResource(R.string.conn_info_active_configuration),
+                            text = stringResource(R.string.conn_info_session_title),
                             modifier = Modifier.padding(
                                 start = 18.dp,
                                 top = 17.dp,
@@ -993,24 +1003,12 @@ fun AgentInfoSheet(
                             fontWeight = FontWeight.SemiBold,
                         )
                         PassportConfigRow(
-                            icon = Icons.Filled.Person,
-                            title = stringResource(R.string.conn_info_personality_title),
-                            value = AgentDisplay.personalityLabel(
-                                selectedPersonality,
-                                defaultPersonality,
-                            ),
-                            expanded = false,
-                            enabled = !isStreaming,
-                            onClick = { activePicker = AgentPassportPicker.Personality },
-                        )
-                        PassportDivider()
-                        PassportConfigRow(
                             icon = Icons.Filled.ViewInAr,
                             title = stringResource(R.string.conn_info_model_title),
-                            value = selectedModel ?: if (modelLabel == serverDefaultLabel) {
-                                serverDefaultLabel
-                            } else {
+                            value = if (sessionModelState.inheritsProfileDefault) {
                                 stringResource(R.string.conn_info_server_default_model, modelLabel)
+                            } else {
+                                modelLabel
                             },
                             expanded = false,
                             enabled = !isStreaming,
@@ -1031,6 +1029,44 @@ fun AgentInfoSheet(
                                 onClick = { activePicker = AgentPassportPicker.Reasoning },
                             )
                         }
+                    }
+                }
+
+                // Upstream personality changes persist to the active profile
+                // while also applying to the live session. Keep that control
+                // visibly separate from the session-only model/effort card so
+                // it cannot be mistaken for an ephemeral override.
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                    ),
+                ) {
+                    Column {
+                        Text(
+                            text = stringResource(R.string.conn_info_profile),
+                            modifier = Modifier.padding(
+                                start = 18.dp,
+                                top = 17.dp,
+                                end = 18.dp,
+                                bottom = 4.dp,
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        PassportConfigRow(
+                            icon = Icons.Filled.Person,
+                            title = stringResource(R.string.conn_info_personality_title),
+                            value = AgentDisplay.personalityLabel(
+                                selectedPersonality,
+                                defaultPersonality,
+                            ),
+                            expanded = false,
+                            enabled = !isStreaming,
+                            onClick = { activePicker = AgentPassportPicker.Personality },
+                        )
                     }
                 }
 
@@ -1155,49 +1191,6 @@ fun AgentInfoSheet(
     }
 
     when (activePicker) {
-        AgentPassportPicker.Profile -> {
-            val selectedProfileKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
-            val visibleProfileKeys = ProfilePresentationPolicy.visibleKeys(
-                profiles = agentProfiles,
-                presentation = profilePresentation,
-                selectedKey = selectedProfileKey,
-            )
-            val options = visibleProfileKeys.mapNotNull { profileKey ->
-                if (profileKey == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY) {
-                    ChatInputPickerOption(
-                        label = serverDefaultLabel,
-                        value = null,
-                        secondary = AgentDisplay.profileDisplayName(resolvedProfile),
-                        selected = selectedProfile == null,
-                        enabled = !isProfileLocked && profileSwitchEnabled,
-                    )
-                } else {
-                    agentProfiles.firstOrNull { it.name == profileKey }?.let { profile ->
-                        ChatInputPickerOption(
-                            label = AgentDisplay.profileDisplayName(profile)
-                                ?: profile.name.replaceFirstChar { it.uppercase() },
-                            value = profile.name,
-                            secondary = profile.model.takeIf { it.isNotBlank() },
-                            selected = selectedProfile?.name == profile.name,
-                            enabled = !isProfileLocked && profileSwitchEnabled,
-                        )
-                    }
-                }
-            }
-            OptionPickerSheet(
-                title = stringResource(R.string.conn_info_profile),
-                options = options,
-                onSelect = { option ->
-                    val profile = option.value?.let { name ->
-                        agentProfiles.firstOrNull { it.name == name }
-                    }
-                    connectionViewModel.selectProfile(profile)
-                    chatViewModel.activateGatewayProfile(profile)
-                    activePicker = null
-                },
-                onDismiss = { activePicker = null },
-            )
-        }
         AgentPassportPicker.Personality -> OptionPickerSheet(
             title = stringResource(R.string.conn_info_personality_title),
             options = buildList {
@@ -1228,7 +1221,9 @@ fun AgentInfoSheet(
         AgentPassportPicker.Model -> ModelPickerSheet(
             options = passportModelOptions,
             refreshing = modelOptionsRefreshing,
-            onRefresh = { chatViewModel.refreshModelOptions(refresh = true) },
+            onRefresh = {
+                chatViewModel.refreshModelOptions(refresh = true, catalogOnly = true)
+            },
             onSelect = { option ->
                 activePicker = null
                 if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
@@ -1274,6 +1269,31 @@ fun AgentInfoSheet(
         null -> Unit
     }
 
+    if (showProfileSwitcher) {
+        ProfileSwitcherSheet(
+            connectionViewModel = connectionViewModel,
+            profiles = agentProfiles,
+            selectedProfile = selectedProfile,
+            resolvedProfile = resolvedProfile,
+            presentation = profilePresentation,
+            isProfileLocked = isProfileLocked,
+            switchEnabled = profileSwitchEnabled,
+            onSelect = { profile ->
+                if (AgentDisplay.profileSessionKey(profile?.name) !=
+                    AgentDisplay.profileSessionKey(selectedProfile?.name)
+                ) {
+                    connectionViewModel.selectProfile(profile)
+                    chatViewModel.activateGatewayProfile(profile)
+                }
+            },
+            onManageDisplay = {
+                showProfileSwitcher = false
+                showProfileManager = true
+            },
+            onDismiss = { showProfileSwitcher = false },
+        )
+    }
+
     if (showProfileManager) {
         ProfileDisplayManagerDialog(
             profiles = agentProfiles,
@@ -1303,11 +1323,11 @@ internal fun AgentPassportSheetHost(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        // Use Material's gesture owner instead of custom pointer input. The
-        // verticalScroll child consumes downward movement until its top
-        // boundary, then hands the remainder to the sheet; Material also
-        // follows the platform animator scale for reduced-motion users.
-        sheetGesturesEnabled = true,
+        // A full-height sheet and its long verticalScroll child otherwise
+        // compete for the same drag at the content boundaries. On some devices
+        // that repeatedly settles/re-expands the sheet and produces a visible
+        // vibration at the bottom. Close and system Back remain explicit.
+        sheetGesturesEnabled = false,
     ) {
         Column(
             modifier = Modifier
@@ -1441,9 +1461,6 @@ private fun AgentPassportHeader(
     presence: ProfilePresence?,
     hasSoul: Boolean,
     skillCount: Int,
-    transportLabel: String,
-    sessionLabel: String,
-    contextLabel: String,
     onProfileClick: () -> Unit,
 ) {
     val brand = LocalBrand.current
@@ -1461,17 +1478,8 @@ private fun AgentPassportHeader(
         }
     }
     val identityMetadata = listOfNotNull(
-        providerLabel,
         stringResource(R.string.conn_info_soul).takeIf { hasSoul },
         stringResource(R.string.conn_info_skills_count, skillCount).takeIf { skillCount > 0 },
-    ).joinToString(" · ")
-    val connectionValue = listOf(
-        transportLabel,
-        if (connected) {
-            stringResource(R.string.conn_info_connected)
-        } else {
-            stringResource(R.string.conn_info_disconnected)
-        },
     ).joinToString(" · ")
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -1565,7 +1573,7 @@ private fun AgentPassportHeader(
             ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                     Text(
-                        text = stringResource(R.string.conn_info_active_profile).uppercase(),
+                        text = stringResource(R.string.profile_shelf_switch_agent).uppercase(),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -1607,40 +1615,17 @@ private fun AgentPassportHeader(
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_model_title),
-                    value = modelLabel,
-                    modifier = Modifier.weight(1f),
-                )
-                PassportTechnicalDivider(height = 44.dp)
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_connection),
-                    value = connectionValue,
-                    valueColor = if (connected) brand.green else MaterialTheme.colorScheme.error,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_session_title),
-                    value = sessionLabel,
-                    modifier = Modifier.weight(1f),
-                )
-                PassportTechnicalDivider(height = 42.dp)
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_context),
-                    value = contextLabel,
-                    modifier = Modifier.weight(1f),
-                )
-                PassportTechnicalDivider(height = 42.dp)
-                PassportTechnicalField(
-                    label = stringResource(R.string.conn_info_transport),
-                    value = transportLabel,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+            PassportTechnicalField(
+                label = stringResource(R.string.voice_test_label_provider),
+                value = providerLabel ?: "—",
+                modifier = Modifier.fillMaxWidth(),
+            )
+            PassportTechnicalField(
+                label = stringResource(R.string.conn_info_model_title),
+                value = modelLabel,
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 2,
+            )
         }
     }
 }
@@ -1651,6 +1636,7 @@ private fun PassportTechnicalField(
     value: String,
     modifier: Modifier = Modifier,
     valueColor: Color = MaterialTheme.colorScheme.onSurface,
+    maxLines: Int = 1,
 ) {
     Column(
         modifier = modifier.padding(horizontal = 8.dp),
@@ -1666,20 +1652,10 @@ private fun PassportTechnicalField(
             text = value,
             style = MaterialTheme.typography.labelLarge,
             color = valueColor,
-            maxLines = 1,
+            maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
         )
     }
-}
-
-@Composable
-private fun PassportTechnicalDivider(height: Dp) {
-    Box(
-        modifier = Modifier
-            .height(height)
-            .widthIn(min = 1.dp, max = 1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-    )
 }
 
 @Composable
@@ -2290,7 +2266,7 @@ private fun LegacyAgentInfoSheet(
 
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
-    LaunchedEffect(Unit) { chatViewModel.refreshModelOptions() }
+    LaunchedEffect(Unit) { chatViewModel.refreshModelOptions(catalogOnly = true) }
     LaunchedEffect(Unit) { chatViewModel.refreshApprovalMode() }
     // Re-pull server-supplied personalities (list + default + active) on open so
     // a server-side change shows without an app reload.
@@ -2298,7 +2274,7 @@ private fun LegacyAgentInfoSheet(
     // Re-pull the SSE-fallback model list + skill catalog on open so server-side
     // changes surface without an app reload (gateway model groups are covered by
     // refreshModelOptions above; skills feed the command palette).
-    LaunchedEffect(Unit) { chatViewModel.refreshModels() }
+    LaunchedEffect(Unit) { chatViewModel.refreshModels(catalogOnly = true) }
     LaunchedEffect(Unit) { chatViewModel.refreshSkills() }
     // Pull the host's agent profiles from the dashboard so they appear in the
     // Profile picker even on a dashboard-only (non-relay) connection.
@@ -2503,7 +2479,7 @@ private fun LegacyAgentInfoSheet(
                 // "default" so "Server default" vs "default" would be
                 // otherwise indistinguishable.
                 val serverDefaultProfile = agentProfiles
-                    .firstOrNull { AgentDisplay.isServerDefaultAlias(it.name) }
+                    .firstOrNull { it.name.equals("default", ignoreCase = true) }
                 val selectedKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
                 val visibleProfileKeys = ProfilePresentationPolicy
                     .visibleKeys(agentProfiles, profilePresentation, selectedKey)
@@ -2526,8 +2502,7 @@ private fun LegacyAgentInfoSheet(
                     val lockedDisplayName = when {
                         lockedProfileName == null ->
                             stringResource(R.string.conn_info_server_default)
-                        AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
-                            lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
+                        lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
                             stringResource(R.string.conn_info_server_default)
                         else ->
                             agentProfiles
@@ -3615,7 +3590,7 @@ private fun LegacyAgentInfoSheet(
 // --- AgentInfoSheet helpers ----------------------------------------------
 
 @Composable
-private fun ProfileDisplayManagerDialog(
+internal fun ProfileDisplayManagerDialog(
     profiles: List<Profile>,
     presentation: ProfilePresentation,
     selectedProfileName: String?,

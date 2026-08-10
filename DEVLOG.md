@@ -1,5 +1,135 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-09 — Gateway activity recovery and chat speech
+
+Successful Android Gateway turns now reconcile against their profile-owned,
+structured session history. This recovers persisted tool calls when an upstream
+Gateway completes a turn without emitting live tool lifecycle events; assistant
+prose is never inspected for inferred activity, and the recovered calls continue
+through the existing Off, Compact, and Detailed display policy.
+
+The Speak message action now follows configured voice readiness and idle output
+state instead of active Voice Mode or presentation style. A settled assistant
+reply can therefore be read aloud directly from chat, while live or provider
+playback still prevents overlapping output. One-shot message narration owns its
+completion state outside Voice Mode and replaces Speak with Stop while active;
+stopping drains only that narration pipeline and does not cancel a chat turn
+started while the response was playing.
+
+## 2026-08-09 — Quiet reasoning and grouped tool activity
+
+Android Chat now treats reasoning and routine tools as transcript scaffolding.
+Visible live reasoning opens automatically without a tinted card, then collapses
+to a quiet Thought disclosure when it settles unless the reader has explicitly
+chosen its state. Empty reasoning remains absent and the existing first-token
+status continues to own the waiting state.
+
+Top-level routine calls retain their source order but render as consecutive
+activity runs. A live run keeps one summary and one latest-activity ticker in a
+stable footprint; a settled run becomes one collapsed summary that can disclose
+the original identity-preserving tool rows. File edits, approval/question tools,
+generated media, failures, output-risk findings, and delegated work split runs
+and retain independent surfaces. Off hides only ordinary activity runs, Compact
+uses compact disclosed rows, and Detailed preserves the full per-tool detail
+surface on demand. Expansion still yields bottom-follow ownership, and each run
+registers its measured bounds as Chat pet terrain.
+
+## 2026-08-09 — Android chat experience and attachment polish
+
+The Android composer now declares sentence capitalization and a Send IME
+action. A device-level setting chooses whether unmodified physical Enter sends
+or inserts a newline; Shift+Enter remains a newline and Ctrl/Command+Enter
+always submits. Every submit route converges on the existing live-turn owner,
+so the current gateway state still decides whether content steers the active
+turn or queues behind it. Directional focus traversal is cancelled while the
+editor owns focus so hardware arrow keys continue to move the caret and
+selection.
+
+Conversation bottom-follow now remains owned when thinking or tool details
+expand. Only an actual drag ending above the bottom yields that ownership, and
+a chat first measured while the IME is already visible now captures the same
+resize-follow state as a keyboard opened after composition.
+
+Bitmap-backed attachment surfaces now apply EXIF rotation and reflection before
+display. Attachment reads and Base64 conversion also leave the UI thread, so
+selecting a larger photo no longer performs the full ingestion path inside the
+activity-result callback.
+
+Composer drafts now belong to the stable connection, profile, and session
+identity. Text, edit context, and pending attachments restore when returning to
+a chat without persisting attachment bytes. Pending attachments expose bounded,
+orientation-aware previews plus explicit remove and reorder controls.
+
+Conversation overflow now opens transcript search with previous/next matches
+and a prompt-turn rail, both keyed to the same stable UI identity as the message
+list. Assistant prose retains the compact bubble and subtle edge treatment that
+keeps it legible above the animated chat background. Tapping a message reveals
+the existing copy, quote, speak, and edit actions with reduced-motion-aware
+expansion and accessible targets.
+
+Quotes are composer-owned structured references instead of raw blockquote text.
+The composer and sent message render a linked, highlighted author preview; the
+transport remains ordinary Markdown so unmodified Desktop and TUI clients show
+a readable quoted reply. Thinking and top-level tools continue to use their
+independent compact thought bubbles and configured compact or full tool cards,
+without an aggregate completion card. The composer also names Correction and
+Queue states with visible labels. Gateway redirects remain text-only:
+follow-ups with attachments are forced through the existing destination-owned
+queue so files cannot be left behind by a correction request.
+
+## 2026-08-08 — Standalone Android thinking status
+
+Blank streaming assistant rows now present the full-size working animation
+directly in the conversation lane above the visible `Still working…` label,
+without painting an empty assistant bubble around the status. The first answer
+token replaces that standalone state with the normal response bubble, while
+recovery retains the distinct `Reconnecting to your answer…` wording. The
+status owns one stable TalkBack description and suppresses animated child
+nodes, avoiding repeated announcements without claiming measurable progress.
+
+## 2026-08-08 — Android text-share draft handoff
+
+The shared Android manifest now advertises a `text/*` `ACTION_SEND` target for
+both app flavors. `MainActivity` accepts only non-blank single-item text shares
+and places them in a process-local, identity-fenced handoff that survives cold
+Compose initialization. Once the configured chat context settles, the app root
+navigates to Chat and delegates draft creation and composer prefill to
+`ChatViewModel`.
+
+The ViewModel reuses the existing new-chat lifecycle, preserving Gateway
+background-turn reconciliation and the active connection/profile/transport
+namespace. Composer prefills use a one-consumer conflated channel so an intent
+received before Chat composition is delivered once. Shared text is never
+routed through message sending; the user must review and submit it explicitly.
+
+## 2026-08-08 — Android Profile Shelf and profile-context identity
+
+Chat profile selection now lives in a collapsible shelf directly below the top
+app bar. The header toggles the shelf, the active capsule opens Agent Passport,
+inactive 48 dp avatars switch context, and a pinned overflow opens the same full
+switcher used by Passport. Saved ordering and hidden state drive both surfaces;
+the selected hidden profile remains disclosed, while a one-identity shelf stays
+out of the layout. Long-press actions expose inspection, Passport, profile lock,
+and hiding without adding activity or presence claims.
+
+The shelf uses the chat surface instead of a second elevated toolbar. A neutral
+active capsule, 36 dp avatar artwork inside 48 dp targets, compact spacing, and
+a contained overflow affordance keep the row visually subordinate to Chat. When
+Server default resolves to a concrete profile, that profile's avatar remains
+the identity and a small home badge discloses its default routing role.
+Local avatar lookup remains keyed to the Server-default presentation identity,
+so an image customized while that row is selected appears consistently in both
+the Chat header and shelf rather than being re-keyed to whichever explicit
+profile is currently active.
+
+The Server-default sentinel is now distinct from a profile literally named
+`default`. Profile selection restores the last compatible connection/profile/
+transport session, otherwise leaves a fresh draft. Gateway turns detach and
+reconcile in their original session, live SSE turns keep switching disabled,
+and every profile transition clears session-scoped model, provider, personality,
+reasoning, approval, Fast, and YOLO state before the destination session seeds
+its own values. Server sticky-default state is never written.
+
 ## 2026-08-08 — Streaming reply tail follow
 
 Android's conversation-bottom follower now reads the current immutable message

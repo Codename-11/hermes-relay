@@ -1909,6 +1909,37 @@ class ChatHandler {
         }
     }
 
+    /**
+     * Returns true when structured session history contains tool lifecycle
+     * state that the live transcript did not receive. This is a read-only
+     * preflight for Gateway completion reconciliation: healthy live turns keep
+     * their current StateFlow list and UI identity, while omitted upstream
+     * tool events opt into [loadMessageHistory]. Assistant prose is never
+     * inspected or interpreted here.
+     */
+    fun hasMissingPersistedToolActivity(items: List<MessageItem>): Boolean {
+        val toolResults = items.filter { it.role == "tool" }
+            .associateBy { it.toolCallId }
+        val persistedCalls = coalesceRenderedHistoryItems(items)
+            .asSequence()
+            .filter { it.role == "assistant" }
+            .flatMap { parseToolCallsFromHistory(it.toolCalls, toolResults).asSequence() }
+            .toList()
+        if (persistedCalls.isEmpty()) return false
+
+        val localCalls = _messages.value.flatMap { it.toolCalls }
+        return persistedCalls.any { persisted ->
+            val local = persisted.id?.let { id -> localCalls.firstOrNull { it.id == id } }
+                ?: localCalls.firstOrNull {
+                    it.id == null && it.name == persisted.name && it.args == persisted.args
+                }
+            local == null ||
+                (persisted.isComplete && !local.isComplete) ||
+                (persisted.result != null && persisted.result != local.result) ||
+                (persisted.success != null && persisted.success != local.success)
+        }
+    }
+
     // --- Session management ---
 
     fun setSessionId(sessionId: String?) {

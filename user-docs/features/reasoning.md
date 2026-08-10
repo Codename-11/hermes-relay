@@ -1,6 +1,6 @@
 # Reasoning Display
 
-When the AI model uses extended thinking (Claude with thinking enabled, o1-style reasoning), Hermes-Relay displays the reasoning process in a collapsible block above the response.
+When the AI model uses extended thinking, Hermes-Relay displays the reasoning process as a quiet inline disclosure above the response.
 
 ## How It Works
 
@@ -8,10 +8,14 @@ The Hermes API Server streams `tool.progress` events (reasoning/thinking) alongs
 
 ## Appearance
 
-- A "Thinking" header with a collapse/expand toggle
+- A live "Thinking…" row with a collapse/expand toggle and no tinted card
 - The reasoning text is displayed in a visually distinct style (muted colors, smaller font)
-- Collapsed by default after the response completes
+- Open automatically while live and collapsed to "Thought" after completion
 - Expandable with a single tap
+
+If you explicitly open or close the disclosure, that choice is preserved when
+the turn settles. Empty reasoning never creates a row; the separate reply
+status owns the wait before any reasoning or answer text arrives.
 
 ## Settings
 

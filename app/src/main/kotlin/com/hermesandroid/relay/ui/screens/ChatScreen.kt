@@ -5,7 +5,6 @@ package com.hermesandroid.relay.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.MutatePriority
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.background
@@ -52,6 +51,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
@@ -86,6 +86,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -100,7 +101,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.ClipEntry
@@ -128,6 +128,7 @@ import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import com.hermesandroid.relay.ui.components.reasoningEffortLabel
+import com.hermesandroid.relay.ui.components.resolveSessionModelUiState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -156,16 +157,22 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.platform.LocalContext
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatComposerDraft
+import com.hermesandroid.relay.data.ChatComposerDraftContext
+import com.hermesandroid.relay.data.ChatComposerDraftKey
+import com.hermesandroid.relay.data.ChatQuoteReference
+import com.hermesandroid.relay.data.buildChatQuotedPrompt
+import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
+import com.hermesandroid.relay.data.ProfilePresentationPolicy
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
@@ -185,7 +192,6 @@ import com.hermesandroid.relay.ui.components.ModelPickerSheet
 import com.hermesandroid.relay.ui.components.OptionPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
-import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.CHAT_PET_WALK_REGION
 import com.hermesandroid.relay.ui.components.CHAT_PET_ASSISTANT_MESSAGE_PERCH_PREFIX
@@ -197,6 +203,11 @@ import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.PendingAttachmentComposer
+import com.hermesandroid.relay.ui.components.AttachmentViewer
+import com.hermesandroid.relay.ui.components.ChatQuoteReferenceChip
+import com.hermesandroid.relay.ui.components.TranscriptSearchNavigator
+import com.hermesandroid.relay.ui.components.TranscriptNavigatorStrings
 import com.hermesandroid.relay.ui.components.newestPetPerchUiKey
 import com.hermesandroid.relay.ui.components.newestPetVisitTargetUiKey
 import com.hermesandroid.relay.ui.components.petPerchUiKeys
@@ -208,6 +219,7 @@ import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.PetInteractionLayer
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import java.io.File
@@ -219,10 +231,16 @@ import com.hermesandroid.relay.ui.components.ThinkingIndicatorStyle
 import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
 import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
+import com.hermesandroid.relay.ui.components.ProfileDisplayManagerDialog
+import com.hermesandroid.relay.ui.components.ProfileShelf
+import com.hermesandroid.relay.ui.components.ProfileSwitcherSheet
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.SubagentLane
+import com.hermesandroid.relay.ui.components.ToolActivityRun
 import com.hermesandroid.relay.ui.components.ToolProgressCard
+import com.hermesandroid.relay.ui.components.ToolTranscriptItem
+import com.hermesandroid.relay.ui.components.groupTranscriptTools
 import com.hermesandroid.relay.ui.components.isVisibleForToolDisplay
 import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
@@ -251,10 +269,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val DEFAULT_CHAR_LIMIT = 4096
 private const val CHAT_SCROLL_TO_BOTTOM_PET_OBSTACLE = "chat-scroll-to-bottom-obstacle"
+private const val CHAT_AUTOCOMPLETE_PET_OBSTACLE = "chat-autocomplete-obstacle"
+private const val CHAT_RECENT_PROMPTS_PET_OBSTACLE = "chat-recent-prompts-obstacle"
 private val CHAT_PET_ROUTES = setOf("chat")
 
 internal fun resolveSessionActivityStates(
@@ -637,13 +659,10 @@ fun ChatScreen(
     onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
+    val responseSpeechActive by voiceViewModel.responseSpeechActive.collectAsState()
     val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
     var voicePresentationOverride by remember { mutableStateOf<VoicePresentationMode?>(null) }
     val effectiveVoicePresentationMode = voicePresentationOverride ?: voicePresentationMode
-    val conversationVoiceResponseActionsEnabled =
-        voiceUiState.voiceMode &&
-            effectiveVoicePresentationMode == VoicePresentationMode.Conversation &&
-            voiceUiState.state == VoiceState.Idle
     val conversationVoiceDockVisible =
         voiceUiState.voiceMode &&
             effectiveVoicePresentationMode == VoicePresentationMode.Conversation
@@ -744,6 +763,8 @@ fun ChatScreen(
     // optional Relay voice routes. Gate the mic on either route being usable;
     // availability picks the actionable toast when neither is.
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
+    val chatSpeakResponseActionsEnabled =
+        shouldOfferChatSpeakAction(voiceReady, voiceUiState.state)
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val standardVoiceSignInRouteHint by
         connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
@@ -784,6 +805,9 @@ fun ChatScreen(
     // of available profiles itself now lives entirely inside the sheet.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
+    val profilePresentation by connectionViewModel.profilePresentation.collectAsState()
+    val isProfileLocked by connectionViewModel.isProfileLocked.collectAsState()
+    val lockedProfileName by connectionViewModel.lockedProfileName.collectAsState()
     // Server-advertised profile catalog — used to locate the "default" profile
     // so the header can render its description/model when no explicit pick
     // has been made (the /api/config fallback is more useful than the bare
@@ -802,12 +826,31 @@ fun ChatScreen(
     val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
     val gatewayProjectName by chatViewModel.gatewayProjectName.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
+    val currentSession = remember(sessions, currentSessionId) {
+        sessions.firstOrNull { it.sessionId == currentSessionId }
+    }
+    val sessionModelState = resolveSessionModelUiState(
+        hasSession = currentSessionId != null,
+        pendingModel = selectedModelOverride,
+        pendingProvider = selectedProviderOverride,
+        gatewayModel = gatewayCurrentModel,
+        gatewayProvider = gatewayCurrentProvider,
+        persistedSessionModel = currentSession?.model,
+        profileDefaultModel = effectiveProfile?.model,
+        serverDefaultModel = serverModelName,
+    )
+    val sessionPickerProvider = sessionModelState.pickerProvider
+        ?: sessionModelState.pickerModel?.let { model ->
+            modelProviders.singleOrNull { model in it.models }?.slug
+        }
     val showThinking by connectionViewModel.showThinking.collectAsState()
     val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
     val closeDrawerOnSend by connectionViewModel.closeDrawerOnSend.collectAsState()
     val keepComposerFocusedOnSend by
         connectionViewModel.keepComposerFocusedOnSend.collectAsState()
+    val physicalKeyboardEnterBehavior by
+        connectionViewModel.physicalKeyboardEnterBehavior.collectAsState()
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
@@ -881,6 +924,7 @@ fun ChatScreen(
     // Edit-and-resend mode: long-press a user bubble → "Edit & resend"
     // prefills the input; submit rewinds the conversation from that message.
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var quotedMessage by remember { mutableStateOf<ChatMessage?>(null) }
 
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
@@ -947,11 +991,93 @@ fun ChatScreen(
     )
 
     var inputText by remember { mutableStateOf("") }
+    val composerDraftKey = remember(
+        activeConnection?.id,
+        selectedProfile?.name,
+        currentSessionId,
+    ) {
+        ChatComposerDraftKey(
+            connectionId = activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline",
+            profileId = selectedProfile?.name?.takeIf(String::isNotBlank)
+                ?: ChatComposerDraftKey.DEFAULT_PROFILE_ID,
+            sessionId = currentSessionId?.takeIf(String::isNotBlank) ?: "new-session",
+        )
+    }
+    var activeComposerDraftKey by remember(chatViewModel) {
+        mutableStateOf<ChatComposerDraftKey?>(null)
+    }
+    var restoringComposerDraft by remember { mutableStateOf(false) }
+    LaunchedEffect(composerDraftKey) {
+        activeComposerDraftKey?.let { previousKey ->
+            chatViewModel.composerDraftStore.save(
+                previousKey,
+                ChatComposerDraft(
+                    text = inputText,
+                    selectionStart = inputText.length,
+                    selectionEnd = inputText.length,
+                    context = ChatComposerDraftContext(
+                        quotedMessageId = quotedMessage?.id,
+                        editingMessageId = editingMessage?.id,
+                    ),
+                    attachments = pendingAttachments,
+                ),
+            )
+        }
+        restoringComposerDraft = true
+        val restored = chatViewModel.composerDraftStore.snapshot(composerDraftKey)
+        inputText = restored.text.take(charLimit)
+        editingMessage = restored.context.editingMessageId?.let { messageId ->
+            messages.firstOrNull { it.id == messageId }
+        }
+        quotedMessage = restored.context.quotedMessageId?.let { messageId ->
+            messages.firstOrNull { it.id == messageId }
+        }
+        chatViewModel.replacePendingAttachments(restored.attachments)
+        activeComposerDraftKey = composerDraftKey
+        restoringComposerDraft = false
+    }
+    LaunchedEffect(
+        inputText,
+        editingMessage?.id,
+        quotedMessage?.id,
+        pendingAttachments,
+        activeComposerDraftKey,
+    ) {
+        val key = activeComposerDraftKey ?: return@LaunchedEffect
+        if (restoringComposerDraft) return@LaunchedEffect
+        chatViewModel.composerDraftStore.save(
+            key,
+            ChatComposerDraft(
+                text = inputText,
+                selectionStart = inputText.length,
+                selectionEnd = inputText.length,
+                context = ChatComposerDraftContext(
+                    quotedMessageId = quotedMessage?.id,
+                    editingMessageId = editingMessage?.id,
+                ),
+                attachments = pendingAttachments,
+            ),
+        )
+    }
     var showCommandPalette by remember { mutableStateOf(false) }
+    var showTranscriptSearch by rememberSaveable { mutableStateOf(false) }
+    var pendingAttachmentPreview by remember { mutableStateOf<Attachment?>(null) }
     var showModelSheet by remember { mutableStateOf(false) }
     var showEffortSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
+    var showProfileShelf by remember { mutableStateOf(false) }
+    var showProfileSwitcher by remember { mutableStateOf(false) }
+    var showProfileManager by remember { mutableStateOf(false) }
     var showBackgroundProcesses by remember { mutableStateOf(false) }
+
+    val pendingComposerDraft by chatViewModel.pendingComposerDraft.collectAsState()
+    LaunchedEffect(pendingComposerDraft) {
+        pendingComposerDraft?.let { draft ->
+            editingMessage = null
+            inputText = draft.take(charLimit)
+            chatViewModel.consumeComposerDraft(draft)
+        }
+    }
 
     // A process inventory is scoped to one gateway session. Never leave a
     // sheet opened onto a different chat after a drawer/profile switch.
@@ -959,11 +1085,17 @@ fun ChatScreen(
         showBackgroundProcesses = false
     }
 
-    // Server command dispatch can ask the composer to prefill (e.g. /undo).
+    val currentMessagesForComposer by rememberUpdatedState(messages)
+    // Server command dispatch can ask the composer to prefill (e.g. /undo),
+    // and queued quoted replies restore as structured composer state.
     LaunchedEffect(chatViewModel) {
         chatViewModel.composerPrefill.collect { text ->
+            val envelope = parseChatQuotedPrompt(text)
             editingMessage = null
-            inputText = text.take(charLimit)
+            inputText = (envelope?.body ?: text).take(charLimit)
+            quotedMessage = envelope?.reference?.messageId?.let { messageId ->
+                currentMessagesForComposer.firstOrNull { it.id == messageId }
+            }
         }
     }
 
@@ -995,30 +1127,51 @@ fun ChatScreen(
         }
     }
     val listState = rememberLazyListState()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    PetInteractionLayer(
+        owner = "chat-interaction-layer",
+        active = shouldHideChatPet(
+            ambientMode = ambientMode,
+            voiceMode = voiceUiState.voiceMode,
+            drawerOpenOrMoving =
+                drawerState.currentValue != DrawerValue.Closed ||
+                    drawerState.targetValue != DrawerValue.Closed,
+            commandPaletteVisible = showCommandPalette,
+            modelSheetVisible = showModelSheet,
+            effortSheetVisible = showEffortSheet,
+            contextSheetVisible = showContextSheet,
+            backgroundProcessesVisible = showBackgroundProcesses,
+            agentInfoVisible = showAgentInfo,
+        ),
+    )
     // Publish only surface-local visibility signals. Live turn state is owned at
     // the app root so navigation cannot reset an in-flight companion to Idle.
+    // Modal Chat chrome owns the interaction layer while it is entering, open,
+    // or leaving. Suppress the root-hosted pet for the whole transition so it
+    // cannot render above the drawer scrim or a bottom sheet.
     val petCompanionCoordinator = LocalPetCompanionCoordinator.current
     LaunchedEffect(listState, petCompanionCoordinator) {
-        snapshotFlow { listState.isScrollInProgress to ambientMode }
+        snapshotFlow { listState.isScrollInProgress }
             .distinctUntilChanged()
-            .collect { (scrolling, hidden) ->
+            .collect { scrolling ->
                 petCompanionCoordinator.publishSurface(
                     owner = "chat",
                     scrolling = scrolling,
-                    hidden = hidden,
+                    hidden = false,
                 )
             }
     }
     DisposableEffect(petCompanionCoordinator) {
         onDispose { petCompanionCoordinator.clearSurface("chat") }
     }
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val copiedToClipboardMsg = stringResource(R.string.chat_copied_to_clipboard)
     val copySessionIdLabel = stringResource(R.string.chat_copy_session_id)
     val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
     val focusManager = LocalFocusManager.current
     val finishSuccessfulSend: () -> Unit = {
+        activeComposerDraftKey?.let(chatViewModel.composerDraftStore::remove)
+        quotedMessage = null
         if (closeDrawerOnSend && drawerState.isOpen) {
             scope.launch { drawerState.close() }
         }
@@ -1211,8 +1364,10 @@ fun ChatScreen(
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        uris.forEach { uri ->
-            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        scope.launch {
+            uris.forEach { uri ->
+                ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+            }
         }
     }
 
@@ -1220,8 +1375,10 @@ fun ChatScreen(
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
-        uris.forEach { uri ->
-            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        scope.launch {
+            uris.forEach { uri ->
+                ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+            }
         }
     }
 
@@ -1236,7 +1393,9 @@ fun ChatScreen(
         val uri = pendingCameraUri
         pendingCameraUri = null
         if (success && uri != null) {
-            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+            scope.launch {
+                ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+            }
         }
     }
     val launchCamera: () -> Unit = {
@@ -1326,7 +1485,10 @@ fun ChatScreen(
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val latestImeBottomPx by rememberUpdatedState(imeBottomPx)
-    var previousImeBottomPx by remember(currentSessionId) { mutableStateOf(imeBottomPx) }
+    // Start from the closed state so a chat/session first composed while the
+    // keyboard is already visible still gets one ownership decision. Starting
+    // at the current non-zero inset left followImeResize false forever.
+    var previousImeBottomPx by remember(currentSessionId) { mutableStateOf(0) }
     var followImeResize by remember(currentSessionId) { mutableStateOf(false) }
     SideEffect {
         followImeResize = shouldFollowImeAfterInsetChange(
@@ -1841,6 +2003,25 @@ fun ChatScreen(
             )
         }
     }
+    val selectedProfileKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
+    val profileShelfAvailable = ProfilePresentationPolicy.shouldShowShelf(
+        profiles = agentProfiles,
+        presentation = profilePresentation,
+        selectedKey = selectedProfileKey,
+    )
+    val profileSwitchEnabled = com.hermesandroid.relay.ui.components.ProfileShelfPolicy.canSwitch(
+        isStreaming = isStreaming,
+        streamingEndpoint = chatViewModel.streamingEndpoint,
+    )
+    LaunchedEffect(profileShelfAvailable) {
+        if (!profileShelfAvailable) showProfileShelf = false
+    }
+    val selectProfileFromShelf: (com.hermesandroid.relay.data.Profile?) -> Unit = { profile ->
+        if (AgentDisplay.profileSessionKey(profile?.name) != selectedProfileKey) {
+            connectionViewModel.selectProfile(profile)
+            chatViewModel.activateGatewayProfile(profile)
+        }
+    }
     val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
     val isChatConnecting = chatConnectState == ChatConnectState.Connecting &&
         !hasLiveConversationSurface
@@ -2005,10 +2186,7 @@ fun ChatScreen(
                     // session.info model — so a mid-session switch shows here
                     // instead of a stale profile/global default. Profile model and
                     // /api/config's serverModelName are the fallbacks.
-                    val modelName = AgentDisplay.displayModelName(selectedModelOverride)
-                        ?: AgentDisplay.displayModelName(gatewayCurrentModel)
-                        ?: AgentDisplay.displayModelName(effectiveProfile?.model)
-                        ?: AgentDisplay.displayModelName(serverModelName)
+                    val modelName = AgentDisplay.displayModelName(sessionModelState.model)
                     // Subtext: a NON-default personality shown BEFORE the model
                     // (e.g. "Catgirl \u00B7 gpt-5.5"). A CLEARED overlay (default /
                     // none / neutral / blank) \u2014 or one that just matches the
@@ -2047,7 +2225,27 @@ fun ChatScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.clickable { showAgentInfo = true }
+                        modifier = Modifier
+                            .clickable {
+                                if (profileShelfAvailable) {
+                                    showProfileShelf = !showProfileShelf
+                                } else {
+                                    showAgentInfo = true
+                                }
+                            }
+                            .semantics {
+                                contentDescription = if (profileShelfAvailable) {
+                                    context.getString(
+                                        if (showProfileShelf) {
+                                            R.string.profile_shelf_collapse
+                                        } else {
+                                            R.string.profile_shelf_expand
+                                        },
+                                    )
+                                } else {
+                                    context.getString(R.string.profile_shelf_open_passport)
+                                }
+                            }
                     ) {
                         // Avatar — a plain 40dp circle whose letter swaps to the
                         // active agent (profile or personality). No overlay ring:
@@ -2277,6 +2475,16 @@ fun ChatScreen(
                                 }
                                 if (messages.isNotEmpty()) {
                                     DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.chat_search_conversation)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Search, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            showTranscriptSearch = true
+                                        },
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text(stringResource(R.string.chat_share_conversation)) },
                                         leadingIcon = {
                                             Icon(
@@ -2303,6 +2511,29 @@ fun ChatScreen(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
                 )
             )
+            AnimatedVisibility(visible = profileShelfAvailable && showProfileShelf) {
+                ProfileShelf(
+                    connectionViewModel = connectionViewModel,
+                    profiles = agentProfiles,
+                    selectedProfile = selectedProfile,
+                    resolvedProfile = effectiveProfile,
+                    presentation = profilePresentation,
+                    activeDisplayName = agentDisplayName,
+                    isProfileLocked = isProfileLocked,
+                    lockedProfileName = lockedProfileName,
+                    switchEnabled = profileSwitchEnabled,
+                    onSelect = selectProfileFromShelf,
+                    onOpenPassport = { showAgentInfo = true },
+                    onOpenSwitcher = { showProfileSwitcher = true },
+                    onInspect = onNavigateToProfileInspector,
+                    onLock = { profile ->
+                        connectionViewModel.lockProfile(profile)
+                        chatViewModel.activateGatewayProfile(profile)
+                    },
+                    onUnlock = connectionViewModel::unlockProfile,
+                    onHide = { connectionViewModel.setProfileHidden(it, true) },
+                )
+            }
             // Per-session context-window gauge at the seam between the app bar
             // and the mode strip — slim bar + `NN% · used/max` token readout,
             // color-graded by fullness. Composes to nothing until the server
@@ -2667,7 +2898,8 @@ fun ChatScreen(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 12.dp),
+                            .padding(horizontal = 12.dp)
+                            .padding(top = if (showTranscriptSearch) 112.dp else 0.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         item { Spacer(modifier = Modifier.height(8.dp).animateItem()) }
@@ -2799,29 +3031,34 @@ fun ChatScreen(
                                         !message.id.startsWith("steer-")
                                     ) {
                                         { msg ->
+                                            val envelope = parseChatQuotedPrompt(msg.content)
                                             editingMessage = msg
-                                            inputText = msg.content.take(charLimit)
+                                            inputText = (envelope?.body ?: msg.content).take(charLimit)
+                                            quotedMessage = envelope?.reference?.messageId?.let { id ->
+                                                messages.firstOrNull { it.id == id }
+                                            }
                                         }
                                     } else {
                                         null
                                     },
-                                    onQuoteMessage = { text ->
+                                    animationEnabled = animationEnabled,
+                                    onQuoteMessage = { quoted ->
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        val quoted = text.take(600)
-                                            .trim()
-                                            .lines()
-                                            .joinToString("\n") { line -> "> $line" }
-                                        inputText = if (inputText.isBlank()) {
-                                            "$quoted\n\n"
-                                        } else {
-                                            "$inputText\n$quoted\n\n"
+                                        quotedMessage = quoted
+                                    },
+                                    onNavigateToMessage = { messageId ->
+                                        val targetIndex = messages.indexOfFirst { it.id == messageId }
+                                        if (targetIndex >= 0) {
+                                            scope.launch { listState.animateScrollToItem(targetIndex + 1) }
                                         }
                                     },
-                                    onSpeakMessage = if (
-                                        conversationVoiceResponseActionsEnabled &&
-                                        !isStreaming
-                                    ) {
+                                    onSpeakMessage = if (chatSpeakResponseActionsEnabled) {
                                         { text -> voiceViewModel.speakResponse(text) }
+                                    } else {
+                                        null
+                                    },
+                                    onStopSpeaking = if (responseSpeechActive) {
+                                        { voiceViewModel.stopResponseSpeech() }
                                     } else {
                                         null
                                     },
@@ -2866,45 +3103,60 @@ fun ChatScreen(
 
                             if (!hasBackgroundTask) {
                                 // Subagent children (taskIndex != null) group
-                                // into lanes after the top-level tool cards;
-                                // the null group renders exactly as before.
+                                // into lanes after the top-level transcript
+                                // activity; the null group retains source order
+                                // while routine calls collapse into runs.
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
-                                laneGroups[null]?.forEach { toolCall ->
-                                    // Image generation renders inside MessageBubble
-                                    // so the progress canvas and final media share
-                                    // one stable Surface and transition in place.
-                                    if (toolCall.showsImageGenerationPlaceholder()) {
-                                        return@forEach
-                                    }
-                                    if (!toolCall.isVisibleForToolDisplay(toolDisplay)) {
-                                        return@forEach
-                                    }
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    when (toolDisplay) {
-                                        "compact" -> CompactToolCall(toolCall = toolCall)
-                                        else -> ToolProgressCard(
-                                            toolCall = toolCall,
-                                            messageTimestamp = message.timestamp,
-                                            onExpandedChange = { expanded ->
-                                                // Expanding a live-tail card is reading intent,
-                                                // not new stream output. Yield bottom-follow so
-                                                // the row's height change stays under the user's
-                                                // finger instead of being scrolled away.
-                                                if (expanded && isStreaming) {
-                                                    userScrolledAway = true
-                                                }
-                                            },
-                                        )
+                                val transcriptTools = groupTranscriptTools(laneGroups[null].orEmpty())
+                                transcriptTools.forEachIndexed { itemIndex, item ->
+                                    when (item) {
+                                        is ToolTranscriptItem.ActivityRun -> {
+                                            if (item.isVisibleForToolDisplay(toolDisplay)) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                ToolActivityRun(
+                                                    calls = item.calls,
+                                                    live = item.calls.any { !it.isComplete } ||
+                                                        (message.isStreaming && itemIndex == transcriptTools.lastIndex),
+                                                    detailed = toolDisplay == "detailed",
+                                                    messageTimestamp = message.timestamp,
+                                                    petObstacleKey = "chat-tools:${message.uiKey}:${item.calls.first().uiKey}",
+                                                    onExpandedChange = { expanded ->
+                                                        if (expanded && isStreaming) {
+                                                            userScrolledAway = true
+                                                        }
+                                                    },
+                                                )
+                                            }
+                                        }
+                                        is ToolTranscriptItem.Standalone -> {
+                                            // Generated media owns its lifecycle inside the
+                                            // message bubble. Every other standalone call is
+                                            // attention-bearing and stays visible even when
+                                            // ordinary tool scaffolding is Off.
+                                            if (!item.call.showsImageGenerationPlaceholder()) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                ToolProgressCard(
+                                                    toolCall = item.call,
+                                                    messageTimestamp = message.timestamp,
+                                                    onExpandedChange = { expanded ->
+                                                        if (expanded && isStreaming) {
+                                                            userScrolledAway = true
+                                                        }
+                                                    },
+                                                )
+                                            }
+                                        }
                                     }
                                 }
-                                if (toolDisplay != "off") {
-                                    laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        SubagentLane(
-                                            taskIndex = taskIndex,
-                                            calls = laneGroups.getValue(taskIndex),
-                                        )
-                                    }
+                                // Delegated work is a lifecycle surface, not
+                                // optional diagnostic scaffolding. Keep lanes
+                                // visible in Off, Compact, and Detailed modes.
+                                laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    SubagentLane(
+                                        taskIndex = taskIndex,
+                                        calls = laneGroups.getValue(taskIndex),
+                                    )
                                 }
                             }
                         }
@@ -2923,6 +3175,33 @@ fun ChatScreen(
                         item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
                     } // CompositionLocalProvider(LocalRelayServerImageResolver)
+
+                    if (showTranscriptSearch) {
+                        TranscriptSearchNavigator(
+                            messages = messages,
+                            onJumpToMessage = { uiKey ->
+                                val messageIndex = messages.indexOfFirst { it.uiKey == uiKey }
+                                if (messageIndex >= 0) {
+                                    scope.launch { listState.animateScrollToItem(messageIndex + 1) }
+                                }
+                            },
+                            onClose = { showTranscriptSearch = false },
+                            strings = TranscriptNavigatorStrings(
+                                searchPlaceholder = stringResource(R.string.chat_search_conversation),
+                                previousMatch = stringResource(R.string.term_search_cd_previous),
+                                nextMatch = stringResource(R.string.term_search_cd_next),
+                                closeSearch = stringResource(R.string.chat_search_close),
+                                noResults = stringResource(R.string.chat_search_no_results),
+                                resultCount = { current, total ->
+                                    context.getString(R.string.chat_search_result_count, current, total)
+                                },
+                            ),
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .zIndex(10f),
+                        )
+                    }
 
                     ChatScrollTicker(
                         listState = listState,
@@ -3028,7 +3307,12 @@ fun ChatScreen(
                         val base = cmd.command.split(" ").first()
                         inputText = if (cmd.command.contains(" ")) cmd.command + " " else "$base "
                     },
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .petObstacleSurface(
+                            key = CHAT_AUTOCOMPLETE_PET_OBSTACLE,
+                            routes = CHAT_PET_ROUTES,
+                        )
 
                 )
             }
@@ -3047,7 +3331,11 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                        .padding(horizontal = 20.dp, vertical = 2.dp)
+                        .petObstacleSurface(
+                            key = CHAT_RECENT_PROMPTS_PET_OBSTACLE,
+                            routes = CHAT_PET_ROUTES,
+                        ),
                 ) {
                     recentPrompts.take(6).forEach { prompt ->
                         AssistChip(
@@ -3133,78 +3421,57 @@ fun ChatScreen(
                 }
             }
 
-            // Attachment preview strip
-            AnimatedVisibility(visible = pendingAttachments.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    pendingAttachments.forEachIndexed { index, attachment ->
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            tonalElevation = 2.dp,
-                            modifier = Modifier.height(56.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(start = 8.dp, end = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                if (attachment.isImage) {
-                                    // Decode and show thumbnail
-                                    val bitmap = remember(attachment.content) {
-                                        try {
-                                            val bytes = Base64.decode(attachment.content, Base64.DEFAULT)
-                                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                        } catch (_: Exception) { null }
-                                    }
-                                    if (bitmap != null) {
-                                        val imageBitmap = remember(bitmap) {
-                                            bitmap.asImageBitmap()
-                                        }
-                                        Image(
-                                            bitmap = imageBitmap,
-                                            contentDescription = attachment.fileName,
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(RoundedCornerShape(4.dp))
-                                        )
-                                    } else {
-                                        Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(24.dp))
-                                    }
-                                } else {
-                                    Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(24.dp))
-                                }
-                                Column(modifier = Modifier.widthIn(max = 100.dp)) {
-                                    Text(
-                                        text = attachment.fileName ?: stringResource(R.string.chat_attachment_file_fallback),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = formatFileSize(attachment.fileSize ?: 0),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { chatViewModel.removeAttachment(index) },
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Filled.Close,
-                                        contentDescription = stringResource(R.string.cd_remove),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
+            val quoteYouLabel = stringResource(R.string.chat_quote_you)
+            val quoteHermesLabel = stringResource(R.string.chat_quote_hermes)
+            val activeQuoteReference = remember(
+                quotedMessage?.id,
+                quotedMessage?.content,
+                quotedMessage?.role,
+                quoteYouLabel,
+                quoteHermesLabel,
+            ) {
+                quotedMessage?.let { quoted ->
+                    val visibleContent = parseChatQuotedPrompt(quoted.content)?.body ?: quoted.content
+                    ChatQuoteReference(
+                        messageId = quoted.id,
+                        authorLabel = if (quoted.role == MessageRole.USER) {
+                            quoteYouLabel
+                        } else {
+                            quoteHermesLabel
+                        },
+                        excerpt = compactQuoteExcerpt(visibleContent),
+                    )
                 }
+            }
+            AnimatedVisibility(visible = activeQuoteReference != null) {
+                activeQuoteReference?.let { reference ->
+                    ChatQuoteReferenceChip(
+                        reference = reference,
+                        onOpenOriginal = {
+                            val index = messages.indexOfFirst { it.id == reference.messageId }
+                            if (index >= 0) {
+                                scope.launch { listState.animateScrollToItem(index + 1) }
+                            }
+                        },
+                        onRemove = { quotedMessage = null },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
+            }
+
+            PendingAttachmentComposer(
+                attachments = pendingAttachments,
+                onPreview = { attachment, _ -> pendingAttachmentPreview = attachment },
+                onRemove = chatViewModel::removeAttachment,
+                onMove = chatViewModel::moveAttachment,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            pendingAttachmentPreview?.let { attachment ->
+                AttachmentViewer(
+                    attachment = attachment,
+                    onDismiss = { pendingAttachmentPreview = null },
+                    initiallyRevealed = true,
+                )
             }
 
             // Edit-and-resend mode chip — cancelable; submitting rewinds the
@@ -3232,6 +3499,7 @@ fun ChatScreen(
                     IconButton(
                         onClick = {
                             editingMessage = null
+                            quotedMessage = null
                             inputText = ""
                         },
                         modifier = Modifier.size(24.dp),
@@ -3251,15 +3519,19 @@ fun ChatScreen(
             // long-press opens the CommandPalette (the dedicated "/" button
             // is gone — typing "/" still surfaces InlineAutocomplete).
             val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()
+            // Gateway redirect is text-only. Attachment-bearing follow-ups must
+            // retain their files in the session-owned queue instead of showing
+            // a correction action that cannot carry them.
+            val canSteerCurrentMessage = steerableTurn && pendingAttachments.isEmpty()
             val trailing = when {
                 !isStreaming && hasContent -> ChatInputTrailing.SEND
                 !isStreaming -> ChatInputTrailing.VOICE
                 isStreaming && !hasContent -> ChatInputTrailing.STOP
-                steerableTurn -> ChatInputTrailing.STEER
+                canSteerCurrentMessage -> ChatInputTrailing.STEER
                 else -> ChatInputTrailing.QUEUE
             }
             val inputCaption = when {
-                isStreaming && hasContent && steerableTurn ->
+                isStreaming && hasContent && canSteerCurrentMessage ->
                     stringResource(R.string.chat_sends_now)
                 isStreaming && hasContent -> stringResource(R.string.chat_delivered_after_turn)
                 isStreaming && steerNotice != null -> steerNotice
@@ -3267,7 +3539,7 @@ fun ChatScreen(
             }
             val inputPlaceholder = when {
                 editingMessage != null -> stringResource(R.string.chat_placeholder_edit)
-                isStreaming && steerableTurn -> stringResource(R.string.chat_placeholder_steer)
+                isStreaming && canSteerCurrentMessage -> stringResource(R.string.chat_placeholder_steer)
                 isStreaming -> stringResource(R.string.chat_placeholder_queue)
                 else -> stringResource(R.string.chat_placeholder_message)
             }
@@ -3282,11 +3554,7 @@ fun ChatScreen(
                     listOfNotNull(AgentDisplay.requestModelName(selectedModelOverride)?.let { ApiModelOption(it) }))
                     .distinctBy { it.id }
             }
-            val currentModelForInput = apiModelOptions.firstOrNull { it.id == selectedModelOverride }?.id
-                ?: AgentDisplay.displayModelName(selectedModelOverride)
-                ?: AgentDisplay.displayModelName(gatewayCurrentModel)
-                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
-                ?: AgentDisplay.displayModelName(serverModelName)
+            val currentModelForInput = AgentDisplay.displayModelName(sessionModelState.model)
             val fallbackModelDetail = AgentDisplay.displayModelName(gatewayCurrentModel)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
                 ?: AgentDisplay.displayModelName(serverModelName)
@@ -3307,6 +3575,8 @@ fun ChatScreen(
                 sseModelOptions,
                 selectedModelOverride,
                 selectedProviderOverride,
+                sessionModelState,
+                sessionPickerProvider,
                 gatewayCurrentModel,
                 fallbackModelDetail,
                 serverDefaultModelDetail,
@@ -3321,7 +3591,7 @@ fun ChatScreen(
                                 label = serverDefaultLabel,
                                 value = null,
                                 secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it, modelDefaultLabel) },
-                                selected = selectedModelOverride == null,
+                                selected = sessionModelState.inheritsProfileDefault,
                             ),
                         )
                         if (modelProviders.any { it.models.isNotEmpty() }) {
@@ -3346,8 +3616,8 @@ fun ChatScreen(
                                                 !provider.authenticated -> provider.warning ?: needsSetupLabel
                                                 else -> null
                                             },
-                                            selected = selectedModelOverride == model &&
-                                                selectedProviderOverride.equals(provider.slug, ignoreCase = true),
+                                            selected = sessionModelState.pickerModel == model &&
+                                                sessionPickerProvider.equals(provider.slug, ignoreCase = true),
                                             enabled = !unavailable,
                                         ),
                                     )
@@ -3361,7 +3631,7 @@ fun ChatScreen(
                                         value = model.id,
                                         group = "Routes",
                                         secondary = model.routeDetail,
-                                        selected = selectedModelOverride == model.id,
+                                        selected = sessionModelState.pickerModel == model.id,
                                     ),
                                 )
                             }
@@ -3372,7 +3642,7 @@ fun ChatScreen(
                                         label = AgentDisplay.displayModelName(model.id) ?: model.id,
                                         value = model.id,
                                         secondary = model.routeDetail,
-                                        selected = selectedModelOverride == model.id,
+                                        selected = sessionModelState.pickerModel == model.id,
                                     ),
                                 )
                             }
@@ -3453,11 +3723,15 @@ fun ChatScreen(
                 trailing = trailing,
                 onSend = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    val outboundText = buildChatQuotedPrompt(
+                        inputText.ifBlank { attachmentPlaceholder },
+                        activeQuoteReference,
+                    )
                     val editing = editingMessage
                     if (editing != null) {
                         // Only drop the edit state once the rewind actually
                         // dispatched — a silent gate must not eat the text.
-                        if (chatViewModel.regenerateFromMessage(editing.id, inputText)) {
+                        if (chatViewModel.regenerateFromMessage(editing.id, outboundText)) {
                             editingMessage = null
                             inputText = ""
                             finishSuccessfulSend()
@@ -3471,7 +3745,7 @@ fun ChatScreen(
                             }
                         }
                     } else {
-                        chatViewModel.sendMessage(inputText.ifBlank { attachmentPlaceholder })
+                        chatViewModel.sendMessage(outboundText)
                         inputText = ""
                         finishSuccessfulSend()
                     }
@@ -3536,6 +3810,8 @@ fun ChatScreen(
                 showVoiceHint = !voiceHintSeen && !conversationVoiceDockVisible,
                 onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },
                 isDarkTheme = isDarkTheme,
+                physicalEnterSends = physicalKeyboardEnterBehavior ==
+                    PhysicalKeyboardEnterBehavior.SendMessage,
                 modelControl = modelControl,
                 onModelOptionSelected = { option ->
                     if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
@@ -3585,7 +3861,9 @@ fun ChatScreen(
                 ModelPickerSheet(
                     options = modelPickerOptions,
                     refreshing = modelOptionsRefreshing,
-                    onRefresh = { chatViewModel.refreshModelOptions(refresh = true) },
+                    onRefresh = {
+                        chatViewModel.refreshModelOptions(refresh = true, catalogOnly = true)
+                    },
                     onSelect = { option ->
                         showModelSheet = false
                         if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
@@ -3824,6 +4102,34 @@ fun ChatScreen(
             onDismiss = { showAgentInfo = false },
             onNavigateToConnections = onNavigateToConnections,
             onNavigateToProfileInspector = onNavigateToProfileInspector,
+        )
+    }
+    if (showProfileSwitcher) {
+        ProfileSwitcherSheet(
+            connectionViewModel = connectionViewModel,
+            profiles = agentProfiles,
+            selectedProfile = selectedProfile,
+            resolvedProfile = effectiveProfile,
+            presentation = profilePresentation,
+            isProfileLocked = isProfileLocked,
+            switchEnabled = profileSwitchEnabled,
+            onSelect = selectProfileFromShelf,
+            onManageDisplay = {
+                showProfileSwitcher = false
+                showProfileManager = true
+            },
+            onDismiss = { showProfileSwitcher = false },
+        )
+    }
+    if (showProfileManager) {
+        ProfileDisplayManagerDialog(
+            profiles = agentProfiles,
+            presentation = profilePresentation,
+            selectedProfileName = selectedProfile?.name,
+            onMove = connectionViewModel::moveProfile,
+            onHiddenChange = connectionViewModel::setProfileHidden,
+            onReset = connectionViewModel::resetProfilePresentation,
+            onDismiss = { showProfileManager = false },
         )
     }
 }
@@ -4244,6 +4550,9 @@ private fun formatFileSize(bytes: Long): String = when {
     else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
 }
 
+private fun compactQuoteExcerpt(content: String): String =
+    content.trim().replace(Regex("\\s+"), " ").take(180)
+
 /**
  * Read an attachment from a content [uri], enforce the [maxAttachmentMb] cap,
  * base64-encode the bytes, and hand a built [Attachment] to [onAttachment].
@@ -4253,7 +4562,7 @@ private fun formatFileSize(bytes: Long): String = when {
  * rather than throwing. [mimeOverride] lets clipboard paste supply the MIME
  * when the resolver can't (some providers don't resolve a type until read).
  */
-private fun ingestAttachmentFromUri(
+private suspend fun ingestAttachmentFromUri(
     context: android.content.Context,
     uri: Uri,
     maxAttachmentMb: Int,
@@ -4262,11 +4571,14 @@ private fun ingestAttachmentFromUri(
 ) {
     try {
         val resolver = context.contentResolver
-        val mimeType = mimeOverride ?: resolver.getType(uri) ?: "application/octet-stream"
-        val fileName = resolveDisplayName(resolver, uri)
-        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+        val source = withContext(Dispatchers.IO) {
+            val mimeType = mimeOverride ?: resolver.getType(uri) ?: "application/octet-stream"
+            val fileName = resolveDisplayName(resolver, uri)
+            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null
+            RawAttachmentSource(mimeType, fileName, bytes)
+        } ?: return
         val maxSize = maxAttachmentMb * 1024 * 1024
-        if (bytes.size > maxSize) {
+        if (source.bytes.size > maxSize) {
             Toast.makeText(
                 context,
                 context.getString(R.string.chat_file_too_large, maxAttachmentMb),
@@ -4274,19 +4586,27 @@ private fun ingestAttachmentFromUri(
             ).show()
             return
         }
-        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        val base64 = withContext(Dispatchers.Default) {
+            Base64.encodeToString(source.bytes, Base64.NO_WRAP)
+        }
         onAttachment(
             Attachment(
-                contentType = mimeType,
+                contentType = source.mimeType,
                 content = base64,
-                fileName = fileName,
-                fileSize = bytes.size.toLong(),
+                fileName = source.fileName,
+                fileSize = source.bytes.size.toLong(),
             )
         )
     } catch (e: Exception) {
         Toast.makeText(context, context.getString(R.string.chat_failed_read_file), Toast.LENGTH_SHORT).show()
     }
 }
+
+private data class RawAttachmentSource(
+    val mimeType: String,
+    val fileName: String,
+    val bytes: ByteArray,
+)
 
 /**
  * Resolve a human-readable file name for [uri]. Prefers the provider's
@@ -4324,7 +4644,7 @@ private fun resolveDisplayName(
  * user. Images ride the clipboard as content URIs; raw bitmaps aren't carried
  * in ClipData, so URI items are the only source.
  */
-private fun ingestClipboardImage(
+private suspend fun ingestClipboardImage(
     context: android.content.Context,
     clip: ClipData?,
     maxAttachmentMb: Int,
@@ -4377,6 +4697,27 @@ internal fun shouldShowCleanViewHint(
     ambientMode: Boolean,
     voiceMode: Boolean,
 ): Boolean = !hasMessages && !ambientMode && !voiceMode
+
+/** Chat overlays that temporarily own input and must not compete with the root pet host. */
+internal fun shouldHideChatPet(
+    ambientMode: Boolean = false,
+    voiceMode: Boolean = false,
+    drawerOpenOrMoving: Boolean = false,
+    commandPaletteVisible: Boolean = false,
+    modelSheetVisible: Boolean = false,
+    effortSheetVisible: Boolean = false,
+    contextSheetVisible: Boolean = false,
+    backgroundProcessesVisible: Boolean = false,
+    agentInfoVisible: Boolean = false,
+): Boolean = ambientMode ||
+    voiceMode ||
+    drawerOpenOrMoving ||
+    commandPaletteVisible ||
+    modelSheetVisible ||
+    effortSheetVisible ||
+    contextSheetVisible ||
+    backgroundProcessesVisible ||
+    agentInfoVisible
 
 private fun compactModelChipLabel(model: String?, defaultLabel: String): String {
     val raw = model?.trim().orEmpty()
@@ -4466,3 +4807,8 @@ private fun shareConversation(
         android.content.Intent.createChooser(intent, context.getString(R.string.chat_share_conversation)),
     )
 }
+
+internal fun shouldOfferChatSpeakAction(
+    voiceReady: Boolean,
+    voiceState: VoiceState,
+): Boolean = voiceReady && voiceState == VoiceState.Idle

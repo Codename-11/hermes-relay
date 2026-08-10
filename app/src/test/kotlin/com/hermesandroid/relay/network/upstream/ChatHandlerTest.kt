@@ -25,6 +25,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -927,6 +928,88 @@ class ChatHandlerTest {
         assertEquals(2, handler.messages.value.size)
         assertEquals(MessageRole.USER, handler.messages.value[0].role)
         assertEquals(MessageRole.ASSISTANT, handler.messages.value[1].role)
+    }
+
+    @Test
+    fun loadMessageHistory_recoversStructuredToolCallsWithoutLiveEvents() {
+        val toolCalls = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("call_id", "call-history-1")
+                    put("name", "terminal")
+                    put("args", buildJsonObject { put("command", "git status") })
+                },
+            )
+        }
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-history-1",
+                    role = "assistant",
+                    content = JsonPrimitive("The workspace is clean."),
+                    toolCalls = toolCalls,
+                ),
+                MessageItem(
+                    id = "tool-history-1",
+                    role = "tool",
+                    content = JsonPrimitive("nothing to commit"),
+                    toolCallId = "call-history-1",
+                ),
+            ),
+        )
+
+        val message = handler.messages.value.single()
+        val call = message.toolCalls.single()
+        assertEquals("terminal", call.name)
+        assertEquals("call-history-1", call.id)
+        assertEquals("nothing to commit", call.result)
+        assertTrue(call.isComplete)
+        assertTrue(call.success == true)
+    }
+
+    @Test
+    fun persistedToolActivityPreflight_keepsHealthyLiveTranscriptUnchanged() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live-1",
+                role = MessageRole.ASSISTANT,
+                content = "The workspace is clean.",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+        handler.onToolCallStart("assistant-live-1", "call-history-1", "terminal", "git status")
+        handler.onToolCallComplete("assistant-live-1", "call-history-1", "nothing to commit")
+        handler.onStreamComplete("assistant-live-1")
+        val before = handler.messages.value
+        val history = listOf(
+            MessageItem(
+                id = "assistant-history-1",
+                role = "assistant",
+                content = JsonPrimitive("The workspace is clean."),
+                toolCalls = buildJsonArray {
+                    add(
+                        buildJsonObject {
+                            put("call_id", "call-history-1")
+                            put("name", "terminal")
+                            put("args", JsonPrimitive("git status"))
+                        },
+                    )
+                },
+            ),
+            MessageItem(
+                id = "tool-history-1",
+                role = "tool",
+                content = JsonPrimitive("nothing to commit"),
+                toolCallId = "call-history-1",
+            ),
+        )
+
+        assertFalse(handler.hasMissingPersistedToolActivity(history))
+        assertSame(before, handler.messages.value)
+
+        handler = ChatHandler()
+        assertTrue(handler.hasMissingPersistedToolActivity(history))
     }
 
     @Test

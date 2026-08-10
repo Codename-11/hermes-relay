@@ -694,6 +694,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">Mostre suas mensagens recentes como chips tocáveis acima do editor para enviá-las novamente. Desativado por padrão.</string>
     <string name="chat_settings_keep_keyboard_open">Manter o teclado aberto ao enviar</string>
     <string name="chat_settings_keep_keyboard_open_desc">Permaneça no editor após enviar. Desative para fechar o teclado depois de cada mensagem enviada.</string>
+    <string name="chat_settings_physical_keyboard_enter">Tecla Enter do teclado físico</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">Escolha se Enter envia ou insere uma nova linha. Ctrl+Enter sempre envia.</string>
+    <string name="chat_settings_insert_newline">Inserir nova linha</string>
     <string name="chat_settings_notify_when_finishes">Alertas de chat em segundo plano</string>
     <string name="chat_settings_notify_when_finishes_desc">Notifique quando o Hermes precisar de uma resposta ou terminar em segundo plano</string>
     <string name="chat_settings_share_phone_status">Compartilhar o status do celular com o agente</string>
@@ -2445,6 +2448,23 @@
     <string name="image_generation_rendering">Gerando imagem</string>
     <string name="tool_progress_cd_collapse">Recolher</string>
     <string name="tool_progress_cd_expand">Expandir</string>
+    <string name="tool_progress_state_expanded">Expandido</string>
+    <string name="tool_progress_state_collapsed">Recolhido</string>
+    <string name="tool_run_preparing">Preparando %1$s</string>
+    <string name="tool_run_running">Executando %1$s</string>
+    <string name="tool_run_finished">%1$s concluído</string>
+    <plurals name="tool_run_reading"><item quantity="one">Lendo %d item</item><item quantity="many">Lendo %d itens</item><item quantity="other">Lendo %d itens</item></plurals>
+    <plurals name="tool_run_read"><item quantity="one">Leu %d item</item><item quantity="many">Leu %d itens</item><item quantity="other">Leu %d itens</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="one">Pesquisando %d fonte</item><item quantity="many">Pesquisando %d fontes</item><item quantity="other">Pesquisando %d fontes</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="one">Pesquisou %d fonte</item><item quantity="many">Pesquisou %d fontes</item><item quantity="other">Pesquisou %d fontes</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="one">Executando %d comando</item><item quantity="many">Executando %d comandos</item><item quantity="other">Executando %d comandos</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="one">Executou %d comando</item><item quantity="many">Executou %d comandos</item><item quantity="other">Executou %d comandos</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="one">Executando %d ação do navegador</item><item quantity="many">Executando %d ações do navegador</item><item quantity="other">Executando %d ações do navegador</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="one">Executou %d ação do navegador</item><item quantity="many">Executou %d ações do navegador</item><item quantity="other">Executou %d ações do navegador</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="one">Executando %d ação do dispositivo</item><item quantity="many">Executando %d ações do dispositivo</item><item quantity="other">Executando %d ações do dispositivo</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="one">Executou %d ação do dispositivo</item><item quantity="many">Executou %d ações do dispositivo</item><item quantity="other">Executou %d ações do dispositivo</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="one">Usando %d ferramenta</item><item quantity="many">Usando %d ferramentas</item><item quantity="other">Usando %d ferramentas</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="one">Usou %d ferramenta</item><item quantity="many">Usou %d ferramentas</item><item quantity="other">Usou %d ferramentas</item></plurals>
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Ícone do agente</string>
     <string name="agent_icon_set">Escolher arquivo</string>
@@ -3483,6 +3503,7 @@
     <string name="tool_name_android">Ação no telefone</string>
     <string name="timeline_no_checks">sem verificações</string>
     <string name="thinking_title">Processo de raciocínio</string>
+    <string name="thinking_settled">Pensamento</string>
     <string name="thinking_thinking_short">Pensando</string>
     <string name="thinking_thinking">Pensando...</string>
     <string name="task_status_working">Trabalhando</string>
@@ -3608,6 +3629,7 @@
     <string name="voice_overlay_attachment_ready">Anexo pronto</string>
     <string name="conn_info_active_profile">Perfil ativo</string>
     <string name="msg_bubble_speak_response">Falar resposta</string>
+    <string name="msg_bubble_stop_speaking">Parar fala</string>
     <string name="voice_overlay_engine_standard">Modo padrão</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Abrir Hermes</string>
@@ -3726,4 +3748,81 @@
     <string name="support_bundle_copied">Informações de suporte copiadas</string>
     <string name="support_bundle_no_share">Informações de suporte copiadas — nenhum app encontrado para compartilhar</string>
     <string name="support_bundle_share_title">Compartilhar informações de suporte do Hermes-Relay</string>
+    <string name="chat_search_conversation">Pesquisar conversa</string>
+    <string name="chat_search_close">Fechar pesquisa</string>
+    <string name="chat_search_no_results">Nenhum resultado</string>
+    <string name="chat_search_result_count">%1$d de %2$d</string>
+    <string name="msg_bubble_queued">Na fila</string>
+    <string name="msg_bubble_steered">Correção enviada</string>
+    <string name="chat_quote_you">Você</string>
+    <string name="chat_quote_hermes">Hermes</string>
+    <string name="chat_quote_open">Abrir mensagem original de %1$s</string>
+    <string name="chat_quote_remove">Remover citação</string>
+    <string name="profile_shelf_switch_agent">Trocar agente</string>
+    <string name="profile_shelf_all_profiles">Abrir todos os perfis de agente</string>
+    <string name="profile_shelf_open_passport">Abrir Passaporte do agente</string>
+    <string name="profile_shelf_switch_to">Trocar para este agente</string>
+    <string name="profile_shelf_locked_hint">A troca de perfil está bloqueada. Toque e segure o agente ativo para desbloquear.</string>
+    <string name="profile_shelf_inspect">Inspecionar perfil</string>
+    <string name="profile_shelf_hide">Ocultar da estante de perfis</string>
+    <string name="profile_shelf_expand">Expandir a estante de perfis</string>
+    <string name="profile_shelf_collapse">Recolher a estante de perfis</string>
+    <string name="appearance_intro">Escolha uma predefinição e veja o resultado ao vivo na prévia.</string>
+    <string name="appearance_preset_gallery">Galeria de predefinições</string>
+    <string name="appearance_preview_relay">Prévia · Relay</string>
+    <string name="appearance_preview_user_message">Dê três dicas rápidas para uma manhã focada.</string>
+    <string name="appearance_preview_agent">Hermes</string>
+    <string name="appearance_preview_agent_message">1. Escolha uma conquista real antes de conferir os feeds.\n2. Reserve os primeiros 45–90 minutos.\n3. Comece com um ritual de preparação, não com “motivação”.</string>
+    <string name="appearance_preview_time">19:00</string>
+    <string name="appearance_preview_voice">Voz</string>
+    <string name="appearance_preview_tool_meta">tool_executor  ·  206 tokens  ·  137,2 mil</string>
+    <string name="appearance_preview_message_placeholder">Mensagem…</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / perfil: padrão</string>
+    <string name="appearance_preview_live_note">Esta prévia é atualizada imediatamente com a predefinição, o modo, a fonte e a aparência da Sphere.</string>
+    <string name="appearance_customize_theme">Personalizar %1$s</string>
+    <string name="appearance_accent_preset">Cor de destaque predefinida</string>
+    <string name="appearance_accent_custom">Cor de destaque personalizada aplicada</string>
+    <string name="appearance_accent_preview_only">As alterações ficam na prévia até você aplicá-las.</string>
+    <string name="appearance_accent_preview_only_short">Somente prévia</string>
+    <string name="appearance_apply_changes">Aplicar alterações</string>
+    <string name="appearance_customize_summary">Destaque, superfícies, forma e densidade</string>
+    <string name="appearance_shape">Forma</string>
+    <string name="appearance_shape_soft">Suave</string>
+    <string name="appearance_shape_balanced">Equilibrada</string>
+    <string name="appearance_shape_sharp">Angular</string>
+    <string name="appearance_contrast_passes">Contraste aprovado</string>
+    <string name="appearance_contrast_fails">O contraste precisa melhorar</string>
+    <string name="appearance_contrast_aa">AA para texto normal</string>
+    <string name="appearance_typography_density">Tipografia e densidade</string>
+    <string name="appearance_readability">Legibilidade</string>
+    <string name="appearance_default">Padrão</string>
+    <string name="appearance_font_normal_summary">Tamanho da fonte: Normal</string>
+    <string name="appearance_reset_draft">Redefinir rascunho</string>
+    <string name="appearance_accent">Cor de destaque</string>
+    <string name="appearance_contrast_status">Contraste legível · %1$.1f:1</string>
+    <string name="appearance_typography_density_summary">A tipografia e a densidade usam os controles específicos de Fonte e Tamanho da fonte abaixo.</string>
+    <string name="appearance_readability_summary">Ajuste a densidade do texto aqui; escolha a tipografia na seção Fonte abaixo.</string>
+    <string name="appearance_reset">Redefinir</string>
+    <string name="appearance_apply">Aplicar</string>
+    <string name="appearance_background_installed">Animações instaladas</string>
+    <string name="appearance_import_background">Importar animação de fundo</string>
+    <string name="appearance_import_background_desc">Importa o mesmo ZIP seguro de pet do Relay ou formato de imagem única, mas o usa apenas na visualização central ou de fundo. Não ativa a movimentação nem altera o pet flutuante.</string>
+    <string name="appearance_import_sphere">Importar aparência da Sphere</string>
+    <string name="appearance_create_pet">Criar um pet personalizado</string>
+    <string name="pet_creator_title">Criar um pet personalizado</string>
+    <string name="pet_creator_intro">Descreva seu companheiro, revise as instruções geradas e escolha onde criá-lo. Nada é enviado até você mesmo enviar o novo chat.</string>
+    <string name="pet_creator_step_idea">Escolher a ideia</string>
+    <string name="pet_creator_name">Nome do pet</string>
+    <string name="pet_creator_description">Direção do personagem</string>
+    <string name="pet_creator_description_hint">Descreva o personagem, os materiais, as cores, o clima e qualquer imagem de referência que você pretende anexar.</string>
+    <string name="pet_creator_animated">Pacote animado</string>
+    <string name="pet_creator_static">Imagem estática</string>
+    <string name="pet_creator_step_create">Revisar e criar</string>
+    <string name="pet_creator_review_copy">Estas instruções completas incluem o formato atual de pets e os limites de validação, privacidade e revisão.</string>
+    <string name="pet_creator_copy">Copiar</string>
+    <string name="pet_creator_copied">Instruções copiadas</string>
+    <string name="pet_creator_new_chat">Novo chat</string>
+    <string name="pet_creator_step_review">Revisar e importar</string>
+    <string name="pet_creator_review_desc">Inspecione primeiro a imagem ou o ZIP retornado. A importação copia os arquivos validados para o armazenamento do app; ela não os publica.</string>
+    <string name="pet_creator_import">Importar pet concluído</string>
 </resources>

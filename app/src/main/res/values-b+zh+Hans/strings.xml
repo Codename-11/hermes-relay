@@ -736,6 +736,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">在输入栏上方显示最近消息为可点击的标签以便重发。默认关闭。</string>
     <string name="chat_settings_keep_keyboard_open">发送时保持键盘打开</string>
     <string name="chat_settings_keep_keyboard_open_desc">发送后留在输入栏。关闭则在每条消息发送后收起键盘。</string>
+    <string name="chat_settings_physical_keyboard_enter">实体键盘 Enter 键</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">选择按 Enter 是发送消息还是插入新行。Ctrl+Enter 始终发送。</string>
+    <string name="chat_settings_insert_newline">插入新行</string>
     <string name="chat_settings_notify_when_finishes">后台聊天提醒</string>
     <string name="chat_settings_notify_when_finishes_desc">Hermes 在后台需要输入或完成回复时通知</string>
     <string name="chat_settings_share_phone_status">与代理分享手机状态</string>
@@ -2554,6 +2557,23 @@
     <string name="image_generation_rendering">正在生成图像</string>
     <string name="tool_progress_cd_collapse">折叠</string>
     <string name="tool_progress_cd_expand">展开</string>
+    <string name="tool_progress_state_expanded">已展开</string>
+    <string name="tool_progress_state_collapsed">已折叠</string>
+    <string name="tool_run_preparing">正在准备%1$s</string>
+    <string name="tool_run_running">正在运行%1$s</string>
+    <string name="tool_run_finished">已完成%1$s</string>
+    <plurals name="tool_run_reading"><item quantity="other">正在读取 %d 项</item></plurals>
+    <plurals name="tool_run_read"><item quantity="other">已读取 %d 项</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="other">正在搜索 %d 个来源</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="other">已搜索 %d 个来源</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="other">正在运行 %d 个命令</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="other">已运行 %d 个命令</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="other">正在执行 %d 个浏览器操作</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="other">已执行 %d 个浏览器操作</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="other">正在执行 %d 个设备操作</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="other">已执行 %d 个设备操作</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="other">正在使用 %d 个工具</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="other">已使用 %d 个工具</item></plurals>
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">代理图标</string>
@@ -3571,6 +3591,7 @@
     <string name="tool_name_android">手机操作</string>
     <string name="timeline_no_checks">无检查</string>
     <string name="thinking_title">思考过程</string>
+    <string name="thinking_settled">思考</string>
     <string name="thinking_thinking_short">思考中</string>
     <string name="thinking_thinking">思考中…</string>
     <string name="task_status_working">处理中</string>
@@ -3696,6 +3717,7 @@
     <string name="voice_overlay_attachment_ready">附件已就绪</string>
     <string name="conn_info_active_profile">活跃个人资料</string>
     <string name="msg_bubble_speak_response">朗读回复</string>
+    <string name="msg_bubble_stop_speaking">停止朗读</string>
     <string name="voice_overlay_engine_standard">标准模式</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">打开 Hermes</string>
@@ -3814,4 +3836,81 @@
     <string name="support_bundle_copied">支持信息已复制</string>
     <string name="support_bundle_no_share">支持信息已复制 — 未找到可分享的应用</string>
     <string name="support_bundle_share_title">分享 Hermes-Relay 支持信息</string>
+    <string name="chat_search_conversation">搜索对话</string>
+    <string name="chat_search_close">关闭搜索</string>
+    <string name="chat_search_no_results">无结果</string>
+    <string name="chat_search_result_count">%1$d / %2$d</string>
+    <string name="msg_bubble_queued">已排队</string>
+    <string name="msg_bubble_steered">更正已发送</string>
+    <string name="chat_quote_you">你</string>
+    <string name="chat_quote_hermes">Hermes</string>
+    <string name="chat_quote_open">打开 %1$s 的原始消息</string>
+    <string name="chat_quote_remove">移除引用</string>
+    <string name="profile_shelf_switch_agent">切换智能体</string>
+    <string name="profile_shelf_all_profiles">打开所有智能体配置</string>
+    <string name="profile_shelf_open_passport">打开智能体护照</string>
+    <string name="profile_shelf_switch_to">切换到此智能体</string>
+    <string name="profile_shelf_locked_hint">配置切换已锁定。长按当前智能体即可解锁。</string>
+    <string name="profile_shelf_inspect">查看配置</string>
+    <string name="profile_shelf_hide">从配置架中隐藏</string>
+    <string name="profile_shelf_expand">展开配置架</string>
+    <string name="profile_shelf_collapse">收起配置架</string>
+    <string name="appearance_intro">选择一个预设，即时查看预览效果。</string>
+    <string name="appearance_preset_gallery">预设库</string>
+    <string name="appearance_preview_relay">预览 · Relay</string>
+    <string name="appearance_preview_user_message">给我三个专注开启早晨的小建议。</string>
+    <string name="appearance_preview_agent">Hermes</string>
+    <string name="appearance_preview_agent_message">1. 查看信息流之前，先选定一个真正的成果。\n2. 留出最初的 45–90 分钟。\n3. 从准备仪式开始，而不是等待“动力”。</string>
+    <string name="appearance_preview_time">晚上 7:00</string>
+    <string name="appearance_preview_voice">语音</string>
+    <string name="appearance_preview_tool_meta">tool_executor  ·  206 个 token  ·  137.2K</string>
+    <string name="appearance_preview_message_placeholder">消息…</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / 配置文件：默认</string>
+    <string name="appearance_preview_live_note">更改预设、模式、字体或 Sphere 皮肤后，此预览会立即更新。</string>
+    <string name="appearance_customize_theme">自定义 %1$s</string>
+    <string name="appearance_accent_preset">预设强调色</string>
+    <string name="appearance_accent_custom">已应用自定义强调色</string>
+    <string name="appearance_accent_preview_only">应用之前，更改只会显示在预览中。</string>
+    <string name="appearance_accent_preview_only_short">仅预览</string>
+    <string name="appearance_apply_changes">应用更改</string>
+    <string name="appearance_customize_summary">强调色、表面、形状和密度</string>
+    <string name="appearance_shape">形状</string>
+    <string name="appearance_shape_soft">柔和</string>
+    <string name="appearance_shape_balanced">均衡</string>
+    <string name="appearance_shape_sharp">锐利</string>
+    <string name="appearance_contrast_passes">对比度达标</string>
+    <string name="appearance_contrast_fails">对比度需要改进</string>
+    <string name="appearance_contrast_aa">普通文本 AA 标准</string>
+    <string name="appearance_typography_density">排版和密度</string>
+    <string name="appearance_readability">可读性</string>
+    <string name="appearance_default">默认</string>
+    <string name="appearance_font_normal_summary">字体大小：标准</string>
+    <string name="appearance_reset_draft">重置草稿</string>
+    <string name="appearance_accent">强调色</string>
+    <string name="appearance_contrast_status">易读对比度 · %1$.1f:1</string>
+    <string name="appearance_typography_density_summary">排版和密度使用下方独立的字体和字体大小控件。</string>
+    <string name="appearance_readability_summary">在此调整文本密度；在下方的字体部分选择字形。</string>
+    <string name="appearance_reset">重置</string>
+    <string name="appearance_apply">应用</string>
+    <string name="appearance_background_installed">已安装的动画</string>
+    <string name="appearance_import_background">导入背景动画</string>
+    <string name="appearance_import_background_desc">导入与安全 Relay 宠物 ZIP 或单张图片相同的格式，但仅用于中央或背景可视化。它不会启用漫游，也不会更改悬浮宠物。</string>
+    <string name="appearance_import_sphere">导入 Sphere 皮肤</string>
+    <string name="appearance_create_pet">创建自定义宠物</string>
+    <string name="pet_creator_title">创建自定义宠物</string>
+    <string name="pet_creator_intro">描述你的伙伴，检查生成的说明，然后选择创建位置。在你自行发送新聊天之前，不会发送任何内容。</string>
+    <string name="pet_creator_step_idea">选择构思</string>
+    <string name="pet_creator_name">宠物名称</string>
+    <string name="pet_creator_description">角色方向</string>
+    <string name="pet_creator_description_hint">描述角色、材质、颜色、氛围以及计划附加的参考图片。</string>
+    <string name="pet_creator_animated">动画包</string>
+    <string name="pet_creator_static">静态图片</string>
+    <string name="pet_creator_step_create">检查并创建</string>
+    <string name="pet_creator_review_copy">这些完整说明涵盖当前宠物格式、验证、隐私和审查边界。</string>
+    <string name="pet_creator_copy">复制</string>
+    <string name="pet_creator_copied">说明已复制</string>
+    <string name="pet_creator_new_chat">新聊天</string>
+    <string name="pet_creator_step_review">检查并导入</string>
+    <string name="pet_creator_review_desc">请先检查返回的图片或 ZIP。导入会将经过验证的文件复制到应用专属存储空间，不会发布它们。</string>
+    <string name="pet_creator_import">导入完成的宠物</string>
 </resources>

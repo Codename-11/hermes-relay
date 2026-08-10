@@ -736,6 +736,9 @@
     <string name="chat_settings_recent_prompt_chips_desc">最近のメッセージをコンポーザーの上にタップ可能なチップとして表示し、再送信します。デフォルトではオフです。</string>
     <string name="chat_settings_keep_keyboard_open">送信時にキーボードを開いたままにする</string>
     <string name="chat_settings_keep_keyboard_open_desc">送信後はコンポーザー内に留まります。メッセージを送信するたびにキーボードを閉じるには、オフにします。</string>
+    <string name="chat_settings_physical_keyboard_enter">物理キーボードの Enter キー</string>
+    <string name="chat_settings_physical_keyboard_enter_desc">Enter で送信するか改行するかを選択します。Ctrl+Enter は常に送信します。</string>
+    <string name="chat_settings_insert_newline">改行を挿入</string>
     <string name="chat_settings_notify_when_finishes">バックグラウンドのチャット通知</string>
     <string name="chat_settings_notify_when_finishes_desc">バックグラウンドで Hermes が入力を必要としたとき、または完了したときに通知します</string>
     <string name="chat_settings_share_phone_status">電話のステータスをエージェントと共有する</string>
@@ -2568,6 +2571,23 @@
     <string name="image_generation_rendering">画像を生成中</string>
     <string name="tool_progress_cd_collapse">崩壊</string>
     <string name="tool_progress_cd_expand">拡大する</string>
+    <string name="tool_progress_state_expanded">展開済み</string>
+    <string name="tool_progress_state_collapsed">折りたたみ済み</string>
+    <string name="tool_run_preparing">%1$s を準備中</string>
+    <string name="tool_run_running">%1$s を実行中</string>
+    <string name="tool_run_finished">%1$s が完了</string>
+    <plurals name="tool_run_reading"><item quantity="other">%d 件を読み取り中</item></plurals>
+    <plurals name="tool_run_read"><item quantity="other">%d 件を読み取り</item></plurals>
+    <plurals name="tool_run_searching"><item quantity="other">%d 件のソースを検索中</item></plurals>
+    <plurals name="tool_run_searched"><item quantity="other">%d 件のソースを検索</item></plurals>
+    <plurals name="tool_run_running_commands"><item quantity="other">%d 件のコマンドを実行中</item></plurals>
+    <plurals name="tool_run_ran_commands"><item quantity="other">%d 件のコマンドを実行</item></plurals>
+    <plurals name="tool_run_browsing"><item quantity="other">%d 件のブラウザー操作を実行中</item></plurals>
+    <plurals name="tool_run_browsed"><item quantity="other">%d 件のブラウザー操作を実行</item></plurals>
+    <plurals name="tool_run_using_device"><item quantity="other">%d 件のデバイス操作を実行中</item></plurals>
+    <plurals name="tool_run_used_device"><item quantity="other">%d 件のデバイス操作を実行</item></plurals>
+    <plurals name="tool_run_using_tools"><item quantity="other">%d 個のツールを使用中</item></plurals>
+    <plurals name="tool_run_used_tools"><item quantity="other">%d 個のツールを使用</item></plurals>
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">エージェントアイコン</string>
@@ -3642,6 +3662,7 @@
     <string name="tool_name_android">電話アクション</string>
     <string name="timeline_no_checks">チェックなし</string>
     <string name="thinking_title">思考プロセス</string>
+    <string name="thinking_settled">思考</string>
     <string name="thinking_thinking_short">考え中</string>
     <string name="thinking_thinking">考え中…</string>
     <string name="task_status_working">作業中</string>
@@ -3767,6 +3788,7 @@
     <string name="voice_overlay_attachment_ready">添付ファイルの準備ができました</string>
     <string name="conn_info_active_profile">アクティブなプロフィール</string>
     <string name="msg_bubble_speak_response">応答を読み上げる</string>
+    <string name="msg_bubble_stop_speaking">読み上げを停止</string>
     <string name="voice_overlay_engine_standard">標準モード</string>
     <string name="voice_overlay_caption_hermes">Hermes</string>
     <string name="voice_overlay_open_hermes">Hermes を開く</string>
@@ -3885,4 +3907,81 @@
     <string name="support_bundle_copied">サポート情報をコピーしました</string>
     <string name="support_bundle_no_share">サポート情報をコピーしました — 共有できるアプリがありません</string>
     <string name="support_bundle_share_title">Hermes-Relay サポート情報を共有</string>
+    <string name="chat_search_conversation">会話を検索</string>
+    <string name="chat_search_close">検索を閉じる</string>
+    <string name="chat_search_no_results">結果なし</string>
+    <string name="chat_search_result_count">%1$d / %2$d</string>
+    <string name="msg_bubble_queued">キュー済み</string>
+    <string name="msg_bubble_steered">修正を送信しました</string>
+    <string name="chat_quote_you">あなた</string>
+    <string name="chat_quote_hermes">Hermes</string>
+    <string name="chat_quote_open">%1$s の元のメッセージを開く</string>
+    <string name="chat_quote_remove">引用を削除</string>
+    <string name="profile_shelf_switch_agent">エージェントを切り替え</string>
+    <string name="profile_shelf_all_profiles">すべてのエージェントプロフィールを開く</string>
+    <string name="profile_shelf_open_passport">エージェントパスポートを開く</string>
+    <string name="profile_shelf_switch_to">このエージェントに切り替え</string>
+    <string name="profile_shelf_locked_hint">プロフィールの切り替えはロックされています。解除するには、使用中のエージェントを長押ししてください。</string>
+    <string name="profile_shelf_inspect">プロフィールを確認</string>
+    <string name="profile_shelf_hide">プロフィールシェルフに表示しない</string>
+    <string name="profile_shelf_expand">プロフィールシェルフを展開</string>
+    <string name="profile_shelf_collapse">プロフィールシェルフを折りたたむ</string>
+    <string name="appearance_intro">プリセットを選ぶと、プレビューですぐに確認できます。</string>
+    <string name="appearance_preset_gallery">プリセットギャラリー</string>
+    <string name="appearance_preview_relay">プレビュー · Relay</string>
+    <string name="appearance_preview_user_message">集中できる朝のための簡単なヒントを3つ教えて。</string>
+    <string name="appearance_preview_agent">Hermes</string>
+    <string name="appearance_preview_agent_message">1. フィードを見る前に、確実に達成することを1つ決めます。\n2. 最初の45〜90分を確保します。\n3. 「やる気」ではなく準備の習慣から始めます。</string>
+    <string name="appearance_preview_time">19:00</string>
+    <string name="appearance_preview_voice">音声</string>
+    <string name="appearance_preview_tool_meta">tool_executor  ·  206トークン  ·  137.2K</string>
+    <string name="appearance_preview_message_placeholder">メッセージ…</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / プロファイル: デフォルト</string>
+    <string name="appearance_preview_live_note">このプレビューには、プリセット、モード、フォント、Sphereスキンの変更がすぐに反映されます。</string>
+    <string name="appearance_customize_theme">%1$sをカスタマイズ</string>
+    <string name="appearance_accent_preset">プリセットのアクセント</string>
+    <string name="appearance_accent_custom">カスタムアクセントを適用済み</string>
+    <string name="appearance_accent_preview_only">適用するまで変更はプレビュー内だけに反映されます。</string>
+    <string name="appearance_accent_preview_only_short">プレビューのみ</string>
+    <string name="appearance_apply_changes">変更を適用</string>
+    <string name="appearance_customize_summary">アクセント、サーフェス、形状、密度</string>
+    <string name="appearance_shape">形状</string>
+    <string name="appearance_shape_soft">ソフト</string>
+    <string name="appearance_shape_balanced">バランス</string>
+    <string name="appearance_shape_sharp">シャープ</string>
+    <string name="appearance_contrast_passes">コントラスト基準を満たしています</string>
+    <string name="appearance_contrast_fails">コントラストの改善が必要です</string>
+    <string name="appearance_contrast_aa">通常テキストのAA基準</string>
+    <string name="appearance_typography_density">文字と密度</string>
+    <string name="appearance_readability">読みやすさ</string>
+    <string name="appearance_default">デフォルト</string>
+    <string name="appearance_font_normal_summary">フォントサイズ: 標準</string>
+    <string name="appearance_reset_draft">下書きをリセット</string>
+    <string name="appearance_accent">アクセントカラー</string>
+    <string name="appearance_contrast_status">読みやすいコントラスト · %1$.1f:1</string>
+    <string name="appearance_typography_density_summary">文字と密度には、下にあるフォントとフォントサイズの専用設定が使用されます。</string>
+    <string name="appearance_readability_summary">ここで文字の密度を調整し、下のフォントセクションで書体を選択します。</string>
+    <string name="appearance_reset">リセット</string>
+    <string name="appearance_apply">適用</string>
+    <string name="appearance_background_installed">インストール済みアニメーション</string>
+    <string name="appearance_import_background">背景アニメーションをインポート</string>
+    <string name="appearance_import_background_desc">安全なRelayペットZIPまたは単一画像と同じ形式を読み込み、中央または背景の表示だけに使用します。移動は有効にならず、フローティングペットも変更されません。</string>
+    <string name="appearance_import_sphere">Sphereスキンをインポート</string>
+    <string name="appearance_create_pet">カスタムペットを作成</string>
+    <string name="pet_creator_title">カスタムペットを作成</string>
+    <string name="pet_creator_intro">コンパニオンを説明し、生成された手順を確認してから作成場所を選びます。新しいチャットを自分で送信するまで何も送られません。</string>
+    <string name="pet_creator_step_idea">アイデアを選ぶ</string>
+    <string name="pet_creator_name">ペットの名前</string>
+    <string name="pet_creator_description">キャラクターの方向性</string>
+    <string name="pet_creator_description_hint">キャラクター、素材、色、雰囲気、添付予定の参照画像について説明します。</string>
+    <string name="pet_creator_animated">アニメーションパック</string>
+    <string name="pet_creator_static">静止画像</string>
+    <string name="pet_creator_step_create">確認して作成</string>
+    <string name="pet_creator_review_copy">この完全な手順には、現在のペット形式、検証、プライバシー、確認の境界が含まれています。</string>
+    <string name="pet_creator_copy">コピー</string>
+    <string name="pet_creator_copied">手順をコピーしました</string>
+    <string name="pet_creator_new_chat">新しいチャット</string>
+    <string name="pet_creator_step_review">確認してインポート</string>
+    <string name="pet_creator_review_desc">返された画像またはZIPを最初に確認してください。インポートすると検証済みファイルがアプリ専用ストレージにコピーされますが、公開はされません。</string>
+    <string name="pet_creator_import">完成したペットをインポート</string>
 </resources>
