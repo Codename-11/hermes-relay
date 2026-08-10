@@ -21,7 +21,6 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,16 +29,13 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -47,22 +43,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -82,7 +71,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -95,14 +83,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -129,8 +115,6 @@ import com.hermesandroid.relay.ui.components.RelayMetricCard
 import com.hermesandroid.relay.ui.components.RelayNavTile
 import com.hermesandroid.relay.ui.components.RelayReturnStrip
 import com.hermesandroid.relay.ui.components.RelaySectionCaption
-import com.hermesandroid.relay.ui.theme.HermesRelayTheme
-import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
@@ -1160,47 +1144,30 @@ fun DashboardManagementScreen(
         )
     }
 
-    val showingProfileDetail = showingDetail && section == DashboardManagementSection.Profiles
-    val managementConnectionLabel = activeConnection?.label
-        ?.takeIf { it.isNotBlank() }
-        ?: dashboardUrl
-
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        if (showingProfileDetail) {
-                            stringResource(R.string.dashboard_tile_profiles_title)
-                        } else {
-                            stringResource(R.string.dashboard_title)
-                        },
-                    )
-                },
+                title = { Text(stringResource(R.string.dashboard_title)) },
                 navigationIcon = {
                     RelayChromeIconButton(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = stringResource(R.string.dashboard_back),
-                        onClick = {
-                            if (showingProfileDetail) showingDetail = false else onBack()
-                        },
+                        onClick = onBack,
                     )
                 },
                 actions = {
-                    if (!showingProfileDetail) {
-                        RelayChromeIconButton(
-                            icon = Icons.Filled.Code,
-                            contentDescription = stringResource(R.string.dashboard_terminal),
-                            onClick = onNavigateToTerminal,
-                            modifier = Modifier.padding(end = 4.dp),
-                        )
-                        RelayChromeIconButton(
-                            icon = Icons.Filled.Tune,
-                            contentDescription = stringResource(R.string.dashboard_settings),
-                            onClick = onNavigateToSettings,
-                            modifier = Modifier.padding(end = 4.dp),
-                        )
-                    }
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Code,
+                        contentDescription = stringResource(R.string.dashboard_terminal),
+                        onClick = onNavigateToTerminal,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Tune,
+                        contentDescription = stringResource(R.string.dashboard_settings),
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
                     IconButton(
                         onClick = {
                             forceReloadKey = payloadKey
@@ -1227,7 +1194,7 @@ fun DashboardManagementScreen(
                 .background(RelayRefresh.Background)
                 .relayGridTexture(alpha = 0.12f)
         ) {
-            if (dashboardUrl.isNotBlank() && !showingProfileDetail) {
+            if (dashboardUrl.isNotBlank()) {
                 ManageDashboardTargetLine(
                     dashboardUrl = dashboardUrl,
                     routeHint = dashboardRouteHint,
@@ -1260,22 +1227,20 @@ fun DashboardManagementScreen(
             ) { detailMode ->
                 if (detailMode) {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        if (!showingProfileDetail) {
-                            ManageSelectedSectionHeader(
-                                section = section,
-                                onBackToOverview = { showingDetail = false },
-                            )
-                            PrimaryScrollableTabRow(selectedTabIndex = selectedTab) {
-                                managementSections.forEachIndexed { index, tab ->
-                                    Tab(
-                                        selected = selectedTab == index,
-                                        onClick = { selectedTab = index },
-                                        text = { Text(tab.displayLabel()) },
-                                    )
-                                }
+                        ManageSelectedSectionHeader(
+                            section = section,
+                            onBackToOverview = { showingDetail = false },
+                        )
+                        PrimaryScrollableTabRow(selectedTabIndex = selectedTab) {
+                            managementSections.forEachIndexed { index, tab ->
+                                Tab(
+                                    selected = selectedTab == index,
+                                    onClick = { selectedTab = index },
+                                    text = { Text(tab.displayLabel()) },
+                                )
                             }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
                         }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
                         if (isRefreshing && payloadState !is DashboardPayloadState.Loading) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
@@ -1308,7 +1273,6 @@ fun DashboardManagementScreen(
                                 is DashboardPayloadState.Loaded -> LoadedBody(
                                     section = section,
                                     state = state,
-                                    connectionLabel = managementConnectionLabel,
                                     actionInFlight = actionInFlight,
                                     actionMessage = actionMessage,
                                     onAction = { item, action ->
@@ -2229,24 +2193,12 @@ private fun ErrorBody(
 private fun LoadedBody(
     section: DashboardManagementSection,
     state: DashboardPayloadState.Loaded,
-    connectionLabel: String,
     actionInFlight: Boolean,
     actionMessage: String?,
     onAction: (DashboardSummaryItem, DashboardItemAction) -> Unit,
     onSectionAction: (DashboardSectionAction) -> Unit = {},
     mcpOAuthSupported: Boolean = true,
 ) {
-    if (section == DashboardManagementSection.Profiles) {
-        ProfilesManagementDetailBody(
-            items = state.items,
-            connectionLabel = connectionLabel,
-            actionInFlight = actionInFlight,
-            actionMessage = actionMessage,
-            onCreateProfile = { onSectionAction(DashboardSectionAction.CreateProfile) },
-            onAction = onAction,
-        )
-        return
-    }
     // Pre-resolve action labels outside LazyColumn's non-Composable lambda
     val actionLabelChangeMainModel = stringResource(R.string.dashboard_section_action_change_main_model)
     val actionLabelNewProfile = stringResource(R.string.dashboard_section_action_new_profile)
@@ -2330,519 +2282,6 @@ private fun LoadedBody(
                     item = renderedItem,
                     actionInFlight = actionInFlight,
                     onAction = { action -> onAction(renderedItem, action) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProfilesManagementDetailBody(
-    items: List<DashboardSummaryItem>,
-    connectionLabel: String,
-    actionInFlight: Boolean,
-    actionMessage: String?,
-    onCreateProfile: () -> Unit,
-    onAction: (DashboardSummaryItem, DashboardItemAction) -> Unit,
-) {
-    val brand = LocalBrand.current
-    val describeLabel = stringResource(R.string.dashboard_profiles_edit_description)
-    val describeSubtitle = stringResource(R.string.dashboard_profiles_edit_description_subtitle)
-    val modelLabel = stringResource(R.string.dashboard_profiles_change_model)
-    val modelSubtitle = stringResource(R.string.dashboard_profiles_change_model_subtitle)
-    val editSoulLabel = stringResource(R.string.dashboard_action_edit_soul)
-    val editSoulSubtitle = stringResource(R.string.dashboard_profiles_edit_soul_subtitle)
-    val identityKey = items.joinToString("|") { it.id.ifBlank { it.title } }
-    val initialSelection = items.firstOrNull { it.profileIsDefault }?.let { it.id.ifBlank { it.title } }
-        ?: items.firstOrNull()?.let { it.id.ifBlank { it.title } }
-    var selectedId by rememberSaveable(connectionLabel) {
-        mutableStateOf<String?>(initialSelection)
-    }
-    LaunchedEffect(identityKey) {
-        if (selectedId == null || items.none { it.id.ifBlank { it.title } == selectedId }) {
-            selectedId = initialSelection
-        }
-    }
-    val selected = items.firstOrNull { it.id.ifBlank { it.title } == selectedId } ?: items.firstOrNull()
-    val selectedKey = selected?.let { it.id.ifBlank { it.title } }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().testTag("profiles-management-detail"),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        item {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = brand.navy,
-                border = BorderStroke(1.dp, brand.lineStrong),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Icon(Icons.Filled.Tune, contentDescription = null, tint = brand.relay)
-                    Text(
-                        text = connectionLabel,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Box(
-                        modifier = Modifier.size(7.dp).background(brand.green, CircleShape),
-                    )
-                    Text(
-                        text = stringResource(R.string.dashboard_profiles_server_profiles),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        item {
-            Button(
-                onClick = onCreateProfile,
-                enabled = !actionInFlight,
-                modifier = Modifier.fillMaxWidth().height(48.dp).testTag("profiles-new-profile"),
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = null)
-                Spacer(Modifier.width(9.dp))
-                Text(stringResource(R.string.dashboard_section_action_new_profile))
-            }
-        }
-        if (items.isNotEmpty()) {
-            item {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(end = 4.dp),
-                ) {
-                    items(items, key = { it.id.ifBlank { it.title } }) { profile ->
-                        val profileId = profile.id.ifBlank { profile.title }
-                        ProfileSelectorCard(
-                            profile = profile,
-                            selected = profileId == selectedKey,
-                            onClick = { selectedId = profileId },
-                        )
-                    }
-                }
-            }
-        }
-        actionMessage?.let { message -> item { ActionMessageCard(message) } }
-        if (selected == null) {
-            item {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = brand.navy,
-                    border = BorderStroke(1.dp, brand.lineStrong),
-                ) {
-                    Text(
-                        text = stringResource(R.string.dashboard_empty_section, stringResource(R.string.dashboard_tab_profiles_lower)),
-                        modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-        } else {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        text = selected.title,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = selected.subtitle ?: stringResource(R.string.dashboard_profiles_no_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            val modelAction = selected.action(DashboardActionKind.SetProfileModel)
-            val viewSoulAction = selected.action(DashboardActionKind.ViewProfileSoul)
-            item {
-                ProfileDetailSectionCard {
-                    ProfileDetailRow(
-                        icon = Icons.Filled.Tune,
-                        title = stringResource(R.string.dashboard_profiles_model),
-                        subtitle = selected.profileModel ?: stringResource(R.string.dashboard_profiles_server_default),
-                        onClick = modelAction?.let { { onAction(selected, it) } },
-                    )
-                    ProfileDetailDivider()
-                    ProfileDetailRow(
-                        icon = Icons.Filled.Shield,
-                        title = stringResource(R.string.dashboard_profiles_soul),
-                        subtitle = stringResource(R.string.dashboard_profiles_soul_open),
-                        onClick = viewSoulAction?.let { { onAction(selected, it) } },
-                    )
-                    selected.profileSkillCount?.let { count ->
-                        ProfileDetailDivider()
-                        ProfileDetailRow(
-                            icon = Icons.Filled.AutoAwesome,
-                            title = stringResource(R.string.dashboard_profiles_skills_tools),
-                            subtitle = stringResource(R.string.dashboard_profiles_enabled_count, count),
-                        )
-                    }
-                }
-            }
-
-            val profileActions = listOfNotNull(
-                selected.action(DashboardActionKind.EditProfileDescription)?.let {
-                    ProfileActionPresentation(
-                        it,
-                        Icons.Filled.Edit,
-                        describeLabel,
-                        describeSubtitle,
-                    )
-                },
-                modelAction?.let {
-                    ProfileActionPresentation(
-                        it,
-                        Icons.Filled.Tune,
-                        modelLabel,
-                        modelSubtitle,
-                    )
-                },
-                selected.action(DashboardActionKind.EditProfileSoul)?.let {
-                    ProfileActionPresentation(
-                        it,
-                        Icons.Filled.Shield,
-                        editSoulLabel,
-                        editSoulSubtitle,
-                    )
-                },
-            )
-            if (profileActions.isNotEmpty()) {
-                item {
-                    Column {
-                        ProfileDetailSectionLabel(stringResource(R.string.dashboard_profiles_profile_actions))
-                        ProfileDetailSectionCard {
-                            profileActions.forEachIndexed { index, presentation ->
-                                if (index > 0) ProfileDetailDivider()
-                                ProfileDetailRow(
-                                    icon = presentation.icon,
-                                    title = presentation.title,
-                                    subtitle = presentation.subtitle,
-                                    enabled = !actionInFlight,
-                                    onClick = { onAction(selected, presentation.action) },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            val activateAction = selected.action(DashboardActionKind.ActivateProfile)
-            val deleteAction = selected.action(DashboardActionKind.DeleteProfile)
-            if (activateAction != null || deleteAction != null) {
-                item {
-                    Column {
-                        ProfileDetailSectionLabel(stringResource(R.string.dashboard_profiles_server_actions))
-                        ProfileDetailSectionCard {
-                            if (activateAction != null) {
-                                Surface(
-                                    color = brand.amber.copy(alpha = if (brand.isDark) 0.14f else 0.08f),
-                                    border = BorderStroke(1.dp, brand.amber.copy(alpha = 0.42f)),
-                                    shape = RoundedCornerShape(9.dp),
-                                    modifier = Modifier.fillMaxWidth().padding(10.dp),
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(11.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        verticalAlignment = Alignment.Top,
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.Warning,
-                                            contentDescription = null,
-                                            tint = brand.amber,
-                                            modifier = Modifier.size(20.dp),
-                                        )
-                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                            Text(
-                                                text = stringResource(R.string.dashboard_profiles_server_warning_title),
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = brand.amber,
-                                            )
-                                            Text(
-                                                text = stringResource(R.string.dashboard_profiles_server_warning, connectionLabel),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
-                                    }
-                                }
-                                ProfileDetailRow(
-                                    icon = Icons.Filled.CheckCircle,
-                                    title = stringResource(R.string.dashboard_profiles_set_active),
-                                    subtitle = stringResource(R.string.dashboard_profiles_set_active_subtitle, connectionLabel),
-                                    enabled = !actionInFlight,
-                                    onClick = { onAction(selected, activateAction) },
-                                )
-                            }
-                            if (activateAction != null && deleteAction != null) ProfileDetailDivider()
-                            if (deleteAction != null) {
-                                ProfileDetailRow(
-                                    icon = Icons.Filled.Delete,
-                                    title = stringResource(R.string.dashboard_profiles_delete_profile),
-                                    subtitle = stringResource(R.string.dashboard_profiles_delete_subtitle),
-                                    valueColor = MaterialTheme.colorScheme.error,
-                                    enabled = !actionInFlight,
-                                    onClick = { onAction(selected, deleteAction) },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private data class ProfileActionPresentation(
-    val action: DashboardItemAction,
-    val icon: ImageVector,
-    val title: String,
-    val subtitle: String,
-)
-
-private fun DashboardSummaryItem.action(kind: DashboardActionKind): DashboardItemAction? =
-    actions.firstOrNull { it.kind == kind }
-
-@Composable
-private fun ProfileSelectorCard(
-    profile: DashboardSummaryItem,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val brand = LocalBrand.current
-    Surface(
-        modifier = Modifier.width(
-            when {
-                profile.profileGatewayRunning -> 140.dp
-                selected -> 120.dp
-                profile.title.length > 5 -> 110.dp
-                else -> 96.dp
-            },
-        )
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(11.dp),
-        color = if (selected) brand.navy3 else brand.navy,
-        border = BorderStroke(
-            1.dp,
-            if (selected) brand.relay else brand.lineStrong,
-        ),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            Icon(Icons.Filled.Person, contentDescription = null, tint = brand.relay)
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = profile.title,
-                    style = if (selected) {
-                        MaterialTheme.typography.bodyMedium
-                    } else {
-                        MaterialTheme.typography.bodySmall
-                    },
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (profile.profileGatewayRunning) {
-                    Text(
-                        text = stringResource(R.string.dashboard_profiles_gateway_running),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = brand.green,
-                    )
-                }
-            }
-            if (selected) {
-                Icon(
-                    Icons.Filled.CheckCircle,
-                    contentDescription = null,
-                    tint = brand.relay,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProfileDetailSectionLabel(text: String) {
-    Text(
-        text = text.uppercase(),
-        style = MaterialTheme.typography.labelMedium,
-        color = LocalBrand.current.relay,
-        modifier = Modifier.padding(start = 3.dp, bottom = 5.dp),
-    )
-}
-
-@Composable
-private fun ProfileDetailSectionCard(content: @Composable () -> Unit) {
-    val brand = LocalBrand.current
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = brand.navy,
-        border = BorderStroke(1.dp, brand.lineStrong),
-    ) {
-        Column(content = { content() })
-    }
-}
-
-@Composable
-private fun ProfileDetailDivider() {
-    HorizontalDivider(
-        modifier = Modifier.padding(horizontal = 14.dp),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.62f),
-    )
-}
-
-@Composable
-private fun ProfileDetailRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    valueColor: androidx.compose.ui.graphics.Color? = null,
-    enabled: Boolean = true,
-    onClick: (() -> Unit)? = null,
-) {
-    val brand = LocalBrand.current
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Surface(
-            modifier = Modifier.size(36.dp),
-            shape = RoundedCornerShape(10.dp),
-            color = brand.navy3,
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    icon,
-                    contentDescription = null,
-                    tint = valueColor ?: brand.relay,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = valueColor ?: MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = valueColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (onClick != null) {
-            Icon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-/** Deterministic production-UI seam for the selected Profiles detail design. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun DashboardProfilesDetailPreview() {
-    val commonActions = listOf(
-        DashboardItemAction("SOUL", DashboardActionKind.ViewProfileSoul),
-        DashboardItemAction("Edit SOUL", DashboardActionKind.EditProfileSoul),
-        DashboardItemAction("Use", DashboardActionKind.ActivateProfile),
-        DashboardItemAction("Describe", DashboardActionKind.EditProfileDescription),
-        DashboardItemAction("Model", DashboardActionKind.SetProfileModel),
-    )
-    val profiles = listOf(
-        DashboardSummaryItem(
-            id = "default",
-            title = "Default",
-            subtitle = "General-purpose profile for everyday work.",
-            actions = commonActions,
-            profileModel = "anthropic / claude-sonnet-4-5",
-            profileIsDefault = true,
-            profileGatewayRunning = true,
-            profileSkillCount = 18,
-        ),
-        DashboardSummaryItem(
-            id = "work",
-            title = "Work",
-            subtitle = "Focused profile for projects and delivery.",
-            actions = commonActions + DashboardItemAction(
-                "Delete",
-                DashboardActionKind.DeleteProfile,
-                destructive = true,
-            ),
-            profileModel = "anthropic / claude-sonnet-4-5",
-            profileSkillCount = 12,
-        ),
-        DashboardSummaryItem(
-            id = "research",
-            title = "Research",
-            subtitle = "Deep research and synthesis.",
-            actions = commonActions + DashboardItemAction(
-                "Delete",
-                DashboardActionKind.DeleteProfile,
-                destructive = true,
-            ),
-            profileModel = "openai / gpt-5.5",
-            profileSkillCount = 9,
-        ),
-    )
-    HermesRelayTheme(themePreference = "dark") {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text(stringResource(R.string.dashboard_tile_profiles_title)) },
-                    navigationIcon = {
-                        RelayChromeIconButton(
-                            icon = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.dashboard_back),
-                            onClick = {},
-                        )
-                    },
-                    actions = {
-                        IconButton(onClick = {}) {
-                            Icon(
-                                Icons.Filled.Refresh,
-                                contentDescription = stringResource(R.string.dashboard_refresh),
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = RelayRefresh.Background.copy(alpha = 0.96f),
-                    ),
-                )
-            },
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier.fillMaxSize().padding(innerPadding)
-                    .background(RelayRefresh.Background).relayGridTexture(alpha = 0.12f),
-            ) {
-                ProfilesManagementDetailBody(
-                    items = profiles,
-                    connectionLabel = "Hermes Home",
-                    actionInFlight = false,
-                    actionMessage = null,
-                    onCreateProfile = {},
-                    onAction = { _, _ -> },
                 )
             }
         }
@@ -4344,10 +3783,6 @@ private fun summarizeObjectItem(
         meta = meta,
         profile = obj.stringField("profile"),
         actions = dashboardActionsFor(obj),
-        profileModel = obj.stringField("model"),
-        profileIsDefault = obj.booleanField("is_default") == true,
-        profileGatewayRunning = obj.booleanField("gateway_running") == true,
-        profileSkillCount = obj.intField("skill_count"),
     )
 }
 
