@@ -326,8 +326,7 @@ class DashboardApiClient(
      * Upstream strips internal `_`-prefixed keys server-side, so the object is
      * safe to mutate and round-trip back through [updateConfig].
      */
-    suspend fun getConfig(profile: String? = null): Result<JsonObject> =
-        getJsonObject("/api/config${profileQuery(profile)}")
+    suspend fun getConfig(): Result<JsonObject> = getJsonObject("/api/config")
 
     /**
      * The config SCHEMA: `{fields: {<dot.path>: {type, description, category,
@@ -335,8 +334,7 @@ class DashboardApiClient(
      * pair it with [getConfig] for current values. Note this is distinct from
      * the values tree — `fields` keys are flat dot-paths, the values are nested.
      */
-    suspend fun getConfigSchema(profile: String? = null): Result<JsonObject> =
-        getJsonObject("/api/config/schema${profileQuery(profile)}")
+    suspend fun getConfigSchema(): Result<JsonObject> = getJsonObject("/api/config/schema")
 
     /**
      * Runtime TTS provider matrix used by upstream's Tools/Capabilities picker.
@@ -386,24 +384,18 @@ class DashboardApiClient(
      * dynamic/custom-provider catalogs on demand without probing every
      * provider during normal picker opens.
      */
-    suspend fun getModelInfo(profile: String? = null): Result<JsonObject> =
-        getJsonObject("/api/model/info${profileQuery(profile)}")
-
-    suspend fun getModelOptions(
-        refresh: Boolean = false,
-        profile: String? = null,
-    ): Result<JsonObject> =
+    suspend fun getModelOptions(refresh: Boolean = false): Result<JsonObject> =
         getJsonObject(
             if (refresh) {
-                "/api/model/options?refresh=1&include_unconfigured=1${profileQueryContinuation(profile)}"
+                "/api/model/options?refresh=1&include_unconfigured=1"
             } else {
-                "/api/model/options?include_unconfigured=1${profileQueryContinuation(profile)}"
+                "/api/model/options?include_unconfigured=1"
             },
         )
 
     /**
      * Assign the main model in `~/.hermes/config.yaml` (new sessions only).
-     * Upstream may answer `{ok: false, confirm_required: true, confirm_message: ...}`
+     * Upstream may answer `{ok: false, confirm_required: true, warning: ...}`
      * for expensive models — re-call with [confirmExpensive] after the user
      * accepts the warning.
      */
@@ -411,10 +403,9 @@ class DashboardApiClient(
         provider: String,
         model: String,
         confirmExpensive: Boolean = false,
-        profile: String? = null,
     ): Result<JsonObject> =
         postJsonObject(
-            path = "/api/model/set${profileQuery(profile)}",
+            path = "/api/model/set",
             payload = buildJsonObject {
                 put("scope", "main")
                 put("provider", provider)
@@ -426,47 +417,31 @@ class DashboardApiClient(
     // --- Env / keys (dashboard parity with hermes-desktop Settings → Keys) ---
 
     /** Curated env-var inventory: name → {is_set, redacted_value, description, category, ...}. */
-    suspend fun getEnvVars(profile: String? = null): Result<JsonObject> =
-        getJsonObject("/api/env${profileQuery(profile)}")
+    suspend fun getEnvVars(): Result<JsonObject> = getJsonObject("/api/env")
 
-    suspend fun setEnvVar(
-        key: String,
-        value: String,
-        profile: String? = null,
-    ): Result<JsonObject> =
+    suspend fun setEnvVar(key: String, value: String): Result<JsonObject> =
         putJsonObject(
             path = "/api/env",
             payload = buildJsonObject {
                 put("key", key)
                 put("value", value)
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
             },
         )
 
-    suspend fun deleteEnvVar(key: String, profile: String? = null): Result<JsonObject> =
+    suspend fun deleteEnvVar(key: String): Result<JsonObject> =
         deleteJsonObjectWithBody(
             path = "/api/env",
-            payload = buildJsonObject {
-                put("key", key)
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
-            },
+            payload = buildJsonObject { put("key", key) },
         )
 
     /** Server rate-limits reveals (5 per 30s) and audit-logs each one. */
-    suspend fun revealEnvVar(key: String, profile: String? = null): Result<JsonObject> =
+    suspend fun revealEnvVar(key: String): Result<JsonObject> =
         postJsonObject(
             path = "/api/env/reveal",
-            payload = buildJsonObject {
-                put("key", key)
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
-            },
+            payload = buildJsonObject { put("key", key) },
         )
 
     // --- Skills hub (dashboard parity with hermes-desktop Browse-hub tab) ---
-
-    /** Installed skills inventory. Upstream returns a top-level JSON array. */
-    suspend fun getSkills(profile: String? = null): Result<JsonElement> =
-        getJsonElement("/api/skills${profileQuery(profile)}")
 
     /**
      * Parallel multi-source hub search. Response carries `results` (name /
@@ -475,61 +450,42 @@ class DashboardApiClient(
      * so already-installed results can be marked. Server caps limit at 50 and
      * fans out with a 30s overall timeout — keep client read timeouts above that.
      */
-    suspend fun searchSkillsHub(
-        query: String,
-        limit: Int = 20,
-        profile: String? = null,
-    ): Result<JsonObject> =
-        getJsonObject(
-            "/api/skills/hub/search?q=${queryValue(query)}&limit=${limit.coerceIn(1, 50)}" +
-                profileQueryContinuation(profile),
-        )
+    suspend fun searchSkillsHub(query: String, limit: Int = 20): Result<JsonObject> =
+        getJsonObject("/api/skills/hub/search?q=${queryValue(query)}&limit=${limit.coerceIn(1, 50)}")
 
     /** SKILL.md + manifest for an identifier WITHOUT installing — read before you trust. */
-    suspend fun previewSkillsHub(
-        identifier: String,
-        profile: String? = null,
-    ): Result<JsonObject> =
-        getJsonObject(
-            "/api/skills/hub/preview?identifier=${queryValue(identifier)}" +
-                profileQueryContinuation(profile),
-        )
+    suspend fun previewSkillsHub(identifier: String): Result<JsonObject> =
+        getJsonObject("/api/skills/hub/preview?identifier=${queryValue(identifier)}")
 
     /**
      * Configured hub sources + featured skills (`{sources, index_available,
      * featured, installed}`) — content for the browse dialog before the first
      * search. Featured entries share the search-result payload shape.
      */
-    suspend fun getSkillsHubSources(profile: String? = null): Result<JsonObject> =
-        getJsonObject("/api/skills/hub/sources${profileQuery(profile)}")
+    suspend fun getSkillsHubSources(): Result<JsonObject> =
+        getJsonObject("/api/skills/hub/sources")
 
     /**
      * Spawns `hermes skills install <identifier>` server-side and returns
      * `{ok, pid}` immediately — the install completes in the background, so
      * callers should message "started" and refresh the skills list later.
      */
-    suspend fun installSkillsHub(identifier: String, profile: String? = null): Result<JsonObject> =
+    suspend fun installSkillsHub(identifier: String): Result<JsonObject> =
         postJsonObject(
             path = "/api/skills/hub/install",
-            payload = buildJsonObject {
-                put("identifier", identifier)
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
-            },
+            payload = buildJsonObject { put("identifier", identifier) },
         )
 
     /** Async spawn like install; takes the installed skill *name*, not the hub identifier. */
-    suspend fun uninstallSkillsHub(name: String, profile: String? = null): Result<JsonObject> =
+    suspend fun uninstallSkillsHub(name: String): Result<JsonObject> =
         postJsonObject(
             path = "/api/skills/hub/uninstall",
-            payload = buildJsonObject {
-                put("name", name)
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
-            },
+            payload = buildJsonObject { put("name", name) },
         )
 
     /** Async spawn of `hermes skills update` for all hub-installed skills. */
-    suspend fun updateSkillsHub(profile: String? = null): Result<JsonObject> =
-        postJsonObject("/api/skills/hub/update${profileQuery(profile)}")
+    suspend fun updateSkillsHub(): Result<JsonObject> =
+        postJsonObject("/api/skills/hub/update")
 
     // --- Profiles (write surface) ---
 
@@ -573,17 +529,12 @@ class DashboardApiClient(
             },
         )
 
-    suspend fun toggleSkill(
-        name: String,
-        enabled: Boolean,
-        profile: String? = null,
-    ): Result<JsonObject> =
+    suspend fun toggleSkill(name: String, enabled: Boolean): Result<JsonObject> =
         putJsonObject(
             path = "/api/skills/toggle",
             payload = buildJsonObject {
                 put("name", name)
                 put("enabled", enabled)
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
             },
         )
 
@@ -1168,11 +1119,6 @@ class DashboardApiClient(
         private fun profileQuery(profile: String?): String {
             val trimmed = profile?.trim().orEmpty()
             return if (trimmed.isBlank()) "" else "?profile=${pathSegment(trimmed)}"
-        }
-
-        private fun profileQueryContinuation(profile: String?): String {
-            val trimmed = profile?.trim().orEmpty()
-            return if (trimmed.isBlank()) "" else "&profile=${pathSegment(trimmed)}"
         }
 
         private fun profileLimitQuery(profile: String?, limit: Int): String {
