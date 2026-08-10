@@ -1,7 +1,7 @@
-v1.7.1 - Safer, steadier conversations
+v1.8.0 - Conversations with more context
 
-* Follow growing replies without overriding intentional scrollback.
-* Render completed Markdown immediately and keep live tool details expandable.
-* Keep queued follow-ups with their originating chat and persist session pins and archives.
-* Require explicit approval decisions and improve Agent Passport controls.
-* Complete hosted Hermes setup through the official Dashboard sign-in flow.
+* Quote, edit, search, and attach files without losing the active chat context.
+* Switch profiles quickly from Chat while each agent keeps its own session.
+* Read quieter thinking and grouped tool activity, with important actions kept distinct.
+* Speak or stop completed replies directly from message actions.
+* Customize themes, Sphere skins, and pets from a live Appearance preview.
