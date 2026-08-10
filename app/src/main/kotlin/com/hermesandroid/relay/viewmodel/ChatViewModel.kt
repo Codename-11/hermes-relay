@@ -92,6 +92,8 @@ import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.network.upstream.formatPhoneActionResult
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.SESSION_MESSAGE_PAGE_SIZE
+import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.models.SkillInfo
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
@@ -2536,9 +2538,16 @@ class ChatViewModel : ViewModel() {
      * once the drawer lists a non-default profile's sessions, opening one must
      * read that profile's own DB. Returns `null` off the dashboard surface.
      */
-    private var profileMessageLoader: (suspend (String) -> Result<List<MessageItem>>?)? = null
+    private var profileMessageLoader:
+        (suspend (String, SessionMessageLoadMode) -> Result<List<MessageItem>>?)? = null
 
     fun setProfileMessageLoader(loader: suspend (String) -> Result<List<MessageItem>>?) {
+        profileMessageLoader = { sessionId, _ -> loader(sessionId) }
+    }
+
+    fun setProfileMessageLoaderWithMode(
+        loader: suspend (String, SessionMessageLoadMode) -> Result<List<MessageItem>>?,
+    ) {
         profileMessageLoader = loader
     }
 
@@ -2551,11 +2560,12 @@ class ChatViewModel : ViewModel() {
     private suspend fun loadSessionHistory(
         sessionId: String,
         requireProfileScope: Boolean = false,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
     ): List<MessageItem> {
         if (streamingEndpoint == "gateway") {
-            return loadGatewaySessionHistory(sessionId, requireProfileScope)
+            return loadGatewaySessionHistory(sessionId, requireProfileScope, mode)
         }
-        return apiClient?.getMessages(sessionId) ?: emptyList()
+        return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
 
     /**
@@ -2567,15 +2577,16 @@ class ChatViewModel : ViewModel() {
     private suspend fun loadGatewaySessionHistory(
         sessionId: String,
         requireProfileScope: Boolean = false,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
     ): List<MessageItem> {
-        val scoped = profileMessageLoader?.invoke(sessionId)
+        val scoped = profileMessageLoader?.invoke(sessionId, mode)
         if (scoped != null) {
             // A gateway profile owns a distinct state.db. Never fall through to
             // the launch/default API database when its scoped read fails: an
             // empty/default transcript is not authoritative for this session.
             return if (requireProfileScope) scoped.getOrThrow() else scoped.getOrElse { emptyList() }
         }
-        return apiClient?.getMessages(sessionId) ?: emptyList()
+        return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
 
     /**
@@ -5498,9 +5509,24 @@ class ChatViewModel : ViewModel() {
             detail = cause,
         )
 
+        // A short transcript fits in Hermes' explicit latest window and can be
+        // polled with one bounded request. Long transcripts retain complete
+        // oldest-first pagination so the positional user anchor and visible
+        // history cannot silently shift when the oldest rows fall outside 500.
+        val recoveryLoadMode = if (handler.messages.value.size < SESSION_MESSAGE_PAGE_SIZE) {
+            SessionMessageLoadMode.LATEST
+        } else {
+            SessionMessageLoadMode.COMPLETE
+        }
         val recovery = ChatStreamRecovery(
             scope = viewModelScope,
-            fetchHistory = { loadSessionHistory(checkpoint.sessionId, requireProfileScope = true) },
+            fetchHistory = {
+                loadSessionHistory(
+                    checkpoint.sessionId,
+                    requireProfileScope = true,
+                    mode = recoveryLoadMode,
+                )
+            },
             timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
         )
         streamRecovery = recovery
@@ -5676,9 +5702,20 @@ class ChatViewModel : ViewModel() {
         val priorUserCount = (
             handler.messages.value.count { it.role == MessageRole.USER } - 1
         ).coerceAtLeast(0)
+        val recoveryLoadMode = if (handler.messages.value.size < SESSION_MESSAGE_PAGE_SIZE) {
+            SessionMessageLoadMode.LATEST
+        } else {
+            SessionMessageLoadMode.COMPLETE
+        }
         val recovery = ChatStreamRecovery(
             scope = viewModelScope,
-            fetchHistory = { loadSessionHistory(sessionId, requireProfileScope = true) },
+            fetchHistory = {
+                loadSessionHistory(
+                    sessionId,
+                    requireProfileScope = true,
+                    mode = recoveryLoadMode,
+                )
+            },
             timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
         )
         streamRecovery = recovery

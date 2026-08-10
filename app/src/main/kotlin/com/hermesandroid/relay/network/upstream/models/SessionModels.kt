@@ -244,7 +244,16 @@ data class MessageListResponse(
     val items: List<MessageItem>? = null,
     val messages: List<MessageItem>? = null, // alternate key
     val data: List<MessageItem>? = null, // upstream /api/sessions/{id}/messages list envelope
-    val total: Int? = null
+    val total: Int? = null,
+    val pagination: MessagePagination? = null,
+)
+
+@Serializable
+data class MessagePagination(
+    val limit: Int? = null,
+    val offset: Int? = null,
+    val order: String? = null,
+    val returned: Int? = null,
 )
 
 @Serializable

@@ -19,6 +19,7 @@ import com.hermesandroid.relay.network.upstream.models.SkillListResponse
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.util.TurnLatencyTracer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.Serializable
@@ -713,19 +714,34 @@ class HermesApiClient(
         }
     }
 
-    suspend fun getMessages(sessionId: String): List<MessageItem> = withContext(Dispatchers.IO) {
-        try {
-            val request = authRequest("$baseUrl/api/sessions/$sessionId/messages")
-                .get()
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptyList()
-                val body = response.body?.string() ?: return@withContext emptyList()
-                val parsed = json.decodeFromString<MessageListResponse>(body)
-                parsed.data ?: parsed.items ?: parsed.messages ?: emptyList()
+    suspend fun getMessages(
+        sessionId: String,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+    ): List<MessageItem> = withContext(Dispatchers.IO) {
+        loadSessionMessages(mode) { page ->
+            runCatching {
+                val url = "$baseUrl/api/sessions/$sessionId/messages".toHttpUrlOrNull()
+                    ?.newBuilder()
+                    ?.addQueryParameter("limit", page.limit.toString())
+                    ?.addQueryParameter("offset", page.offset.toString())
+                    ?.addQueryParameter("order", page.order)
+                    ?.build()
+                    ?: error("invalid session messages URL")
+                val request = authRequest(url.toString()).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) error("HTTP ${response.code}")
+                    val body = response.body?.string() ?: error("empty response body")
+                    val parsed = json.decodeFromString<MessageListResponse>(body)
+                    SessionMessagePage(
+                        messages = parsed.data ?: parsed.items ?: parsed.messages ?: emptyList(),
+                        pagination = parsed.pagination,
+                        payloadChars = body.length,
+                    )
+                }
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to get messages: ${e.message}")
+        }.getOrElse { error ->
+            if (error is CancellationException) throw error
+            Log.w(TAG, "Failed to get messages: ${error.message}")
             emptyList()
         }
     }

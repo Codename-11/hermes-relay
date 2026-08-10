@@ -2099,7 +2099,7 @@ class GatewayChatClientTest {
     // --- Edit & regenerate ---
 
     @Test
-    fun `truncate ordinal rides prompt submit`() {
+    fun `later truncate ordinal carries destructive confirmation only`() {
         val r = Recorder()
         client.sendTurn(
             sessionId = null,
@@ -2111,6 +2111,42 @@ class GatewayChatClientTest {
         )
         val submit = harness.awaitRpc("prompt.submit")
         assertEquals(2, (submit["truncate_before_user_ordinal"] as? JsonPrimitive)?.intOrNull)
+        assertEquals(true, (submit["confirm_truncate"] as? JsonPrimitive)?.booleanOrNull)
+        assertFalse(submit.containsKey("confirm_empty_truncate"))
+    }
+
+    @Test
+    fun `first user truncate carries empty-history confirmation`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "replace first message",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            truncateBeforeUserOrdinal = 0,
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+        val submit = harness.awaitRpc("prompt.submit")
+        assertEquals(0, (submit["truncate_before_user_ordinal"] as? JsonPrimitive)?.intOrNull)
+        assertEquals(true, (submit["confirm_truncate"] as? JsonPrimitive)?.booleanOrNull)
+        assertEquals(true, (submit["confirm_empty_truncate"] as? JsonPrimitive)?.booleanOrNull)
+    }
+
+    @Test
+    fun `middle truncate ordinal omits empty-history confirmation`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "replace middle message",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            truncateBeforeUserOrdinal = 1,
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+        val submit = harness.awaitRpc("prompt.submit")
+        assertEquals(1, (submit["truncate_before_user_ordinal"] as? JsonPrimitive)?.intOrNull)
+        assertEquals(true, (submit["confirm_truncate"] as? JsonPrimitive)?.booleanOrNull)
+        assertFalse(submit.containsKey("confirm_empty_truncate"))
     }
 
     @Test
@@ -2119,6 +2155,8 @@ class GatewayChatClientTest {
         client.sendTurn(null, "plain", null, r.callbacks) { r.preflightFailures += it }
         val submit = harness.awaitRpc("prompt.submit")
         assertFalse(submit.containsKey("truncate_before_user_ordinal"))
+        assertFalse(submit.containsKey("confirm_truncate"))
+        assertFalse(submit.containsKey("confirm_empty_truncate"))
     }
 
     @Test
@@ -2138,18 +2176,26 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `active session cap rejection surfaces error without preflight fallback`() {
-        val message = "Active session limit reached; close the session held by another client"
-        harness.rpcErrors["prompt.submit"] = 4090 to message
-        val r = Recorder()
+    fun `authoritative prompt rejections surface server message without preflight fallback`() {
+        val cases = listOf(
+            4028 to "Empty-history truncate confirmation required",
+            4029 to "Truncate confirmation required",
+            4090 to "Active session limit reached; close the session held by another client",
+            5070 to "Session storage is full; free disk space and retry",
+            5071 to "Initial session persistence failed",
+        )
 
-        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
-        harness.awaitRpc("prompt.submit")
+        cases.forEachIndexed { index, (code, message) ->
+            harness.rpcErrors["prompt.submit"] = code to message
+            val r = Recorder()
+            client.sendTurn(null, "hello-$code", null, r.callbacks) { r.preflightFailures += it }
+            harness.awaitRpc("prompt.submit")
 
-        waitUntil { r.errors.isNotEmpty() }
-        assertEquals(listOf(message), r.errors.toList())
-        assertTrue("authoritative rejection must not trigger SSE fallback", r.preflightFailures.isEmpty())
-        assertEquals(1, harness.rpcLog.count { it.first == "prompt.submit" })
+            waitUntil { r.errors.isNotEmpty() }
+            assertEquals(listOf(message), r.errors.toList())
+            assertTrue("$code must not trigger SSE fallback", r.preflightFailures.isEmpty())
+            assertEquals(index + 1, harness.rpcLog.count { it.first == "prompt.submit" })
+        }
     }
 
     // --- HRUI-016: long / fire-and-forget prompt.submit ack semantics.

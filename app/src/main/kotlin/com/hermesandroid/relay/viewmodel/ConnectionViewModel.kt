@@ -76,6 +76,7 @@ import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardChatDisplaySettings
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.mirrorDashboardSessionCookies
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
@@ -1492,8 +1493,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listProfileScopedSessions(limit)
 
-    suspend fun loadProfileScopedMessages(sessionId: String): Result<List<MessageItem>>? =
-        profileController.loadProfileScopedMessages(sessionId)
+    suspend fun loadProfileScopedMessages(
+        sessionId: String,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+    ): Result<List<MessageItem>>? = profileController.loadProfileScopedMessages(sessionId, mode)
 
     /**
      * Delete a session scoped to the ACTIVE PROFILE via the dashboard
