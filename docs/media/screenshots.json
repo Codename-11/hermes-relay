@@ -26,12 +26,12 @@
   },
   "scenes": [
     {
-      "id": "01_startup",
-      "title": "Start a conversation",
-      "source": "assets/screenshots/01_startup.png",
-      "readme": "assets/screenshots/01_startup.png",
+      "id": "01_voice_conversation",
+      "title": "Voice in conversation",
+      "source": "assets/screenshots/01_voice_conversation.png",
+      "readme": "assets/screenshots/01_voice_conversation.png",
       "play": "1.png",
-      "captureNote": "Current chat chrome, idle visualization, model and effort controls, and public-safe suggestions."
+      "captureNote": "Real ConversationVoiceDock inside the production chat composer, complementing the full Voice focus frame."
     },
     {
       "id": "02_chat",
@@ -39,7 +39,7 @@
       "source": "assets/screenshots/02_chat.png",
       "readme": "assets/screenshots/02_chat.png",
       "play": "2.png",
-      "captureNote": "Current grouped conversation UI with assistant identity, code rendering, model and effort controls, plus the production app-level floating pet host and no private host data."
+      "captureNote": "Galaxy Ultra-like chat viewport with Hermes Relay identity, grouped code conversation, model and effort controls, plus Petdex Teknium perched through the production floating-pet host."
     },
     {
       "id": "03_voice",
@@ -87,7 +87,27 @@
       "source": "assets/screenshots/08_appearance.png",
       "readme": "assets/screenshots/08_appearance.png",
       "play": "8.png",
-      "captureNote": "Real Appearance screen showing the background/pet separation, a deterministic custom companion rendered through PetAvatar, and Petdex/import actions."
+      "captureNote": "Real Appearance screen showing the background/pet separation, pinned Petdex Teknium artwork rendered through PetAvatar, and Petdex/import actions."
+    }
+  ],
+  "supplementalScenes": [
+    {
+      "id": "12_theme_customizer",
+      "title": "Relay theme customizer",
+      "source": "assets/screenshots/supplemental/12_theme_customizer.png",
+      "captureNote": "Real Appearance customizer with accent, shape, surface, and density controls."
+    },
+    {
+      "id": "13_font_picker",
+      "title": "Language, density, and fonts",
+      "source": "assets/screenshots/supplemental/13_font_picker.png",
+      "captureNote": "Real Appearance language, font-size, Inter, and Nunito controls."
+    },
+    {
+      "id": "14_startup",
+      "title": "Start a conversation",
+      "source": "assets/screenshots/supplemental/14_startup.png",
+      "captureNote": "Current empty-chat chrome, idle visualization, model and effort controls, and public-safe suggestions."
     }
   ]
 }

@@ -138,7 +138,7 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
 
 <table>
   <tr>
-    <td align="center" width="25%"><img src="assets/screenshots/01_startup.png" alt="Cold start" width="100%"><br><sub><b>Cold start</b></sub></td>
+    <td align="center" width="25%"><img src="assets/screenshots/01_voice_conversation.png" alt="Voice controls in chat" width="100%"><br><sub><b>Voice in chat</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/02_chat.png" alt="Streaming chat" width="100%"><br><sub><b>Streaming chat</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/03_voice.png" alt="Hands-free voice" width="100%"><br><sub><b>Hands-free voice</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/04_sessions.png" alt="Session history" width="100%"><br><sub><b>Session history</b></sub></td>

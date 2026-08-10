@@ -1,9 +1,5 @@
 package com.hermesandroid.relay.screenshots
 
-import android.graphics.Bitmap
-import android.graphics.Canvas as AndroidCanvas
-import android.graphics.Color as AndroidColor
-import android.graphics.Paint as AndroidPaint
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
@@ -67,6 +63,7 @@ import com.hermesandroid.relay.ui.components.ChatInputBar
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.ContextMeterBar
+import com.hermesandroid.relay.ui.components.ConversationVoiceDock
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
@@ -111,7 +108,6 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
-import java.io.FileOutputStream
 
 /**
  * Deterministic, host-side marketing frames with Roborazzi.
@@ -129,7 +125,7 @@ import java.io.FileOutputStream
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(qualifiers = "w360dp-h720dp-xxhdpi") // 1080x2160 px @ density 3.0
+@Config(qualifiers = "w400dp-h800dp-432dpi") // 1080x2160 px, Galaxy Ultra-like 400x800dp viewport
 class StoreScreenshotTest {
 
     @get:Rule
@@ -179,6 +175,18 @@ class StoreScreenshotTest {
         compose.mainClock.advanceTimeByFrame()
         compose.onRoot().captureRoboImage("build/store-shots/03_voice.png")
     }
+    @Test fun s11_voice_conversation() {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
+                    VoiceConversationScene()
+                }
+            }
+        }
+        compose.mainClock.advanceTimeByFrame()
+        compose.onRoot().captureRoboImage("build/store-shots/11_voice_conversation.png")
+    }
     // Real screen (1:1, auto-updates on layout changes). ConnectionViewModel
     // takes only an Application; Robolectric provides it. Renders every section
     // the production Appearance screen has — theme grid, mode, font, animation,
@@ -191,7 +199,6 @@ class StoreScreenshotTest {
                     AppearanceSettingsScreen(
                         connectionViewModel = vm,
                         onBack = {},
-                        initialCustomizerExpanded = true,
                     )
                 }
             }
@@ -257,42 +264,15 @@ class StoreScreenshotTest {
         compose.onRoot().captureRoboImage("build/store-shots/08_appearance.png")
     }
 
-    /** Public-safe, deterministic one-frame pet rendered through PetAvatar. */
+    /** Pinned Petdex Teknium idle frame rendered through the production PetAvatar. */
     private fun marketingPet(): PetAvatar {
-        val output = File("build/store-fixtures/pixel-companion.png")
-        output.parentFile?.mkdirs()
-
-        val bitmap = Bitmap.createBitmap(192, 192, Bitmap.Config.ARGB_8888)
-        val canvas = AndroidCanvas(bitmap)
-        val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
-
-        paint.color = AndroidColor.rgb(126, 87, 255)
-        canvas.drawRoundRect(36f, 48f, 156f, 154f, 34f, 34f, paint)
-        canvas.drawCircle(58f, 48f, 27f, paint)
-        canvas.drawCircle(134f, 48f, 27f, paint)
-        paint.color = AndroidColor.rgb(177, 196, 255)
-        canvas.drawOval(54f, 76f, 82f, 108f, paint)
-        canvas.drawOval(110f, 76f, 138f, 108f, paint)
-        paint.color = AndroidColor.rgb(8, 9, 14)
-        canvas.drawCircle(68f, 92f, 7f, paint)
-        canvas.drawCircle(124f, 92f, 7f, paint)
-        paint.strokeWidth = 7f
-        paint.style = AndroidPaint.Style.STROKE
-        canvas.drawArc(76f, 98f, 116f, 134f, 12f, 156f, false, paint)
-        paint.style = AndroidPaint.Style.FILL
-        paint.color = AndroidColor.rgb(87, 218, 136)
-        canvas.drawRoundRect(50f, 146f, 86f, 170f, 12f, 12f, paint)
-        canvas.drawRoundRect(106f, 146f, 142f, 170f, 12f, 12f, paint)
-
-        FileOutputStream(output).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        bitmap.recycle()
-
+        val output = File("src/test/resources/marketing/petdex-teknium-idle.png")
         val clip = FrameSequenceClip(files = listOf(output), fps = 1f)
         val stateClips = SphereState.entries.associateWith { clip }
         return PetAvatar(
-            id = "pixel-companion",
-            label = "Pixel",
-            description = "A public-safe custom companion fixture",
+            id = "petdex-teknium",
+            label = "Teknium",
+            description = "Petdex companion by asimons81",
             reactivity = SphereReactivity(voice = true, tools = true, intensity = true, gaze = false),
             activityClips = stateClips,
             workingClip = clip,
@@ -357,10 +337,15 @@ private fun ChatScene() = StoreCockpit(contextUsage = 0.04f) {
 // surface, and the compact 340dp cap + tightened density match production.
 @Composable
 private fun BlendChatScene() = StoreCockpit(contextUsage = 0.06f) {
+    BlendThread()
+}
+
+@Composable
+private fun BlendThread() {
     val thread = MockChat.blendThread
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+        Modifier.fillMaxSize().padding(start = 18.dp, top = 14.dp, end = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Bottom)
     ) {
         thread.forEachIndexed { i, m ->
             val first = i == 0 || thread[i - 1].role != m.role
@@ -368,7 +353,7 @@ private fun BlendChatScene() = StoreCockpit(contextUsage = 0.06f) {
             MessageBubble(
                 message = m,
                 modifier = Modifier.padding(top = if (first) 6.dp else 1.dp),
-                maxBubbleWidth = 340.dp,
+                maxBubbleWidth = 344.dp,
                 isFirstInGroup = first,
                 isLastInGroup = last,
             )
@@ -386,6 +371,7 @@ private fun BlendChatScene() = StoreCockpit(contextUsage = 0.06f) {
 private fun StoreCockpit(
     contextUsage: Float? = null,
     showInput: Boolean = true,
+    conversationVoiceState: VoiceUiState? = null,
     content: @Composable () -> Unit
 ) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -405,7 +391,7 @@ private fun StoreCockpit(
                     }
                     Column(Modifier.padding(start = 10.dp)) {
                         Text("Hermes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("gpt-5.5", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        Text("gpt-5.6-sol", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     }
                 }
             },
@@ -434,11 +420,35 @@ private fun StoreCockpit(
                 showVoiceHint = false,
                 onVoiceHintShown = {},
                 isDarkTheme = dark,
-                modelControl = ChatInputPickerControl(value = "gpt-5.5", contentDescription = "Select model", options = emptyList()),
+                modelControl = ChatInputPickerControl(value = "gpt-5.6-sol", contentDescription = "Select model", options = emptyList()),
                 effortControl = ChatInputPickerControl(value = "High", contentDescription = "Select reasoning effort", options = emptyList()),
+                topContent = {
+                    conversationVoiceState?.let { state ->
+                        ConversationVoiceDock(
+                            uiState = state,
+                            engineMode = "hermes_voice_output",
+                            provider = "OpenAI",
+                            model = "gpt-4o-mini-tts",
+                            voice = "alloy",
+                            profileName = "Hermes",
+                            outputEnabled = true,
+                            onMicTap = {},
+                            onMicRelease = {},
+                            onInterrupt = {},
+                            onPauseAutoMode = {},
+                            onModeChange = {},
+                            onFocusRequest = {},
+                            onOverlayRequest = {},
+                            onOpenSettings = {},
+                            onExit = {},
+                        )
+                    }
+                },
+                topContentVisible = conversationVoiceState != null,
+                suppressVoiceTrailing = conversationVoiceState != null,
             )
         }
-        RelayStatusStrip(leading = "⚡ Gateway  ·  LAN", trailing = "gpt-5.5 / profile: default")
+        RelayStatusStrip(leading = "⚡ Gateway  ·  LAN", trailing = "gpt-5.6-sol / profile: default")
     }
 }
 
@@ -464,7 +474,7 @@ private fun StoreSettings(title: String, content: @Composable androidx.compose.f
             verticalArrangement = Arrangement.spacedBy(16.dp),
             content = content,
         )
-        RelayStatusStrip(leading = "⚡ Gateway  ·  LAN", trailing = "gpt-5.5 / profile: default")
+        RelayStatusStrip(leading = "⚡ Gateway  ·  LAN", trailing = "gpt-5.6-sol / profile: default")
     }
 }
 
@@ -499,6 +509,14 @@ private fun VoiceScene() = VoiceModeOverlay(
     presentationMode = VoicePresentationMode.Focus,
 )
 
+@Composable
+private fun VoiceConversationScene() = StoreCockpit(
+    contextUsage = 0.05f,
+    conversationVoiceState = marketingVoiceUiState,
+) {
+    BlendThread()
+}
+
 /** The real sphere renderer pinned to one frame for pixel-identical marketing output. */
 private object FrozenMarketingSphere : AgentAvatar {
     override val id = "marketing-sphere"
@@ -530,12 +548,12 @@ private fun ChatWithPetScene(pet: AgentAvatar) {
         FloatingPetCompanion(
             pet = pet,
             state = AvatarRenderState(state = SphereState.Idle, paused = true),
-            placement = PetPlacement(PetLogicalEdge.End, 0.63f),
+            placement = PetPlacement(PetLogicalEdge.End, 0.93f),
             roamingEnabled = false,
             roamingAllowed = false,
-            behaviorPreferences = PetBehaviorPreferences(),
+            behaviorPreferences = PetBehaviorPreferences(sizeScale = 1.05f),
             surfaceScrolling = false,
-            compact = false,
+            compact = true,
             animationEnabled = false,
             appForeground = true,
             route = null,
@@ -549,6 +567,14 @@ private fun ChatWithPetScene(pet: AgentAvatar) {
         )
     }
 }
+
+private val marketingVoiceUiState = VoiceUiState(
+    voiceMode = true,
+    state = VoiceState.Listening,
+    amplitude = 0.42f,
+    interactionMode = InteractionMode.Continuous,
+)
+
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -590,7 +616,7 @@ private fun ManageScene() {
                 com.hermesandroid.relay.ui.components.RelayNavTile(ic.Tune, "Models", "Pick provider + default model", {})
             }
         }
-        RelayStatusStrip(leading = "⚡ Gateway  ·  LAN", trailing = "gpt-5.5 / profile: default")
+        RelayStatusStrip(leading = "⚡ Gateway  ·  LAN", trailing = "gpt-5.6-sol / profile: default")
     }
 }
 
@@ -690,7 +716,7 @@ private object MockChat {
 
 @Composable
 private fun SessionsScene() {
-    // The production drawer intentionally caps itself at 320dp inside a 360dp
+    // The production drawer intentionally caps itself at 320dp inside a wider
     // phone. Keep the full app viewport as the capture root so Roborazzi does
     // not shrink-wrap the image to the drawer's intrinsic width.
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim)) {
@@ -721,11 +747,11 @@ private fun ConnectionsScene() = ConnectionsSettingsScreen(
 )
 
 private val marketingSessions = listOf(
-    ChatSession("morning-focus", "Morning focus tips", "gpt-5.5", 8, lastActivityAt = 1_780_000_000_000, pinned = true),
-    ChatSession("android-polish", "Android appearance polish", "gpt-5.5", 23, lastActivityAt = 1_779_999_900_000, source = "phone"),
-    ChatSession("weekly-report", "Weekly report draft", "gpt-5.5", 11, lastActivityAt = 1_779_999_800_000),
-    ChatSession("voice-notes", "Voice workflow notes", "gpt-5.5", 17, lastActivityAt = 1_779_999_700_000),
-    ChatSession("trip-planning", "Trip planning", "gpt-5.5", 31, lastActivityAt = 1_779_999_600_000),
+    ChatSession("morning-focus", "Morning focus tips", "gpt-5.6-sol", 8, lastActivityAt = 1_780_000_000_000, pinned = true),
+    ChatSession("android-polish", "Android appearance polish", "gpt-5.6-sol", 23, lastActivityAt = 1_779_999_900_000, source = "phone"),
+    ChatSession("weekly-report", "Weekly report draft", "gpt-5.6-sol", 11, lastActivityAt = 1_779_999_800_000),
+    ChatSession("voice-notes", "Voice workflow notes", "gpt-5.6-sol", 17, lastActivityAt = 1_779_999_700_000),
+    ChatSession("trip-planning", "Trip planning", "gpt-5.6-sol", 31, lastActivityAt = 1_779_999_600_000),
 )
 
 private val marketingConnections = listOf(

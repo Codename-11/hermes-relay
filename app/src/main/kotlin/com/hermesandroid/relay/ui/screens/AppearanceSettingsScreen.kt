@@ -1650,7 +1650,7 @@ private fun AppearanceLivePreviewContent() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Icon(Icons.Filled.Add, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("gpt-5.5", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
+                    Text("gpt-5.6-sol", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
                     Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(14.dp))
                     Text("High", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
                     Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(14.dp))

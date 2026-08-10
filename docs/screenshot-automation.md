@@ -135,14 +135,20 @@ The canonical marketing lineup intentionally exercises current product seams:
   hosts it.
 - `03_voice` renders the real `VoiceModeOverlay` with a fixed sphere frame,
   public-safe transcript, waveform, and session controls.
+- `01_voice_conversation` renders the real `ConversationVoiceDock` inside the
+  chat composer, so the Play lineup covers both Voice presentation modes.
 - `04_sessions` renders the real `SessionDrawerContent` with deterministic
   `ChatSession` fixtures, including pinned and Thread states.
 - `05_themes` renders the real Appearance preview and expanded customizer.
 - `07_connections` renders the real `ConnectionsSettingsScreen` with
   deterministic connection and dashboard-status fixtures.
 - `08_appearance` renders the real floating-pet controls with a deterministic
-  one-frame fixture passed through `PetAvatar`; the fixture is generated under
-  `app/build/store-fixtures/` and is not a second source asset.
+  pinned Teknium idle frame from Petdex passed through `PetAvatar`; provenance
+  lives beside the fixture in `app/src/test/resources/marketing/`.
+- Supplemental `12_theme_customizer` and `13_font_picker` expand Appearance
+  coverage beyond the two Play-listing frames.
+- Supplemental `14_startup` preserves the lower-information empty-chat frame
+  outside the eight-slot Play lineup.
 
 ### Render any view going forward
 
@@ -160,8 +166,9 @@ Add a `@Test` that calls the `capture(name, themeId) { ... }` helper:
   scaffolds wrap content in real chrome.
 - **Theme** — any `AppThemes.ALL` id; `capture()` wraps the body in
   `HermesRelayTheme` + provides the `Adaptive` sphere skin (the app's real default).
-- **Resolution** — the class `@Config(qualifiers = "w360dp-h720dp-xxhdpi")` = 1080x2160.
-  Change it for other sizes.
+- **Resolution** — the class uses
+  `@Config(qualifiers = "w400dp-h800dp-432dpi")`: a Galaxy Ultra-like 400x800dp
+  viewport rendered at exactly 1080x2160 for Play's 2:1 limit.
 
 ### Constraints
 
