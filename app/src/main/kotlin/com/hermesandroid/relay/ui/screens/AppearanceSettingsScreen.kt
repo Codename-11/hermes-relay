@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -236,7 +239,10 @@ fun AppearanceSettingsScreen(
 
     Scaffold(
         topBar = {
-            Surface(color = MaterialTheme.colorScheme.background) {
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
