@@ -763,12 +763,24 @@ class DashboardApiClient(
     suspend fun getSessionMessages(
         sessionId: String,
         profile: String? = null,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
     ): Result<List<MessageItem>> = withContext(Dispatchers.IO) {
         val name = profile?.trim().orEmpty()
-        val query = if (name.isNotBlank()) "?profile=${pathSegment(name)}" else ""
-        getJson("/api/sessions/${pathSegment(sessionId)}/messages$query").mapCatching { root ->
-            val parsed = json.decodeFromJsonElement(MessageListResponse.serializer(), root)
-            parsed.messages ?: parsed.data ?: parsed.items ?: emptyList()
+        loadSessionMessages(mode) { page ->
+            val query = buildList {
+                add("limit=${page.limit}")
+                add("offset=${page.offset}")
+                add("order=${page.order}")
+                if (name.isNotBlank()) add("profile=${pathSegment(name)}")
+            }.joinToString(prefix = "?", separator = "&")
+            getJson("/api/sessions/${pathSegment(sessionId)}/messages$query").mapCatching { root ->
+                val parsed = json.decodeFromJsonElement(MessageListResponse.serializer(), root)
+                SessionMessagePage(
+                    messages = parsed.messages ?: parsed.data ?: parsed.items ?: emptyList(),
+                    pagination = parsed.pagination,
+                    payloadChars = root.toString().length,
+                )
+            }
         }
     }
 

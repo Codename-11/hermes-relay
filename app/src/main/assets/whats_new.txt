@@ -1,7 +1,6 @@
-v1.8.0 - Conversations with more context
+v1.8.1 - Complete, reliable transcripts
 
-* Quote, edit, search, and attach files without losing the active chat context.
-* Switch profiles quickly from Chat while each agent keeps its own session.
-* Read quieter thinking and grouped tool activity, with important actions kept distinct.
-* Speak or stop completed replies directly from message actions.
-* Customize themes, Sphere skins, and pets from a live Appearance preview.
+* Keep complete history in long sessions beyond Hermes' latest-500 default.
+* Preserve stable edit, retry, sharing, and recovery anchors while paging history.
+* Show authoritative Gateway rejection messages without an unintended fallback.
+* Reconcile Gateway events and edit-and-regenerate requests with current upstream contracts.

@@ -18,6 +18,7 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardProfileScope
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.relay.RelayHttpClient
 import kotlinx.coroutines.CoroutineScope
@@ -348,12 +349,15 @@ class ProfileController(
      * `/api/sessions/{id}/messages?profile=`. Returns `null` off the dashboard
      * surface so the caller falls back to the api_server transcript.
      */
-    suspend fun loadProfileScopedMessages(sessionId: String): Result<List<MessageItem>>? {
+    suspend fun loadProfileScopedMessages(
+        sessionId: String,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+    ): Result<List<MessageItem>>? {
         val connectionId = activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrlProvider() ?: return null
         val profileName = resolveSessionProfileName()
         return dashboardClientFactory(connectionId, dashboardUrl)
-            .getSessionMessages(sessionId, profileName)
+            .getSessionMessages(sessionId, profileName, mode)
     }
 
     suspend fun deleteProfileScopedSession(sessionId: String): Boolean {

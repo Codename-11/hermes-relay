@@ -2756,3 +2756,27 @@ writing into whichever session happened to be visible during startup.
 **Consequences.** Shared text lands in a fresh, reviewable draft without
 crossing profile/session namespaces or creating a new server-side integration.
 Non-text attachments and multi-item shares remain outside this contract.
+
+---
+
+## ADR 50 — Android transcript reads are explicitly bounded and intent-specific
+
+**Status:** Accepted (2026-08-09).
+
+**Context.** Hermes now defaults omitted message limits to the latest 500 rows.
+Android previously omitted pagination on both the API-server and profile-scoped
+Dashboard routes, which silently dropped older history and shifted transcript-
+derived edit ordinals in long sessions.
+
+**Decision.** Both transports share one 500-row pagination contract. Complete
+user-visible reads page oldest-first and accept legacy envelopes with no
+pagination metadata. Reads stop at 50,000 messages or 32 MB of decoded response
+payload. Recovery explicitly requests one latest page only while the already
+known transcript fits that window; otherwise it uses complete paging to retain
+the positional user anchor. Cancellation propagates rather than becoming an
+empty transcript.
+
+**Consequences.** Long session history, sharing, retry, and edit/regenerate no
+longer operate on a silent latest-500 subset. Recovery stays cheap for ordinary
+sessions without allowing a bounded window to replace the complete visible
+history. Older Hermes releases remain compatible.

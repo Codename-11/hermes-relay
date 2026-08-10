@@ -901,9 +901,43 @@ class DashboardApiClientTest {
         val url = request.requestUrl!!
         assertEquals("/api/sessions/sess-a/messages", url.encodedPath)
         assertEquals("mizu", url.queryParameter("profile"))
+        assertEquals("500", url.queryParameter("limit"))
+        assertEquals("0", url.queryParameter("offset"))
+        assertEquals("oldest", url.queryParameter("order"))
         assertEquals(2, messages.size)
         assertEquals("user", messages[0].role)
         assertEquals("assistant", messages[1].role)
+    }
+
+    @Test
+    fun getSessionMessages_pagesCompleteHistoryAndPreservesProfileScope() = runTest {
+        server.enqueue(messagePageResponse(key = "messages", start = 0, count = 500, returned = 500))
+        server.enqueue(messagePageResponse(key = "messages", start = 500, count = 1, returned = 1))
+
+        val messages = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getSessionMessages("sess-a", profile = "mizu")
+            .getOrThrow()
+
+        val first = server.takeRequest().requestUrl!!
+        val second = server.takeRequest().requestUrl!!
+        assertEquals(listOf("0", "500"), listOf(first, second).map { it.queryParameter("offset") })
+        assertEquals(listOf("mizu", "mizu"), listOf(first, second).map { it.queryParameter("profile") })
+        assertEquals((0..500).map(Int::toString), messages.map { it.id })
+    }
+
+    @Test
+    fun getSessionMessages_latestUsesOneBoundedPage() = runTest {
+        server.enqueue(messagePageResponse(key = "messages", start = 500, count = 500, returned = 500))
+
+        val messages = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getSessionMessages("sess-a", profile = null, mode = SessionMessageLoadMode.LATEST)
+            .getOrThrow()
+
+        val request = server.takeRequest().requestUrl!!
+        assertEquals("latest", request.queryParameter("order"))
+        assertEquals("0", request.queryParameter("offset"))
+        assertEquals(500, messages.size)
+        assertEquals(1, server.requestCount)
     }
 
     @Test
@@ -1286,4 +1320,20 @@ class DashboardApiClientTest {
         assertEquals(true, settings.showReasoning)
         assertEquals("off", settings.toolDisplay)
     }
+}
+
+private fun messagePageResponse(
+    key: String,
+    start: Int,
+    count: Int,
+    returned: Int,
+): MockResponse {
+    val messages = (start until start + count).joinToString(",") { index ->
+        """{"id":"$index","role":"user","content":"m$index"}"""
+    }
+    return MockResponse()
+        .setHeader("Content-Type", "application/json")
+        .setBody(
+            """{"session_id":"sess-a","$key":[$messages],"pagination":{"limit":500,"offset":$start,"order":"oldest","returned":$returned}}""",
+        )
 }

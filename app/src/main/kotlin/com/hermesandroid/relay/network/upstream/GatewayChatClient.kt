@@ -562,7 +562,11 @@ class GatewayChatClient(
                     buildJsonObject {
                         put("session_id", liveSessionId ?: error("no live session"))
                         put("text", text)
-                        truncateBeforeUserOrdinal?.let { put("truncate_before_user_ordinal", it) }
+                        truncateBeforeUserOrdinal?.let { ordinal ->
+                            put("truncate_before_user_ordinal", ordinal)
+                            put("confirm_truncate", true)
+                            if (ordinal == 0) put("confirm_empty_truncate", true)
+                        }
                         if (queuedFollowUp) put("queued", true)
                     },
                     // Long-running RPC, not a generic 15s ack — see the
@@ -588,7 +592,7 @@ class GatewayChatClient(
                     if (activeTurn === turn) activeTurn = null
                     turn.disarmWatchdog()
                     val submitError = submitted.exceptionOrNull()
-                    if ((submitError as? GatewayRpcException)?.code == ACTIVE_SESSION_CAP_REJECTION) {
+                    if (submitError.isAuthoritativePromptSubmitRejection()) {
                         // Authoritative policy rejection: the gateway received
                         // the prompt and deliberately refused to create the
                         // first turn. Falling back to SSE would bypass the cap
@@ -597,7 +601,7 @@ class GatewayChatClient(
                         // through the normal failed-turn callback instead.
                         turn.tracer.done("submit-rejected")
                         turn.callbacks.onError(
-                            submitError.message ?: "Hermes rejected the new session",
+                            submitError?.message ?: "Hermes rejected the new session",
                         )
                         return@launch
                     }
@@ -3084,7 +3088,13 @@ internal class GatewayConnectAttemptException(message: String) : Exception(messa
 internal class GatewayRpcException(message: String, val code: Int? = null) : Exception(message)
 
 private const val JSONRPC_METHOD_NOT_FOUND = -32601
-private const val ACTIVE_SESSION_CAP_REJECTION = 4090
+private val AUTHORITATIVE_PROMPT_SUBMIT_REJECTIONS = setOf(
+    4028, // first-turn truncate requires explicit empty-history confirmation
+    4029, // every destructive truncate requires explicit confirmation
+    4090, // active-session capacity policy
+    5070, // initial session persistence failed: storage full
+    5071, // other authoritative initial session persistence failure
+)
 private const val MAX_RECOVERED_CORRECTIONS = 32
 private const val MAX_RECOVERED_CORRECTION_CHARS = 32_768
 private const val PET_THUMB_DATA_PREFIX = "data:image/png;base64,"
@@ -3139,6 +3149,9 @@ private fun Throwable?.isMethodNotFound(): Boolean {
     return msg.contains("method not found", ignoreCase = true) ||
         msg.contains("unknown method", ignoreCase = true)
 }
+
+private fun Throwable?.isAuthoritativePromptSubmitRejection(): Boolean =
+    (this as? GatewayRpcException)?.code in AUTHORITATIVE_PROMPT_SUBMIT_REJECTIONS
 
 private fun Throwable?.isApprovalModeUnsupported(): Boolean {
     val rpcError = this as? GatewayRpcException ?: return false
