@@ -1854,8 +1854,8 @@
     <!-- DashboardManagementScreen -->
     <!-- Tab labels (display) -->
     <string name="dashboard_tab_skills">Skills</string>
-    <string name="dashboard_tab_cron">Cron</string>
-    <string name="dashboard_tab_mcp">MCP</string>
+    <string name="dashboard_tab_cron">Automations</string>
+    <string name="dashboard_tab_mcp">MCP servers</string>
     <string name="dashboard_tab_catalog">Catalog</string>
     <string name="dashboard_tab_custom_endpoints">Endpoints</string>
     <string name="dashboard_tab_profiles">Profiles</string>
@@ -1872,6 +1872,131 @@
     <string name="dashboard_tab_models_lower">models</string>
     <string name="dashboard_tab_keys_lower">keys</string>
     <string name="dashboard_tab_config_lower">config</string>
+
+    <!-- Shared management detail filters, statuses, and scope -->
+    <string name="dashboard_filter_all">All</string>
+    <string name="dashboard_filter_enabled">Enabled</string>
+    <string name="dashboard_filter_disabled">Disabled</string>
+    <string name="dashboard_filter_active">Active</string>
+    <string name="dashboard_filter_paused">Paused</string>
+    <string name="dashboard_filter_needs_attention">Needs attention</string>
+    <string name="dashboard_status_enabled">Enabled</string>
+    <string name="dashboard_status_disabled">Disabled</string>
+    <string name="dashboard_status_connected">Connected</string>
+    <string name="dashboard_status_installed">Installed</string>
+    <string name="dashboard_item_status_available">Available</string>
+    <string name="dashboard_status_needs_attention">Needs attention</string>
+    <string name="dashboard_status_key_required">Key required</string>
+    <string name="dashboard_scope_label">Scope</string>
+    <string name="dashboard_scope_server">Entire Hermes server</string>
+    <string name="dashboard_scope_profile">Agent profile: %1$s</string>
+    <string name="dashboard_scope_server_notice">Changes apply across this Hermes server, not only the active profile or current chat.</string>
+    <string name="dashboard_scope_profile_notice">Changes apply to profile %1$s for future sessions. Existing sessions keep their current overrides.</string>
+    <string name="dashboard_scope_pill_app">App</string>
+    <string name="dashboard_scope_pill_profile">Profile</string>
+    <string name="dashboard_scope_pill_per_job">Per job</string>
+    <string name="dashboard_scope_pill_host">Host</string>
+    <string name="dashboard_scope_pill_server">Server</string>
+    <string name="dashboard_scope_pill_server_wide">Server-wide</string>
+
+    <!-- Skills, MCP, catalog, and custom endpoint details -->
+    <string name="dashboard_skills_installed">Installed skills</string>
+    <string name="dashboard_skills_available">Available skills</string>
+    <string name="dashboard_skills_server_notice">Skill changes are saved on this Hermes server.</string>
+    <string name="dashboard_mcp_configured_servers">Configured servers</string>
+    <string name="dashboard_mcp_server_tools">Available tools</string>
+    <string name="dashboard_mcp_server_auth">Authentication</string>
+    <string name="dashboard_mcp_server_transport">Transport</string>
+    <string name="dashboard_mcp_credentials_server_only">Credentials stay on the Hermes server.</string>
+    <string name="dashboard_catalog_available_servers">Available servers</string>
+    <string name="dashboard_catalog_missing_requirements">Add the required provider keys before installing.</string>
+    <string name="dashboard_endpoints_configured">Configured endpoints</string>
+    <string name="dashboard_endpoints_active">Active endpoint</string>
+    <string name="dashboard_endpoints_inactive">Not active</string>
+    <string name="dashboard_endpoints_secret_safety">Saved API keys are never shown here. Leaving the key blank preserves the existing value.</string>
+
+    <!-- Automation details -->
+    <string name="dashboard_automations_summary">Scheduled jobs</string>
+    <string name="dashboard_automations_schedule">Schedule</string>
+    <string name="dashboard_automations_next_run">Next run</string>
+    <string name="dashboard_automations_last_run">Last run</string>
+    <string name="dashboard_automations_delivery">Delivery</string>
+    <string name="dashboard_automations_recent_runs">Recent runs</string>
+    <string name="dashboard_automations_never_run">Not run yet</string>
+    <string name="dashboard_automations_server_notice">Automations run on this Hermes server and do not change the current chat.</string>
+    <string name="dashboard_automations_delete_title">Delete %1$s?</string>
+    <string name="dashboard_automations_delete_body">This permanently removes the schedule and prevents future runs.</string>
+
+    <!-- Models, keys, and schema-driven configuration -->
+    <string name="dashboard_models_current_default">Current server default</string>
+    <string name="dashboard_models_provider">Provider</string>
+    <string name="dashboard_models_available">Available models</string>
+    <string name="dashboard_models_new_sessions_notice">Changing the main model applies to new sessions. It does not retarget the current chat.</string>
+    <string name="dashboard_keys_provider_keys">Provider keys</string>
+    <string name="dashboard_keys_other_secrets">Other server secrets</string>
+    <string name="dashboard_keys_secret_safety">Provider keys are stored by Hermes on the server. Values stay hidden until you choose Reveal.</string>
+    <string name="dashboard_config_agent_defaults">Agent defaults</string>
+    <string name="dashboard_config_model_routing">Model routing</string>
+    <string name="dashboard_config_voice">Voice</string>
+    <string name="dashboard_config_tools">Tools</string>
+    <string name="dashboard_config_advanced">Advanced</string>
+    <string name="dashboard_config_full_document_warning">Saving replaces the server configuration document. Review every change before saving.</string>
+    <string name="dashboard_config_read_only_notice">Configuration is schema-driven and read-only here. No automatic writes are made.</string>
+    <string name="dashboard_config_unknown_fields_preserved">Unknown configuration fields remain untouched because this view does not autosave.</string>
+    <string name="dashboard_review_changes">Review changes</string>
+    <string name="dashboard_discard_changes">Discard changes</string>
+    <string name="dashboard_save_changes">Save changes</string>
+    <string name="dashboard_no_pending_changes">No pending changes</string>
+    <plurals name="dashboard_pending_changes">
+        <item quantity="one">%1$d pending change</item>
+        <item quantity="other">%1$d pending changes</item>
+    </plurals>
+
+    <!-- Management hub -->
+    <string name="dashboard_hub_group_app">APP</string>
+    <string name="dashboard_hub_group_agent">AGENT</string>
+    <string name="dashboard_hub_group_capabilities">CAPABILITIES</string>
+    <string name="dashboard_hub_group_integrations">INTEGRATIONS</string>
+    <string name="dashboard_hub_group_server">SERVER</string>
+    <string name="dashboard_hub_hermes">Hermes</string>
+    <string name="dashboard_hub_hermes_version">Hermes %1$s</string>
+    <string name="dashboard_hub_dashboard_ready">Dashboard ready</string>
+    <string name="dashboard_hub_profile_status">Profile: %1$s</string>
+    <string name="dashboard_hub_current_chat_profile">Current chat profile: %1$s</string>
+    <string name="dashboard_hub_multiple_profiles">Multiple profiles</string>
+    <string name="dashboard_hub_server_configuration">Server configuration</string>
+    <string name="dashboard_hub_server_details">Server details</string>
+    <string name="dashboard_hub_server_details_subtitle">Health, topology, and authentication</string>
+    <string name="dashboard_hub_gateway_topology">Gateway topology</string>
+    <string name="dashboard_hub_component_health">Component health</string>
+    <string name="dashboard_hub_connection_summary">Connection routes and sign-in</string>
+    <string name="dashboard_hub_model_summary">Model settings</string>
+    <string name="dashboard_hub_credentials_summary">Provider credentials</string>
+    <string name="dashboard_hub_config_summary">Schema-driven profile settings</string>
+    <string name="dashboard_hub_installed_skills_summary">Installed skills</string>
+    <string name="dashboard_hub_automations_summary">Automations</string>
+    <string name="dashboard_hub_servers_summary">Servers</string>
+    <string name="dashboard_hub_available_summary">Available</string>
+    <string name="dashboard_hub_configured_summary">Configured</string>
+    <string name="dashboard_hub_active_summary">Active</string>
+    <string name="dashboard_hub_unknown_value">unknown</string>
+    <string name="dashboard_hub_unavailable_value">—</string>
+    <string name="dashboard_hub_noun_installed_skills">installed skills</string>
+    <string name="dashboard_hub_noun_automations">automations</string>
+    <string name="dashboard_hub_noun_servers">servers</string>
+    <string name="dashboard_hub_noun_configured">configured</string>
+    <string name="dashboard_hub_route_summary">%1$s route</string>
+    <string name="dashboard_hub_profile_fallback">Profile: %1$s</string>
+    <string name="dashboard_hub_profiles_summary">%1$d profiles · %2$s selected</string>
+    <string name="dashboard_hub_count_summary">%1$d %2$s</string>
+    <string name="dashboard_hub_count_active_summary">%1$d %2$s · %3$d active</string>
+    <string name="dashboard_hub_available_count">%1$d available</string>
+    <string name="dashboard_hub_key_count">%1$d set · %2$d known</string>
+    <string name="dashboard_hub_profile_items_notice">Items are scoped to %1$s.</string>
+    <string name="dashboard_hub_server_items_notice">These settings apply across this Hermes server.</string>
+    <string name="dashboard_hub_automation_scope_notice">Current chat profile: %1$s. Each automation keeps the scope reported by Hermes.</string>
+    <string name="dashboard_hub_server_change_notice">Changes here affect this Hermes server. Review persistent actions before continuing.</string>
+    <string name="dashboard_hub_dangerous_actions">Dangerous actions</string>
 
     <!-- Tile titles + subtitles -->
     <string name="dashboard_tile_profiles_title">Profiles</string>

@@ -270,3 +270,28 @@ final result: blocked
 The current Hermes Management Profiles-detail build is documented above under **Hermes Management Profiles detail**. Older blocked sections are retained as historical, unrelated audits.
 
 final result: passed
+
+## Hermes Management hub and detail families
+
+- Source visuals: approved Manage hub, Integrations, Automations, and Server configuration mockups generated for this implementation.
+- Implementation captures: `app/build/ui-regression/dashboard-management-hub-dark.png`, `dashboard-integrations-mcp-dark.png`, `dashboard-automations-dark.png`, and `dashboard-server-config-dark.png`.
+- Viewport: 390 x 844 dp, xxhdpi Roborazzi production Compose renders.
+
+### Final comparison
+
+- The Manage hub preserves Connections and navigation while replacing ambiguous KPIs with a compact server identity, grouped destinations, honest cached summaries, and explicit scope labels.
+- Integrations and Automations use first-item expansion, compact inventory rows, visible profile ownership, routine actions, and separated destructive actions.
+- Server configuration uses the same family navigation and schema-derived rows. Config intentionally remains read-only because the current surface does not own a conflict-safe full-document editor.
+- Generated examples contained illustrative values and controls. Production renders use only data and actions exposed by the authenticated upstream Dashboard.
+- Custom endpoints are labeled Host-scoped because current upstream routes do not accept a profile parameter.
+- Terminal remains reachable through Server details instead of the former ambiguous code icon.
+
+### Verification
+
+- `DashboardManagementDetailScreenshotTest`: four screenshots passed.
+- `DashboardApiClientTest`: profile query/body and blank-profile compatibility coverage passed.
+- Google Play production and unit-test Kotlin compilation passed.
+
+No open P0, P1, or P2 findings.
+
+final result: passed
