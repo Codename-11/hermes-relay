@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
 
+## [Android 1.8.1] - 2026-08-09
+
+### Fixed
+
+- **Android preserves complete long-session transcripts.** API-server and profile-scoped Dashboard history reads now use explicit bounded pagination, retain compatibility with older unpaginated responses, and keep edit, retry, sharing, and recovery anchors stable beyond Hermes' latest-500 default window.
+- **Android follows authoritative Gateway turn contracts.** Submit rejections retain the server's message without silently falling through to SSE, event envelopes reconcile consistently, and edit-and-regenerate requests send the required truncation confirmation.
+
 ## [Android 1.8.0] - 2026-08-09
 
 ### Added

@@ -89,12 +89,12 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.8.0 - Conversations with more context
+v1.8.1 - Complete, reliable transcripts
 
-* Quote, edit, search, and attach files without losing chat context.
-* Switch profiles quickly while each agent keeps its own session.
-* Cleaner thinking and grouped tool activity.
-* Speak or stop completed replies from message actions.
+* Keep complete history beyond Hermes' latest-500 default.
+* Preserve stable edit, retry, sharing, and recovery anchors.
+* Show authoritative Gateway rejection messages without unintended fallback.
+* Follow current event and edit-and-regenerate contracts.
 * Live theme, Sphere, and pet previews.
 ```
 

@@ -1,6 +1,27 @@
 {
  "versions": [
   {
+   "version": "1.8.1",
+   "title": "Complete, reliable transcripts",
+   "date": "2026-08-09",
+   "sections": [
+    {
+     "header": "Keep long sessions complete",
+     "bullets": [
+      "Android pages explicitly through complete API-server and profile-scoped Dashboard history instead of silently stopping at Hermes' latest-500 default.",
+      "Sharing, retry, edit, and recovery retain stable transcript anchors while bounded safety limits keep unusually large reads controlled."
+     ]
+    },
+    {
+     "header": "Follow Gateway truth",
+     "bullets": [
+      "Authoritative submit rejections preserve the server's message without an unintended SSE fallback.",
+      "Gateway event envelopes and edit-and-regenerate truncation confirmation now follow current upstream contracts."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.8.0",
    "title": "Conversations with more context",
    "date": "2026-08-09",
