@@ -6,10 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0-alpha.3] - 2026-08-11
+
+### Added
+
+- **Windows tray provides focused remote-access management.** The compact host-aware popup covers connection state, per-host Ask/Trusted/Full Access, pending grant dialogs, authorized-client revocation, activity, daemon controls, and settings without adding chat, terminal, plugin, voice, or session surfaces.
+- **Desktop access policy is isolated per Hermes host.** `hermes-relay hosts` lists and selects local pairings and stores fail-closed access modes independently for each canonical relay URL.
+- **Windows CLI installations can add or open the management UI directly.** `hermes-relay ui install|open|status` and the installed UI shim provide a supported lifecycle for optional UI setup, discovery, and activation.
+
+### Changed
+
+- **Daemon connectivity no longer requires a tool grant.** Ask mode can keep an authenticated daemon connected with zero desktop tools attached; Trusted enables command/file tools with task-scoped screen/input grants, while Full Access removes those task prompts only for the selected host.
+- **Windows bundle updates preserve the desktop lifecycle.** The CLI and tray coordinate one verified installer launch, restore the daemon and UI after setup, and permit same-version UI add or repair without silently downgrading a newer CLI.
+
 ### Fixed
 
-- **Issue area labels require maintainer review.** The unreliable keyword-based auto-labeling workflow no longer assigns ownership from ambiguous issue text.
+- **Background daemon start reports real readiness.** Detached startup now waits for the spawned process to authenticate and connect, and returns actionable log evidence for configuration, authentication, early-exit, and timeout failures.
+- **Local and release tray builds embed the packaged UI.** Development installs use Tauri's production protocol instead of attempting to load a missing localhost development server, and release CI exercises a silent install/uninstall lifecycle.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [1.6.2] - 2026-08-11
+
+### Fixed
+
+- **Paired sessions use recognizable device identities.** Relay sessions preserve a client-provided hostname as the primary name, retain model and platform details, and enrich valid reconnects without requiring users to pair again.
+- **Long-lived session expiry is readable.** The Dashboard presents paired-session lifetime in days or weeks with the exact local deadline available in the detail view instead of accumulating hundreds of hours.
 
 ## [Android 1.8.1] - 2026-08-09
 

@@ -1,8 +1,8 @@
 # Hermes-Relay-Server v__VERSION__
 
-**Release Date:** August 8, 2026
+**Release Date:** August 11, 2026
 
-This patch makes the optional Dashboard plugin's Android setup handoff reliable for hosted Hermes connections.
+This patch makes paired sessions easier to identify and their expiry easier to understand across Relay clients and the Dashboard.
 
 Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
@@ -10,8 +10,10 @@ Standard chat, session history, and Vanilla Hermes voice remain upstream-owned a
 
 ### Fixed
 
-- **Canonical hosted-Hermes setup handoff.** The Dashboard plugin supplies the verified Dashboard address Android needs to continue through the official system-browser authentication flow.
-- **Contained dialog focus behavior.** Mobile setup dialogs retain their own focus and keyboard handling without disrupting the surrounding Dashboard.
+- **Recognizable device names.** Relay uses the client hostname as the primary paired-session name when available while preserving compatibility with existing clients.
+- **Persisted device details.** Model and platform metadata survive refresh, reconnect, and Relay restart and appear in the authorized-session API and Dashboard detail view.
+- **Reconnect enrichment without re-pairing.** A valid paired client can fill missing identity metadata during reconnect without changing its authentication state.
+- **Human-readable expiry.** Long paired-session lifetimes use days, weeks, or a calendar date, with the exact local deadline retained for inspection.
 
 ## Install / update
 
