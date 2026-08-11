@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0-alpha.6] - 2026-08-11
+
+### Fixed
+
+- **Installer cleanup validation compares the unexpanded Windows PATH.** Release smoke tests now read the raw user registry value, ensuring `%USERPROFILE%` entries are verified without temporary-profile expansion changing their apparent value.
+
 ## [0.4.0-alpha.5] - 2026-08-11
 
 ### Fixed
