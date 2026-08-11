@@ -682,6 +682,8 @@ def _session_to_dict(session: Session, current_token: str | None) -> dict[str, A
         "transport_hint": session.transport_hint,
         "client_surface": session.client_surface,
         "device_form_factor": session.device_form_factor,
+        "device_model": session.device_model,
+        "device_platform": session.device_platform,
         "is_current": current_token is not None and session.token == current_token,
     }
 
@@ -3958,10 +3960,17 @@ async def _authenticate(
     pairing_code = payload.get("pairing_code", "")
     session_token_attempt = payload.get("session_token", "")
     refresh_token_attempt = str(payload.get("refresh_token", "") or "").strip()
-    device_name = payload.get("device_name", "Unknown device")
+    device_hostname = str(payload.get("device_hostname", "") or "").strip()
+    device_name = str(
+        payload.get("device_name") or device_hostname or "Unknown device"
+    ).strip()
     device_id = payload.get("device_id", "unknown")
     client_surface = str(payload.get("client_surface", "unknown") or "unknown")
     device_form_factor = str(payload.get("device_form_factor", "unknown") or "unknown")
+    device_model = str(payload.get("device_model", "unknown") or "unknown").strip()
+    device_platform = str(
+        payload.get("device_platform", "unknown") or "unknown"
+    ).strip()
 
     # Pairing policy is attached by a loopback-only operator flow. Clients
     # may still send ttl_seconds / grants for wire compatibility, but those
@@ -3973,6 +3982,24 @@ async def _authenticate(
     if session_token_attempt:
         session = server.sessions.get_session(session_token_attempt)
         if session is not None:
+            server.sessions.update_session_device_metadata(
+                session,
+                device_name=(
+                    device_name
+                    if "device_name" in payload or device_hostname
+                    else None
+                ),
+                device_model=(device_model if "device_model" in payload else None),
+                device_platform=(
+                    device_platform if "device_platform" in payload else None
+                ),
+                client_surface=(
+                    client_surface if "client_surface" in payload else None
+                ),
+                device_form_factor=(
+                    device_form_factor if "device_form_factor" in payload else None
+                ),
+            )
             if (
                 not refresh_token_attempt
                 and device_id
@@ -3998,6 +4025,8 @@ async def _authenticate(
             transport_hint=detected_transport,
             client_surface=client_surface,
             device_form_factor=device_form_factor,
+            device_model=device_model,
+            device_platform=device_platform,
         )
         if session is not None:
             server.rate_limiter.record_success(remote_ip)
@@ -4025,6 +4054,8 @@ async def _authenticate(
                 transport_hint=transport_hint,
                 client_surface=client_surface,
                 device_form_factor=device_form_factor,
+                device_model=device_model,
+                device_platform=device_platform,
                 issue_refresh_token=True,
             )
             server.rate_limiter.record_success(remote_ip)

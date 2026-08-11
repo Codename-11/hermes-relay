@@ -572,6 +572,18 @@ private fun DeviceCard(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
+                    val deviceDetail = listOf(device.deviceModel, device.devicePlatform)
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                        .joinToString(" · ")
+                    if (deviceDetail.isNotBlank()) {
+                        Text(
+                            text = deviceDetail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (device.deviceId.isNotBlank()) {
                         Text(
                             text = device.deviceId,

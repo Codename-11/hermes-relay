@@ -82,6 +82,21 @@ class SessionsRoutesTests(AioHTTPTestCase):
         body = await resp.json()
         self.assertEqual(body["sessions"][0]["transport_hint"], "wss")
 
+    async def test_list_includes_device_identity_metadata(self) -> None:
+        token = await self._mint(
+            "bailey-phone",
+            device_model="Pixel 10 Pro",
+            device_platform="Android 17",
+        )
+        resp = await self.client.get(
+            "/sessions", headers={"Authorization": f"Bearer {token}"}
+        )
+        body = await resp.json()
+        entry = body["sessions"][0]
+        self.assertEqual(entry["device_name"], "bailey-phone")
+        self.assertEqual(entry["device_model"], "Pixel 10 Pro")
+        self.assertEqual(entry["device_platform"], "Android 17")
+
     async def test_loopback_without_bearer_returns_full_list(self) -> None:
         # Dashboard-plugin branch: loopback callers with no Authorization
         # header get the full session list. No session highlight is
