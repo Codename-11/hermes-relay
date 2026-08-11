@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0-alpha.5] - 2026-08-11
+
+### Fixed
+
+- **Installer cleanup validation handles expandable Windows PATH entries.** Release smoke tests restore the original profile environment before comparing user PATH, avoiding false failures when unchanged `%USERPROFILE%` entries are expanded inside an isolated test profile.
+
 ## [0.4.0-alpha.4] - 2026-08-11
 
 ### Fixed
