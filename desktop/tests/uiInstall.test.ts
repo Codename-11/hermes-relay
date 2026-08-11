@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
@@ -11,14 +11,14 @@ import { windowsInstallerLaunchPlan } from '../src/windowsInstaller.js'
 test('UI executable follows an explicit install directory', () => {
   assert.equal(
     uiExecutablePath({ HERMES_RELAY_INSTALL_DIR: 'C:\\Hermes' }, 'C:\\runtime\\node.exe'),
-    join('C:\\Hermes', 'hermes-relay-tray.exe')
+    win32.join('C:\\Hermes', 'hermes-relay-tray.exe')
   )
 })
 
 test('compiled CLI resolves a colocated UI executable', () => {
   assert.equal(
     uiExecutablePath({}, 'C:\\Hermes\\hermes-relay.exe'),
-    join('C:\\Hermes', 'hermes-relay-tray.exe')
+    win32.join('C:\\Hermes', 'hermes-relay-tray.exe')
   )
 })
 
@@ -37,7 +37,9 @@ test('installer launch is delayed until the running CLI can exit', () => {
   assert.equal(plan.options.detached, true)
 })
 
-test('PowerShell launches an installer whose path contains spaces via environment transport', async () => {
+test('PowerShell launches an installer whose path contains spaces via environment transport', {
+  skip: process.platform !== 'win32'
+}, async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'hermes ui installer '))
   const fakeInstaller = join(scratch, 'fake setup.exe')
   await copyFile(join(process.env.WINDIR ?? 'C:\\Windows', 'System32', 'whoami.exe'), fakeInstaller)

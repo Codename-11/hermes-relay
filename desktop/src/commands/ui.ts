@@ -1,15 +1,22 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, win32 } from 'node:path'
 
 import type { ParsedArgs } from '../cli.js'
 import { updateCommand } from './update.js'
 
 export function uiExecutablePath(env = process.env, executable = process.execPath): string {
   if (env.HERMES_RELAY_UI_PATH) return env.HERMES_RELAY_UI_PATH
-  if (env.HERMES_RELAY_INSTALL_DIR) return join(env.HERMES_RELAY_INSTALL_DIR, 'hermes-relay-tray.exe')
-  if (basename(executable).toLowerCase() === 'hermes-relay.exe') {
+  if (env.HERMES_RELAY_INSTALL_DIR) {
+    const pathApi = win32.isAbsolute(env.HERMES_RELAY_INSTALL_DIR) ? win32 : { join }
+    return pathApi.join(env.HERMES_RELAY_INSTALL_DIR, 'hermes-relay-tray.exe')
+  }
+  const executableName = win32.basename(executable).toLowerCase()
+  if (executableName === 'hermes-relay.exe') {
+    return win32.join(win32.dirname(executable), 'hermes-relay-tray.exe')
+  }
+  if (basename(executable).toLowerCase() === 'hermes-relay') {
     return join(dirname(executable), 'hermes-relay-tray.exe')
   }
   return join(homedir(), '.hermes', 'bin', 'hermes-relay-tray.exe')
