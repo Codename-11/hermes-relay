@@ -7,6 +7,7 @@ import test from 'node:test'
 
 import { updateCommand } from '../src/commands/update.js'
 import { checkForUpdate, downloadAndInstall } from '../src/updater.js'
+import { VERSION } from '../src/version.js'
 
 async function captureStdout(run: () => Promise<number>): Promise<{ code: number; output: string }> {
   const originalWrite = process.stdout.write
@@ -85,7 +86,7 @@ test('installer check reports a newer local preview without treating it as an er
     }))
     assert.equal(check.code, 0)
     const report = JSON.parse(check.output)
-    assert.equal(report.current, '0.4.0-alpha.3')
+    assert.equal(report.current, VERSION)
     assert.equal(report.latest_version, '0.4.0-alpha.2')
     assert.equal(report.up_to_date, true)
     assert.equal(report.ahead_of_latest, true)
