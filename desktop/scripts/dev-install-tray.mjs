@@ -9,7 +9,20 @@ import { spawnSync } from 'node:child_process'
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 if (process.platform !== 'win32') throw new Error('the optional systray is Windows-only')
 
-const build = spawnSync('cargo', ['build', '--release', '--manifest-path', 'tray/Cargo.toml'], {
+const npmExecPath = process.env.npm_execpath
+const npmCommand = npmExecPath ? process.execPath : (process.env.ComSpec ?? 'cmd.exe')
+const npmArgs = npmExecPath
+  ? [npmExecPath, '--prefix', 'tray', 'run', 'build']
+  : ['/d', '/s', '/c', 'npm.cmd', '--prefix', 'tray', 'run', 'build']
+const uiBuild = spawnSync(npmCommand, npmArgs, {
+  cwd: desktopRoot,
+  stdio: 'inherit'
+})
+if (uiBuild.error || uiBuild.status !== 0) process.exit(uiBuild.status ?? 1)
+
+// Match the shipped build. Without custom-protocol Tauri follows devUrl and an
+// installed tray tries to load 127.0.0.1:1420 instead of its embedded UI.
+const build = spawnSync('cargo', ['build', '--release', '--features', 'custom-protocol', '--manifest-path', 'tray/Cargo.toml'], {
   cwd: desktopRoot,
   stdio: 'inherit'
 })

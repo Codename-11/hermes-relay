@@ -2045,9 +2045,9 @@ private preflight.
 
 ---
 
-## ADR 37 — Desktop is CLI/TUI plus an optional menu-only Windows systray
+## ADR 37 — Desktop is CLI/TUI plus an optional Windows management tray
 
-**Status:** Accepted (2026-07-13).
+**Status:** Amended (2026-08-11; originally accepted 2026-07-13).
 
 **Context.** The Windows Tauri shell grew from a tray convenience into a second
 desktop client with Chat, embedded PTYs, sessions, plugins, voice, diagnostics,
@@ -2057,41 +2057,73 @@ helper carry a full WebView application architecture.
 
 **Decision.** Hermes-Relay desktop has exactly two deliverables on the
 `desktop-v*` production track (historical `cli-v*` tags remain immutable):
-track:
 
 1. `hermes-relay`, the primary cross-platform CLI and terminal TUI. Interactive
    behavior, pairing, sessions, daemon management, grants, audit, diagnostics,
    plugins, chat, and voice remain CLI-owned.
-2. `hermes-relay-tray`, an optional Windows-only native tray process. Its only
-   interface is the right-click context menu. It may display daemon state and
-   invoke the installed CLI for TUI, start/stop/restart, pairing, pending grant
-   review, audit, diagnostics, logs, sign-in startup, emergency stop, and exit.
-   Left-click does nothing. Daemon state includes PID liveness and the current
+2. `hermes-relay-tray`, an optional Windows-only management tray. It may display
+   a single compact popup for connection state, paired Hermes hosts, the selected
+   host's access policy, pending grants, daemon controls, authorized clients,
+   activity, and settings. It invokes the installed CLI rather than duplicating
+   its state or protocol logic. Daemon state includes PID liveness and the current
    User/Administrator privilege level; elevation is an explicit UAC-confirmed
    daemon action, never a permanently elevated tray. Desktop computer use is a
-   persistent CLI-owned machine preference, while the tray displays and invokes
-   that contract rather than maintaining private settings.
+   per-host CLI-owned policy, while the tray displays and invokes that contract
+   rather than maintaining private settings.
 
-The tray must not create an application window, WebView, overlay, embedded
-terminal, chat view, session manager, plugin view, voice view, diagnostics
-dashboard, or settings panel. Actions requiring interaction open the real CLI
-in a terminal. The Windows installer places one CLI binary and the tray binary
-beside each other under `~/.hermes/bin`; there is no private bundled sidecar.
+The management popup is deliberately not a second Hermes desktop client. It must
+not contain chat, an embedded terminal or PTY, agent sessions, plugins, voice, an
+always-on overlay, or a general diagnostics dashboard. Pairing may open the real
+CLI until an equally narrow native pairing dialog exists. The Windows installer
+places one CLI binary and the tray binary beside each other under
+`~/.hermes/bin`; there is no private bundled sidecar.
+
+**2026-08-11 access and host amendment.** Stored relay URLs represent distinct
+Hermes hosts, not peer devices on one relay. The compact host selector lists
+those local pairings and places **Pair another host...** inside the selector;
+when none exist, the selector becomes the single Pair action. Peer sessions for
+the selected relay appear only under Settings as authorized clients and may be
+revoked there.
+
+Host access is persisted locally, keyed by canonical relay URL, and defaults to
+`ask`. `trusted` permits the regular command and file tool surface while keeping
+task-scoped screen/input approval. `full_access` also permits screen, keyboard,
+and mouse use without expiring task grants for that host. Full Access never
+bypasses relay authentication, local audit, revocation, emergency stop, or UAC
+boundaries. The daemon may connect in a locked zero-tool state under `ask`, so
+starting connectivity does not itself require or imply a tool grant.
 
 **Consequences.**
 
-- Tauri, xterm, dashboard assets, tray IPC, and tray-owned PTY/process state are
-  removed.
-- Pending computer-use requests gain a CLI command so approval is available
-  without a GUI window and stays scriptable.
+- A narrowly scoped Tauri WebView is allowed for the popup; xterm, tray-owned
+  PTY/process state, and full desktop-client assets remain excluded.
+- Pending computer-use requests retain a CLI command and are also resolved in a
+  focused in-window dialog, so normal tray operation never requires opening a
+  terminal merely to approve or reject a request.
 - Normal-user operation remains the default. Administrator desktop-tool access
   is available through an explicit UAC prompt, and elevated daemon lifecycle
   actions retain that privilege boundary.
-- Experimental desktop use remains separately opt-in. The tray shows its state,
-  active grant and expiry, alerts on pending local approval, supports immediate
-  cancellation, and warns when an Administrator input grant is active.
-- The tray is a small native Rust process built on `tray-icon`; NSIS packages it
-  with the same compiled CLI released separately.
+- The tray shows host access, active grant and expiry, alerts on pending local
+  approval, supports immediate cancellation, and warns when an Administrator
+  input grant is active.
+- Local desktop-tool audit entries use a backward-compatible structured event
+  envelope (`tool.completed`, category, duration, request ID, and optional
+  process exit code). The tray derives its live, filterable Activity view from
+  that local log and treats non-zero exits as attention-worthy even when the
+  tool handler itself returned normally. Successful tray management actions
+  append compatible `management.completed` events, keeping daemon, host-access,
+  grant, client-revocation, startup, pairing, and update changes in the same
+  local timeline without creating a second state store.
+- Settings shows only a short Activity preview. A dedicated detail view owns
+  filters, event expansion, and confirmed local-history clearing. Non-zero
+  subprocess exits are warnings rather than user-actionable Issues; only handler
+  failures and aborts contribute to the Issues count.
+- Host cards navigate to local detail rather than implicitly switching the
+  daemon. Host selection is an explicit detail action, and an optional local
+  alias is stored beside the selected relay URL without mutating the paired
+  session or remote server identity.
+- The tray is a small Rust/Tauri process; NSIS packages it with the same compiled
+  CLI released separately.
 - Rich full-window desktop chat and management remain upstream desktop-product
   concerns, not a Hermes-Relay surface.
 - The CLI package version remains canonical for both binaries and the installer.

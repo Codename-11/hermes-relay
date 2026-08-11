@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline/promises'
 
 import type { ParsedArgs } from '../cli.js'
-import { readDaemonStatus, isPidAlive } from '../lib/daemonStatus.js'
+import { readDaemonStatus, isDaemonProcessAlive } from '../lib/daemonStatus.js'
 import {
   readDesktopUseSettings,
   requestComputerGrantCancellation,
@@ -58,7 +58,7 @@ async function statusPayload(): Promise<Record<string, unknown>> {
     readDaemonStatus(),
     listPendingGrantRequests()
   ])
-  const daemonAlive = !!daemon && isPidAlive(daemon.pid)
+  const daemonAlive = !!daemon && isDaemonProcessAlive(daemon)
   const activeGrant = daemonAlive && daemon?.computer_grant?.active === true
     ? daemon.computer_grant
     : null
@@ -120,7 +120,7 @@ export async function computerUseCommand(args: ParsedArgs): Promise<number> {
 
   if (subcommand === 'cancel') {
     const daemon = await readDaemonStatus()
-    if (!daemon || !isPidAlive(daemon.pid) || daemon.computer_grant?.active !== true) {
+    if (!daemon || !isDaemonProcessAlive(daemon) || daemon.computer_grant?.active !== true) {
       process.stdout.write(t.muted('No active desktop-use grant is reported.') + '\n')
       return 0
     }

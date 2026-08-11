@@ -1,19 +1,20 @@
 # hermes-relay-cli
 
-Cross-platform CLI/TUI and optional menu-only Windows systray for [Hermes-Relay](https://github.com/Codename-11/hermes-relay).
+Cross-platform CLI/TUI and optional compact Windows management tray for [Hermes-Relay](https://github.com/Codename-11/hermes-relay).
 
 These are the only Hermes-Relay desktop deliverables: the cross-platform CLI
 and its optional Windows systray. Hermes-Relay does not ship a separate
-full desktop chat or management client; that product surface belongs to
-[hermes-desktop](https://github.com/NousResearch/hermes-agent). The systray has
-no application window: right-clicking its icon exposes a small native menu that
-invokes the installed CLI for TUI, pairing, daemon control, grants, audit, and logs.
+full desktop chat client; that product surface belongs to
+[hermes-desktop](https://github.com/NousResearch/hermes-agent). The tray opens a
+compact management popup for hosts, connection state, access, grants, authorized
+clients, activity, and settings. It deliberately contains no chat, embedded
+terminal, plugins, voice, or agent-session UI.
 
 The agent brain (LLM + tools + sessions + memory) runs on your Hermes host. The
 CLI is the product: bare `hermes-relay` opens the remote Hermes TUI, while
 subcommands provide scriptable chat, pairing, sessions, daemon management,
 grants, diagnostics, and desktop-tool routing. The optional systray is only a
-Windows convenience launcher and controller for those commands.
+Windows management surface over those same commands and state files.
 
 > **What this is not:** A local Hermes install. Point it at an existing Hermes-Relay server (`ws://host:8767`). For the full TUI with Ink, see the sibling package [`ui-tui`](../../hermes-agent-tui-smoke/ui-tui) in the hermes-agent fork.
 
@@ -26,26 +27,53 @@ binary and one set of state files; the tray does not bundle a private sidecar.
 | Surface | Intended use | Default experience |
 |---------|--------------|--------------------|
 | CLI/TUI | Primary desktop experience | Interactive remote Hermes TUI plus scriptable commands and JSON output |
-| Windows systray | Optional convenience | Right-click menu for TUI, daemon, pairing, grants, audit, logs, and emergency stop |
-| Daemon | Headless operation | Background desktop-tool router controlled by the CLI or tray menu |
+| Windows tray | Optional management | Compact host, connection, access, grant, authorized-client, and settings popup |
+| Daemon | Headless operation | Background connection and desktop-tool router controlled by the CLI or tray |
 
-Left-clicking the tray icon intentionally does nothing. Right-clicking opens its
-only interface. Actions that need input open the real CLI in a terminal rather
-than embedding another terminal or management window.
+Clicking the tray icon toggles the management popup. Paired Hermes instances are
+shown as **Hosts**; clients authenticated to the selected host appear separately
+under Settings and can be deauthorized there. **Pair another host...** is the
+last host-selector option, or the selector's only action when no hosts exist.
 
-The menu cross-checks the daemon heartbeat and PID, labels the account as
+The tray cross-checks the daemon heartbeat and PID, labels the account as
 **User** or **Administrator**, and disables lifecycle actions that do not apply
 to the current state. **Start/Restart daemon as Administrator...** uses the
-standard Windows UAC prompt; the tray itself stays unelevated. The menu also
-shows pending-grant counts, exposes CLI diagnostics, can toggle tray startup at
-sign-in, and states explicitly that exiting the tray leaves the daemon running.
+standard Windows UAC prompt; the tray itself stays unelevated. Settings can
+check the Desktop release channel and self-update the CLI and management UI
+together. The installer download is verified against the release
+`SHA256SUMS.txt`, preserves the startup preference, restores a previously
+running daemon, and relaunches the tray after the silent replacement.
+
+Access is selected per host. **Ask** keeps the connection available but attaches
+no desktop tools. **Trusted** enables command and file tools while screen/input
+still uses task grants. **Full Access** also allows screen, keyboard, and mouse
+without task grants for that host; authentication, audit, deauthorization,
+emergency stop, and UAC boundaries still apply.
+
+The tray's **Activity** section is a live, local view of recent remote actions
+and management events such as daemon, host-access, grant, client, and update
+changes.
+It groups events into commands, files, screen, and input; highlights failures,
+aborts, and non-zero process exits; and keeps request context collapsed until
+explicitly expanded. Events record handler duration and request ID where
+available. The compact Overview still shows only the three newest events.
+Settings also keeps activity compact: it previews the three newest events and
+opens a dedicated Activity detail page for wrapped filters and expandable
+records. Handler failures and aborts are **Issues**; non-zero process exits are
+shown separately because probing commands may legitimately use them. **Clear**
+removes both current and rotated local audit history after confirmation.
+
+Clicking a card under **Hosts** opens that host's detail page; it does not change
+the active connection. The detail page can set a local display name and has an
+explicit connect action. Local names are stored in `desktop-control.json` and
+do not rename the remote Hermes instance.
 
 ## Install
 
 ### GitHub Release install (recommended, no Node required)
 
 ```powershell
-# Windows CLI + optional menu-only systray (default)
+# Windows CLI + optional management tray (default)
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 ```
 
@@ -60,9 +88,10 @@ curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/deskt
 ```
 
 Windows downloads and verifies `hermes-relay-windows-x64-setup.exe`. The installer
-places the CLI and systray together, adds `~/.hermes/bin` to the user PATH, and
-lets the systray start at sign-in. CLI-only installs download the same prebuilt
-single-file CLI binary without the systray. Pin a release with
+places the CLI and management UI together, adds `~/.hermes/bin` to the user PATH, and
+lets the UI start at sign-in. CLI-only installs download the same prebuilt
+single-file CLI binary without the UI; add it later with `hermes-relay ui install`.
+Pin a release with
 `HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.18`; CLI-only installs can override the
 install directory with `HERMES_RELAY_INSTALL_DIR=...`.
 
@@ -112,6 +141,7 @@ on Windows because Windows locks its executable.
 For tray development on Windows:
 
 ```sh
+npm --prefix tray ci
 npm run tray:dev
 npm run tray:fmt
 npm run tray:lint
@@ -195,7 +225,7 @@ hermes-pair
 # -> prints "Copy/paste pairing invite" with hermes-relay://pair?payload=...
 ```
 
-Right-click the tray and choose **Pair or re-pair...**, or use the CLI directly:
+Open the host selector and choose **Pair another host...**, or use the CLI directly:
 
 ```sh
 hermes-relay pair --pair-qr 'hermes-relay://pair?payload=...' --grant-tools
@@ -227,26 +257,27 @@ Herm uses `bun add -g herm-tui` when Bun is available and falls back to
 `npm install -g herm-tui`; launch uses the installed `herm` binary or
 `bunx herm-tui` / `npx --yes herm-tui` when available.
 
-### Pair + grant tools in one shot (CLI-only daemon bring-up)
+### Host access and daemon bring-up
 
-If you plan to run `daemon` (headless tool serving), tack `--grant-tools` onto `pair` to capture the per-URL desktop-tool consent in the same step. That removes the historical `pair` → `shell` (consent prompt) → `daemon` dance:
-
-```sh
-hermes-relay pair   --remote ws://192.168.1.100:8767 --grant-tools
-# ...prompts for code, then prompts for tool consent, stamps it on the stored session.
-
-hermes-relay daemon
-# ...starts headless; consent gate already satisfied.
-```
-
-For non-interactive provisioning (CI, install scripts, automated boxes) use `--auto-grant-tools` — same effect, no prompt:
+Starting the daemon no longer grants tools and no longer requires a tool grant.
+With a paired host in **Ask**, it connects in locked mode with zero desktop tools.
+Select a host policy from the tray or use the CLI:
 
 ```sh
-HERMES_RELAY_CODE=F3W7EY hermes-relay pair \
-  --remote ws://192.168.1.100:8767 --auto-grant-tools --non-interactive
+hermes-relay hosts list --json
+hermes-relay hosts select ws://192.168.1.100:8767
+hermes-relay hosts access trusted --remote ws://192.168.1.100:8767
+hermes-relay daemon start
 ```
 
-The two flags are deliberately separate so consent is never implicit — `--grant-tools` means "ask me", `--auto-grant-tools` means "I've already decided". Plain `pair` (no flag) leaves consent untouched, matching the original behavior.
+Full Access requires explicit confirmation for non-interactive use:
+
+```sh
+hermes-relay hosts access full-access \
+  --remote ws://192.168.1.100:8767 --yes
+```
+
+Pairing still supports `--grant-tools` and `--auto-grant-tools` for backward-compatible CLI provisioning. New management flows should use `hosts access` so the policy is explicit and host-scoped.
 
 ## Usage
 
@@ -262,6 +293,8 @@ hermes-relay computer-use        Enable, inspect, disable, or cancel desktop use
 hermes-relay status              Show stored sessions + grants + TTL
 hermes-relay tools               List tools available on the server
 hermes-relay devices             List / revoke / extend server-side paired devices
+hermes-relay hosts               List / select hosts and set per-host access
+hermes-relay daemon              Start / stop / restart the background connection
 hermes-relay --help              Full help
 ```
 
@@ -345,17 +378,17 @@ hermes-relay computer-use cancel
 hermes-relay computer-use disable
 ```
 
-The preference is stored in `~/.hermes/desktop-settings.json` and applies to
+The legacy preference is stored in `~/.hermes/desktop-settings.json` and applies to
 future chat, shell, daemon, tray restart, and UAC elevation flows. The explicit
 `--experimental-computer-use` and `--no-computer-use` flags remain one-process
-overrides. The Windows tray exposes the same enable/disable control, active
-grant mode and expiry, and a cancel action.
+overrides. The per-host policy is stored separately in
+`~/.hermes/desktop-host-access.json`; Full Access enables this surface for its
+host without an expiring task grant.
 
-They still require normal desktop-tool consent. Observe grants allow screenshots;
+In Ask or Trusted mode, observe grants allow screenshots;
 assist/control grants require explicit local approval before host input can run.
 The daemon writes pending requests to `~/.hermes/grant-bridge`; review them with
-`hermes-relay grants` or the systray's **Review pending grants...** action. The
-tray raises a native security alert when a new approval request appears. Grants
+`hermes-relay grants` or the tray's focused approval dialog. Grants
 expire automatically after at most one hour, and disabling desktop use,
 **Cancel active desktop grant**, or **Emergency stop daemon** ends local input
 authority. An Administrator daemon displays a prominent warning while an
@@ -480,7 +513,7 @@ Desktop-tool activity (4 most recent)
    2s ago  desktop_search      ● ok     pattern=TODO
 ```
 
-Read from a local log (`~/.hermes/desktop-audit.jsonl`) the tool router writes whenever the agent runs a `desktop_*` tool — no network, no auth, works whether the relay is local or remote.
+Read from a local log (`~/.hermes/desktop-audit.jsonl`) the tool router writes whenever the agent runs a `desktop_*` tool — no network, no auth, works whether the relay is local or remote. New entries include a stable `tool.completed` kind, category, handler duration, request ID, and process exit code when the handler exposes one. Older log entries remain readable.
 
 ### Relay — inspect the server
 
@@ -560,7 +593,7 @@ Precedence for credentials: `--token` → `HERMES_RELAY_TOKEN` → `--code` → 
 What's shipped on the `desktop-v*` track: remote chat + tool-event rendering,
 one-time pairing, the interactive PTY/TUI shell, client-side tool routing,
 auto-reconnect with TOFU cert pinning, server-side session management, the
-headless daemon, local diagnostics, and the optional menu-only Windows systray.
+headless daemon, local diagnostics, and the optional Windows management tray.
 
 What's next (see [ROADMAP.md](../ROADMAP.md#desktop-track) for the full track):
 

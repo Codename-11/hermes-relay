@@ -27,7 +27,7 @@ type Copy = {
     chatDescription: string; voiceDescription: string; manageDescription: string; additional: string;
     cliTitle: string; cliLede: string; terminal: string; consentTitle: string; consentBody: string;
     capabilities: string; sessionsTitle: string; sessionsBody: string; daemonTitle: string; daemonBody: string;
-    auditTitle: string; auditBody: string; meetCli: string;
+    auditTitle: string; auditBody: string; uiTitle: string; uiBody: string; meetCli: string;
   };
   device: {
     eyebrow: string; title: string; lede: string; capabilities: string; read: string; tap: string; type: string;
@@ -77,6 +77,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: 'Pick up where you left off.', sessionsBody: 'Reconnect to named tmux sessions with recent scrollback already in place.',
       daemonTitle: 'Available in the background.', daemonBody: 'Keep approved desktop tools ready through the headless daemon.',
       auditTitle: 'See what ran on your machine.', auditBody: 'Review the local record of every desktop tool call—even while offline.',
+      uiTitle: 'Manage it without opening a terminal.', uiBody: 'Windows includes an optional compact tray UI for hosts, access, approvals, activity, updates, and daemon settings.',
       meetCli: 'Meet the CLI',
     },
     device: {
@@ -134,6 +135,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: 'Mach dort weiter, wo du aufgehört hast.', sessionsBody: 'Verbinde dich erneut mit benannten tmux-Sitzungen; der letzte Scrollback ist bereits vorhanden.',
       daemonTitle: 'Im Hintergrund verfügbar.', daemonBody: 'Halte genehmigte Desktop-Werkzeuge über den headless Daemon bereit.',
       auditTitle: 'Sieh, was auf deinem Rechner ausgeführt wurde.', auditBody: 'Prüfe den lokalen Verlauf jedes Desktop-Tool-Aufrufs — auch offline.',
+      uiTitle: 'Verwalten ohne Terminal.', uiBody: 'Windows bietet eine optionale kompakte Tray-Oberfläche für Hosts, Zugriff, Freigaben, Aktivitäten, Updates und Daemon-Einstellungen.',
       meetCli: 'CLI kennenlernen',
     },
     device: {
@@ -191,6 +193,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: 'Continúa donde lo dejaste.', sessionsBody: 'Vuelve a conectarte a sesiones tmux con nombre y conserva el historial reciente.',
       daemonTitle: 'Disponible en segundo plano.', daemonBody: 'Mantén disponibles las herramientas de escritorio aprobadas mediante el daemon sin interfaz.',
       auditTitle: 'Consulta lo que se ejecutó en tu equipo.', auditBody: 'Revisa el registro local de cada llamada a herramientas de escritorio, incluso sin conexión.',
+      uiTitle: 'Adminístralo sin abrir una terminal.', uiBody: 'Windows incluye una interfaz compacta y opcional en la bandeja para hosts, acceso, aprobaciones, actividad, actualizaciones y el daemon.',
       meetCli: 'Conocer la CLI',
     },
     device: {
@@ -248,6 +251,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: '中断したところから再開。', sessionsBody: '名前付き tmux セッションへ再接続し、直前のスクロールバックもそのまま利用できます。',
       daemonTitle: 'バックグラウンドで待機。', daemonBody: '承認したデスクトップツールをヘッドレス daemon 経由で利用可能に保ちます。',
       auditTitle: 'マシンで実行された内容を確認。', auditBody: 'オフライン時を含む、すべてのデスクトップツール呼び出しのローカル記録を確認できます。',
+      uiTitle: 'ターミナルを開かずに管理。', uiBody: 'Windows には、ホスト、アクセス、承認、アクティビティ、更新、daemon 設定用のコンパクトなオプションのトレイ UI があります。',
       meetCli: 'CLI の詳細',
     },
     device: {
@@ -305,6 +309,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: 'Continue de onde parou.', sessionsBody: 'Reconecte-se a sessões tmux nomeadas com o histórico recente já disponível.',
       daemonTitle: 'Disponível em segundo plano.', daemonBody: 'Mantenha as ferramentas de desktop aprovadas prontas por meio do daemon sem interface.',
       auditTitle: 'Veja o que foi executado na sua máquina.', auditBody: 'Revise o registro local de cada chamada de ferramenta de desktop, mesmo offline.',
+      uiTitle: 'Gerencie sem abrir um terminal.', uiBody: 'O Windows inclui uma interface compacta e opcional na bandeja para hosts, acesso, aprovações, atividades, atualizações e configurações do daemon.',
       meetCli: 'Conhecer a CLI',
     },
     device: {
@@ -362,6 +367,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: '从上次离开的地方继续。', sessionsBody: '重新连接到命名的 tmux 会话，并保留最近的回滚内容。',
       daemonTitle: '在后台保持可用。', daemonBody: '通过无界面的 daemon，让已批准的桌面工具保持就绪。',
       auditTitle: '查看计算机上执行过的操作。', auditBody: '即使离线，也能查看每次桌面工具调用的本地记录。',
+      uiTitle: '无需打开终端即可管理。', uiBody: 'Windows 提供可选的紧凑托盘界面，用于管理主机、访问权限、审批、活动、更新和 daemon 设置。',
       meetCli: '了解 CLI',
     },
     device: {

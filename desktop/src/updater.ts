@@ -48,6 +48,7 @@ export interface UpdateInfo {
 export interface DownloadOptions {
   targetPath?: string
   onProgress?: (bytes: number, total: number) => void
+  cooperative?: boolean
 }
 
 export interface DownloadResult {
@@ -192,7 +193,7 @@ async function fetchReleases(repo: string): Promise<GhRelease[]> {
   return data
 }
 
-export async function checkForUpdate(opts: { repo?: string } = {}): Promise<UpdateInfo | null> {
+export async function checkForUpdate(opts: { repo?: string; assetName?: string } = {}): Promise<UpdateInfo | null> {
   const repo = opts.repo ?? DEFAULT_REPO
   const releases = await fetchReleases(repo)
 
@@ -214,7 +215,7 @@ export async function checkForUpdate(opts: { repo?: string } = {}): Promise<Upda
   const latestVersion = releaseVersionFromTag(pick.tag_name)
   const current = VERSION
 
-  const wantAsset = assetNameForPlatform()
+  const wantAsset = opts.assetName ?? assetNameForPlatform()
   if (!wantAsset) {
     // Unsupported platform — tell the caller the state but don't crash here.
     // The `update` subcommand will surface this to the user.
@@ -337,7 +338,10 @@ export async function downloadAndInstall(
     throw new Error(`no asset available for ${process.platform}/${process.arch}`)
   }
   const targetPath = opts.targetPath ?? process.execPath
-  const { downloadTmp, finalStaged, cooperative } = stagingPathFor(targetPath)
+  const paths = stagingPathFor(targetPath)
+  const cooperative = opts.cooperative ?? paths.cooperative
+  const finalStaged = cooperative ? paths.finalStaged : targetPath
+  const downloadTmp = paths.downloadTmp
 
   // Best-effort cleanup of any stale temp file from a previous aborted run.
   try { await unlink(downloadTmp) } catch { /* ok */ }

@@ -7,7 +7,7 @@
 It also includes a terminal escape hatch for when *you* want to drive: bare `hermes-relay` attaches your server's own Hermes TUI over a PTY, tmux-backed so disconnects lose nothing.
 
 ::: warning Experimental phase
-Prebuilt CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64. The optional native systray is Windows-only. Assets are unsigned, so SmartScreen or Gatekeeper warnings are expected. Wire protocol details may shift between alphas, and multi-client routing remains a single-client MVP. [File an issue](https://github.com/Codename-11/hermes-relay/issues) when something does not behave as documented.
+Prebuilt CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64. The optional compact management UI is Windows-only. Assets are unsigned, so SmartScreen or Gatekeeper warnings are expected. Wire protocol details may shift between alphas, and multi-client routing remains a single-client MVP. [File an issue](https://github.com/Codename-11/hermes-relay/issues) when something does not behave as documented.
 :::
 
 ::: info Where this track is headed
@@ -115,15 +115,13 @@ The third command (`hermes-relay` with no args) drops you into `shell` mode — 
 
 See **[Installation](./installation.md)** for the full walkthrough (Bun-compiled binaries, version-aware install, `hermes` alias, self-update flow) and **[Pairing](./pairing.md)** for minting a 6-char code on the server.
 
-## Windows systray: menu only, no desktop window
+## Windows management UI
 
-The optional Windows systray is a native right-click menu over the installed CLI. It has no dashboard, WebView, embedded terminal, chat window, settings window, or background GUI framework. Choosing an interactive action opens the real CLI in a terminal.
+The optional **Hermes-Relay CLI UI** is a compact popup anchored above its notification-area icon. Click the icon to open or hide it. It manages paired Hermes hosts, connection and daemon state, per-host access, local approvals, activity, authorized clients, updates, and settings. It deliberately does not embed chat, the Hermes TUI, a terminal, plugins, voice, or agent sessions.
 
-The menu reports the daemon's connection and privilege state, opens the Hermes TUI, starts/stops/restarts the daemon, requests an explicit UAC elevation when you choose **Start/Restart daemon as Administrator…**, opens pairing, pending grants, recent activity, diagnostics, and logs, and provides an emergency stop. The tray itself remains a normal user process even when it starts an elevated daemon.
+Access is scoped to the selected host. **Ask** keeps the daemon connected without attaching desktop tools. **Trusted** enables command and file tools while screen and input remain task-granted. **Full Access** removes those task prompts for that host; authentication, audit, client revocation, emergency stop, and Windows UAC boundaries still apply. Approval requests appear directly as focused local cards without requiring the main popup or a separate terminal.
 
-Desktop use is independently disabled by default. **Enable desktop use…** stores the preference in `~/.hermes/desktop-settings.json`, restarts the daemon at its existing privilege level, and allows the experimental screenshot/input tool family to be advertised. Pending assist/control approvals raise a native security alert; **Review pending grants…** opens `hermes-relay grants` in a terminal, and **Cancel active desktop grant** ends the current task-scoped grant. The status rows show the grant mode and expiry, with an explicit warning when an Administrator control grant is active.
-
-The installer can register **Start tray at sign-in**, and the same setting is available from the menu. This is per-user startup—not a Windows service. The tray starts the daemon on launch; choosing **Exit tray** intentionally leaves the daemon running.
+The Windows one-liner installs the checksum-verified CLI and UI bundle by default. A CLI-only install can add the UI later with `hermes-relay ui install`, open it with `hermes-relay ui` or `hermes-relay ui open`, and inspect it with `hermes-relay ui status`. The installer can register **Start UI at sign-in**; this is a per-user startup entry, not a Windows service.
 
 ## Why both shell AND chat modes?
 

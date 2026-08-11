@@ -323,7 +323,31 @@ hermes-relay update              # check + download + verify + swap (with confir
 hermes-relay update --check      # dry-run: print available version, don't install
 hermes-relay update --yes        # skip confirm
 hermes-relay update --json       # machine-readable status
+hermes-relay update --installer  # Windows: update the complete CLI + UI bundle
 ```
+
+The normal update path replaces only the CLI binary. On Windows, `--installer`
+downloads the checksum-verified NSIS bundle so the CLI and management UI stay on
+the same release. The UI's update action invokes this bundle path, stops the
+affected processes, installs the update, and reopens the UI.
+
+## `hermes-relay ui`
+
+Install, open, or inspect the optional Windows management UI. This command is
+Windows-only; macOS and Linux remain CLI-only.
+
+```powershell
+hermes-relay ui             # open the UI; same as `ui open`
+hermes-relay ui open        # show the compact popup above the tray icon
+hermes-relay ui status      # report installation state and executable path
+hermes-relay ui install     # install or repair the matching CLI + UI bundle
+```
+
+The Windows PowerShell one-liner installs the UI bundle by default, so `ui
+install` is mainly for machines originally installed with
+`HERMES_RELAY_INSTALL_SURFACE=cli`. The UI manages hosts, access, approvals,
+activity, updates, authorized clients, and daemon settings. It does not embed
+chat, the remote Hermes TUI, a terminal, plugins, or voice.
 
 POSIX uses atomic `fs.rename` (the running daemon keeps its inode); Windows uses a cooperative `.new.exe` swap on the next start.
 

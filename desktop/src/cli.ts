@@ -10,6 +10,7 @@ import { daemonCommand } from './commands/daemon.js'
 import { devicesCommand } from './commands/devices.js'
 import { doctorCommand } from './commands/doctor.js'
 import { grantsCommand } from './commands/grants.js'
+import { hostsCommand } from './commands/hosts.js'
 import { pairCommand } from './commands/pair.js'
 import { pasteCommand } from './commands/paste.js'
 import { pluginsCommand } from './commands/plugins.js'
@@ -19,6 +20,7 @@ import { shellCommand } from './commands/shell.js'
 import { statusCommand } from './commands/status.js'
 import { toolsCommand } from './commands/tools.js'
 import { updateCommand } from './commands/update.js'
+import { uiCommand } from './commands/ui.js'
 import { voiceCommand } from './commands/voice.js'
 import { workspaceCommand } from './commands/workspace.js'
 import { renderLogo } from './lib/logo.js'
@@ -72,6 +74,9 @@ const BOOLEAN_FLAGS = new Set([
   'no-voice',
   'no-open',
   'check',
+  'installer',
+  'download-only',
+  'force',
   'yes',
   'new',
   'watch-editor',
@@ -141,6 +146,7 @@ const KNOWN_COMMANDS = new Set([
   'devices',
   'doctor',
   'grants',
+  'hosts',
   'paste',
   'pair',
   'relay',
@@ -150,6 +156,7 @@ const KNOWN_COMMANDS = new Set([
   'status',
   'tools',
   'update',
+  'ui',
   'voice',
   'workspace',
   'help'
@@ -174,7 +181,9 @@ Usage:
   hermes-relay daemon [start|stop|restart|status]   Headless tool router — 'start' runs it in the background
   hermes-relay doctor              Diagnostic report: version, paths, sessions, daemon status
   hermes-relay grants              Review pending local computer-use grants
+  hermes-relay hosts               List/select paired hosts and set local access policy
   hermes-relay update              Check for and install the latest desktop-v* release
+  hermes-relay ui [open|status|install]  Open or install the optional Windows management UI
   hermes-relay voice               Show native Hermes voice config (STT/TTS/realtime providers)
   hermes-relay voice mode          Push-to-talk in a browser tab (proxied through this CLI)
   hermes-relay workspace           Print local workspace context (cwd, git, editor, shell) — --json for scripting
@@ -325,6 +334,8 @@ export async function main(argv = process.argv): Promise<number> {
       return doctorCommand(args)
     case 'grants':
       return grantsCommand(args)
+    case 'hosts':
+      return hostsCommand(args)
     case 'pair':
       return pairCommand(args)
     case 'paste':
@@ -343,6 +354,8 @@ export async function main(argv = process.argv): Promise<number> {
       return toolsCommand(args)
     case 'update':
       return updateCommand(args)
+    case 'ui':
+      return uiCommand(args)
     case 'voice':
       return voiceCommand(args)
     case 'workspace':

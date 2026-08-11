@@ -11,6 +11,7 @@
 //       render "Paired via LAN / Tailscale / Public" correctly).
 
 import type { ParsedArgs } from '../cli.js'
+import { desktopRelayIdentity } from '../deviceIdentity.js'
 import { formatError } from '../lib/hints.js'
 import { SYMBOLS, theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
@@ -191,7 +192,7 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
   const relay = new RelayTransport({
     url: target.url,
     pairingCode: target.code,
-    deviceName: `hermes-relay-cli (${process.platform})`
+    ...desktopRelayIdentity()
   })
 
   relay.start()

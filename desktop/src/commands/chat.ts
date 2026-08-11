@@ -13,6 +13,7 @@ import {
   type AttachPayload
 } from '../chatAttach.js'
 import type { ParsedArgs } from '../cli.js'
+import { desktopRelayIdentity } from '../deviceIdentity.js'
 import { resolveCredentials } from '../credentials.js'
 import { GatewayClient } from '../gatewayClient.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
@@ -115,7 +116,7 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
 
     const cfg: ConstructorParameters<typeof RelayTransport>[0] = {
       url,
-      deviceName: `hermes-relay-cli (${process.platform})`
+      ...desktopRelayIdentity()
     }
     if (creds.pairingCode) {
       cfg.pairingCode = creds.pairingCode
@@ -591,6 +592,7 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
       const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
+        hostUrl: url,
         handlers: desktopHandlers({ computerUse: computerUseEnabled }),
         advertisedTools: [...advertisedTools]
       })

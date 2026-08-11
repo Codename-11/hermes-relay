@@ -168,7 +168,9 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            desktop/tray/package-lock.json
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -179,7 +181,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install deps
-        run: npm ci
+        run: npm ci && npm --prefix tray ci
 
       - name: Type-check
         run: npm run type-check
@@ -213,12 +215,121 @@ jobs:
           $proc = Start-Process -FilePath tray/target/release/hermes-relay-tray.exe -WindowStyle Hidden -PassThru
           Start-Sleep -Seconds 5
           if ($proc.HasExited) { throw "tray app exited early with code $($proc.ExitCode)" }
-          $proc.Refresh()
-          if ($proc.MainWindowHandle -ne 0) { throw 'menu-only systray created an application window' }
           $traySize = (Get-Item tray/target/release/hermes-relay-tray.exe).Length
-          if ($traySize -gt 5242880) { throw "tray executable exceeds 5 MiB: $traySize bytes" }
+          if ($traySize -le 0) { throw 'tray executable is empty' }
           Stop-Process -Id $proc.Id -Force
-          Write-Host "menu-only tray launch smoke OK pid=$($proc.Id) bytes=$traySize"
+          Write-Host "management tray launch smoke OK pid=$($proc.Id) bytes=$traySize"
+
+      - name: Smoke-test packaged installer lifecycle
+        shell: pwsh
+        env:
+          EXPECTED_DESKTOP_VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Normalize-UserPath([string]$Value) {
+            return (@($Value -split ';' | Where-Object { $_ }) -join ';')
+          }
+
+          $setup = (Resolve-Path 'dist/tray/hermes-relay-windows-x64-setup.exe').Path
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'hermes-installer-lifecycle-smoke'
+          $smokeProfile = Join-Path $smokeRoot 'profile'
+          $installDir = Join-Path $smokeRoot 'installed files'
+          $sessionDir = Join-Path $smokeProfile '.hermes'
+          $sessionSentinel = Join-Path $sessionDir 'remote-sessions.json'
+          $uninstaller = Join-Path $installDir 'uninstall-hermes-relay.exe'
+          $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\HermesRelay'
+          $productKey = 'HKCU:\Software\HermesRelay'
+          $startupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Hermes-Relay CLI'
+          $oldUserProfile = $env:USERPROFILE
+          $oldHomeEnv = $env:HOME
+          $userPathBefore = Normalize-UserPath ([Environment]::GetEnvironmentVariable('Path', 'User'))
+          $startupBefore = (Get-ItemProperty -Path $startupKey -Name HermesRelayTray -ErrorAction SilentlyContinue).HermesRelayTray
+
+          if (Test-Path $uninstallKey) { throw 'installer smoke requires a clean HermesRelay uninstall registry key' }
+          if (Test-Path $productKey) { throw 'installer smoke requires a clean HermesRelay product registry key' }
+          if (Test-Path $smokeRoot) { Remove-Item -LiteralPath $smokeRoot -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null
+          Set-Content -LiteralPath $sessionSentinel -Value '{"sentinel":"preserve-me"}' -Encoding UTF8
+
+          $env:USERPROFILE = $smokeProfile
+          $env:HOME = $smokeProfile
+          try {
+            & $setup /S "/D=$installDir"
+            if ($LASTEXITCODE -ne 0) { throw "installer exited with code $LASTEXITCODE" }
+
+            $expectedFiles = @(
+              'hermes-relay.exe',
+              'hermes-relay-tray.exe',
+              'hermes-relay-ui.cmd',
+              'hermes-relay-path.ps1',
+              'uninstall-hermes-relay.exe'
+            )
+            foreach ($name in $expectedFiles) {
+              $path = Join-Path $installDir $name
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                throw "packaged installer did not create $path"
+              }
+            }
+
+            $cli = Join-Path $installDir 'hermes-relay.exe'
+            $versionOutput = (& $cli --version | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) { throw "installed CLI --version exited with code $LASTEXITCODE" }
+            if ($versionOutput -ne "hermes-relay $env:EXPECTED_DESKTOP_VERSION") {
+              throw "installed CLI version mismatch: expected $env:EXPECTED_DESKTOP_VERSION, got '$versionOutput'"
+            }
+            $helpOutput = (& $cli --help | Out-String)
+            if ($LASTEXITCODE -ne 0 -or $helpOutput -notmatch 'Usage:') {
+              throw 'installed CLI --help smoke failed'
+            }
+            if (-not (Test-Path -LiteralPath $sessionSentinel -PathType Leaf)) {
+              throw 'installer removed profile session data'
+            }
+
+            & $uninstaller /S
+            if ($LASTEXITCODE -ne 0) { throw "uninstaller exited with code $LASTEXITCODE" }
+
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            while ((Test-Path -LiteralPath $uninstaller) -and [DateTime]::UtcNow -lt $deadline) {
+              Start-Sleep -Milliseconds 250
+            }
+            foreach ($name in $expectedFiles) {
+              $path = Join-Path $installDir $name
+              if (Test-Path -LiteralPath $path) { throw "uninstaller left owned artifact $path" }
+            }
+            if (Test-Path $uninstallKey) { throw 'uninstaller left the Installed Apps registry key' }
+            if (Test-Path $productKey) { throw 'uninstaller left the HermesRelay product registry key' }
+            if (Test-Path -LiteralPath $startMenuDir) { throw "uninstaller left Start-menu artifacts at $startMenuDir" }
+            if (-not (Test-Path -LiteralPath $sessionSentinel -PathType Leaf)) {
+              throw 'uninstaller removed preserved profile session data'
+            }
+            if ((Get-Content -LiteralPath $sessionSentinel -Raw) -notmatch 'preserve-me') {
+              throw 'installer lifecycle modified preserved profile session data'
+            }
+
+            $userPathAfter = Normalize-UserPath ([Environment]::GetEnvironmentVariable('Path', 'User'))
+            if ($userPathAfter -ne $userPathBefore) {
+              throw "uninstaller did not restore user PATH (before='$userPathBefore', after='$userPathAfter')"
+            }
+            $startupAfter = (Get-ItemProperty -Path $startupKey -Name HermesRelayTray -ErrorAction SilentlyContinue).HermesRelayTray
+            if ($startupAfter -ne $startupBefore) {
+              throw "installer lifecycle changed the pre-existing tray startup preference"
+            }
+
+            Write-Host "packaged installer lifecycle smoke OK version=$versionOutput install=$installDir"
+          } finally {
+            Get-Process -Name 'hermes-relay-tray' -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $uninstaller) {
+              & $uninstaller /S | Out-Null
+            }
+            $env:USERPROFILE = $oldUserProfile
+            $env:HOME = $oldHomeEnv
+            if (Test-Path -LiteralPath $smokeRoot) {
+              Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
 
       - name: Upload Windows tray release asset
         uses: actions/upload-artifact@v4

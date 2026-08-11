@@ -9,9 +9,11 @@
 
 import { promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { execFileSync } from 'node:child_process'
 
 import type { ProcessPrivilege } from './processPrivilege.js'
+import type { HostAccessMode } from './hostAccessPolicy.js'
 
 export type DaemonState = 'starting' | 'connected' | 'reconnecting' | 'stopped'
 
@@ -24,6 +26,9 @@ export interface DaemonComputerGrantStatus {
 
 export interface DaemonStatus {
   pid: number
+  /** Executable image recorded by the daemon. Used to reject a recycled PID
+   * before status/stop treats an unrelated process as Hermes Relay. */
+  process_name?: string
   url: string
   state: DaemonState
   /** Epoch seconds. */
@@ -38,6 +43,8 @@ export interface DaemonStatus {
   username?: string
   privilege?: ProcessPrivilege
   computer_use_enabled?: boolean
+  access_mode?: HostAccessMode
+  tools_enabled?: boolean
   computer_grant?: DaemonComputerGrantStatus
 }
 
@@ -82,4 +89,42 @@ export function isPidAlive(pid: number): boolean {
   } catch (e) {
     return (e as NodeJS.ErrnoException)?.code === 'EPERM'
   }
+}
+
+function normalizeProcessName(value: string): string {
+  return basename(value.trim()).replace(/\.exe$/i, '').toLocaleLowerCase('en-US')
+}
+
+function processNameForPid(pid: number): string | null {
+  try {
+    if (process.platform === 'win32') {
+      const output = execFileSync(
+        'tasklist.exe',
+        ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'],
+        { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+      return /^"([^"]+)"/.exec(output.trim())?.[1] ?? null
+    }
+    const output = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    return output.trim() || null
+  } catch {
+    return null
+  }
+}
+
+/** Validate both PID existence and executable identity. PID-only probes are
+ * unsafe for status/stop because operating systems can recycle a daemon PID
+ * for an unrelated process immediately after a crash. */
+export function isDaemonProcessAlive(
+  status: Pick<DaemonStatus, 'pid' | 'process_name'>,
+  lookup: (pid: number) => string | null = processNameForPid
+): boolean {
+  if (!isPidAlive(status.pid)) return false
+  const actual = lookup(status.pid)
+  if (!actual) return false
+  const expected = status.process_name ?? basename(process.execPath)
+  return normalizeProcessName(actual) === normalizeProcessName(expected)
 }

@@ -4,6 +4,7 @@
 // so the user can see which toolsets are enabled before spending a prompt.
 
 import type { ParsedArgs } from '../cli.js'
+import { desktopRelayIdentity } from '../deviceIdentity.js'
 import { resolveCredentials } from '../credentials.js'
 import { GatewayClient } from '../gatewayClient.js'
 import type { GatewayEvent, ToolsListResponse } from '../gatewayTypes.js'
@@ -101,7 +102,7 @@ export async function toolsCommand(args: ParsedArgs): Promise<number> {
 
   const relayCfg: ConstructorParameters<typeof RelayTransport>[0] = {
     url,
-    deviceName: `hermes-relay-cli (${process.platform})`
+    ...desktopRelayIdentity()
   }
   if (creds.pairingCode) {
     relayCfg.pairingCode = creds.pairingCode

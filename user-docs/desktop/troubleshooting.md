@@ -36,42 +36,45 @@ Or run with the platform-appropriate full path:
 
 If Command Prompt says `'\"C:\Users\...\hermes-relay.exe\"' is not recognized`, the quotes were copied with a literal apostrophe/backslash wrapper. Use the exact `cmd.exe` form above.
 
-## The tray icon is running but no desktop window opens
+## Clicking the tray icon does not open the management UI
 
-That is expected. The Windows systray is deliberately menu-only. Find **Hermes Relay** in the notification area (including the hidden-icons chevron) and right-click it. Interactive actions open the real CLI in a terminal; there is no dashboard or WebView window.
+Find **Hermes-Relay CLI UI** in the notification area, including the hidden-icons chevron, and left-click it. The compact popup should open directly above the taskbar icon. It is intentionally a focused management surface rather than a full chat or terminal application.
 
-If the icon is absent, launch **Hermes Relay Systray** from the Start menu. Check `~/.hermes/tray.log` for startup errors and confirm only one copy is running:
+If the icon is absent, run `hermes-relay ui` or launch **Hermes-Relay CLI UI** from the Start menu. Check `~/.hermes/tray.log` for startup errors, inspect the installation, and confirm only one copy is running:
 
 ```powershell
 Get-Process hermes-relay-tray -ErrorAction SilentlyContinue
+hermes-relay ui status
 ```
+
+For a CLI-only installation, add the UI with `hermes-relay ui install`.
 
 ## The daemon is User but I need Administrator access
 
-Normal-user operation is the safe default. Right-click the tray and choose **Start daemon as Administrator…** or **Restart daemon as Administrator…**, then approve the Windows UAC prompt. The tray remains a normal user process; only the daemon and its approved tool/input actions are elevated.
+Normal-user operation is the safe default. Open UI Settings and choose **Start daemon as Administrator…** or **Restart daemon as Administrator…**, then approve the Windows UAC prompt. The UI remains a normal user process; only the daemon and its approved tool/input actions are elevated.
 
 Use `hermes-relay daemon status` or the tray status row to confirm the privilege. Elevation is never automatic and is not required for ordinary user files/apps.
 
-## Desktop use is enabled but the daemon still advertises 23 tools
+## Changing host access did not change the daemon's tools
 
 The persistent preference is read when the daemon starts. Check the state and restart requirement:
 
 ```powershell
-hermes-relay computer-use status
+hermes-relay hosts list
 hermes-relay daemon restart
 ```
 
-The Windows tray restarts automatically after **Enable desktop use…** or **Disable desktop use** while preserving the daemon's User/Administrator level. `--no-computer-use` suppresses the feature for one invocation even when the preference is enabled.
+Access is stored per host. **Ask** connects with no desktop tools, **Trusted** enables command and file tools with task-scoped screen/input grants, and **Full Access** removes those task prompts for the selected host. The UI normally restarts a running daemon after a host or access change; use the explicit restart above if an interrupted transition left stale state.
 
 ## A desktop-control request is waiting or needs to be stopped
 
-Run `hermes-relay grants` to review pending assist/control requests. The Windows tray raises a native alert and its **Review pending grants…** action opens the same command. To end active access immediately:
+The Windows UI presents a focused approval card without requiring the main popup. Approve or reject there, or run `hermes-relay grants` for terminal review. To end active access immediately:
 
 ```powershell
 hermes-relay computer-use cancel
 ```
 
-Disabling desktop use also requests cancellation. Without a local approval response, a headless request times out and input remains blocked.
+Switching the host to **Ask** or using emergency stop also requests cancellation. Without a local approval response, a headless request times out and input remains blocked.
 
 ## `auth timed out after 15000ms`
 

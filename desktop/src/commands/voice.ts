@@ -24,6 +24,7 @@
 // here without restructuring — the resolver and HTTP helper are reusable.
 
 import type { ParsedArgs } from '../cli.js'
+import { desktopRelayIdentity } from '../deviceIdentity.js'
 import { resolveCredentials } from '../credentials.js'
 import { GatewayClient } from '../gatewayClient.js'
 import type {
@@ -388,7 +389,7 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
 
     const cfg: ConstructorParameters<typeof RelayTransport>[0] = {
       url,
-      deviceName: `hermes-relay-cli voice (${process.platform})`
+      ...desktopRelayIdentity()
     }
     if (creds.pairingCode) cfg.pairingCode = creds.pairingCode
     if (creds.sessionToken) cfg.sessionToken = creds.sessionToken
