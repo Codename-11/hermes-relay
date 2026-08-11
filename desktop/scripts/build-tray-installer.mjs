@@ -30,11 +30,21 @@ function npmRun(script) {
   }
 }
 
+function npmPrefixRun(prefix, script) {
+  const npmExecPath = process.env.npm_execpath
+  if (npmExecPath) {
+    run(process.execPath, [npmExecPath, '--prefix', prefix, 'run', script], `npm --prefix ${prefix} run ${script}`)
+  } else {
+    run(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd', '--prefix', prefix, 'run', script], `npm --prefix ${prefix} run ${script}`)
+  }
+}
+
 function findMakensis() {
   const candidates = [
     process.env.MAKENSIS,
     join(process.env.ProgramFiles ?? '', 'NSIS', 'makensis.exe'),
-    join(process.env['ProgramFiles(x86)'] ?? '', 'NSIS', 'makensis.exe')
+    join(process.env['ProgramFiles(x86)'] ?? '', 'NSIS', 'makensis.exe'),
+    join(process.env.LOCALAPPDATA ?? '', 'Programs', 'NSIS', 'makensis.exe')
   ].filter(Boolean)
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate
@@ -46,7 +56,12 @@ function findMakensis() {
 }
 
 npmRun('build:bin:win')
-run('cargo', ['build', '--release', '--manifest-path', 'tray/Cargo.toml'], 'tray release build')
+npmPrefixRun('tray', 'build')
+run(
+  'cargo',
+  ['build', '--release', '--features', 'custom-protocol', '--manifest-path', 'tray/Cargo.toml'],
+  'tray release build'
+)
 
 const cliExe = join(desktopRoot, 'dist', 'bin', 'hermes-relay-win-x64.exe')
 const trayExe = join(desktopRoot, 'tray', 'target', 'release', 'hermes-relay-tray.exe')
@@ -68,6 +83,7 @@ run(
     `/DTRAY_EXE=${trayExe}`,
     `/DOUT_FILE=${output}`,
     `/DPATH_HELPER=${join(desktopRoot, 'tray', 'installer', 'path.ps1')}`,
+    `/DUI_SHIM=${join(desktopRoot, 'tray', 'installer', 'hermes-relay-ui.cmd')}`,
     `/DICON_FILE=${join(desktopRoot, 'tray', 'icons', 'icon.ico')}`,
     join(desktopRoot, 'tray', 'installer', 'hermes-relay.nsi')
   ],

@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.auth
 
 import android.content.Context
+import android.provider.Settings
 import android.util.Log
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
@@ -631,7 +632,7 @@ class AuthManager(
         val now = System.currentTimeMillis() / 1000L
         val defaults = PairedSession(
             token = token,
-            deviceName = android.os.Build.MODEL,
+            deviceName = relayDeviceName(),
             expiresAt = null,
             grants = emptyMap(),
             transportHint = null,
@@ -651,7 +652,7 @@ class AuthManager(
             val transportHint = obj["transport_hint"]?.jsonPrimitive?.contentOrNull
             val firstSeen = obj["first_seen"]?.jsonPrimitive?.longOrNull ?: now
             val deviceName = obj["device_name"]?.jsonPrimitive?.contentOrNull
-                ?: android.os.Build.MODEL
+                ?: relayDeviceName()
 
             PairedSession(
                 token = token,
@@ -750,6 +751,26 @@ class AuthManager(
         })
     }
 
+    private fun JsonObjectBuilder.putRelayDeviceIdentity() {
+        val model = android.os.Build.MODEL.orEmpty().ifBlank { "Android device" }
+        val deviceName = relayDeviceName()
+        put("device_name", deviceName)
+        put("device_hostname", deviceName)
+        put("device_model", model)
+        put("device_platform", "Android ${android.os.Build.VERSION.RELEASE}")
+        put("client_surface", "android")
+        put("device_form_factor", "phone")
+    }
+
+    private fun relayDeviceName(): String {
+        val configured = runCatching {
+            Settings.Global.getString(context.contentResolver, "device_name")
+        }.getOrNull()?.trim().orEmpty()
+        return configured.ifBlank {
+            android.os.Build.MODEL.orEmpty().ifBlank { "Android device" }
+        }
+    }
+
     /**
      * Send auth envelope when connection is established.
      *
@@ -784,7 +805,7 @@ class AuthManager(
                             put("refresh_token", refreshToken)
                         }
                         put("device_id", deviceId)
-                        put("device_name", android.os.Build.MODEL)
+                        putRelayDeviceIdentity()
                         putRelayClientSupports()
                     }
                 }
@@ -800,7 +821,7 @@ class AuthManager(
                     buildJsonObject {
                         put("pairing_code", codeToSend)
                         put("device_id", deviceId)
-                        put("device_name", android.os.Build.MODEL)
+                        putRelayDeviceIdentity()
                         putRelayClientSupports()
                         pendingTtlSeconds?.let { put("ttl_seconds", it) }
                         pendingGrants?.let { grants ->
@@ -1066,7 +1087,7 @@ class AuthManager(
 
                     val paired = PairedSession(
                         token = token,
-                        deviceName = android.os.Build.MODEL,
+                        deviceName = relayDeviceName(),
                         expiresAt = expiresAt,
                         grants = grantsMap,
                         transportHint = transportHint,

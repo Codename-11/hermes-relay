@@ -42,6 +42,8 @@ class SessionPersistenceRoundtripTests(unittest.TestCase):
             device_id="dev-a",
             ttl_seconds=3600,
             transport_hint="wss",
+            device_model="Pixel 10 Pro",
+            device_platform="Android 17",
         )
         token = session.token
 
@@ -54,6 +56,8 @@ class SessionPersistenceRoundtripTests(unittest.TestCase):
         self.assertEqual(reloaded.device_name, "Phone-A")
         self.assertEqual(reloaded.device_id, "dev-a")
         self.assertEqual(reloaded.transport_hint, "wss")
+        self.assertEqual(reloaded.device_model, "Pixel 10 Pro")
+        self.assertEqual(reloaded.device_platform, "Android 17")
 
     def test_never_expire_roundtrips(self) -> None:
         """``math.inf`` expiries must survive a save/load cycle —
@@ -115,6 +119,8 @@ class SessionPersistenceRoundtripTests(unittest.TestCase):
             device_id="dev-a",
             ttl_seconds=3600,
             transport_hint="ws",
+            device_model="Pixel 10 Pro",
+            device_platform="Android 17",
             issue_refresh_token=True,
         )
         refresh = original.refresh_token
@@ -138,6 +144,8 @@ class SessionPersistenceRoundtripTests(unittest.TestCase):
         self.assertNotEqual(recovered.token, original.token)
         self.assertIsNotNone(recovered.refresh_token)
         self.assertNotEqual(recovered.refresh_token, refresh)
+        self.assertEqual(recovered.device_model, "Pixel 10 Pro")
+        self.assertEqual(recovered.device_platform, "Android 17")
 
         # Old refresh token was rotated away and cannot be replayed.
         replay = mgr2.refresh_session(
@@ -235,6 +243,40 @@ class SessionPersistenceRoundtripTests(unittest.TestCase):
             transport_hint="ws",
         )
         self.assertIsNotNone(recovered)
+
+    def test_valid_reconnect_enriches_session_and_trusted_device_identity(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        session = mgr.create_session(
+            device_name="Legacy client",
+            device_id="dev-a",
+            issue_refresh_token=True,
+        )
+
+        mgr.update_session_device_metadata(
+            session,
+            device_name="bailey-desktop",
+            device_model="Precision 5680",
+            device_platform="Windows 11",
+            client_surface="desktop",
+            device_form_factor="desktop",
+        )
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        reloaded = mgr2.get_session(session.token)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        self.assertEqual(reloaded.device_name, "bailey-desktop")
+        self.assertEqual(reloaded.device_model, "Precision 5680")
+        self.assertEqual(reloaded.device_platform, "Windows 11")
+        self.assertEqual(reloaded.client_surface, "desktop")
+        self.assertEqual(reloaded.device_form_factor, "desktop")
+
+        trusted = next(iter(mgr2._trusted_devices.values()))
+        self.assertEqual(trusted.device_name, "bailey-desktop")
+        self.assertEqual(trusted.device_model, "Precision 5680")
+        self.assertEqual(trusted.device_platform, "Windows 11")
+        self.assertEqual(trusted.client_surface, "desktop")
+        self.assertEqual(trusted.device_form_factor, "desktop")
 
 
 class SessionPersistenceExpiryTests(unittest.TestCase):

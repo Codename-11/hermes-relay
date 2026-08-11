@@ -102,8 +102,8 @@ Connection lifecycle, auth, keepalive.
 
 | Type | Direction | Payload |
 |------|-----------|---------|
-| `auth` (pairing mode) | App → Server | `{ pairing_code, ttl_seconds?, grants?, device_name, device_id }` — `ttl_seconds` / `grants` remain in the wire shape for client compatibility, but only policy attached by a loopback-only host flow is authoritative; missing host metadata uses bounded server defaults |
-| `auth` (session mode) | App → Server | `{ session_token, device_name, device_id }` — ttl/grants are not re-sent; server keeps the grant table keyed on the original pair |
+| `auth` (pairing mode) | App → Server | `{ pairing_code, ttl_seconds?, grants?, device_name?, device_hostname?, device_id, device_model?, device_platform? }` — `device_name` is the primary display identity and falls back to `device_hostname`; model/platform are informational detail only. `ttl_seconds` / `grants` remain in the wire shape for client compatibility, but only policy attached by a loopback-only host flow is authoritative; missing host metadata uses bounded server defaults |
+| `auth` (session mode) | App → Server | `{ session_token, device_name?, device_hostname?, device_id, device_model?, device_platform? }` — identity metadata can enrich an existing pair on reconnect; ttl/grants are not re-sent and the server keeps the grant table keyed on the original pair |
 | `auth.ok` | Server → App | `{ session_token, server_version, profiles[], expires_at, grants, transport_hint }` — see below |
 | `auth.fail` | Server → App | `{ reason }` |
 | `ping` | Both | `{ ts }` |

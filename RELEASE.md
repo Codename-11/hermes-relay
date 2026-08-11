@@ -119,9 +119,9 @@ artifacts.
 ### CLI / tray versioning
 
 `desktop/package.json` is the Desktop/CLI release track's source of truth. Its version
-must match the generated CLI and native Windows systray metadata. The systray is
-a menu-only controller for the installed CLI; it has no application window,
-WebView, embedded terminal, or separate desktop product surface. The public
+must match the generated CLI and Windows tray metadata. The tray is a compact
+management popup over the installed CLI and shared state; it has no chat,
+embedded terminal, plugins, voice, or separate desktop product surface. The public
 release remains one `Hermes-Relay-Desktop` track containing CLI binaries plus the
 optional Windows installer.
 
@@ -132,6 +132,9 @@ optional Windows installer.
 | `desktop/src/version.ts` | compiled CLI runtime version |
 | `desktop/tray/Cargo.toml` | native systray package version |
 | `desktop/tray/Cargo.lock` | locked systray package version |
+| `desktop/tray/tauri.conf.json` | tray application and bundle version |
+| `desktop/tray/package.json` | tray UI package version |
+| `desktop/tray/package-lock.json` | locked tray UI package version |
 
 Prepare a new CLI version on `dev` without creating a tag or npm-generated
 commit:

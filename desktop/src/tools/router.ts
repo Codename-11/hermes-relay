@@ -25,7 +25,13 @@ import * as os from 'node:os'
 
 import type { RelayTransport } from '../transport/RelayTransport.js'
 
-import { appendAudit, previewArgs, summarizeResult } from '../lib/auditLog.js'
+import {
+  appendAudit,
+  categorizeTool,
+  previewArgs,
+  resultExitCode,
+  summarizeResult
+} from '../lib/auditLog.js'
 import { VERSION } from '../version.js'
 import { getComputerGrantSummary, getComputerUseRuntimeSummary } from './computerGrants.js'
 
@@ -69,6 +75,8 @@ export type ToolHandler = (
 
 export interface DesktopToolRouterOpts {
   handlers: Record<string, ToolHandler>
+  /** Relay identity recorded with local audit events. */
+  hostUrl?: string
   /** Optional override for the heartbeat `advertised_tools` list — default
    * is `Object.keys(handlers)`. Useful when some handlers are stubs that
    * should not be advertised. */
@@ -129,6 +137,7 @@ export class DesktopToolRouter {
   private readonly advertisedTools: string[]
   private readonly consentGranted: boolean
   private readonly interactive: boolean
+  private readonly hostUrl?: string
   private relay: RelayTransport | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private attached = false
@@ -143,6 +152,7 @@ export class DesktopToolRouter {
 
   constructor(opts: DesktopToolRouterOpts) {
     this.handlers = opts.handlers
+    this.hostUrl = opts.hostUrl
     this.advertisedTools = opts.advertisedTools ?? Object.keys(opts.handlers)
     this.consentGranted = opts.consentGranted ?? false
     // Explicit opts.interactive wins; otherwise detect from env/TTY. We
@@ -264,6 +274,7 @@ export class DesktopToolRouter {
    * paths — so the server's pending-request map never hangs. */
   private async dispatch(cmd: ToolCallPayload): Promise<void> {
     const { request_id, tool, args } = cmd
+    const startedAt = Date.now()
     const handler = this.handlers[tool]
     if (!handler) {
       this.sendResponse({
@@ -301,9 +312,14 @@ export class DesktopToolRouter {
       // Local audit trail — fire-and-forget so logging never delays the reply.
       void appendAudit({
         ts: Date.now(),
+        kind: 'tool.completed',
         tool,
+        category: categorizeTool(tool),
         ok: true,
         request_id,
+        host_url: this.hostUrl,
+        duration_ms: Date.now() - startedAt,
+        exit_code: resultExitCode(result),
         args_preview: previewArgs(args),
         summary: summarizeResult(result)
       })
@@ -325,10 +341,14 @@ export class DesktopToolRouter {
       this.sendResponse({ request_id, ok: false, error: message })
       void appendAudit({
         ts: Date.now(),
+        kind: 'tool.completed',
         tool,
+        category: categorizeTool(tool),
         ok: false,
         aborted,
         request_id,
+        host_url: this.hostUrl,
+        duration_ms: Date.now() - startedAt,
         args_preview: previewArgs(args),
         error: message
       })

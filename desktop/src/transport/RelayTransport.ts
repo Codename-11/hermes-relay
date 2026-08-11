@@ -121,6 +121,15 @@ export interface RelayTransportConfig {
   sessionToken?: string
   /** Human-readable label for the "Paired Devices" list. */
   deviceName?: string
+  /** Machine hostname used as a fallback identity by newer relays. */
+  deviceHostname?: string
+  /** Hardware/model descriptor retained as secondary metadata. */
+  deviceModel?: string
+  /** OS/platform descriptor retained as secondary metadata. */
+  devicePlatform?: string
+  /** Client family and physical form-factor metadata. */
+  clientSurface?: string
+  deviceFormFactor?: string
   /** Stable per-install identifier. */
   deviceId?: string
   /** Requested session lifetime in seconds (0 = never expire). */
@@ -491,6 +500,12 @@ export class RelayTransport extends EventEmitter implements Transport {
     if (this.cfg.deviceName) {
       payload.device_name = this.cfg.deviceName
     }
+
+    if (this.cfg.deviceHostname) payload.device_hostname = this.cfg.deviceHostname
+    if (this.cfg.deviceModel) payload.device_model = this.cfg.deviceModel
+    if (this.cfg.devicePlatform) payload.device_platform = this.cfg.devicePlatform
+    if (this.cfg.clientSurface) payload.client_surface = this.cfg.clientSurface
+    if (this.cfg.deviceFormFactor) payload.device_form_factor = this.cfg.deviceFormFactor
 
     if (this.cfg.deviceId) {
       payload.device_id = this.cfg.deviceId

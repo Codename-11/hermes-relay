@@ -234,6 +234,7 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
   const grant = getActiveComputerGrant()
   const runtime = getComputerUseRuntimeSummary()
   const inputBackendReady = runtime.consented === true && process.platform === 'win32'
+  const fullAccess = runtime.full_access === true
   return {
     ok: true,
     ...EXPERIMENTAL_META,
@@ -241,10 +242,10 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
     displays: await getDisplays(),
     runtime,
     permissions: {
-      screenshot: grant ? 'granted' : 'grant_required',
-      input: grant?.mode === 'assist' || grant?.mode === 'control'
+      screenshot: fullAccess ? 'full_access' : grant ? 'granted' : 'grant_required',
+      input: fullAccess || grant?.mode === 'assist' || grant?.mode === 'control'
         ? inputBackendReady
-          ? 'granted_until_expiry'
+          ? fullAccess ? 'full_access' : 'granted_until_expiry'
           : 'grant_active_but_input_backend_unavailable'
         : 'not_granted',
       accessibility: 'not_implemented'
@@ -254,8 +255,8 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
       visible: ctx.interactive,
       state: ctx.interactive ? 'cli_grant_prompt_available' : 'not_available',
       message: ctx.interactive
-        ? 'CLI grant approval prompts are available. Native overlay/tray UI is still planned.'
-        : 'Native overlay/tray UI is not implemented and this client is non-interactive.'
+        ? 'Local grant approval is available through the CLI or Hermes-Relay CLI UI.'
+        : 'This client is non-interactive; use the Hermes-Relay CLI UI approval card or hermes-relay grants.'
     },
     safety: {
       host_input: process.platform === 'win32' ? 'windows_only_with_local_approval' : 'unsupported_platform',
@@ -365,8 +366,19 @@ export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
   if (!mode) {
     return failure('invalid_request', 'mode must be one of observe, assist, or control.')
   }
+  const runtime = getComputerUseRuntimeSummary()
+  if (runtime.full_access === true) {
+    return {
+      ...requestComputerGrant({
+        mode,
+        scope: args.scope,
+        duration_seconds: args.duration_seconds,
+        reason: args.reason
+      }),
+      ...EXPERIMENTAL_META
+    }
+  }
   if (mode !== 'observe') {
-    const runtime = getComputerUseRuntimeSummary()
     if (runtime.consented !== true) {
       return failure(
         'computer_use_consent_required',

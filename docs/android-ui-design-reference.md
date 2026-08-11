@@ -15,10 +15,11 @@ This project should keep its native Android stack:
 
 Do not propose a React Native or Expo migration just because Orca's mobile app uses that stack. The useful lesson from Orca is the visual discipline and pairing UX, not the framework choice.
 
-The Windows systray no longer has a visual application surface. It uses a native
-right-click menu and opens the real CLI/TUI for interactive work, so this Android
-reference does not define desktop tray layout or navigation. Historical desktop
-parity plans remain under `docs/plans/`; ADR 37 records the current boundary.
+The Windows tray has a compact click-to-open management popup for hosts, access,
+approvals, activity, updates, and daemon settings. It is not a full chat or
+terminal application, so this Android reference does not define its layout or
+navigation. Historical desktop parity plans remain under `docs/plans/`; ADR 37
+records the current boundary.
 
 ## Source References
 

@@ -12,6 +12,7 @@ import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
 
 import { approveOrReject } from '../patchApproval.js'
+import { hasFullHostAccess } from '../computerGrants.js'
 import type { ToolContext, ToolHandler } from '../router.js'
 
 const DEFAULT_MAX_BYTES = 1_000_000
@@ -247,15 +248,17 @@ export const patchHandler: ToolHandler = async (args, ctx) => {
   // Interactive gate. The approver returns a decision — accepted or
   // rejected with a reason — and never throws. If the user edited the
   // diff we re-parse the edited version (strict; still no fuzz).
-  const decision = await approveOrReject(patchText, {
-    targetFile: abs,
-    interactive: ctx.interactive
-  })
+  const decision = hasFullHostAccess()
+    ? { accepted: true }
+    : await approveOrReject(patchText, {
+        targetFile: abs,
+        interactive: ctx.interactive
+      })
   if (!decision.accepted) {
     const reason = decision.reason ?? 'user rejected patch'
     throw new Error(`patch rejected: ${reason}`)
   }
-  let approvalTag: 'auto' | 'user' | 'edited' = 'user'
+  let approvalTag: 'auto' | 'user' | 'edited' = hasFullHostAccess() ? 'auto' : 'user'
   if (decision.editedPatch && decision.editedPatch !== patchText) {
     try {
       hunks = parseUnifiedDiff(decision.editedPatch)

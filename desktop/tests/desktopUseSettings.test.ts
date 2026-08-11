@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -12,6 +12,7 @@ import {
   setDesktopUseEnabled
 } from '../src/lib/desktopUseSettings.js'
 import { shouldAdvertiseComputerUse } from '../src/tools/handlerSet.js'
+import { patchHandler } from '../src/tools/handlers/fs.js'
 import {
   cancelComputerGrant,
   configureComputerUseRuntime,
@@ -54,7 +55,7 @@ test('persistent desktop-use preference participates in advertisement precedence
 
 test('grant changes publish immediately for daemon status and tray cancellation', () => {
   const changes: Array<ComputerGrant | null> = []
-  configureComputerUseRuntime({ computerUseConsented: true })
+  configureComputerUseRuntime({ computerUseConsented: true, accessMode: 'ask' })
   const restore = setComputerGrantChangeListener(grant => changes.push(grant))
   try {
     requestComputerGrant({ mode: 'control', duration_seconds: 60, reason: 'status test' })
@@ -65,5 +66,42 @@ test('grant changes publish immediately for daemon status and tray cancellation'
   } finally {
     restore()
     cancelComputerGrant('test cleanup')
+  }
+})
+
+test('full access bypasses expiring computer grants for the selected host', () => {
+  configureComputerUseRuntime({
+    url: 'wss://trusted.example.test',
+    computerUseConsented: true,
+    consentSource: 'stored',
+    accessMode: 'full_access'
+  })
+  const result = requestComputerGrant({ mode: 'control', reason: 'remote operation' })
+  assert.equal(result.ok, true)
+  assert.equal(result.full_access, true)
+  assert.equal((result.grant as { mode: string }).mode, 'full_access')
+  configureComputerUseRuntime({ accessMode: 'ask' })
+})
+
+test('full access applies file patches without an interactive task prompt', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hermes-full-access-patch-'))
+  const file = join(dir, 'note.txt')
+  try {
+    await writeFile(file, 'before\n')
+    configureComputerUseRuntime({
+      url: 'wss://trusted.example.test',
+      computerUseConsented: true,
+      consentSource: 'stored',
+      accessMode: 'full_access'
+    })
+    const result = await patchHandler(
+      { path: file, patch: '@@ -1,1 +1,1 @@\n-before\n+after' },
+      { cwd: dir, abortSignal: new AbortController().signal, interactive: false }
+    ) as { approved: string }
+    assert.equal(result.approved, 'auto')
+    assert.equal(await readFile(file, 'utf8'), 'after\n')
+  } finally {
+    configureComputerUseRuntime({ accessMode: 'ask' })
+    await rm(dir, { recursive: true, force: true })
   }
 })
