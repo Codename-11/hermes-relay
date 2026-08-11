@@ -231,6 +231,20 @@ jobs:
             return (@($Value -split ';' | Where-Object { $_ }) -join ';')
           }
 
+          function Get-RawUserPath {
+            $environmentKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+            if ($null -eq $environmentKey) { return '' }
+            try {
+              return [string]$environmentKey.GetValue(
+                'Path',
+                '',
+                [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+              )
+            } finally {
+              $environmentKey.Dispose()
+            }
+          }
+
           $setup = (Resolve-Path 'dist/tray/hermes-relay-windows-x64-setup.exe').Path
           $smokeRoot = Join-Path $env:RUNNER_TEMP 'hermes-installer-lifecycle-smoke'
           $smokeProfile = Join-Path $smokeRoot 'profile'
@@ -244,7 +258,7 @@ jobs:
           $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Hermes-Relay CLI'
           $oldUserProfile = $env:USERPROFILE
           $oldHomeEnv = $env:HOME
-          $userPathBefore = Normalize-UserPath ([Environment]::GetEnvironmentVariable('Path', 'User'))
+          $userPathBefore = Normalize-UserPath (Get-RawUserPath)
           $startupBefore = (Get-ItemProperty -Path $startupKey -Name HermesRelayTray -ErrorAction SilentlyContinue).HermesRelayTray
 
           if (Test-Path $uninstallKey) { throw 'installer smoke requires a clean HermesRelay uninstall registry key' }
@@ -308,11 +322,9 @@ jobs:
               throw 'installer lifecycle modified preserved profile session data'
             }
 
-            # User PATH may contain expandable %USERPROFILE% entries. Restore the
-            # runner profile before comparing the unchanged registry value.
-            $env:USERPROFILE = $oldUserProfile
-            $env:HOME = $oldHomeEnv
-            $userPathAfter = Normalize-UserPath ([Environment]::GetEnvironmentVariable('Path', 'User'))
+            # Compare the raw registry value so expandable entries such as
+            # %USERPROFILE% are not resolved against the isolated smoke profile.
+            $userPathAfter = Normalize-UserPath (Get-RawUserPath)
             if ($userPathAfter -ne $userPathBefore) {
               throw "uninstaller did not restore user PATH (before='$userPathBefore', after='$userPathAfter')"
             }
