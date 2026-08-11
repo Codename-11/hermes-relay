@@ -308,6 +308,10 @@ jobs:
               throw 'installer lifecycle modified preserved profile session data'
             }
 
+            # User PATH may contain expandable %USERPROFILE% entries. Restore the
+            # runner profile before comparing the unchanged registry value.
+            $env:USERPROFILE = $oldUserProfile
+            $env:HOME = $oldHomeEnv
             $userPathAfter = Normalize-UserPath ([Environment]::GetEnvironmentVariable('Path', 'User'))
             if ($userPathAfter -ne $userPathBefore) {
               throw "uninstaller did not restore user PATH (before='$userPathBefore', after='$userPathAfter')"
