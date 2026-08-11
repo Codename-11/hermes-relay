@@ -73,6 +73,11 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     let ui = include_str!("../ui/App.tsx");
     let native = include_str!("../src/main.rs");
     let config = include_str!("../tauri.conf.json");
+    let config_json: serde_json::Value = serde_json::from_str(config).expect("valid Tauri config");
+    let grant_window = config_json["app"]["windows"]
+        .as_array()
+        .and_then(|windows| windows.iter().find(|window| window["label"] == "grant"))
+        .expect("grant window configuration");
 
     assert!(ui.contains("isGrantWindow ? <GrantWindow /> : <ManagementApp />"));
     assert!(ui.contains("present_grant_window"));
@@ -80,10 +85,9 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("start_grant_watcher"));
     assert!(native.contains("get_webview_window(\"grant\")"));
     assert!(!native.contains("get_webview_window(\"main\").show"));
-    assert!(config.contains("\"label\": \"grant\""));
-    assert!(config.contains("\"alwaysOnTop\": true"));
-    assert!(config.contains("\"backgroundColor\": [0, 0, 0, 0]"));
-    assert!(config.contains("\"shadow\": false"));
+    assert_eq!(grant_window["alwaysOnTop"], true);
+    assert_eq!(grant_window["backgroundColor"], serde_json::json!([0, 0, 0, 0]));
+    assert_eq!(grant_window["shadow"], false);
     assert!(ui.contains("snapshot.daemon.url === host.url"));
     assert!(ui.contains("formatGrantScope(grant.scope)"));
     assert!(native.contains("restart_daemon_if_running"));
