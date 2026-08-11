@@ -1,35 +1,38 @@
-# Hermes-Relay-CLI v__VERSION__
+# Hermes-Relay CLI v__VERSION__
 
-**Release Date:** 2026-07-13
+**Release Date:** 2026-08-11
 
-This alpha makes the desktop direction explicit: Hermes-Relay is a real CLI/TUI with an optional Windows right-click systray—not a second desktop application. The old Tauri/WebView dashboard and its embedded windows are gone. The installed CLI remains the single source of behavior for pairing, TUI, daemon management, grants, audit, diagnostics, chat, voice, and tools.
+This alpha replaces the right-click-only Windows tray with the compact **Hermes-Relay CLI UI** popup while keeping Hermes-Relay's desktop boundary narrow. Chat, the remote TUI, plugins, voice, and agent sessions remain CLI or upstream desktop concerns.
 
-**Experimental phase.** Assets are unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64; the optional native systray is Windows-only.
+**Experimental phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64; the management tray is Windows-only.
 
 ## What's changed
 
 ### Added
 
-- **Persistent desktop-use control.** `hermes-relay computer-use status|enable|disable|cancel` stores one local preference, reports daemon privilege and active/pending grants, and can end an active task-scoped grant without relying on a GUI.
-- **Headless grant review.** `hermes-relay grants` lists pending local computer-use requests and supports interactive review plus explicit `approve`, `reject`, and JSON forms for scripts.
-- **Typed Relay chat option.** `chat --relay-chat` sends `chat.send` over WSS and renders typed `stream.event` v1 assistant, tool, artifact, memory, skill, and error lifecycles while preserving the existing gateway path as the default.
-- **Release-parity verification.** One version contract now keeps the npm package, compiled CLI, Rust tray, lockfile, and installer metadata aligned. The Windows verification target covers TypeScript, compiled-binary smoke tests, Rust formatting/lint/check/tests, and installer packaging.
+- **Compact Windows management tray.** The popup provides connection status, host selection, per-host access, pending approval dialogs, recent activity, daemon controls, startup settings, and authorized-client revocation.
+- **Host-aware desktop access.** `hermes-relay hosts` lists and selects paired Hermes instances and stores independent Ask, Trusted, or Full Access policy for each canonical relay URL.
+- **In-window grant decisions.** New computer-use requests bring the tray forward and show the requesting host, scope, reason, and duration with explicit Approve and Reject actions.
+- **Supported UI lifecycle from the CLI.** `hermes-relay ui install|open|status` lets a CLI-only Windows installation add, reveal, or inspect the optional management UI without rerunning setup by hand.
 
 ### Changed
 
-- **Menu-only Windows systray.** The optional tray is a small native Rust process with no application window, WebView, overlay, embedded terminal, chat view, voice view, or settings dashboard. Interactive actions open the installed CLI in a normal terminal.
-- **State- and privilege-aware daemon control.** The menu reports PID-backed daemon state and User/Administrator privilege, disables invalid lifecycle actions, and requests UAC only when **Start/Restart daemon as Administrator…** is explicitly chosen. The tray itself remains unprivileged.
-- **Visible desktop-use safety.** The tray shows enablement, active grant mode and expiry, warns when an Administrator control grant is active, raises a native alert for pending approvals, opens CLI grant review, and provides immediate cancellation and emergency stop.
-- **Per-user Windows installation.** The default PowerShell installer downloads the checksum-verified NSIS package, installs the CLI and optional tray under `~/.hermes/bin`, adds Start-menu shortcuts and user PATH, and can start the tray at sign-in. CLI-only installation remains available with `HERMES_RELAY_INSTALL_SURFACE=cli`.
+- **Daemon startup is connectivity-first.** Ask mode can keep an authenticated daemon connected with zero desktop tools attached, so starting the daemon does not itself grant authority.
+- **Full Access is explicit and host-scoped.** Trusted hosts may use command and file tools while screen/input remains task-granted. Full Access also removes task prompts for screen, input, and file patches for that host, while authentication, audit, revocation, emergency stop, and UAC boundaries remain enforced.
+- **Host changes apply immediately.** Selecting a different host or changing its access mode restarts an already-running daemon and the UI verifies that the daemon URL matches the selected host before showing it as connected.
+- **PowerShell remains first-class.** Agents should prefer the dedicated `desktop_powershell` RPC for native Windows work; `desktop_terminal` remains cmd-compatible for existing callers.
+- **CLI and UI updates share one verified installer.** Bundle updates coordinate shutdown and restart, allow same-version UI repair, and refuse accidental downgrade unless explicitly forced.
 
 ### Fixed
 
-- **Installed-binary diagnostics.** `hermes-relay doctor` reports the physical Bun-compiled executable instead of a virtual embedded-module path, so PATH and install-directory checks describe the binary that actually launched.
-- **Release guardrails.** CLI tag automation rejects version drift, tags not contained in `main`, oversized tray binaries, or a tray process that creates an application window.
+- **Detached daemon start reports real readiness.** `daemon start` waits for the spawned PID to authenticate and connect, and reports configuration, authentication, early-exit, and timeout diagnostics instead of returning a false success.
+- **Normal tray operation no longer requires opening a CLI for grants.** Pending requests are resolved directly in the focused management dialog.
+- **Release checks match the management tray.** CI builds the React assets, validates Tauri metadata, and smoke-tests the packaged tray without obsolete menu-only size or window assertions.
+- **Installed tray builds no longer depend on a localhost development server.** Local and packaged builds embed their UI assets, eliminating the `127.0.0.1 refused to connect` failure.
 
 ## Install
 
-**Windows CLI + optional systray (PowerShell):**
+**Windows CLI + management tray (PowerShell):**
 
 ```powershell
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
@@ -53,11 +56,11 @@ Pin this release with `HERMES_RELAY_VERSION=__TAG__`.
 
 ```text
 hermes-relay --version
-hermes-relay pair --remote ws://<host>:8767 --grant-tools
+hermes-relay hosts list --json
 hermes-relay daemon start
-hermes-relay daemon status
+hermes-relay daemon status --json
 ```
 
-On Windows, open **Hermes Relay Systray** from the Start menu and right-click its notification-area icon. No separate desktop window is installed.
+On Windows, click the Hermes-Relay CLI UI notification-area icon to open the management popup directly above it.
 
-See the [CLI and systray guide](https://hermes-relay.dev/docs/desktop/) for installation, commands, desktop-use safety, and troubleshooting.
+See the [CLI and tray guide](https://hermes-relay.dev/docs/desktop/) for installation, access modes, grants, and troubleshooting.
