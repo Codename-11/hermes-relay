@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0-alpha.7] - 2026-08-11
+
+### Fixed
+
+- **Installer lifecycle validation uses an isolated Windows PATH fixture.** Release smoke tests now verify add/remove cleanup against a fixed registry value and restore the runner's original value afterward, independently of the temporary profile used for session-preservation checks.
+
 ## [0.4.0-alpha.6] - 2026-08-11
 
 ### Fixed
