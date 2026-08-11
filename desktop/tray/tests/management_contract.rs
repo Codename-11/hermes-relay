@@ -86,7 +86,10 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("get_webview_window(\"grant\")"));
     assert!(!native.contains("get_webview_window(\"main\").show"));
     assert_eq!(grant_window["alwaysOnTop"], true);
-    assert_eq!(grant_window["backgroundColor"], serde_json::json!([0, 0, 0, 0]));
+    assert_eq!(
+        grant_window["backgroundColor"],
+        serde_json::json!([0, 0, 0, 0])
+    );
     assert_eq!(grant_window["shadow"], false);
     assert!(ui.contains("snapshot.daemon.url === host.url"));
     assert!(ui.contains("formatGrantScope(grant.scope)"));
