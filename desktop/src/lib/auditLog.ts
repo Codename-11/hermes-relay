@@ -16,16 +16,27 @@ import { dirname, join } from 'node:path'
 export interface AuditEntry {
   /** Epoch milliseconds when the command completed. */
   ts: number
+  /** Stable event type for consumers that do not want to infer it from fields. */
+  kind?: 'tool.completed'
   tool: string
+  category?: AuditCategory
   ok: boolean
   aborted?: boolean
   request_id?: string
+  /** Relay identity that issued the action, when known. */
+  host_url?: string
+  /** Handler wall time, excluding relay transport latency. */
+  duration_ms?: number
+  /** Process exit code when the handler returns one. Non-zero is attention-worthy. */
+  exit_code?: number
   /** Truncated preview of the call args, for context. */
   args_preview?: string
   /** Short success summary (path / exit code / first stdout line). */
   summary?: string
   error?: string
 }
+
+export type AuditCategory = 'command' | 'files' | 'screen' | 'input' | 'system' | 'other'
 
 /** Rotate the log once it crosses ~1 MB, keeping a single `.1` backup. */
 const MAX_BYTES = 1_000_000
@@ -111,4 +122,21 @@ export function summarizeResult(result: unknown): string | undefined {
     return first.length > 80 ? first.slice(0, 79) + '…' : first
   }
   return undefined
+}
+
+export function resultExitCode(result: unknown): number | undefined {
+  if (result === null || typeof result !== 'object') return undefined
+  const value = (result as Record<string, unknown>).exit_code
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/** A small stable taxonomy shared by CLI audit consumers and the tray UI. */
+export function categorizeTool(tool: string): AuditCategory {
+  const value = tool.toLowerCase()
+  if (value.includes('computer_screenshot') || value.includes('screen')) return 'screen'
+  if (value.includes('computer_') || value.includes('mouse') || value.includes('keyboard')) return 'input'
+  if (value.includes('file') || value.includes('directory') || value.includes('patch')) return 'files'
+  if (value.includes('shell') || value.includes('terminal') || value.includes('powershell') || value.includes('job')) return 'command'
+  if (value.includes('daemon') || value.includes('connect')) return 'system'
+  return 'other'
 }

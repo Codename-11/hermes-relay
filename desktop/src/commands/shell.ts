@@ -48,6 +48,7 @@
 
 import { buildConnectBanner } from '../banner.js'
 import type { ParsedArgs } from '../cli.js'
+import { desktopRelayIdentity } from '../deviceIdentity.js'
 import { resolveCredentials } from '../credentials.js'
 import { GatewayClient } from '../gatewayClient.js'
 import type { GatewayEvent } from '../gatewayTypes.js'
@@ -140,7 +141,7 @@ export async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
 
     const cfg: ConstructorParameters<typeof RelayTransport>[0] = {
       url,
-      deviceName: `hermes-relay-cli shell (${process.platform})`
+      ...desktopRelayIdentity()
     }
     if (creds.pairingCode) {
       cfg.pairingCode = creds.pairingCode
@@ -417,6 +418,7 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
       const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
+        hostUrl: url,
         handlers: desktopHandlers({ computerUse: computerUseEnabled }),
         advertisedTools: [...advertisedTools]
       })

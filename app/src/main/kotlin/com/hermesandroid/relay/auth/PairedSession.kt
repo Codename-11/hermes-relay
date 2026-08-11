@@ -74,6 +74,14 @@ data class PairedDeviceInfo(
     val deviceName: String = "",
     @SerialName("device_id")
     val deviceId: String = "",
+    @SerialName("device_model")
+    val deviceModel: String = "",
+    @SerialName("device_platform")
+    val devicePlatform: String = "",
+    @SerialName("client_surface")
+    val clientSurface: String = "",
+    @SerialName("device_form_factor")
+    val deviceFormFactor: String = "",
     @SerialName("created_at")
     val createdAt: Double? = null,
     @SerialName("last_seen")

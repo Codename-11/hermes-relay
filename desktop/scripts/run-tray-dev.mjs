@@ -2,7 +2,8 @@
 
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { createConnection } from 'node:net'
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -24,9 +25,34 @@ if (npmExecPath) {
   run('npm.cmd', ['run', 'build:bin:win'])
 }
 
-run('cargo', ['run', '--manifest-path', 'tray/Cargo.toml'], {
-  env: {
-    ...process.env,
-    HERMES_RELAY_CLI_PATH: join(desktopRoot, 'dist', 'bin', 'hermes-relay-win-x64.exe')
+const npmCommand = npmExecPath ? process.execPath : 'npm.cmd'
+const npmArgs = npmExecPath
+  ? [npmExecPath, '--prefix', 'tray', 'run', 'dev']
+  : ['--prefix', 'tray', 'run', 'dev']
+const vite = spawn(npmCommand, npmArgs, { cwd: desktopRoot, stdio: 'inherit' })
+
+async function waitForVite() {
+  const deadline = Date.now() + 15_000
+  while (Date.now() < deadline) {
+    const ready = await new Promise(resolve => {
+      const socket = createConnection({ host: '127.0.0.1', port: 1420 })
+      socket.once('connect', () => { socket.destroy(); resolve(true) })
+      socket.once('error', () => resolve(false))
+    })
+    if (ready) return
+    await new Promise(resolve => setTimeout(resolve, 100))
   }
-})
+  throw new Error('tray Vite server did not start on 127.0.0.1:1420')
+}
+
+try {
+  await waitForVite()
+  run('cargo', ['run', '--manifest-path', 'tray/Cargo.toml'], {
+    env: {
+      ...process.env,
+      HERMES_RELAY_CLI_PATH: join(desktopRoot, 'dist', 'bin', 'hermes-relay-win-x64.exe')
+    }
+  })
+} finally {
+  vite.kill()
+}

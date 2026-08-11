@@ -142,6 +142,7 @@ export const getSession = async (url: string): Promise<RemoteSessionRecord | nul
 }
 
 export interface SaveSessionOptions {
+  pairedAt?: number
   certPin?: string | null
   grants?: Record<string, number | null> | null
   ttlExpiresAt?: number | null
@@ -169,7 +170,7 @@ export const saveSession = async (
     file.sessions[url] = fromRecord({
       token,
       serverVersion,
-      pairedAt: Math.floor(Date.now() / 1000),
+      pairedAt: options.pairedAt ?? Math.floor(Date.now() / 1000),
       certPinSha256: options.certPin ?? prev?.cert_pin_sha256 ?? null,
       grants: options.grants ?? prev?.grants ?? null,
       ttlExpiresAt: options.ttlExpiresAt ?? prev?.ttl_expires_at ?? null,

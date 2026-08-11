@@ -17,7 +17,7 @@ Read the canonical setup recipe before acting:
 Then guide me through:
 - Verifying hermes-agent is already installed (it's a prerequisite — Hermes-Relay is a plugin, not standalone)
 - Running the install one-liner: \`curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash\`
-- Pairing my phone via \`hermes-pair\` or \`/hermes-relay-pair\` (Android), or another machine via the \`hermes-relay\` CLI (Windows binary one-liner: \`irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex\`; macOS/Linux builds coming soon)
+- Pairing my phone via \`hermes-pair\` or \`/hermes-relay-pair\` (Android), or another machine via the \`hermes-relay\` CLI (Windows CLI + UI one-liner: \`irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex\`; macOS/Linux CLI: \`curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh\`)
 - Verifying with \`hermes-status\`
 
 Always confirm before running shell commands. Never restart hermes-gateway without asking. If any step fails, consult the Troubleshooting section in the SKILL.md and ask me for the exact error.`
@@ -114,11 +114,11 @@ async function copy(key: string, text: string) {
       </div>
 
       <p class="path-note">
-        Installs the 18 <code>android_*</code> + 23 <code>desktop_*</code> tool surfaces, the <code>/hermes-relay-pair</code> skill, and a <code>hermes-pair</code> shell shim. Requires current upstream hermes-agent (API server + dashboard enabled) and Python 3.11+.
+        Installs the Relay's Android and desktop tool surfaces, the <code>/hermes-relay-pair</code> skill, and a <code>hermes-pair</code> shell shim. Requires current upstream hermes-agent (API server + dashboard enabled) and Python 3.11+.
       </p>
 
       <p>
-        For hands on a computer, add the CLI:
+        For hands on a computer, add the CLI. On Windows this installs the checksum-verified CLI + compact management UI bundle by default:
       </p>
 
       <div class="install-code">
@@ -137,7 +137,7 @@ async function copy(key: string, text: string) {
       </div>
 
       <p class="path-note">
-        Windows today — the macOS / Linux one-liner lands with those builds. Track it on <a :href="withBase('/desktop/installation')">CLI setup</a>.
+        macOS and Linux ship a CLI-only one-liner. Windows users who choose a CLI-only install can add the UI later with <code>hermes-relay ui install</code>. See <a :href="withBase('/desktop/installation')">CLI setup</a>.
       </p>
 
       <p class="install-extra-actions">

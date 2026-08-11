@@ -1,3 +1,5 @@
+import type { HostAccessMode } from '../lib/hostAccessPolicy.js'
+
 export type ComputerGrantMode = 'observe' | 'assist' | 'control'
 
 export interface ComputerGrantScope {
@@ -19,6 +21,7 @@ export interface ComputerUseRuntime {
   url: string | null
   computerUseConsented: boolean
   consentSource: 'stored' | 'prompted' | 'override' | 'none'
+  accessMode: HostAccessMode
 }
 
 let activeGrant: ComputerGrant | null = null
@@ -26,7 +29,8 @@ let grantChangeListener: ((grant: ComputerGrant | null) => void) | null = null
 let runtime: ComputerUseRuntime = {
   url: null,
   computerUseConsented: false,
-  consentSource: 'none'
+  consentSource: 'none',
+  accessMode: 'ask'
 }
 
 function nowMs(): number {
@@ -97,6 +101,15 @@ export function getActiveComputerGrant(): ComputerGrant | null {
 }
 
 export function getComputerGrantSummary(): Record<string, unknown> {
+  if (runtime.accessMode === 'full_access') {
+    return {
+      active: true,
+      mode: 'full_access',
+      expires_at: null,
+      scope: null,
+      reason: 'This host has Full Access.'
+    }
+  }
   const grant = getActiveComputerGrant()
   if (!grant) {
     return {
@@ -127,7 +140,9 @@ export function getComputerUseRuntimeSummary(): Record<string, unknown> {
   return {
     url: runtime.url,
     consented: runtime.computerUseConsented,
-    consent_source: runtime.consentSource
+    consent_source: runtime.consentSource,
+    access_mode: runtime.accessMode,
+    full_access: runtime.accessMode === 'full_access'
   }
 }
 
@@ -139,6 +154,14 @@ export interface RequestComputerGrantInput {
 }
 
 export function requestComputerGrant(input: RequestComputerGrantInput): Record<string, unknown> {
+  if (runtime.accessMode === 'full_access') {
+    return {
+      ok: true,
+      full_access: true,
+      grant: getComputerGrantSummary(),
+      message: 'This host already has Full Access; no task grant is required.'
+    }
+  }
   const mode = input.mode
   const reason = normalizeComputerGrantReason(input.reason)
   const durationSeconds = normalizeComputerGrantDurationSeconds(input.duration_seconds)
@@ -189,10 +212,15 @@ export function cancelComputerGrant(reason = 'cancelled'): Record<string, unknow
 }
 
 export function hasComputerInputGrant(): boolean {
+  if (runtime.accessMode === 'full_access') return true
   const grant = getActiveComputerGrant()
   return grant?.mode === 'assist' || grant?.mode === 'control'
 }
 
 export function hasComputerObserveGrant(): boolean {
-  return getActiveComputerGrant() !== null
+  return runtime.accessMode === 'full_access' || getActiveComputerGrant() !== null
+}
+
+export function hasFullHostAccess(): boolean {
+  return runtime.accessMode === 'full_access'
 }

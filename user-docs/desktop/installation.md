@@ -1,6 +1,6 @@
 # Installing the CLI <ExperimentalBadge />
 
-Prebuilt, self-contained CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64 — **no Node or Python required**. Windows also has an optional native, menu-only systray installer.
+Prebuilt, self-contained CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64 — **no Node or Python required**. Windows also has an optional compact management UI.
 
 ## Prerequisites
 
@@ -15,16 +15,16 @@ If you'd rather install from source, see the [source install](#install-from-sour
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 ```
 
-By default the script installs the Windows CLI **and** optional systray through the signed-checksum NSIS package. It:
+By default the script installs the Windows CLI **and** management UI through the checksum-verified NSIS package. It:
 
 1. Detects architecture (x64; ARM64 lands once Bun's cross-compile target stabilizes).
 2. Resolves the **latest** Desktop release by querying the GitHub Releases API directly and picking the SemVer-max `desktop-v*` tag, with a migration fallback to historical `cli-v*` releases. Prereleases are included, so alpha builds aren't skipped (see CHANGELOG entry on alpha.11 for why this matters).
 3. Downloads `hermes-relay-windows-x64-setup.exe` and verifies SHA256 against the published `SHA256SUMS.txt`.
 4. Runs the per-user installer. No administrator access is required.
 5. Installs `hermes-relay.exe`, `hermes-relay-tray.exe`, and the uninstaller to `%USERPROFILE%\.hermes\bin`.
-6. Adds that directory to your **user** PATH and creates Start-menu shortcuts for the TUI, systray, and uninstaller.
-7. Offers an optional **Start systray when I sign in** component. The same preference can be changed later from the tray menu.
-8. Starts the systray from the finish page when selected. The tray has no application window; right-click its notification-area icon.
+6. Adds that directory to your **user** PATH and creates Start-menu shortcuts for the CLI, UI, and uninstaller.
+7. Offers an optional **Start tray when I sign in** component. The same preference can be changed later in UI settings.
+8. Starts the UI from the finish page when selected. Click its notification-area icon to open the compact management popup.
 
 For a CLI-only install, set the surface explicitly. This path downloads and verifies `hermes-relay-win-x64.exe` directly and prints the existing/new version comparison:
 
@@ -38,6 +38,14 @@ Open a **new** terminal (PATH updates don't retroactively apply to in-process sh
 ```powershell
 hermes-relay --version
 hermes-relay daemon status
+```
+
+CLI-only users can install the matching UI bundle later, or open and inspect an existing UI install:
+
+```powershell
+hermes-relay ui install
+hermes-relay ui          # same as: hermes-relay ui open
+hermes-relay ui status
 ```
 
 ### SmartScreen warning on first launch
@@ -61,7 +69,7 @@ The resolver compares full SemVer including the prerelease tail, so an older alp
 
 ### Uninstall
 
-Use **Apps → Installed apps → Hermes Relay CLI + Systray**, the Start-menu uninstaller, or `%USERPROFILE%\.hermes\bin\uninstall-hermes-relay.exe`. Uninstall stops the tray and daemon, removes the installed binaries, Start-menu shortcuts, sign-in entry, and user-PATH entry, while preserving pairing/session data.
+For the CLI + UI bundle, use **Apps → Installed apps → Hermes-Relay CLI UI**, the Start-menu uninstaller, or `%USERPROFILE%\.hermes\bin\uninstall-hermes-relay.exe`. The NSIS uninstaller stops the UI and daemon, removes the installed binaries, shortcuts, sign-in entry, and user-PATH entry, while preserving pairing/session data. Use `uninstall.ps1` only for a CLI-only installation.
 
 ## macOS / Linux — curl one-liner
 
@@ -134,7 +142,7 @@ The updater:
 4. **POSIX (macOS / Linux):** atomic `fs.rename` over the running binary. The running process keeps the old inode open, so `hermes-relay daemon` (if running) keeps serving until restarted; the next `hermes-relay <verb>` invocation picks up the new binary.
 5. **Windows:** can't replace a running `.exe`, so the updater writes to `<bin>.new.exe` and `finalizePendingUpdate()` runs at the top of `main()` on every subsequent invocation to rename it into place. Result: the swap completes the **next** time you run `hermes-relay`.
 
-`hermes-relay update` updates the CLI binary only. Windows systray/installer changes ship in the same release but require rerunning the PowerShell installer (or downloading the new setup asset) so both executables stay on the same version.
+`hermes-relay update` updates the CLI binary only. On Windows, `hermes-relay update --installer` updates the complete CLI + UI bundle. The UI's update action uses the same bundle path, restarts the affected processes, and reopens the UI after replacement.
 
 If `hermes-relay update --check` says "Up to date" but you know there's a newer alpha, see the [troubleshooting note](./troubleshooting.md#hermes-relay-update-says-up-to-date-but-i-know-there-s-a-newer-alpha).
 
@@ -175,7 +183,7 @@ Tiers combine: `--purge --service` runs both.
 
 **`--purge` warning:** `remote-sessions.json` is shared with the Ink TUI and the Hermes Android desktop tooling. Wiping it signs those surfaces out too. Use `--purge` when giving a machine away — not for routine cleanup.
 
-### Windows
+### Windows CLI-only install
 
 ```powershell
 # Binary + user-PATH entry only (default)
@@ -186,7 +194,7 @@ $env:HERMES_RELAY_UNINSTALL_PURGE = 1
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/uninstall.ps1 | iex
 ```
 
-The script removes `%USERPROFILE%\.hermes\bin\hermes-relay.exe`, the `hermes.cmd` alias (if it points at our binary), strips that directory from your **user** PATH (not system — no admin needed), and removes the install dir if it's empty.
+The script removes `%USERPROFILE%\.hermes\bin\hermes-relay.exe`, the `hermes.cmd` alias (if it points at our binary), strips that directory from your **user** PATH (not system — no admin needed), and removes the install dir if it's empty. If you installed the CLI + UI NSIS bundle, use its Apps/Start-menu uninstaller instead so shortcuts, registry entries, startup state, and both executables are removed together.
 
 Open a new terminal afterward so shells pick up the PATH change.
 

@@ -38,7 +38,12 @@ Source: `plugin/relay/server.py:2649-2889` (`handle_ws`, `_authenticate`).
   "payload": {
     "pairing_code": "ABC123",
     "device_name": "Samsung Galaxy S25",
+    "device_hostname": "Bailey's phone",
     "device_id": "android-device-uuid",
+    "device_model": "SM-S938U1",
+    "device_platform": "Android 16",
+    "client_surface": "android",
+    "device_form_factor": "phone",
     "ttl_seconds": 2592000,
     "grants": {"chat": 2592000, "terminal": 604800, "bridge": 604800, "voice:stt": 2592000},
     "session_token": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
@@ -53,7 +58,13 @@ Source: `plugin/relay/server.py:2649-2889` (`handle_ws`, `_authenticate`).
 **Fields:**
 - `pairing_code` — 6 chars A-Z/0-9, one-time, 10 min TTL, case-insensitive, consumed on use.
 - `session_token` — UUID, used for reconnection after initial pairing. Exactly one of `pairing_code` or `session_token` must be present.
-- `device_name` — display name on "Paired Devices" screen. Max 255 chars.
+- `device_name` — primary display name on paired-session surfaces. New clients
+  default it to the device hostname or configured system device name.
+- `device_hostname` — optional fallback display name when `device_name` is absent.
+- `device_model` / `device_platform` — optional informational details shown
+  beneath the primary name. They do not participate in authentication or grants.
+- `client_surface` / `device_form_factor` — optional client-family and form-factor
+  classifiers such as `desktop`/`desktop`, `android`/`phone`, or `quest`/`xr`.
 - `device_id` — unique persistent identifier.
 - `ttl_seconds` — requested session lifetime; `0` means never expire. Ignored if pairing code carried pre-set metadata from host.
 - `grants` — per-channel seconds-from-now. Keys include `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, `voice:tts`, and `voice:realtime`.

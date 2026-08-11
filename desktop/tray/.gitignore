@@ -1,0 +1,5 @@
+dist/
+target/
+gen/
+.playwright-cli/
+output/

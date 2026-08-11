@@ -67,6 +67,10 @@ interface ServerSession {
   expires_at?: number | null
   grants?: Record<string, number | null>
   transport_hint?: string
+  client_surface?: string
+  device_form_factor?: string
+  device_model?: string
+  device_platform?: string
   is_current?: boolean
 }
 
@@ -214,6 +218,9 @@ async function listDevices(args: ParsedArgs): Promise<number> {
     return [
       s.token_prefix,
       nameCell,
+      [s.device_model, s.device_platform, s.client_surface]
+        .filter(value => typeof value === 'string' && value.trim())
+        .join(' · ') || '—',
       lastSeen,
       humanExpiry(s.expires_at ?? null),
       s.transport_hint ?? '—',
@@ -227,6 +234,7 @@ async function listDevices(args: ParsedArgs): Promise<number> {
       [
         { header: 'PREFIX' },
         { header: 'DEVICE' },
+        { header: 'DETAILS' },
         { header: 'LAST SEEN' },
         { header: 'EXPIRES' },
         { header: 'TRANSPORT' },
