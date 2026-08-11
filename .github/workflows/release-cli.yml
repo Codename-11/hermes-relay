@@ -258,7 +258,12 @@ jobs:
           $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Hermes-Relay CLI'
           $oldUserProfile = $env:USERPROFILE
           $oldHomeEnv = $env:HOME
-          $userPathBefore = Normalize-UserPath (Get-RawUserPath)
+          $environmentKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+          $hadUserPath = $environmentKey.GetValueNames() -contains 'Path'
+          $originalUserPath = Get-RawUserPath
+          $originalUserPathKind = if ($hadUserPath) { $environmentKey.GetValueKind('Path') } else { $null }
+          $userPathBefore = 'C:\Windows\System32'
+          $environmentKey.Dispose()
           $startupBefore = (Get-ItemProperty -Path $startupKey -Name HermesRelayTray -ErrorAction SilentlyContinue).HermesRelayTray
 
           if (Test-Path $uninstallKey) { throw 'installer smoke requires a clean HermesRelay uninstall registry key' }
@@ -270,6 +275,10 @@ jobs:
           $env:USERPROFILE = $smokeProfile
           $env:HOME = $smokeProfile
           try {
+            $environmentKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+            $environmentKey.SetValue('Path', $userPathBefore, [Microsoft.Win32.RegistryValueKind]::String)
+            $environmentKey.Dispose()
+
             $installProcess = Start-Process -FilePath $setup -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
             if ($installProcess.ExitCode -ne 0) { throw "installer exited with code $($installProcess.ExitCode)" }
 
@@ -342,6 +351,13 @@ jobs:
             }
             $env:USERPROFILE = $oldUserProfile
             $env:HOME = $oldHomeEnv
+            $environmentKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+            if ($hadUserPath) {
+              $environmentKey.SetValue('Path', $originalUserPath, $originalUserPathKind)
+            } else {
+              $environmentKey.DeleteValue('Path', $false)
+            }
+            $environmentKey.Dispose()
             if (Test-Path -LiteralPath $smokeRoot) {
               Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
