@@ -256,8 +256,8 @@ jobs:
           $env:USERPROFILE = $smokeProfile
           $env:HOME = $smokeProfile
           try {
-            & $setup /S "/D=$installDir"
-            if ($LASTEXITCODE -ne 0) { throw "installer exited with code $LASTEXITCODE" }
+            $installProcess = Start-Process -FilePath $setup -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
+            if ($installProcess.ExitCode -ne 0) { throw "installer exited with code $($installProcess.ExitCode)" }
 
             $expectedFiles = @(
               'hermes-relay.exe',
@@ -287,8 +287,8 @@ jobs:
               throw 'installer removed profile session data'
             }
 
-            & $uninstaller /S
-            if ($LASTEXITCODE -ne 0) { throw "uninstaller exited with code $LASTEXITCODE" }
+            $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+            if ($uninstallProcess.ExitCode -ne 0) { throw "uninstaller exited with code $($uninstallProcess.ExitCode)" }
 
             $deadline = [DateTime]::UtcNow.AddSeconds(20)
             while ((Test-Path -LiteralPath $uninstaller) -and [DateTime]::UtcNow -lt $deadline) {
@@ -322,7 +322,7 @@ jobs:
             Get-Process -Name 'hermes-relay-tray' -ErrorAction SilentlyContinue |
               Stop-Process -Force -ErrorAction SilentlyContinue
             if (Test-Path -LiteralPath $uninstaller) {
-              & $uninstaller /S | Out-Null
+              Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait | Out-Null
             }
             $env:USERPROFILE = $oldUserProfile
             $env:HOME = $oldHomeEnv

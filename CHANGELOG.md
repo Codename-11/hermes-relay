@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0-alpha.4] - 2026-08-11
+
+### Fixed
+
+- **Windows release validation waits for installer processes.** The packaged install/uninstall lifecycle smoke now captures GUI-subsystem process exit codes reliably before validating installed files, preserved sessions, registry state, and cleanup.
+
 ## [0.4.0-alpha.3] - 2026-08-11
 
 ### Added
