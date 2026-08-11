@@ -605,15 +605,16 @@ class DashboardApiClient(
         )
     }
 
-    suspend fun getCustomEndpoints(): Result<DashboardCustomEndpoints> =
-        getJsonObject("/api/providers/custom-endpoints")
+    suspend fun getCustomEndpoints(profile: String? = null): Result<DashboardCustomEndpoints> =
+        getJsonObject("/api/providers/custom-endpoints${profileQuery(profile)}")
             .mapCatching(::parseCustomEndpoints)
 
     suspend fun saveCustomEndpoint(
         draft: DashboardCustomEndpointDraft,
+        profile: String? = null,
     ): Result<DashboardCustomEndpoints> =
         postJsonObject(
-            "/api/providers/custom-endpoints",
+            "/api/providers/custom-endpoints${profileQuery(profile)}",
             customEndpointPayload(draft),
         ).mapCatching(::parseCustomEndpoints)
 
@@ -634,13 +635,19 @@ class DashboardApiClient(
 
     suspend fun activateCustomEndpoint(
         id: String,
+        profile: String? = null,
     ): Result<JsonObject> =
-        postJsonObject("/api/providers/custom-endpoints/${pathSegment(id)}/activate")
+        postJsonObject(
+            "/api/providers/custom-endpoints/${pathSegment(id)}/activate${profileQuery(profile)}",
+        )
 
     suspend fun deleteCustomEndpoint(
         id: String,
+        profile: String? = null,
     ): Result<DashboardCustomEndpoints> =
-        deleteJsonObject("/api/providers/custom-endpoints/${pathSegment(id)}")
+        deleteJsonObject(
+            "/api/providers/custom-endpoints/${pathSegment(id)}${profileQuery(profile)}",
+        )
             .mapCatching(::parseCustomEndpoints)
 
     suspend fun installMcpCatalogEntry(

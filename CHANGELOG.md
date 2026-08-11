@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
+- **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
+
 ## [0.4.0-alpha.7] - 2026-08-11
 
 ### Fixed

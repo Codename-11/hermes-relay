@@ -183,7 +183,10 @@ private enum class DashboardManagementSection(val path: String) {
 private val managementSections: List<DashboardManagementSection> = DashboardManagementSection.entries
 
 internal fun dashboardSectionRequestPath(path: String, profile: String?): String {
-    if (profile.isNullOrBlank() || path !in setOf("/api/mcp/servers", "/api/mcp/catalog")) return path
+    if (
+        profile.isNullOrBlank() ||
+        path !in setOf("/api/mcp/servers", "/api/mcp/catalog", "/api/providers/custom-endpoints")
+    ) return path
     val encoded = java.net.URLEncoder.encode(profile, Charsets.UTF_8.name()).replace("+", "%20")
     return "$path?profile=$encoded"
 }
@@ -225,7 +228,11 @@ internal fun scopeDashboardManageItems(
     profile: String?,
     items: List<DashboardSummaryItem>,
 ): List<DashboardSummaryItem> =
-    if (sectionPath == "/api/mcp/servers" || sectionPath == "/api/mcp/catalog") {
+    if (
+        sectionPath == "/api/mcp/servers" ||
+        sectionPath == "/api/mcp/catalog" ||
+        sectionPath == "/api/providers/custom-endpoints"
+    ) {
         items.map { it.copy(profile = profile) }
     } else {
         items
@@ -1091,6 +1098,7 @@ fun DashboardManagementScreen(
     if (showCustomEndpointEditor) {
         CustomEndpointDialog(
             existing = customEndpointEditor,
+            profile = effectiveProfileName,
             clientFactory = clientFactory,
             onSaved = {
                 showCustomEndpointEditor = false
@@ -3479,6 +3487,7 @@ private fun McpOAuthDialog(
 @Composable
 private fun CustomEndpointDialog(
     existing: DashboardSummaryItem?,
+    profile: String?,
     clientFactory: () -> DashboardApiClient,
     onSaved: () -> Unit,
     onDismiss: () -> Unit,
@@ -3586,7 +3595,9 @@ private fun CustomEndpointDialog(
                     onClick = {
                         busy = true
                         scope.launch {
-                            val result = withDashboardClient(clientFactory) { it.saveCustomEndpoint(draft()) }
+                            val result = withDashboardClient(clientFactory) {
+                                it.saveCustomEndpoint(draft(), profile = profile)
+                            }
                             result.fold(onSuccess = { onSaved() }, onFailure = {
                                 busy = false
                                 message = it.message ?: context.getString(R.string.dashboard_custom_endpoint_save_failed)
@@ -3736,7 +3747,7 @@ private fun summarizeEnvVars(root: JsonElement): List<DashboardSummaryItem> {
     }.sortedWith(compareByDescending<DashboardSummaryItem> { it.meta?.startsWith("set") == true }.thenBy { it.title })
 }
 
-private fun summarizeObjectItem(
+internal fun summarizeObjectItem(
     element: JsonElement,
     fallbackTitle: String,
 ): DashboardSummaryItem {
@@ -3768,6 +3779,9 @@ private fun summarizeObjectItem(
         obj.booleanField("installed")?.let { if (it) "installed" else "not installed" },
         obj.booleanField("needs_install")?.let { if (it) "bootstrap install" else null },
         status,
+        obj.stringField("last_status")?.let { "last: $it" },
+        obj.stringField("last_error")?.let { "error: $it" },
+        obj.stringField("last_delivery_error")?.let { "delivery: $it" },
         obj.stringField("provider"),
         obj.stringField("transport"),
         obj.stringField("auth_type"),
@@ -3801,6 +3815,7 @@ internal fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
     val hasSkillUsage = obj["usage"] != null || obj.stringField("category") != null
     val enabled = obj.booleanField("enabled")
     val paused = obj.booleanField("paused")
+    val completedCron = obj.stringField("state").equals("completed", ignoreCase = true)
 
     return when {
         isCatalogEntry -> buildList {
@@ -3810,12 +3825,14 @@ internal fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
         }
         hasSchedule -> buildList {
             add(DashboardItemAction("Runs", DashboardActionKind.ViewCronRuns))
-            if (paused == true) {
-                add(DashboardItemAction("Resume", DashboardActionKind.ResumeCron))
-            } else {
-                add(DashboardItemAction("Pause", DashboardActionKind.PauseCron))
+            if (!completedCron) {
+                if (paused == true) {
+                    add(DashboardItemAction("Resume", DashboardActionKind.ResumeCron))
+                } else {
+                    add(DashboardItemAction("Pause", DashboardActionKind.PauseCron))
+                }
+                add(DashboardItemAction("Run now", DashboardActionKind.TriggerCron))
             }
-            add(DashboardItemAction("Run now", DashboardActionKind.TriggerCron))
             add(DashboardItemAction("Delete", DashboardActionKind.DeleteCron, destructive = true))
         }
         hasTransport -> buildList {
@@ -4107,9 +4124,10 @@ private suspend fun DashboardApiClient.runDashboardAction(
         DashboardActionKind.ViewProfileSoul -> getProfileSoul(id)
         DashboardActionKind.ActivateProfile -> setActiveProfile(id)
         DashboardActionKind.DeleteProfile -> deleteProfile(id)
-        DashboardActionKind.ActivateCustomEndpoint -> activateCustomEndpoint(id)
+        DashboardActionKind.ActivateCustomEndpoint ->
+            activateCustomEndpoint(id, profile = item.profile)
         DashboardActionKind.DeleteCustomEndpoint ->
-            deleteCustomEndpoint(id).map { JsonObject(emptyMap()) }
+            deleteCustomEndpoint(id, profile = item.profile).map { JsonObject(emptyMap()) }
         DashboardActionKind.RevealEnvKey -> revealEnvVar(id)
         DashboardActionKind.ClearEnvKey -> deleteEnvVar(id)
         // Input-backed kinds are intercepted at the onAction layer and routed

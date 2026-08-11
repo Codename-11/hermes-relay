@@ -33,6 +33,7 @@ obvious for any future multi-worker or background-cleanup refactor.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import secrets
@@ -40,7 +41,7 @@ import tempfile
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 logger = logging.getLogger("hermes_relay.media")
@@ -52,6 +53,147 @@ class MediaRegistrationError(ValueError):
     Subclass of :class:`ValueError` so aiohttp handlers can distinguish
     "bad input" from "server bug" cleanly.
     """
+
+
+def _translate_with_upstream(path: str) -> str | None:
+    """Use Hermes' canonical Docker media translator when it is available."""
+    try:
+        from gateway.platforms.base import _translate_docker_container_media_path
+
+        translated = _translate_docker_container_media_path(Path(path))
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return None
+    except Exception:
+        logger.debug("Upstream Docker media translation failed", exc_info=True)
+        return None
+    return str(translated) if translated is not None else None
+
+
+def _configured_docker_mounts() -> list[tuple[Path, PurePosixPath]]:
+    """Return resolvable ``(host, container)`` mounts for compatibility mode."""
+    raw = os.environ.get("TERMINAL_DOCKER_VOLUMES", "").strip()
+    if not raw:
+        return []
+    try:
+        specs = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(specs, list):
+        return []
+
+    mounts: list[tuple[Path, PurePosixPath]] = []
+    for entry in specs:
+        if not isinstance(entry, str):
+            continue
+        # A Windows host path has its own drive colon (``C:\\...``); start
+        # after it so the delimiter we find is the container's ``:/``.
+        search_start = 2 if len(entry) > 1 and entry[1] == ":" else 0
+        separator = entry.find(":/", search_start)
+        if separator <= 0:
+            continue
+        host_raw = os.path.expanduser(entry[:separator])
+        container_raw = entry[separator + 1 :].split(":", 1)[0]
+        if not container_raw.startswith("/"):
+            continue
+        if not (host_raw.startswith("/") or (len(host_raw) > 1 and host_raw[1] == ":")):
+            continue
+        try:
+            mounts.append((Path(host_raw).resolve(strict=False), PurePosixPath(container_raw)))
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return mounts
+
+
+def _fallback_docker_mounts() -> list[tuple[Path, PurePosixPath]]:
+    """Reconstruct Hermes' standard Docker mounts on older installations."""
+    if os.environ.get("TERMINAL_ENV", "").strip().lower() != "docker":
+        return []
+
+    mounts = _configured_docker_mounts()
+    try:
+        from tools.credential_files import get_cache_directory_mounts
+
+        mounts.extend(
+            (Path(item["host_path"]), PurePosixPath(item["container_path"]))
+            for item in get_cache_directory_mounts()
+        )
+    except Exception:
+        pass
+
+    persistent = os.environ.get("TERMINAL_CONTAINER_PERSISTENT", "true").strip().lower()
+    if persistent not in {"1", "true", "yes", "on"}:
+        return mounts
+
+    try:
+        from tools.environments.base import get_sandbox_dir
+
+        sandbox = get_sandbox_dir() / "docker" / "default"
+    except Exception:
+        sandbox = None
+
+    if not any(container.as_posix() == "/workspace" for _, container in mounts):
+        mount_cwd = os.environ.get(
+            "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
+            "false",
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        workspace = (
+            Path(os.path.expanduser(os.environ.get("TERMINAL_CWD") or os.getcwd()))
+            if mount_cwd
+            else (sandbox / "workspace" if sandbox is not None else None)
+        )
+        if workspace is not None:
+            mounts.append((workspace.resolve(strict=False), PurePosixPath("/workspace")))
+
+    if sandbox is not None and not any(container.as_posix() == "/root" for _, container in mounts):
+        mounts.append(((sandbox / "home").resolve(strict=False), PurePosixPath("/root")))
+    return mounts
+
+
+def translate_container_media_path(path: str) -> str:
+    """Translate an agent-visible Docker path before Relay validates it.
+
+    Current Hermes supplies the canonical translator. The bounded fallback
+    keeps Relay compatible with older Hermes versions using the same explicit,
+    cache, workspace, and persistent-home mount model. Unmatched paths are
+    returned unchanged so the existing validator produces its normal error.
+    """
+    if not path or not (path.startswith("/") or os.path.isabs(path)):
+        return path
+
+    translated = _translate_with_upstream(path)
+    if translated is not None:
+        return translated
+
+    try:
+        candidate = PurePosixPath(path) if path.startswith("/") else Path(path)
+    except (OSError, RuntimeError, ValueError):
+        return path
+
+    # Never reinterpret the container credential tree through the broad /root
+    # home mount. Canonical cache mounts above may still translate safe cache
+    # artifacts through a longer, explicit prefix.
+    protected_container_home = candidate.as_posix().startswith("/root/.hermes")
+    best: tuple[Path, PurePosixPath, int] | None = None
+    for host_root, container_root in _fallback_docker_mounts():
+        container_prefix = container_root.as_posix().rstrip("/") or "/"
+        if protected_container_home and container_prefix == "/root":
+            continue
+        candidate_posix = candidate.as_posix()
+        if candidate_posix != container_prefix and not candidate_posix.startswith(container_prefix + "/"):
+            continue
+        score = len(container_prefix)
+        if best is None or score > best[2]:
+            best = (host_root, container_root, score)
+    if best is None:
+        return path
+
+    host_root, container_root, _ = best
+    try:
+        translated_path = (host_root / candidate.relative_to(container_root)).resolve(strict=False)
+        translated_path.relative_to(host_root.resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        return path
+    return str(translated_path)
 
 
 @dataclass

@@ -60,7 +60,12 @@ from .channels.terminal import TerminalHandler
 from .channels.tui import TuiHandler
 from .config import RelayConfig
 from .image_activity import read_image_activity
-from .media import MediaRegistrationError, MediaRegistry, validate_media_path
+from .media import (
+    MediaRegistrationError,
+    MediaRegistry,
+    translate_container_media_path,
+    validate_media_path,
+)
 from .model_capabilities import (
     CONTRACT_VERSION as MODEL_CAPABILITIES_CONTRACT_VERSION,
     MAX_MODEL_PAIRS,
@@ -1656,7 +1661,7 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
     )
     try:
         real_path, size = validate_media_path(
-            path,
+            translate_container_media_path(path),
             roots_for_check,
             server.media.max_size_bytes,
         )

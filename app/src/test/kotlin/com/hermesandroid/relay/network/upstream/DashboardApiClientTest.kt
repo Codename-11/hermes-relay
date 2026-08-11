@@ -690,24 +690,30 @@ class DashboardApiClientTest {
             apiKey = "never-persist-this",
         )
 
-        val listed = client.getCustomEndpoints().getOrThrow()
-        client.saveCustomEndpoint(draft).getOrThrow()
+        val listed = client.getCustomEndpoints("work profile").getOrThrow()
+        client.saveCustomEndpoint(draft, "work profile").getOrThrow()
         val validation = client.validateCustomEndpoint(draft).getOrThrow()
-        client.activateCustomEndpoint("local").getOrThrow()
-        client.deleteCustomEndpoint("local").getOrThrow()
+        client.activateCustomEndpoint("local", "work profile").getOrThrow()
+        client.deleteCustomEndpoint("local", "work profile").getOrThrow()
 
         assertEquals("local", listed.currentProvider)
         assertTrue(listed.endpoints.single().hasApiKey)
         assertEquals(listOf("qwen"), validation.models)
-        assertEquals("/api/providers/custom-endpoints", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints?profile=work%20profile", server.takeRequest().path)
         val save = server.takeRequest()
-        assertEquals("/api/providers/custom-endpoints", save.path)
+        assertEquals("/api/providers/custom-endpoints?profile=work%20profile", save.path)
         val saveBody = save.body.readUtf8()
         assertTrue(saveBody.contains("never-persist-this"))
         assertTrue(saveBody.contains(""""models":["qwen","qwen-vl"]"""))
         assertEquals("/api/providers/custom-endpoints/validate", server.takeRequest().path)
-        assertEquals("/api/providers/custom-endpoints/local/activate", server.takeRequest().path)
-        assertEquals("/api/providers/custom-endpoints/local", server.takeRequest().path)
+        assertEquals(
+            "/api/providers/custom-endpoints/local/activate?profile=work%20profile",
+            server.takeRequest().path,
+        )
+        assertEquals(
+            "/api/providers/custom-endpoints/local?profile=work%20profile",
+            server.takeRequest().path,
+        )
     }
 
     @Test
