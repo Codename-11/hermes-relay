@@ -50,9 +50,10 @@ terminal, PowerShell, detached-process, and command-job launch. **Trusted** adds
 those execution tools while screen/input still uses task grants. **Full Access**
 also allows screen, keyboard, and mouse without task grants for that host;
 authentication, audit, deauthorization, emergency stop, and UAC boundaries
-still apply. USB is a separate per-host Disabled/Ask/Allow policy and Full
-Access does not override it. Microphone and camera remain unavailable until
-their bounded brokers exist.
+still apply. Raw USB is a separate per-host Disabled/Ask/Allow policy and Full
+Access does not override it. The policy gates direct native/vendor USB utility
+execution plus secondary services such as ADB. Microphone and camera remain
+unavailable until their controlled paths exist.
 
 The tray's **Activity** section is a live, local view of recent remote actions
 and management events such as daemon, host-access, grant, client, and update

@@ -289,7 +289,7 @@ export class DesktopToolRouter {
     }
 
     const controller = new AbortController()
-    const timeoutMs = tool.startsWith('desktop_computer_') || tool.startsWith('desktop_adb_')
+    const timeoutMs = tool.startsWith('desktop_computer_') || tool.startsWith('desktop_adb_') || tool.startsWith('desktop_usb_')
       ? COMPUTER_USE_HANDLER_TIMEOUT_MS
       : HANDLER_TIMEOUT_MS
     const timeoutTimer = setTimeout(() => {

@@ -211,6 +211,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .supported-broker { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; }
 .supported-broker > span { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .supported-broker > span i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 7px #5bd56c99; }
+.supported-broker > span i.offline { background: var(--faint); box-shadow: none; }
 .supported-broker strong { font-size: 11px; font-weight: 550; }
 .supported-broker small { grid-column: 1; padding-left: 12px; color: var(--faint); font-size: 9.5px; }
 .supported-broker em { grid-column: 2; grid-row: 1 / span 2; color: var(--faint); font-size: 8.5px; font-style: normal; text-transform: uppercase; letter-spacing: .5px; }

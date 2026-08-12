@@ -35,6 +35,11 @@ Tools registered (Phase B + remote-PC ergonomics, alpha.7):
     - desktop_health           connected client name, uptime, advertised tools,
                                 last error — answered by the relay (no client RTT)
 
+  USB:
+    - desktop_usb_devices      enumerate host-visible USB devices
+    - desktop_usb_run          direct-spawn a native/vendor USB utility
+    - desktop_adb_*            serial-bound Android Debug Bridge conveniences
+
   Experimental computer-use (observe-first):
     - desktop_computer_status          local display/grant/permission summary
     - desktop_computer_screenshot      screenshot wrapper with coordinate metadata
@@ -261,7 +266,39 @@ def desktop_powershell(
     return json.dumps(data)
 
 
-# ── Structured USB / ADB broker ──────────────────────────────────────────────
+# ── Host-gated raw USB + ADB services ───────────────────────────────────────
+
+
+def desktop_usb_devices(reason: Optional[str] = None) -> str:
+    """List USB devices visible to the targeted desktop host."""
+    payload: dict[str, Any] = {}
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post("/desktop/desktop_usb_devices", payload, timeout=_adb_http_timeout())
+    )
+
+
+def desktop_usb_run(
+    executable: str,
+    arguments: Optional[list[str]] = None,
+    cwd: Optional[str] = None,
+    timeout: int = 30,
+    reason: Optional[str] = None,
+) -> str:
+    """Direct-spawn a native or vendor USB utility without a shell."""
+    payload: dict[str, Any] = {
+        "executable": executable,
+        "arguments": list(arguments or []),
+        "timeout": int(timeout),
+    }
+    if cwd is not None:
+        payload["cwd"] = cwd
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post("/desktop/desktop_usb_run", payload, timeout=_adb_http_timeout(timeout))
+    )
 
 
 def _adb_http_timeout(operation_timeout: int = 30) -> float:
@@ -739,6 +776,33 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "required": ["script"],
+        },
+    },
+    "desktop_usb_devices": {
+        "name": "desktop_usb_devices",
+        "description": (
+            "List USB devices visible to the targeted desktop. Governed by the "
+            "host's Raw USB Off/Ask/Allow policy."
+        ),
+        "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}},
+    },
+    "desktop_usb_run": {
+        "name": "desktop_usb_run",
+        "description": (
+            "Run a native or vendor USB utility by direct executable + argument "
+            "array, without shell parsing. This is host-wide Raw USB access and "
+            "is governed by the selected desktop's USB Off/Ask/Allow policy."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "executable": {"type": "string", "description": "Executable name or path."},
+                "arguments": {"type": "array", "items": {"type": "string"}, "maxItems": 128, "default": []},
+                "cwd": {"type": "string", "description": "Working directory for the utility."},
+                "timeout": {"type": "integer", "default": 30, "maximum": 120},
+                "reason": {"type": "string"},
+            },
+            "required": ["executable"],
         },
     },
     "desktop_adb_devices": {
@@ -1225,6 +1289,8 @@ _HANDLERS: dict[str, Any] = {
     "desktop_patch":         lambda args, **kw: desktop_patch(**args),
     # Shell
     "desktop_powershell":    lambda args, **kw: desktop_powershell(**args),
+    "desktop_usb_devices": lambda args, **kw: desktop_usb_devices(**args),
+    "desktop_usb_run": lambda args, **kw: desktop_usb_run(**args),
     "desktop_adb_devices": lambda args, **kw: desktop_adb_devices(**args),
     "desktop_adb_shell": lambda args, **kw: desktop_adb_shell(**args),
     "desktop_adb_push": lambda args, **kw: desktop_adb_push(**args),
@@ -1295,6 +1361,8 @@ _TOOL_CAPABILITIES = {
     "desktop_unzip": "files.write",
     "desktop_terminal": "system.execute",
     "desktop_powershell": "system.execute",
+    "desktop_usb_devices": "devices.usb",
+    "desktop_usb_run": "devices.usb",
     "desktop_adb_devices": "devices.usb",
     "desktop_adb_shell": "devices.usb",
     "desktop_adb_push": "devices.usb",

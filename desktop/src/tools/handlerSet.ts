@@ -28,6 +28,7 @@ import {
   adbPushHandler,
   adbShellHandler
 } from './handlers/adb.js'
+import { usbDevicesHandler, usbRunHandler } from './handlers/usb.js'
 import {
   findPidByPortHandler,
   killProcessHandler,
@@ -100,6 +101,8 @@ const BASE_DESKTOP_HANDLERS: Record<string, ToolHandler> = {
   desktop_clipboard_write: clipboardWriteHandler,
   desktop_screenshot: screenshotHandler,
   desktop_open_in_editor: openInEditorHandler,
+  desktop_usb_devices: usbDevicesHandler,
+  desktop_usb_run: usbRunHandler,
   desktop_adb_devices: adbDevicesHandler,
   desktop_adb_shell: adbShellHandler,
   desktop_adb_push: adbPushHandler,
@@ -114,7 +117,11 @@ export const RAW_EXECUTION_TOOLS = Object.freeze([
   'desktop_spawn_detached',
   'desktop_job_start'
 ])
-export const USB_TOOLS = Object.freeze([
+export const RAW_USB_TOOLS = Object.freeze([
+  'desktop_usb_devices',
+  'desktop_usb_run'
+])
+export const ADB_TOOLS = Object.freeze([
   'desktop_adb_devices',
   'desktop_adb_shell',
   'desktop_adb_push',
@@ -122,6 +129,7 @@ export const USB_TOOLS = Object.freeze([
   'desktop_adb_install',
   'desktop_adb_logcat'
 ])
+export const USB_TOOLS = Object.freeze([...RAW_USB_TOOLS, ...ADB_TOOLS])
 
 const COMPUTER_USE_HANDLERS: Record<string, ToolHandler> = {
   desktop_computer_status: computerStatusHandler,
@@ -142,6 +150,7 @@ export interface DesktopAdvertiseOptions {
   computerUse?: boolean
   structuredOnly?: boolean
   usb?: boolean
+  adb?: boolean
 }
 
 function envEnabled(value: string | undefined): boolean {
@@ -172,10 +181,12 @@ export function desktopHandlers(
 ): Record<string, ToolHandler> {
   const handlers = opts.computerUse === true ? DESKTOP_HANDLERS : BASE_DESKTOP_HANDLERS
   const raw = new Set(RAW_EXECUTION_TOOLS)
-  const usb = new Set(USB_TOOLS)
+  const rawUsb = new Set(RAW_USB_TOOLS)
+  const adb = new Set(ADB_TOOLS)
   return Object.fromEntries(Object.entries(handlers).filter(([name]) =>
     (opts.structuredOnly !== true || !raw.has(name)) &&
-    (opts.usb === true || !usb.has(name))
+    (opts.usb === true || !rawUsb.has(name)) &&
+    (opts.adb === true || !adb.has(name))
   ))
 }
 

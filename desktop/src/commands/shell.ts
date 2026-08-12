@@ -417,17 +417,18 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
       const structuredOnly = accessMode === 'structured'
       const capabilities = await getHostCapabilityPolicies(url)
       configureCapabilityPolicies(capabilities)
-      const usb = capabilities.usb !== 'disabled' && adbBackendAvailable()
+      const usb = capabilities.usb !== 'disabled'
+      const adb = usb && adbBackendAvailable()
       configureComputerUseRuntime({
         url,
         computerUseConsented: computerUseEnabled,
         consentSource: consent.source ?? 'stored'
       })
-      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled, structuredOnly, usb })
+      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled, structuredOnly, usb, adb })
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
         hostUrl: url,
-        handlers: desktopHandlers({ computerUse: computerUseEnabled, structuredOnly, usb }),
+        handlers: desktopHandlers({ computerUse: computerUseEnabled, structuredOnly, usb, adb }),
         advertisedTools: [...advertisedTools]
       })
       toolRouter.attach(relay)

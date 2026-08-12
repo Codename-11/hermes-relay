@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Structured desktop access provides an enforceable broker boundary.** Per-host Structured mode withholds terminal, PowerShell, detached process, and command-job launch while retaining typed operations. USB/ADB access is separately Disabled, Ask, or Allow and exposes serial-bound list, shell, push, pull, install, and bounded logcat tools; microphone and camera remain unavailable until their brokers exist.
+- **Structured desktop access provides an enforceable broker boundary.** Per-host Structured mode withholds terminal, PowerShell, detached process, and command-job launch while retaining typed operations. Host-wide Raw USB access is separately Disabled, Ask, or Allow, with direct-spawn native utility operations and ADB as a secondary service; microphone and camera remain unavailable until their brokers exist.
 
 ### Fixed
 

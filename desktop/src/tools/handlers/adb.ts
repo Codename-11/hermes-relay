@@ -40,7 +40,7 @@ async function authorize(
   ctx: ToolContext
 ): Promise<void> {
   const policy = capabilityPolicy('usb')
-  if (policy === 'disabled') throw new Error('USB/ADB capability is disabled for this Hermes host')
+  if (policy === 'disabled') throw new Error('Raw USB access is disabled for this Hermes host')
   if (policy === 'allow') return
   const approval = await approveComputerGrant({
     mode: `usb.${operation}`,
@@ -49,7 +49,7 @@ async function authorize(
     scope,
     interactive: ctx.interactive
   })
-  if (!approval.approved) throw new Error(approval.reason || 'USB/ADB request rejected locally')
+  if (!approval.approved) throw new Error(approval.reason || 'ADB request rejected locally')
 }
 
 async function runAdb(args: string[], ctx: ToolContext, timeout = DEFAULT_TIMEOUT_MS) {

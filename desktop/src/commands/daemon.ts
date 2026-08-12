@@ -689,9 +689,10 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const capabilities = await getHostCapabilityPolicies(url)
   configureCapabilityPolicies(capabilities)
   const structuredOnly = accessMode === 'structured'
-  const usb = capabilities.usb !== 'disabled' && adbBackendAvailable()
+  const usb = capabilities.usb !== 'disabled'
+  const adb = usb && adbBackendAvailable()
   const advertisedTools = toolsEnabled
-    ? advertisedDesktopTools({ computerUse: computerUseEnabled, structuredOnly, usb })
+    ? advertisedDesktopTools({ computerUse: computerUseEnabled, structuredOnly, usb, adb })
     : []
   const toDaemonGrantStatus = (grant: ComputerGrant | null): DaemonComputerGrantStatus => ({
     active: grant !== null,
@@ -728,7 +729,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
         consentGranted: true,
         interactive,
         hostUrl: url,
-        handlers: desktopHandlers({ computerUse: computerUseEnabled, structuredOnly, usb }),
+        handlers: desktopHandlers({ computerUse: computerUseEnabled, structuredOnly, usb, adb }),
         advertisedTools: [...advertisedTools]
       })
     : null

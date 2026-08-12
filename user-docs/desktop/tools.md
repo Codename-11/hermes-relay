@@ -59,7 +59,14 @@ Tools are registered in the `desktop` toolset. The agent sees them as normal too
 | `desktop_screenshot` | `(display?: number \| string, save_to?: string)` | Capture all monitors (default), primary (`'primary'`), or a specific display (`1` / `2` / ...). Returns base64 + dimensions, or saves to `save_to` and returns the path. |
 | `desktop_open_in_editor` | `(path: string, line?: number, col?: number, wait?: boolean)` | Open a file in the user's editor. Detects `$VISUAL` → `$EDITOR` → `code` / `cursor` / `subl` / `nvim` / `vim` on PATH → platform fallback. Injects `-g path:line:col` for GUI editors. |
 
-**Connected Android devices**
+**USB devices**
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
+| `desktop_usb_devices` | `(reason?: string)` | List USB devices visible to the selected desktop host. |
+| `desktop_usb_run` | `(executable: string, arguments?: string[], cwd?: string, timeout?: number, reason?: string)` | Direct-spawn a native or vendor USB utility without shell parsing. |
+
+**Android Debug Bridge service**
 
 | Tool | Signature | Example use |
 |------|-----------|-------------|
@@ -70,7 +77,15 @@ Tools are registered in the `desktop` toolset. The agent sees them as normal too
 | `desktop_adb_install` | `(serial: string, apk: string, replace?: boolean, timeout?: number, reason?: string)` | Install one local APK on an explicit serial. |
 | `desktop_adb_logcat` | `(serial: string, lines?: number, timeout?: number, reason?: string)` | Return a bounded recent logcat snapshot. |
 
-The base Trusted client advertises 23 tools. The six ADB tools appear only when USB is Ask/Allow and a working ADB backend is detected; Structured also omits the four raw execution tools. A further **computer-use** family (`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` / `_cancel`) is registered for full local UI control but ships **experimental and off by default**. Enable it persistently with `hermes-relay computer-use enable` or from the Windows tray; one-process flag/env overrides remain available. Host input still fails closed without a task-scoped grant approved locally.
+The two raw USB tools appear when the selected host's USB policy is Ask or
+Allow. The six ADB tools additionally require a working ADB backend. Structured
+mode omits the four general shell/process escape hatches but retains these
+separately gated USB paths. A further **computer-use** family
+(`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` /
+`_cancel`) is registered for full local UI control but ships **experimental and
+off by default**. Enable it persistently with `hermes-relay computer-use enable`
+or from the Windows tray; one-process flag/env overrides remain available. Host
+input still fails closed without a task-scoped grant approved locally.
 
 All tools run under a **30-second AbortController** ceiling enforced by the router. `desktop_terminal` / `desktop_powershell` accept a per-call `timeout` (seconds, per the wire spec — converted to ms internally) that's clamped to a 10-minute maximum. `desktop_screenshot` has its own 10 s timeout and 50 MB cap. `desktop_clipboard_*` 5 s timeout and 10 MB cap.
 
@@ -84,11 +99,13 @@ device tools for ordinary work. `desktop_terminal`, `desktop_powershell`,
 detached commands, and command jobs are intentionally labeled `system.execute`:
 because they run as your Windows user, they can indirectly access files and
 attached hardware. **Structured** mode withholds those four escape hatches. Its
-separate per-host USB policy defaults Off, can Ask through the local approval
-card for every operation, or can Allow after explicit confirmation. Every ADB
-operation requires an exact device serial. Full Access does not bypass USB
-policy. Camera and microphone remain unavailable until real bounded brokers
-exist.
+separate per-host Raw USB policy defaults Off, can Ask through the local
+approval card for every operation, or can Allow after explicit confirmation.
+It governs host-wide direct execution of native/vendor USB utilities and all
+enabled USB services; it is not scoped to one physical device. ADB remains a
+secondary service and its device operations require an exact serial. Full
+Access does not bypass USB policy. Camera and microphone remain unavailable
+until controlled paths exist.
 
 The router heartbeats `desktop.status` every 30 s, advertising the full handler-name list, so the server's `desktop` channel knows which tools your client can service. Servers ping `/desktop/_ping?tool=<name>` to fail fast when a tool isn't advertised.
 

@@ -31,7 +31,7 @@ const HOSTS_USAGE: UsageSpec = {
     { verb: 'select <url>', desc: 'Choose the host used by the tray and daemon' },
     { verb: 'rename <url> <name>', desc: 'Set a local display name for a paired host' },
     { verb: 'access <mode>', desc: 'Set this PC access policy for one host' },
-    { verb: 'capability <name> <mode>', desc: 'Set a brokered hardware capability policy' }
+    { verb: 'capability <name> <mode>', desc: 'Set a host-wide hardware capability policy' }
   ],
   flags: [
     { flag: '--remote <url>', desc: 'Host targeted by the access command' },
@@ -121,7 +121,8 @@ async function listHosts(args: ParsedArgs): Promise<number> {
   for (const host of hosts) {
     process.stdout.write(
       `  ${host.is_active ? '*' : ' '} ${host.host}  ${host.access_mode.replace('_', '-')}\n` +
-      t.muted(`      ${host.url}${host.endpoint_role ? ` (${host.endpoint_role})` : ''}`) + '\n'
+      t.muted(`      ${host.url}${host.endpoint_role ? ` (${host.endpoint_role})` : ''}`) + '\n' +
+      t.muted(`      Raw USB: ${host.capabilities.usb}`) + '\n'
     )
   }
   return 0
@@ -199,7 +200,7 @@ async function setCapability(args: ParsedArgs): Promise<number> {
     return 2
   }
   if (mode === 'allow' && args.flags.yes !== true) {
-    process.stderr.write(`error: allowing ${capability} permits brokered hardware operations without per-task approval. Pass --yes to confirm.\n`)
+    process.stderr.write(`error: allowing ${capability} permits host-wide raw USB and enabled USB-service operations without per-operation approval. Pass --yes to confirm.\n`)
     return 2
   }
   const requested = typeof args.flags.remote === 'string' ? args.flags.remote.trim() : ''
@@ -217,7 +218,7 @@ async function setCapability(args: ParsedArgs): Promise<number> {
   if (args.flags.json) process.stdout.write(JSON.stringify(payload, null, 2) + '\n')
   else {
     const t = makeTheme({ noColor: !!args.flags['no-color'] })
-    process.stdout.write(t.okLine(`${hostLabel(url)} ${capability} access set to ${mode}`) + '\n')
+    process.stdout.write(t.okLine(`${hostLabel(url)} ${capability === 'usb' ? 'Raw USB' : capability} access set to ${mode}`) + '\n')
     process.stdout.write(t.muted('Restart the daemon to apply this policy.') + '\n')
   }
   return 0

@@ -21,7 +21,7 @@ const demo: Snapshot = {
   active_url: 'wss://home-hermes.local:8767',
   daemon: { state: 'connected', running: true, url: 'wss://home-hermes.local:8767', privilege: 'user', username: 'Local user' },
   startup_enabled: true,
-  hardware_availability: { usb: true, microphone: false, camera: false },
+  hardware_availability: { usb: true, adb: true, microphone: false, camera: false },
   pending_grants: [],
   activity: [
     { ts: Date.now() - 110_000, tool: 'desktop.shell', ok: true, summary: 'PowerShell command completed' },
@@ -370,7 +370,7 @@ function ManagementApp() {
     {pending && <div className="modal-backdrop" role="presentation"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <div className="modal-icon">{pending.type === 'revoke' ? <UserRoundX /> : pending.type === 'clear-activity' ? <Trash2 /> : <AlertTriangle />}</div>
       <h2 id="confirm-title">{pending.type === 'access' ? `Give ${host?.name} full access?` : pending.type === 'capability' ? `Always allow USB access for ${host?.name}?` : pending.type === 'revoke' ? `Deauthorize ${pending.client.device_name ?? pending.client.token_prefix}?` : 'Clear local activity?'}</h2>
-      <p>{pending.type === 'access' ? 'This host will be able to run commands and control this PC without asking. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This host may use enabled brokered USB services without asking each time. It does not grant unrestricted raw device access.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
+      <p>{pending.type === 'access' ? 'This host will be able to run commands and control this PC without asking. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This host may run native or vendor USB utilities and enabled USB services without asking for each operation.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
       <div className="modal-actions"><button className="secondary" onClick={() => setPending(null)}>Cancel</button><button className="danger" onClick={confirmPending}>{pending.type === 'access' ? 'Enable Full Access' : pending.type === 'capability' ? 'Allow USB' : pending.type === 'revoke' ? 'Deauthorize' : 'Clear activity'}</button></div>
     </div></div>}
   </div>
@@ -542,14 +542,14 @@ function CapabilitiesPage({ host, availability, busy, onBack, onChoose }: { host
   if (!host) return <div className="page-panel large-empty"><SlidersHorizontal /><h2>No host selected</h2><button onClick={onBack}>Back to Overview</button></div>
   return <section className="page-panel policy-detail-page">
     <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ChevronRight />Overview</button><p>{host.name}</p><h1>Capabilities</h1></div></div>
-    <p className="page-intro">Control brokered hardware separately from general desktop access.</p>
+    <p className="page-intro">Control host-wide hardware access separately from general desktop access.</p>
     <div className="capability-detail-card">
-      <div className="capability-detail-head"><span className="option-icon"><Usb /></span><span><strong>USB access</strong><small>Brokered access to connected USB devices</small></span><em className={availability.usb ? 'available' : ''}>{availability.usb ? '1 service' : 'Unavailable'}</em></div>
+      <div className="capability-detail-head"><span className="option-icon"><Usb /></span><span><strong>Raw USB access</strong><small>Native and vendor USB utilities</small></span><em className={availability.usb ? 'available' : ''}>{availability.usb ? 'Available' : 'Unavailable'}</em></div>
       <div className="capability-modes" role="radiogroup" aria-label="USB access">
         {(['disabled', 'ask', 'allow'] as CapabilityMode[]).map(mode => <button key={mode} disabled={busy || !availability.usb} role="radio" aria-checked={host.capabilities.usb === mode} className={host.capabilities.usb === mode ? 'active' : ''} onClick={() => onChoose('usb', mode)}>{capabilityLabel[mode]}</button>)}
       </div>
-      <p>{availability.usb ? 'Ask raises a local approval card for each USB operation. Allow skips those per-operation prompts.' : 'No supported USB broker is currently available.'}</p>
-      <div className="supported-broker"><span><i /><strong>Android Debug Bridge</strong></span><small>Serial-bound Android device control</small><em>{availability.usb ? 'Available' : 'Unavailable'}</em></div>
+      <p>{availability.usb ? 'Ask raises a local approval card for each raw USB or USB-service operation. Allow skips those prompts.' : 'Raw USB control is unavailable on this platform.'}</p>
+      <div className="supported-broker"><span><i className={availability.adb ? '' : 'offline'} /><strong>Android Debug Bridge</strong></span><small>Secondary serial-bound Android service</small><em>{availability.adb ? 'Available' : 'Unavailable'}</em></div>
     </div>
     <div className="unavailable-capabilities">
       <div><span className="option-icon"><Mic /></span><span><strong>Microphone</strong><small>A bounded broker is not available yet</small></span><em>Unavailable</em></div>

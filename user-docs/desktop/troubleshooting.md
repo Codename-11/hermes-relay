@@ -64,7 +64,7 @@ hermes-relay hosts list
 hermes-relay daemon restart
 ```
 
-Access is stored per host. **Ask** connects with no desktop tools, **Structured** enables typed operations without raw command launch, **Trusted** adds command execution with task-scoped screen/input grants, and **Full Access** removes those task prompts for the selected host. USB/ADB remains separately Off, Ask, or Allow. The UI normally restarts a running daemon after a host or access change; use the explicit restart above if an interrupted transition left stale state.
+Access is stored per host. **Ask** connects with no desktop tools, **Structured** enables typed operations without general raw command launch, **Trusted** adds command execution with task-scoped screen/input grants, and **Full Access** removes those task prompts for the selected host. Raw USB remains separately Off, Ask, or Allow and covers direct USB utilities plus services such as ADB. The UI normally restarts a running daemon after a host or access change; use the explicit restart above if an interrupted transition left stale state.
 
 ## A desktop-control request is waiting or needs to be stopped
 

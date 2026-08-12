@@ -86,6 +86,22 @@ class DesktopMultiDeviceTests(unittest.IsolatedAsyncioTestCase):
             ["serial", "command"],
         )
 
+    async def test_raw_usb_schemas_are_host_gated_and_direct_spawn(self) -> None:
+        for name in {"desktop_usb_devices", "desktop_usb_run"}:
+            schema = desktop_tool._SCHEMAS[name]
+            self.assertEqual(schema["x-hermes-capability"], "devices.usb")
+            self.assertIn("device", schema["parameters"]["properties"])
+        run = desktop_tool._SCHEMAS["desktop_usb_run"]["parameters"]
+        self.assertEqual(run["required"], ["executable"])
+        self.assertEqual(run["properties"]["arguments"]["type"], "array")
+
+        response = Mock(status_code=200)
+        response.json.return_value = {"ok": True, "result": {"exit_code": 0}}
+        with patch.object(desktop_tool.requests, "post", return_value=response) as post:
+            desktop_tool.desktop_usb_run("fastboot", ["devices"], timeout=40)
+        self.assertEqual(post.call_args.kwargs["json"]["executable"], "fastboot")
+        self.assertEqual(post.call_args.kwargs["json"]["arguments"], ["devices"])
+
     async def test_adb_http_timeout_covers_approval_and_operation(self) -> None:
         response = Mock(status_code=200)
         response.json.return_value = {"ok": True, "result": {"exit_code": 0}}

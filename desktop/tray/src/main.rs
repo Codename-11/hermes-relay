@@ -291,6 +291,7 @@ mod app {
     #[derive(Debug, Serialize)]
     struct HardwareAvailability {
         usb: bool,
+        adb: bool,
         microphone: bool,
         camera: bool,
     }
@@ -517,13 +518,14 @@ mod app {
         let adb = env::var_os("HERMES_RELAY_ADB_PATH")
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "adb".into());
-        let usb = Command::new(adb)
+        let adb = Command::new(adb)
             .arg("version")
             .creation_flags(CREATE_NO_WINDOW.0)
             .status()
             .is_ok_and(|status| status.success());
         HardwareAvailability {
-            usb,
+            usb: true,
+            adb,
             microphone: false,
             camera: false,
         }

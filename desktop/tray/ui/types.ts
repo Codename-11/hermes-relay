@@ -44,7 +44,7 @@ export interface Snapshot {
   activity: Activity[]
   pending_grants: PendingGrantRequest[]
   startup_enabled: boolean
-  hardware_availability: { usb: boolean; microphone: boolean; camera: boolean }
+  hardware_availability: { usb: boolean; adb: boolean; microphone: boolean; camera: boolean }
 }
 
 export interface PendingGrantRequest {
