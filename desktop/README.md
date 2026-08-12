@@ -44,15 +44,15 @@ together. The installer download is verified against the release
 `SHA256SUMS.txt`, preserves the startup preference, restores a previously
 running daemon, and relaunches the tray after the silent replacement.
 
-Access is selected per host. **Ask** keeps the connection available but attaches
-no desktop tools. **Structured** enables typed operations while withholding raw
-terminal, PowerShell, detached-process, and command-job launch. **Trusted** adds
-those execution tools while screen/input still uses task grants. **Full Access**
+Access is selected per host. **Restricted** keeps the connection available but
+attaches no desktop tools. **Standard** enables typed operations while withholding
+raw terminal, PowerShell, detached-process, and command-job launch. **Full Access**
 allows every available capability without task grants for that host;
 authentication, audit, deauthorization, emergency stop, and UAC boundaries
 still apply. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera
 form one per-host capability ledger. Changing an individual gate creates a
-**Custom** policy. Raw USB gates direct native/vendor USB utility
+**Custom** policy. Existing `ask`, `structured`, and `trusted` CLI values remain
+accepted as compatibility aliases. Raw USB gates direct native/vendor USB utility
 execution plus secondary services such as ADB. Microphone and camera remain
 unavailable until their controlled paths exist.
 
@@ -274,13 +274,13 @@ Herm uses `bun add -g herm-tui` when Bun is available and falls back to
 ### Host access and daemon bring-up
 
 Starting the daemon no longer grants tools and no longer requires a tool grant.
-With a paired host in **Ask**, it connects in locked mode with zero desktop tools.
+With a paired host in **Restricted**, it connects in locked mode with zero desktop tools.
 Select a host policy from the tray or use the CLI:
 
 ```sh
 hermes-relay hosts list --json
 hermes-relay hosts select ws://192.168.1.100:8767
-hermes-relay hosts access structured --remote ws://192.168.1.100:8767
+hermes-relay hosts access standard --remote ws://192.168.1.100:8767
 hermes-relay hosts capability commands allow --remote ws://192.168.1.100:8767 --yes
 hermes-relay hosts capability files ask --remote ws://192.168.1.100:8767
 hermes-relay hosts capability screen-input ask --remote ws://192.168.1.100:8767
@@ -403,7 +403,7 @@ overrides. The per-host policy is stored separately in
 `~/.hermes/desktop-host-access.json`; Full Access enables this surface for its
 host without an expiring task grant.
 
-In Ask or Trusted mode, observe grants allow screenshots;
+When Screen & Input is set to Ask, observe grants allow screenshots;
 assist/control grants require explicit local approval before host input can run.
 The daemon writes pending requests to `~/.hermes/grant-bridge`; review them with
 `hermes-relay grants` or the tray's focused approval dialog. Grants

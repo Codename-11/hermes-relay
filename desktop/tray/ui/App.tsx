@@ -142,15 +142,15 @@ function friendlyUpdateError(error: unknown): string {
 }
 
 const accessCopy: Record<AccessMode, string> = {
-  ask: 'The connection stays ready, but this host cannot use desktop tools until you allow access.',
-  structured: 'Typed file, process, screen, and enabled hardware tools only. Raw shell execution is unavailable.',
-  trusted: 'This host may use command and file tools; screen and input still require a task grant.',
+  ask: 'The connection stays ready, but desktop capabilities are off.',
+  structured: 'Typed desktop operations are available; sensitive screen and hardware actions ask first. Raw commands stay off.',
+  trusted: 'Individual capabilities use the settings migrated from the former Trusted preset.',
   'full-access': 'Every available capability is allowed without task grants.',
   custom: 'Individual capabilities use the settings you choose.'
 }
 
 const accessLabel: Record<AccessMode, string> = {
-  ask: 'Ask', structured: 'Structured', trusted: 'Trusted', 'full-access': 'Full Access', custom: 'Custom'
+  ask: 'Restricted', structured: 'Standard', trusted: 'Custom', 'full-access': 'Full Access', custom: 'Custom'
 }
 
 const capabilityLabel: Record<CapabilityMode, string> = {
@@ -318,7 +318,11 @@ function ManagementApp() {
               <span className="route-endpoint"><Bot /><small>Agent</small></span>
               <i className="route-link left"><b /></i>
               <div className="route-host">
-                <button aria-expanded={selectorOpen} onClick={() => setSelectorOpen(value => !value)}>{host?.name}<ChevronDown /></button>
+                <button className="route-host-button" aria-expanded={selectorOpen} aria-label={`Connected host: ${host?.name}. Change host`} onClick={() => setSelectorOpen(value => !value)}>
+                  <span className="route-host-icon"><Server /></span>
+                  <span className="route-host-copy"><small>Connected host</small><strong>{host?.name}</strong></span>
+                  <span className="route-host-action">Change</span><ChevronDown />
+                </button>
               {selectorOpen && <div className="selector-menu">
                 {snapshot.hosts.map(item => <button key={item.url} className={item.url === host?.url ? 'selected' : ''} onClick={() => selectHost(item.url)}><Monitor /><span><strong>{item.name}</strong><small>{item.url}</small></span>{item.url === host?.url && <Check />}</button>)}
                 <button className="pair-option" onClick={() => { setSelectorOpen(false); action('pair_host') }}><Link2 /><span><strong>Pair host</strong><small>Connect another Hermes instance</small></span></button>
@@ -545,22 +549,22 @@ function ActivityDetailPage({ entry, host, onBack }: { entry: Activity | null; h
 
 function AccessPage({ host, busy, onBack, onChoose }: { host: Host | null; busy: boolean; onBack: () => void; onChoose: (mode: AccessMode) => void }) {
   if (!host) return <div className="page-panel large-empty"><LockKeyhole /><h2>No host selected</h2><button onClick={onBack}>Back to Overview</button></div>
+  const customPolicy = host.access_mode === 'custom' || host.access_mode === 'trusted'
   const options: Array<{ mode: AccessMode; Icon: typeof CircleHelp }> = [
-    { mode: 'ask', Icon: CircleHelp },
-    { mode: 'structured', Icon: LockKeyhole },
-    { mode: 'trusted', Icon: ShieldCheck },
+    { mode: 'ask', Icon: LockKeyhole },
+    { mode: 'structured', Icon: ShieldCheck },
     { mode: 'full-access', Icon: Monitor }
   ]
   return <section className="page-panel policy-detail-page">
     <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ChevronRight />Overview</button><p>{host.name}</p><h1>Host access</h1></div></div>
     <p className="page-intro">Choose the broadest kind of work this Hermes host may perform on this PC.</p>
-    {host.access_mode === 'custom' && <div className="custom-policy-banner"><SlidersHorizontal /><span><strong>Custom policy</strong><small>Individual capabilities differ from the standard presets.</small></span></div>}
+    {customPolicy && <div className="custom-policy-banner"><SlidersHorizontal /><span><strong>Custom policy</strong><small>Individual capabilities differ from the standard presets.</small></span></div>}
     <div className="access-options" role="radiogroup" aria-label="Host access">
       {options.map(({ mode, Icon }) => <button key={mode} role="radio" aria-checked={host.access_mode === mode} className={host.access_mode === mode ? 'active' : ''} disabled={busy} onClick={() => onChoose(mode)}>
         <span className="option-icon"><Icon /></span><span><strong>{accessLabel[mode]}</strong><small>{accessCopy[mode]}</small></span>{host.access_mode === mode ? <span className="selected-check"><Check /></span> : <ChevronRight />}
       </button>)}
     </div>
-    {host.access_mode === 'custom' && <p className="policy-footnote"><SlidersHorizontal />Custom reflects individual capability choices. Selecting a preset replaces them.</p>}
+    {customPolicy && <p className="policy-footnote"><SlidersHorizontal />Custom reflects individual capability choices. Selecting a preset replaces them.</p>}
   </section>
 }
 

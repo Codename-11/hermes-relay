@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, test } from 'node:test'
 
 import type { ParsedArgs } from '../src/cli.js'
-import { hostsCommand, parseAccessMode } from '../src/commands/hosts.js'
+import { displayAccessMode, hostsCommand, parseAccessMode } from '../src/commands/hosts.js'
 import { getActiveDesktopRelayUrl, getDesktopHostAliases, setDesktopConfigPath } from '../src/desktopConfig.js'
 import { getHostAccessMode, getHostCapabilityPolicies } from '../src/lib/hostAccessPolicy.js'
 import { getSession, saveSession, setStorePath } from '../src/remoteSessions.js'
@@ -36,7 +36,9 @@ function args(positional: string[], flags: Record<string, string | true> = {}): 
   return { command: 'hosts', positional: [...positional], flags }
 }
 
-test('access mode parser accepts the user-facing full-access spelling', () => {
+test('access mode parser accepts simplified names and compatibility aliases', () => {
+  assert.equal(parseAccessMode('restricted'), 'ask')
+  assert.equal(parseAccessMode('standard'), 'structured')
   assert.equal(parseAccessMode('ask'), 'ask')
   assert.equal(parseAccessMode('trusted'), 'trusted')
   assert.equal(parseAccessMode('structured'), 'structured')
@@ -44,6 +46,11 @@ test('access mode parser accepts the user-facing full-access spelling', () => {
   assert.equal(parseAccessMode('full_access'), 'full_access')
   assert.equal(parseAccessMode('custom'), null)
   assert.equal(parseAccessMode('always'), null)
+  assert.equal(displayAccessMode('ask'), 'restricted')
+  assert.equal(displayAccessMode('structured'), 'standard')
+  assert.equal(displayAccessMode('trusted'), 'custom')
+  assert.equal(displayAccessMode('custom'), 'custom')
+  assert.equal(displayAccessMode('full_access'), 'full-access')
 })
 
 test('USB capability policy requires confirmation for allow and rejects unavailable brokers', async () => {

@@ -25,15 +25,15 @@ const HOSTS_USAGE: UsageSpec = {
     'hosts [list] [--json]',
     'hosts select <relay-url>',
     'hosts rename <relay-url> <name>',
-    'hosts access <ask|structured|trusted|full-access> [--remote <url>] [--yes]',
+    'hosts access <restricted|standard|full-access> [--remote <url>] [--yes]',
     'hosts capability <commands|files|screen-input|usb|microphone|camera> <disabled|ask|allow> [--remote <url>] [--yes]'
   ],
   subcommands: [
     { verb: 'list', desc: 'List locally paired Hermes hosts (default)' },
     { verb: 'select <url>', desc: 'Choose the host used by the tray and daemon' },
     { verb: 'rename <url> <name>', desc: 'Set a local display name for a paired host' },
-    { verb: 'access <mode>', desc: 'Set this PC access policy for one host' },
-    { verb: 'capability <name> <mode>', desc: 'Set a host-wide hardware capability policy' }
+    { verb: 'access <mode>', desc: 'Set a Restricted, Standard, or Full Access preset' },
+    { verb: 'capability <name> <mode>', desc: 'Set one capability; creates a Custom policy' }
   ],
   flags: [
     { flag: '--remote <url>', desc: 'Host targeted by the access command' },
@@ -43,7 +43,7 @@ const HOSTS_USAGE: UsageSpec = {
   examples: [
     'hermes-relay hosts --json',
     'hermes-relay hosts select wss://home.example:8767',
-    'hermes-relay hosts access structured --remote wss://home.example:8767',
+    'hermes-relay hosts access standard --remote wss://home.example:8767',
     'hermes-relay hosts capability usb ask --remote wss://home.example:8767'
   ]
 }
@@ -69,7 +69,16 @@ function hostLabel(url: string): string {
 
 export function parseAccessMode(value: string | undefined): HostAccessMode | null {
   const normalized = value?.trim().toLowerCase().replaceAll('-', '_')
+  if (normalized === 'restricted') return 'ask'
+  if (normalized === 'standard') return 'structured'
   return isHostAccessMode(normalized) && normalized !== 'custom' ? normalized : null
+}
+
+export function displayAccessMode(mode: HostAccessMode): string {
+  if (mode === 'ask') return 'restricted'
+  if (mode === 'structured') return 'standard'
+  if (mode === 'trusted' || mode === 'custom') return 'custom'
+  return 'full-access'
 }
 
 async function localHosts(): Promise<LocalHostSummary[]> {
@@ -123,7 +132,7 @@ async function listHosts(args: ParsedArgs): Promise<number> {
   process.stdout.write(t.bold(`Paired Hermes hosts (${hosts.length})`) + '\n')
   for (const host of hosts) {
     process.stdout.write(
-      `  ${host.is_active ? '*' : ' '} ${host.host}  ${host.access_mode.replace('_', '-')}\n` +
+      `  ${host.is_active ? '*' : ' '} ${host.host}  ${displayAccessMode(host.access_mode)}\n` +
       t.muted(`      ${host.url}${host.endpoint_role ? ` (${host.endpoint_role})` : ''}`) + '\n' +
       t.muted(`      Commands: ${host.capabilities.commands} · Files: ${host.capabilities.files} · Screen/input: ${host.capabilities.screen_input} · USB: ${host.capabilities.usb}`) + '\n'
     )
@@ -150,7 +159,7 @@ async function selectHost(args: ParsedArgs): Promise<number> {
 async function setAccess(args: ParsedArgs): Promise<number> {
   const mode = parseAccessMode(args.positional[0])
   if (!mode) {
-    process.stderr.write('error: access mode must be ask, structured, trusted, or full-access\n')
+    process.stderr.write('error: access mode must be restricted, standard, or full-access\n')
     return 2
   }
   const requested = typeof args.flags.remote === 'string' ? args.flags.remote.trim() : ''
@@ -181,7 +190,7 @@ async function setAccess(args: ParsedArgs): Promise<number> {
   if (args.flags.json) process.stdout.write(JSON.stringify(payload, null, 2) + '\n')
   else {
     const t = makeTheme({ noColor: !!args.flags['no-color'] })
-    process.stdout.write(t.okLine(`${hostLabel(url)} access set to ${mode.replace('_', '-')}`) + '\n')
+    process.stdout.write(t.okLine(`${hostLabel(url)} access set to ${displayAccessMode(mode)}`) + '\n')
     process.stdout.write(t.muted('Restart the daemon to apply this policy.') + '\n')
   }
   return 0

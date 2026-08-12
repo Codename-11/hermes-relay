@@ -98,7 +98,7 @@ Prefer the typed file, process, job, transfer, screen, clipboard, and connected-
 device tools for ordinary work. `desktop_terminal`, `desktop_powershell`,
 detached commands, and command jobs are intentionally labeled `system.execute`:
 because they run as your Windows user, they can indirectly access files and
-attached hardware. **Structured** mode withholds those four escape hatches.
+attached hardware. **Standard** mode withholds those four escape hatches.
 Raw USB defaults Off, can Ask through the local
 approval card for every operation, or can Allow after explicit confirmation.
 It governs host-wide direct execution of native/vendor USB utilities and all

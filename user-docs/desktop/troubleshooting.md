@@ -64,7 +64,7 @@ hermes-relay hosts list
 hermes-relay daemon restart
 ```
 
-Access is stored per host. **Ask** connects with no desktop tools, **Structured** enables typed operations without general raw command launch, **Trusted** adds command execution with task-scoped screen/input grants, and **Full Access** allows every available capability without task grants for the selected host. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera can be changed individually; doing so creates a Custom policy. ADB remains secondary to the host-wide Raw USB gate. The UI normally restarts a running daemon after a host or access change; use the explicit restart above if an interrupted transition left stale state.
+Access is stored per host. **Restricted** connects with no desktop tools, **Standard** enables typed operations without general raw command launch, and **Full Access** allows every available capability without task grants for the selected host. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera can be changed individually; doing so creates a Custom policy. Existing Ask, Structured, and Trusted policies keep their effective permissions during migration. ADB remains secondary to the host-wide Raw USB gate. The UI normally restarts a running daemon after a host or access change; use the explicit restart above if an interrupted transition left stale state.
 
 ## A desktop-control request is waiting or needs to be stopped
 
@@ -74,7 +74,7 @@ The Windows UI presents a focused approval card without requiring the main popup
 hermes-relay computer-use cancel
 ```
 
-Switching the host to **Ask** or using emergency stop also requests cancellation. Without a local approval response, a headless request times out and input remains blocked.
+Switching the host to **Restricted** or using emergency stop also requests cancellation. Without a local approval response, a headless request times out and input remains blocked.
 
 ## `auth timed out after 15000ms`
 
