@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
 
+## [1.6.4] - 2026-08-12
+
+### Added
+
+- **Desktop tools support explicit host targeting.** Every client-routed desktop tool accepts a stable device ID or unambiguous computer name, and `/desktop/health` enumerates connected targets and their advertised tools.
+- **USB operations retain both routing scopes.** Raw USB and ADB tools use `device` to select the desktop PC, while ADB operations continue to use `serial` to select hardware attached to that PC.
+
+### Fixed
+
+- **Multiple desktop clients remain connected simultaneously.** The Relay no longer replaces the previous desktop when another heartbeat arrives; concurrent requests are bound to their selected WebSockets, responses from another PC are ignored, and an untargeted call fails closed when several desktops are online.
+- **Pairing another desktop preserves existing credentials.** Legacy placeholder device identifiers are treated as absent instead of shared ownership, preventing an unrelated PC from revoking the first desktop's session.
+
 ## [1.6.3] - 2026-08-11
 
 ### Fixed

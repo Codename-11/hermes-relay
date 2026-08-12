@@ -937,6 +937,12 @@ class SessionManager:
             # Keep different devices independent and leave legacy clients with
             # no device_id alone because an empty id cannot identify ownership.
             normalized_device_id = device_id.strip()
+            # Legacy desktop clients omitted device_id, which the wire layer
+            # represented as the shared sentinel "unknown". Treat sentinels as
+            # absent ownership, otherwise pairing any second PC revokes every
+            # other legacy desktop session as if they were one installation.
+            if normalized_device_id.casefold() in {"unknown", "none", "null"}:
+                normalized_device_id = ""
             if normalized_device_id:
                 replaced_sessions = [
                     token
@@ -1077,14 +1083,30 @@ class SessionManager:
         if trusted.is_expired:
             self._save_to_disk()
             return None
-        if device_id and trusted.device_id != device_id:
+        normalized_device_id = device_id.strip()
+        legacy_desktop_identity = (
+            trusted.client_surface in {"desktop", "unknown"}
+            and trusted.device_id.strip().casefold() in {"unknown", "none", "null"}
+            and normalized_device_id.casefold() not in {"", "unknown", "none", "null"}
+        )
+        if (
+            normalized_device_id
+            and trusted.device_id != normalized_device_id
+            and not legacy_desktop_identity
+        ):
             logger.info(
                 "Refresh rejected for device_id mismatch: stored=%s attempted=%s",
                 trusted.device_id,
-                device_id,
+                normalized_device_id,
             )
             self._trusted_devices[refresh_hash] = trusted
             return None
+        if legacy_desktop_identity:
+            # The refresh secret proves continuity for desktop clients created
+            # before they persisted an installation UUID. Upgrade that one
+            # trusted record in place without weakening normal ID mismatch
+            # rejection or conflating separate legacy PCs during pairing.
+            trusted.device_id = normalized_device_id
 
         now = time.time()
         new_refresh_token = _generate_refresh_token()

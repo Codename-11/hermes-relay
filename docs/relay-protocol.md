@@ -389,11 +389,27 @@ Sources: `plugin/relay/channels/notifications.py`, `app/src/main/kotlin/.../noti
 |------|-----------|---------|
 | `desktop.command` | Server → Client | `{request_id, tool, args}` |
 | `desktop.response` | Client → Server | `{request_id, ok: true, result}` or `{request_id, ok: false, error}` |
-| `desktop.status` | Client → Server | `{advertised_tools, host, platform, version, computer_use?}` |
+| `desktop.status` | Client → Server | `{advertised_tools, device_id, host, platform, version, computer_use?}` |
 | `desktop.workspace` | Client → Server | Workspace context snapshot |
 | `desktop.active_editor` | Client → Server | Active editor hint |
 
 Experimental computer-use tools use the same channel but are advertised by the desktop client only when the experimental computer-use feature flag is enabled (`--experimental-computer-use` or `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1`) after normal desktop-tool consent. The relay still treats `desktop_computer_*` names as strict-advertise tools so older or unflagged clients fail closed. Screenshots require an in-memory observe/assist/control grant. Host input currently uses a Windows-only CLI approval path: desktop-tool consent plus one visible local `yes` prompt for a task-scoped assist/control grant. Actions then run without per-action prompts until that grant expires or is canceled. Headless/non-interactive clients advertise blocked grant state and reject assist/control grant requests with structured failures.
+
+Every desktop heartbeat includes its stable installation `device_id` and
+display name. Tool HTTP bodies accept a relay-only `device` selector. With one
+connected desktop the selector is optional; with several it is required and may
+be an exact device ID or an unambiguous host/device name. The Relay binds each
+pending request to the selected WebSocket, ignores responses from other PCs,
+and includes resolved target metadata in the response. `/desktop/health` lists
+the connected targets.
+
+Per-host Structured access withholds `desktop_terminal`,
+`desktop_powershell`, `desktop_spawn_detached`, and `desktop_job_start` from
+`advertised_tools`. Brokered USB tools use the same request/response envelope:
+`desktop_adb_devices`, `_shell`, `_push`, `_pull`, `_install`, and `_logcat`.
+Every device operation other than enumeration requires an explicit ADB serial;
+local USB policy independently disables, prompts for, or allows each call.
+Disabled or unavailable ADB backends omit all six names from advertisement.
 
 ### 3.8 TUI *(new, being added — see `docs/plans/2026-04-22-desktop-tui-mvp.md`)*
 

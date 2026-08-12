@@ -966,12 +966,13 @@ async def handle_desktop_ping(request: web.Request) -> web.Response:
     _require_loopback(request)
     server: RelayServer = request.app["server"]
     tool = request.query.get("tool", "").strip()
+    device = request.query.get("device", "").strip() or None
     if not server.desktop.is_client_connected():
         return web.json_response(
             {"ok": False, "error": "no desktop client connected"},
             status=503,
         )
-    if tool and not server.desktop.has_client_for(tool):
+    if tool and not server.desktop.has_client_for(tool, device=device):
         return web.json_response(
             {"ok": False, "error": f"client connected but does not advertise tool {tool!r}"},
             status=503,
@@ -1022,6 +1023,7 @@ async def handle_desktop_health(request: web.Request) -> web.Response:
         "interactive": cs.get("interactive"),
         "last_error": cs.get("last_error"),
         "computer_use": cs.get("computer_use"),
+        "clients": snap.get("clients") or [],
         "recent_commands": server.desktop.get_recent(limit=20),
     }
     return web.json_response(out)
@@ -1045,8 +1047,11 @@ async def handle_desktop_dispatch(request: web.Request) -> web.Response:
             args = {}
     except Exception:  # noqa: BLE001
         args = {}
+    device = args.pop("device", None) or args.pop("device_id", None)
+    if not isinstance(device, str):
+        device = None
     try:
-        result = await server.desktop.handle_command(tool_name, args)
+        result = await server.desktop.handle_command(tool_name, args, device=device)
         return web.json_response(result)
     except Exception as exc:  # DesktopError or asyncio.TimeoutError
         msg = str(exc) or exc.__class__.__name__
@@ -4197,7 +4202,9 @@ async def _on_message(
         # on the session; never replied to. Dispatching as a tracked task
         # keeps it consistent with other channels so disconnect-cancel
         # works uniformly.
-        task = asyncio.create_task(server.desktop.handle(ws, envelope))
+        token = server._clients.get(ws)
+        session = server.sessions.get_session(token) if token else None
+        task = asyncio.create_task(server.desktop.handle(ws, envelope, session=session))
         _track_task(server, ws, task)
     else:
         logger.warning("Unknown channel: %s", channel)
