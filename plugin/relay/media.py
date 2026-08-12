@@ -36,6 +36,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import tempfile
 import time
@@ -189,7 +190,18 @@ def translate_container_media_path(path: str) -> str:
 
     host_root, container_root, _ = best
     try:
-        translated_path = (host_root / candidate.relative_to(container_root)).resolve(strict=False)
+        relative_parts = candidate.relative_to(container_root).parts
+        # This compatibility path consumes model-supplied text. Validate each
+        # component before it reaches a host filesystem expression; the later
+        # resolve+relative_to check remains the symlink/containment authority.
+        # Generated Hermes media names fit this intentionally conservative set.
+        if not relative_parts or any(
+            part in {".", ".."} or
+            re.fullmatch(r"[A-Za-z0-9._ @()+,=-]{1,255}", part) is None
+            for part in relative_parts
+        ):
+            return path
+        translated_path = host_root.joinpath(*relative_parts).resolve(strict=False)
         translated_path.relative_to(host_root.resolve(strict=False))
     except (OSError, RuntimeError, ValueError):
         return path

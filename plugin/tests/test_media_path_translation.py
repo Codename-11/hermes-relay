@@ -51,6 +51,16 @@ def test_unmatched_path_is_left_for_existing_validator() -> None:
         assert translate_container_media_path("/outside/result.png") == "/outside/result.png"
 
 
+def test_unsafe_relative_component_is_not_joined_to_host(tmp_path: Path) -> None:
+    env = {
+        "TERMINAL_ENV": "docker",
+        "TERMINAL_DOCKER_VOLUMES": json.dumps([f"{tmp_path}:/workspace:rw"]),
+    }
+    source = "/workspace/report∕secret.png"
+    with _fallback_only(), mock.patch.dict(os.environ, env, clear=False):
+        assert translate_container_media_path(source) == source
+
+
 def test_root_hermes_tree_does_not_use_broad_home_mount(tmp_path: Path) -> None:
     env = {
         "TERMINAL_ENV": "docker",
