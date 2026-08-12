@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
+
 ### Changed
 
 - **Relay voice custom transports follow upstream provider security options.** Relay-owned OpenAI/xAI realtime and TTS clients now honor explicit custom headers, custom CA bundles, the standard CA environment precedence, and an opt-in warned `ssl_verify=false` development mode without changing public-provider defaults or logging header values.

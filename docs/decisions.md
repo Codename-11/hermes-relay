@@ -2813,3 +2813,37 @@ empty transcript.
 longer operate on a silent latest-500 subset. Recovery stays cheap for ordinary
 sessions without allowing a bounded window to replace the complete visible
 history. Older Hermes releases remain compatible.
+
+---
+
+## ADR 51 — Android coding-session context is optional upstream metadata
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** Current upstream Hermes records a session's working directory, Git
+branch, and repository root in its session database and returns those fields on
+Dashboard session-list routes. It also exposes a read-only profile-wide endpoint
+that recovers the pull request a session created from a narrowly validated tool
+result. Android previously discarded all of that context, making coding chats
+indistinguishable in the session drawer.
+
+**Decision.** Android maps optional `cwd`, `git_branch`, and `git_repo_root`
+fields from existing Dashboard list responses. For rows with workspace context,
+it asks `POST /api/profiles/sessions/pull-requests` and accepts only a positive
+PR number with a non-blank URL. Unresolved active sessions retry on a bounded
+cadence and receive one final scan after ending; resolved associations and
+terminal misses remain cached. Cache ownership is profile plus session id, and
+ambiguous duplicate ids in an all-profile response are never assigned a
+transcript result. Android then uses the repository-
+scoped `POST /api/git/review/pr-list` view to refresh the matching branch or
+known PR number's lifecycle state. The drawer displays only the repository
+basename, exact branch, PR number, and lifecycle state; it does not expose host
+paths. Both reads are best-effort. A missing route, unavailable GitHub CLI,
+malformed response, or API-server-only connection leaves ordinary session
+behavior intact and is not promoted to a session-list failure.
+
+**Consequences.** Coding sessions become recognizable without introducing a
+Relay dependency or a GitHub credential path. Repository and branch state can
+still appear when PR recovery is unsupported, while legacy hosts show no new
+badges and active sessions can surface a PR created after their first drawer
+refresh without allowing cross-profile cache collisions.

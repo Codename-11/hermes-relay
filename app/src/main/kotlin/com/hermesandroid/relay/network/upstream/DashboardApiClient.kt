@@ -7,9 +7,12 @@ import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.MessageListResponse
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.models.SessionListResponse
+import com.hermesandroid.relay.network.upstream.models.SessionPullRequest
+import com.hermesandroid.relay.network.upstream.models.SessionPullRequestScanResponse
 import com.hermesandroid.relay.network.upstream.models.SessionPruneFilters
 import com.hermesandroid.relay.network.upstream.models.SessionPrunePreview
 import com.hermesandroid.relay.network.upstream.models.SessionPruneResult
+import com.hermesandroid.relay.network.upstream.models.RepositoryPullRequestListResponse
 import com.hermesandroid.relay.auth.SecureStoreCache
 import com.hermesandroid.relay.auth.SessionTokenStore
 import com.hermesandroid.relay.auth.buildRawTokenStore
@@ -206,8 +209,14 @@ class DashboardApiClient(
         isLenient = true
         coerceInputValues = true
     },
+    private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
     private val baseUrl: String = baseUrl.trim().trimEnd('/')
+    private val sessionPrScanLock = Any()
+    private val sessionPrScannedAt = mutableMapOf<String, Long>()
+    private val sessionPrScanWasTerminal = mutableMapOf<String, Boolean>()
+    private val sessionPullRequests = mutableMapOf<String, SessionPullRequest>()
+    private var sessionPrScanSupported: Boolean? = null
 
     /**
      * Resolve a request URL without ever throwing. okhttp's
@@ -764,7 +773,13 @@ class DashboardApiClient(
                 pageSessions.forEach { sessions.putIfAbsent(it.id, it) }
                 if (pageSessions.size < page.limit) break
             }
-            Result.success(sessions.values.take(limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)))
+            Result.success(
+                enrichSessionWorkState(
+                    sessions.values.take(limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)),
+                    fixedProfile = profile?.trim()?.takeIf { it.isNotBlank() }
+                        ?: DEFAULT_SESSION_PROFILE_SCOPE,
+                ),
+            )
         }
 
     /**
@@ -776,7 +791,7 @@ class DashboardApiClient(
         limit: Int = SESSION_LIST_WINDOW_LIMIT,
     ): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
         val boundedLimit = limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)
-        getJson(
+        val result = getJson(
             "/api/profiles/sessions?limit=$boundedLimit&offset=0&order=recent" +
                 "&min_messages=1&archived=include&profile=all",
         ).mapCatching { root ->
@@ -786,7 +801,128 @@ class DashboardApiClient(
                 .distinctBy { "${it.profile}:${it.id}" }
                 .take(boundedLimit)
         }
+        if (result.isFailure) return@withContext result
+        Result.success(enrichSessionWorkState(result.getOrThrow(), fixedProfile = null))
     }
+
+    /**
+     * Attach the PR a coding session created using the current upstream
+     * transcript-backed endpoint. Repository and branch already arrive on the
+     * list row. Missing/older endpoints are deliberately ignored, leaving the
+     * original rows intact. Active misses retry on a bounded cadence; terminal
+     * rows get one final scan and resolved associations remain cached.
+     */
+    private suspend fun enrichSessionWorkState(
+        sessions: List<SessionItem>,
+        fixedProfile: String?,
+    ): List<SessionItem> {
+        val candidates = sessions.filter {
+            it.id.isNotBlank() &&
+                (!it.gitRepoRoot.isNullOrBlank() || !it.gitBranch.isNullOrBlank() || !it.cwd.isNullOrBlank())
+        }
+        val duplicateIds = if (fixedProfile == null) {
+            candidates.groupingBy { it.id }.eachCount().filterValues { it > 1 }.keys
+        } else {
+            emptySet()
+        }
+        val now = nowMillis()
+        val pending = synchronized(sessionPrScanLock) {
+            candidates.filter { session ->
+                if (session.id in duplicateIds) return@filter false
+                val key = sessionWorkKey(session, fixedProfile)
+                val scannedAt = sessionPrScannedAt[key]
+                val resolved = sessionPullRequests[key] != null
+                !resolved && when {
+                    scannedAt == null -> true
+                    session.endedAt != null -> sessionPrScanWasTerminal[key] != true
+                    else -> now - scannedAt >= ACTIVE_SESSION_PR_MISS_TTL_MILLIS
+                }
+            }
+        }
+        val pendingIds = pending.map { it.id }.distinct()
+        if (pendingIds.isNotEmpty()) {
+            val payload = buildJsonObject {
+                put("ids", JsonArray(pendingIds.map { JsonPrimitive(it) }))
+            }
+            val scan = postJsonObject("/api/profiles/sessions/pull-requests", payload)
+                .mapCatching { root ->
+                    json.decodeFromJsonElement(SessionPullRequestScanResponse.serializer(), root)
+                }
+            synchronized(sessionPrScanLock) {
+                // A legacy 404 is a compatibility outcome, not a session-list failure.
+                // Avoid hammering an unsupported host on every drawer refresh.
+                if (scan.isSuccess || sessionPrScanSupported == null) {
+                    sessionPrScanSupported = scan.isSuccess
+                }
+                pending.forEach { session ->
+                    val key = sessionWorkKey(session, fixedProfile)
+                    sessionPrScannedAt[key] = now
+                    sessionPrScanWasTerminal[key] = session.endedAt != null
+                    scan.getOrNull()?.pullRequests?.get(session.id)?.takeIf {
+                        it.number > 0 && it.url.isNotBlank()
+                    }?.let { pullRequest ->
+                        sessionPullRequests[key] = pullRequest
+                    }
+                }
+            }
+        }
+        refreshPullRequestStates(candidates, fixedProfile)
+        val pullRequests = synchronized(sessionPrScanLock) { sessionPullRequests.toMap() }
+        return sessions.map { session ->
+            session.copy(pullRequest = pullRequests[sessionWorkKey(session, fixedProfile)])
+        }
+    }
+
+    /** Refresh current PR lifecycle state using upstream's repo-scoped GitHub view. */
+    private suspend fun refreshPullRequestStates(
+        sessions: List<SessionItem>,
+        fixedProfile: String?,
+    ) {
+        if (synchronized(sessionPrScanLock) { sessionPrScanSupported } != true) return
+        val known = synchronized(sessionPrScanLock) { sessionPullRequests.toMap() }
+        sessions.groupBy { (it.gitRepoRoot ?: it.cwd).orEmpty().trim() }
+            .filterKeys { it.isNotBlank() }
+            .forEach { (path, repositorySessions) ->
+                val branches = repositorySessions.mapNotNull { it.gitBranch?.trim() }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                val numbers = repositorySessions.mapNotNull {
+                    known[sessionWorkKey(it, fixedProfile)]?.number
+                }
+                    .filter { it > 0 }
+                    .distinct()
+                if (branches.isEmpty() && numbers.isEmpty()) return@forEach
+                val payload = buildJsonObject {
+                    put("path", path)
+                    put("branches", JsonArray(branches.map { JsonPrimitive(it) }))
+                    put("numbers", JsonArray(numbers.map { JsonPrimitive(it) }))
+                }
+                val response = postJsonObject("/api/git/review/pr-list", payload)
+                    .mapCatching { root ->
+                        json.decodeFromJsonElement(RepositoryPullRequestListResponse.serializer(), root)
+                    }
+                    .getOrNull()
+                    ?: return@forEach
+                if (!response.ghReady) return@forEach
+                synchronized(sessionPrScanLock) {
+                    repositorySessions.forEach { session ->
+                        val key = sessionWorkKey(session, fixedProfile)
+                        val recovered = sessionPullRequests[key]
+                        val current = response.prs.firstOrNull { pr ->
+                            recovered != null && pr.number == recovered.number
+                        } ?: response.prs.firstOrNull { pr ->
+                            !session.gitBranch.isNullOrBlank() && pr.branch == session.gitBranch
+                        }
+                        if (current != null && current.number > 0 && current.url.isNotBlank()) {
+                            sessionPullRequests[key] = current
+                        }
+                    }
+                }
+            }
+    }
+
+    private fun sessionWorkKey(session: SessionItem, fixedProfile: String?): String =
+        "${fixedProfile ?: session.profile.orEmpty()}\u0000${session.id}"
 
     /**
      * A session's message history, scoped to its owning profile via the dashboard
@@ -1112,6 +1248,8 @@ class DashboardApiClient(
 
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+        private const val DEFAULT_SESSION_PROFILE_SCOPE = "__dashboard_default__"
+        internal const val ACTIVE_SESSION_PR_MISS_TTL_MILLIS = 60_000L
 
         fun pathSegment(value: String): String =
             URLEncoder.encode(value, "UTF-8").replace("+", "%20")

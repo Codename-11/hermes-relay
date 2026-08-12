@@ -148,6 +148,13 @@ the local operator enables the runtime dev toggle with
 | `done` | Server → App | `{ session_id, run_id, state: "final" }` |
 
 Session management uses the REST API (`GET/POST /api/sessions`, `PATCH/DELETE /api/sessions/{id}`).
+Newer Dashboard session rows may also supply `cwd`, `git_branch`, and
+`git_repo_root`. Android reduces paths to a repository name for display and
+uses the read-only `POST /api/profiles/sessions/pull-requests` transcript scan
+to attach the PR a coding session created, then the repo-scoped read-only
+`POST /api/git/review/pr-list` route for its current lifecycle state. All of
+this metadata is optional; older Dashboard and API-server hosts retain the
+ordinary session row.
 
 #### Channel: `terminal`
 PTY streaming — raw terminal I/O.

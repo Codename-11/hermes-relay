@@ -865,6 +865,191 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun listSessions_enrichesWorkspaceRowsWithTranscriptBackedPullRequest() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"sessions":[{"id":"coding-1","title":"Ship it","cwd":"/work/hermes-relay","git_branch":"feature/session-context","git_repo_root":"/work/hermes-relay"}]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"pull_requests":{"coding-1":{"number":134,"url":"https://github.com/example/hermes-relay/pull/134"}},"scanned":["coding-1"]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"ghReady":true,"prs":[{"branch":"feature/session-context","draft":false,"number":134,"state":"open","title":"Session context","url":"https://github.com/example/hermes-relay/pull/134"}]}""",
+            ),
+        )
+
+        val session = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listSessions()
+            .getOrThrow()
+            .single()
+
+        assertEquals("/work/hermes-relay", session.cwd)
+        assertEquals("feature/session-context", session.gitBranch)
+        assertEquals("/work/hermes-relay", session.gitRepoRoot)
+        assertEquals(134, session.pullRequest?.number)
+        assertEquals("https://github.com/example/hermes-relay/pull/134", session.pullRequest?.url)
+        assertEquals("open", session.pullRequest?.state)
+        assertEquals(false, session.pullRequest?.draft)
+        server.takeRequest()
+        val scanRequest = server.takeRequest()
+        assertEquals("POST", scanRequest.method)
+        assertEquals("/api/profiles/sessions/pull-requests", scanRequest.requestUrl!!.encodedPath)
+        assertEquals(
+            listOf("coding-1"),
+            Json.parseToJsonElement(scanRequest.body.readUtf8()).jsonObject["ids"]
+                ?.let { it as JsonArray }
+                ?.map { it.toString().trim('"') },
+        )
+        val stateRequest = server.takeRequest()
+        assertEquals("/api/git/review/pr-list", stateRequest.requestUrl!!.encodedPath)
+        val stateBody = Json.parseToJsonElement(stateRequest.body.readUtf8()).jsonObject
+        assertEquals("/work/hermes-relay", stateBody["path"]?.toString()?.trim('"'))
+        assertEquals(listOf("feature/session-context"), (stateBody["branches"] as JsonArray).map { it.toString().trim('"') })
+        assertEquals(listOf("134"), (stateBody["numbers"] as JsonArray).map { it.toString() })
+    }
+
+    @Test
+    fun listSessions_keepsWorkspaceMetadataWhenPullRequestEndpointIsUnavailable() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"sessions":[{"id":"legacy-1","git_branch":"dev","git_repo_root":"/work/legacy"}]}""",
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(404).setBody("not found"))
+
+        val session = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listSessions()
+            .getOrThrow()
+            .single()
+
+        assertEquals("dev", session.gitBranch)
+        assertEquals("/work/legacy", session.gitRepoRoot)
+        assertEquals(null, session.pullRequest)
+    }
+
+    @Test
+    fun listSessions_retriesActiveSessionPullRequestMissAfterBoundedTtl() = runTest {
+        var now = 1_000L
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            nowMillis = { now },
+        )
+        val sessionList = """{"sessions":[{"id":"active-1","cwd":"/work/repo"}]}"""
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(sessionList))
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"pull_requests":{},"scanned":["active-1"]}"""),
+        )
+
+        assertEquals(null, client.listSessions().getOrThrow().single().pullRequest)
+        server.takeRequest()
+        server.takeRequest()
+
+        now += DashboardApiClient.ACTIVE_SESSION_PR_MISS_TTL_MILLIS - 1
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(sessionList))
+        assertEquals(null, client.listSessions().getOrThrow().single().pullRequest)
+        assertEquals("GET", server.takeRequest().method)
+
+        now += 1
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(sessionList))
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"pull_requests":{"active-1":{"number":12,"url":"https://github.com/example/repo/pull/12"}},"scanned":["active-1"]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"ghReady":false,"prs":[]}"""),
+        )
+
+        assertEquals(12, client.listSessions().getOrThrow().single().pullRequest?.number)
+        assertEquals("GET", server.takeRequest().method)
+        assertEquals("/api/profiles/sessions/pull-requests", server.takeRequest().requestUrl!!.encodedPath)
+        assertEquals("/api/git/review/pr-list", server.takeRequest().requestUrl!!.encodedPath)
+    }
+
+    @Test
+    fun listSessions_performsOneFinalScanWhenAnActiveMissBecomesTerminal() = runTest {
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"sessions":[{"id":"finishing","cwd":"/work/repo"}]}"""),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"pull_requests":{},"scanned":["finishing"]}"""),
+        )
+        client.listSessions().getOrThrow()
+        repeat(2) { server.takeRequest() }
+
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"sessions":[{"id":"finishing","cwd":"/work/repo","ended_at":2000.0}]}"""),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"pull_requests":{"finishing":{"number":13,"url":"https://github.com/example/repo/pull/13"}},"scanned":["finishing"]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"ghReady":false,"prs":[]}"""),
+        )
+
+        assertEquals(13, client.listSessions().getOrThrow().single().pullRequest?.number)
+        repeat(3) { server.takeRequest() }
+    }
+
+    @Test
+    fun listSessions_scopesPullRequestCacheByProfileAndSessionId() = runTest {
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        fun enqueueProfileRead(number: Int) {
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json")
+                    .setBody("""{"sessions":[{"id":"same","cwd":"/work/repo"}]}"""),
+            )
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json").setBody(
+                    """{"pull_requests":{"same":{"number":$number,"url":"https://github.com/example/repo/pull/$number"}},"scanned":["same"]}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json")
+                    .setBody("""{"ghReady":false,"prs":[]}"""),
+            )
+        }
+
+        enqueueProfileRead(11)
+        assertEquals(11, client.listSessions(profile = "alpha").getOrThrow().single().pullRequest?.number)
+        repeat(3) { server.takeRequest() }
+
+        enqueueProfileRead(22)
+        assertEquals(22, client.listSessions(profile = "beta").getOrThrow().single().pullRequest?.number)
+        repeat(3) { server.takeRequest() }
+    }
+
+    @Test
+    fun listAllProfileSessions_doesNotGuessAcrossDuplicateSessionIds() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"sessions":[{"id":"same","profile":"alpha","cwd":"/work/a"},{"id":"same","profile":"beta","cwd":"/work/b"}]}""",
+            ),
+        )
+
+        val sessions = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listAllProfileSessions()
+            .getOrThrow()
+
+        assertEquals(2, sessions.size)
+        assertTrue(sessions.all { it.pullRequest == null })
+        assertEquals("GET", server.takeRequest().method)
+    }
+
+    @Test
     fun listAllProfileSessions_preservesOwnerAndCompositeIdentity() = runTest {
         server.enqueue(
             MockResponse()

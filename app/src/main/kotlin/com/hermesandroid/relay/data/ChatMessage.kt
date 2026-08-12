@@ -421,6 +421,14 @@ data class ChatSession(
     /** Durable upstream session metadata, scoped by the owning connection/profile DB. */
     val pinned: Boolean = false,
     val archived: Boolean = false,
+    /** Optional newer-upstream workspace context; absent on legacy/API-only hosts. */
+    val workingDirectory: String? = null,
+    val gitBranch: String? = null,
+    val gitRepoRoot: String? = null,
+    val pullRequestNumber: Int? = null,
+    val pullRequestUrl: String? = null,
+    val pullRequestState: String? = null,
+    val pullRequestDraft: Boolean = false,
 ) {
     val activityTimestamp: Long
         get() = firstPositive(lastActivityAt, updatedAt, startedAt)

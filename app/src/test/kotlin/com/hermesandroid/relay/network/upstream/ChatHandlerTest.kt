@@ -16,6 +16,7 @@ import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.network.upstream.models.SessionPullRequest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -600,6 +601,35 @@ class ChatHandlerTest {
 
         assertTrue(restartedHandler.sessions.value.first { it.sessionId == "pinned" }.pinned)
         assertTrue(restartedHandler.sessions.value.first { it.sessionId == "archived" }.archived)
+    }
+
+    @Test
+    fun updateSessions_mapsOptionalWorkspaceAndPullRequestState() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "coding",
+                    cwd = "/work/repo",
+                    gitBranch = "feature/mobile",
+                    gitRepoRoot = "/work/repo",
+                    pullRequest = SessionPullRequest(
+                        number = 134,
+                        url = "https://github.com/example/repo/pull/134",
+                        state = "open",
+                        draft = true,
+                    ),
+                ),
+            ),
+        )
+
+        val session = handler.sessions.value.single()
+        assertEquals("/work/repo", session.workingDirectory)
+        assertEquals("feature/mobile", session.gitBranch)
+        assertEquals("/work/repo", session.gitRepoRoot)
+        assertEquals(134, session.pullRequestNumber)
+        assertEquals("https://github.com/example/repo/pull/134", session.pullRequestUrl)
+        assertEquals("open", session.pullRequestState)
+        assertTrue(session.pullRequestDraft)
     }
 
     @Test
