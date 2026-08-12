@@ -55,7 +55,9 @@ test('PowerShell launches an installer whose path contains spaces via environmen
 test('NSIS bundle installs and removes the stable UI shim', async () => {
   const script = await readFile(new URL('../tray/installer/hermes-relay.nsi', import.meta.url), 'utf8')
   assert.match(script, /File \/oname=hermes-relay-ui\.cmd "\$\{UI_SHIM\}"/)
-  assert.match(script, /Hermes-Relay CLI UI\.lnk" "\$INSTDIR\\hermes-relay-ui\.cmd"/)
+  assert.match(script, /Hermes-Relay CLI UI\.lnk" "\$INSTDIR\\hermes-relay-ui\.cmd" "" "\$INSTDIR\\hermes-relay-tray\.exe" 0/)
+  assert.match(script, /Hermes-Relay CLI\.lnk" "\$INSTDIR\\hermes-relay\.exe" "" "\$INSTDIR\\hermes-relay-tray\.exe" 0/)
+  assert.match(script, /"DisplayIcon" '\"\$INSTDIR\\hermes-relay-tray\.exe\",0'/)
   assert.match(script, /Delete "\$INSTDIR\\hermes-relay-ui\.cmd"/)
 })
 
