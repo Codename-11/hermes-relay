@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Relay voice custom transports follow upstream provider security options.** Relay-owned OpenAI/xAI realtime and TTS clients now honor explicit custom headers, custom CA bundles, the standard CA environment precedence, and an opt-in warned `ssl_verify=false` development mode without changing public-provider defaults or logging header values.
+- **Voice Lab xAI sign-in uses device authorization.** The standalone xAI login now shows a verification URL and user code and polls for approval, matching upstream Hermes and removing the loopback callback/SSH-tunnel requirement while preserving existing Voice Lab token files and refresh behavior.
+
 ### Fixed
 
 - **Phone is discoverable as a proactive delivery target.** The Relay phone adapter now publishes its configured home destination through Hermes' standard channel directory, so target listings can offer `phone` before any historical phone session exists.
