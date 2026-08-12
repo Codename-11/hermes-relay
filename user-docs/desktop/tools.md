@@ -1,10 +1,10 @@
 # Local tool routing <ExperimentalBadge />
 
-The big feature. The remote Hermes agent can read, write, search, execute, capture, paste, and edit on **your machine** — not the server — through the same WSS relay it uses for chat. The agent's brain and conversation state stay on the host; your laptop is the hands.
+The big feature. The remote Hermes agent can read, write, search, execute, capture, paste, edit, and use explicitly brokered connected devices on **your machine** — not the server — through the same WSS relay it uses for chat. The agent's brain and conversation state stay on the host; your laptop is the hands.
 
 ## What the agent can do
 
-Tools are registered in the `desktop` toolset. The agent sees them as normal tools alongside its usual ones — no special syntax needed, just "read my notes" or "run `tsc --noEmit`". The shipped toolset is grouped into six families:
+Tools are registered in the `desktop` toolset. The agent sees them as normal tools alongside its usual ones — no special syntax needed, just "read my notes" or "run `tsc --noEmit`". The shipped toolset is grouped into seven families:
 
 **Filesystem**
 
@@ -20,7 +20,7 @@ Tools are registered in the `desktop` toolset. The agent sees them as normal too
 | Tool | Signature | Example use |
 |------|-----------|-------------|
 | `desktop_terminal` | `(command: string, cwd?: string, timeout?: number)` | "Run `tsc --noEmit` and tell me what's broken." `bash -lc` on POSIX, `cmd /c` on Windows. |
-| `desktop_powershell` | `(script: string, cwd?: string, timeout?: number)` | Runs a PowerShell script piped over stdin (`pwsh` preferred, falls back to `powershell`) — no `cmd.exe` quote-mangling. |
+| `desktop_powershell` | `(script: string, cwd?: string, timeout?: number, device?: string)` | Runs a private temporary PowerShell script (`pwsh` preferred, falls back to `powershell`) with complete UTF-8 stdout/stderr, native exit status, and explicit truncation metadata. |
 
 **Process management**
 
@@ -59,9 +59,53 @@ Tools are registered in the `desktop` toolset. The agent sees them as normal too
 | `desktop_screenshot` | `(display?: number \| string, save_to?: string)` | Capture all monitors (default), primary (`'primary'`), or a specific display (`1` / `2` / ...). Returns base64 + dimensions, or saves to `save_to` and returns the path. |
 | `desktop_open_in_editor` | `(path: string, line?: number, col?: number, wait?: boolean)` | Open a file in the user's editor. Detects `$VISUAL` → `$EDITOR` → `code` / `cursor` / `subl` / `nvim` / `vim` on PATH → platform fallback. Injects `-g path:line:col` for GUI editors. |
 
-That's the 23 tools the client advertises by default. A further **computer-use** family (`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` / `_cancel`) is registered for full local UI control but ships **experimental and off by default**. Enable it persistently with `hermes-relay computer-use enable` or from the Windows tray; one-process flag/env overrides remain available. Host input still fails closed without a task-scoped grant approved locally.
+**USB devices**
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
+| `desktop_usb_devices` | `(reason?: string)` | List USB devices visible to the selected desktop host. |
+| `desktop_usb_run` | `(executable: string, arguments?: string[], cwd?: string, timeout?: number, reason?: string)` | Direct-spawn a native or vendor USB utility without shell parsing. |
+
+**Android Debug Bridge service**
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
+| `desktop_adb_devices` | `(reason?: string)` | List devices visible to the local ADB backend. |
+| `desktop_adb_shell` | `(serial: string, command: string, timeout?: number, reason?: string)` | Run one bounded Android shell operation on an explicit serial. |
+| `desktop_adb_push` | `(serial: string, source: string, destination: string, timeout?: number, reason?: string)` | Push one local file to an explicit serial. |
+| `desktop_adb_pull` | `(serial: string, source: string, destination: string, timeout?: number, reason?: string)` | Pull one device file to the local PC. |
+| `desktop_adb_install` | `(serial: string, apk: string, replace?: boolean, timeout?: number, reason?: string)` | Install one local APK on an explicit serial. |
+| `desktop_adb_logcat` | `(serial: string, lines?: number, timeout?: number, reason?: string)` | Return a bounded recent logcat snapshot. |
+
+The two raw USB tools appear when the selected host's USB policy is Ask or
+Allow. The six ADB tools additionally require a working ADB backend. Structured
+mode omits the four general shell/process escape hatches but retains these
+separately gated USB paths. A further **computer-use** family
+(`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` /
+`_cancel`) is registered for full local UI control but ships **experimental and
+off by default**. Enable it persistently with `hermes-relay computer-use enable`
+or from the Windows tray; one-process flag/env overrides remain available. Host
+input still fails closed without a task-scoped grant approved locally.
 
 All tools run under a **30-second AbortController** ceiling enforced by the router. `desktop_terminal` / `desktop_powershell` accept a per-call `timeout` (seconds, per the wire spec — converted to ms internally) that's clamped to a 10-minute maximum. `desktop_screenshot` has its own 10 s timeout and 50 MB cap. `desktop_clipboard_*` 5 s timeout and 10 MB cap.
+
+Every client-routed tool also accepts `device`, using the stable device ID or an
+unambiguous computer name shown by `desktop_health`. It is optional with one
+connected PC and required when several desktop daemons are online. An
+untargeted call fails closed rather than choosing the latest heartbeat.
+
+Prefer the typed file, process, job, transfer, screen, clipboard, and connected-
+device tools for ordinary work. `desktop_terminal`, `desktop_powershell`,
+detached commands, and command jobs are intentionally labeled `system.execute`:
+because they run as your Windows user, they can indirectly access files and
+attached hardware. **Structured** mode withholds those four escape hatches. Its
+separate per-host Raw USB policy defaults Off, can Ask through the local
+approval card for every operation, or can Allow after explicit confirmation.
+It governs host-wide direct execution of native/vendor USB utilities and all
+enabled USB services; it is not scoped to one physical device. ADB remains a
+secondary service and its device operations require an exact serial. Full
+Access does not bypass USB policy. Camera and microphone remain unavailable
+until controlled paths exist.
 
 The router heartbeats `desktop.status` every 30 s, advertising the full handler-name list, so the server's `desktop` channel knows which tools your client can service. Servers ping `/desktop/_ping?tool=<name>` to fail fast when a tool isn't advertised.
 
@@ -168,7 +212,7 @@ How you approve depends on how the client is running:
 
 - **Interactive (`shell` / `chat` on a TTY):** a visible prompt appears in your terminal — type `yes` to approve.
 - **Headless (`daemon`, no TTY):** approvals route through the local file bridge at `~/.hermes/grant-bridge` (override with `HERMES_RELAY_GRANT_BRIDGE_DIR`). The daemon writes `request-<id>.json`; `hermes-relay grants` reviews it and writes the matching response. Without a local approver, the request times out and input stays failed-closed.
-- **Windows tray:** a new pending request raises a native security alert. Choose **Review pending grants…** to open the same `hermes-relay grants` review in a terminal. The tray never auto-approves a request and has no hidden approval window.
+- **Windows tray:** a pending request raises a dedicated borderless approval card without opening the main management UI. The card identifies the host, operation scope, and reason; it never auto-approves.
 
 Use `hermes-relay computer-use status` to see the persisted preference, daemon privilege, active grant/expiry, pending count, and whether a restart is required. Disabling desktop use requests exact-once cancellation from the running daemon. The Windows tray displays the same state and warns explicitly when an Administrator control grant is active.
 

@@ -2812,3 +2812,54 @@ empty transcript.
 longer operate on a silent latest-500 subset. Recovery stays cheap for ordinary
 sessions without allowing a bounded window to replace the complete visible
 history. Older Hermes releases remain compatible.
+
+---
+
+## ADR 51 — Desktop RPC is explicitly device-targeted and capability-honest
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** A Relay can retain several authorized desktop sessions, but the
+desktop channel historically latched one latest WebSocket. Pairing two PCs could
+therefore make an agent command change targets implicitly. The desktop surface
+also mixes typed file/process/screen operations with unrestricted terminal and
+PowerShell execution. Camera, microphone, and attached-device toggles cannot be
+claimed as security boundaries while unrestricted code still runs as the same
+Windows user.
+
+**Decision.** Every desktop advertises a stable installation `device_id` and
+display name. The Relay keeps all connected desktop WebSockets, accepts a
+`device` selector on every client-routed tool, binds pending responses to that
+WebSocket, and fails closed when more than one desktop is connected without an
+explicit target. Health reports enumerate valid targets, and successful RPCs
+identify the resolved target.
+
+Typed tools are the preferred automation surface and declare a capability such
+as `files.read`, `files.write`, `process.manage`, `screen.observe`, or
+`input.control`. `desktop_terminal`, `desktop_powershell`, detached processes,
+and background command jobs declare `system.execute`. This capability is an
+escape hatch: at user privilege it can transitively reach files, processes,
+USB devices, camera, or microphone through operating-system APIs. The UI must
+not present independent hardware-deny toggles as enforceable while
+`system.execute` remains enabled.
+
+Existing local policy remains authoritative on each target PC: Ask does not
+start the headless tool router without consent; Structured withholds
+`desktop_terminal`, `desktop_powershell`, detached process launch, and command
+job start; Trusted permits typed and execution tools but retains task grants for
+screen/input; Full Access bypasses those task grants for that Relay host.
+
+Hardware policy is separate and per host. USB defaults Disabled and exposes
+only typed, serial-bound ADB list, shell, push, pull, install, and bounded
+logcat operations. Ask raises the dedicated local approval card for every
+operation; Allow requires explicit confirmation. Full Access does not override
+the USB policy. Disabled or unavailable backends are omitted from advertised
+tools. Microphone and camera remain visibly unavailable until bounded
+brokers, active-use indication, and cancellation exist.
+
+**Consequences.** Agents cannot accidentally execute against whichever PC most
+recently sent a heartbeat, and a response from another PC cannot satisfy a
+targeted request. Common operations remain typed and auditable while raw shell
+power is labeled honestly. Structured mode makes the USB policy enforceable,
+and device operations appear as their own local Activity category. Microphone
+and camera controls are not shipped as cosmetic switches.
