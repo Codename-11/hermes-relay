@@ -64,7 +64,7 @@ hermes-relay hosts list
 hermes-relay daemon restart
 ```
 
-Access is stored per host. **Restricted** connects with no desktop tools, **Standard** enables typed operations without general raw command launch, and **Full Access** allows every available capability without task grants for the selected host. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera can be changed individually; doing so creates a Custom policy. Existing Ask, Structured, and Trusted policies keep their effective permissions during migration. ADB remains secondary to the host-wide Raw USB gate. The UI normally restarts a running daemon after a host or access change; use the explicit restart above if an interrupted transition left stale state.
+Access is stored per host. **Restricted** connects with no desktop tools, **Ask Every Time** requests local approval for each available operation, **Standard** enables typed operations without general raw command launch, and **Full Access** allows every available capability without task grants for the selected host. New pairings default to Ask Every Time, while existing hosts keep their stored policy. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera can be changed individually; an exact combination selects its preset automatically and any other combination is Custom. ADB remains secondary to the host-wide Raw USB gate. The UI normally restarts a running daemon after a host or access change; use the explicit restart above if an interrupted transition left stale state.
 
 ## A desktop-control request is waiting or needs to be stopped
 

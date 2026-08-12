@@ -2857,6 +2857,12 @@ the USB policy. Disabled or unavailable backends are omitted from advertised
 tools. Microphone and camera remain visibly unavailable until bounded
 brokers, active-use indication, and cancellation exist.
 
+The management UI names the legacy no-tools Ask state **Restricted**. A separate
+**Ask Every Time** preset advertises each available command, file, screen/input,
+and USB operation behind a per-operation local approval; unavailable brokers
+remain disabled. New pairings receive Ask Every Time explicitly, while missing
+or existing legacy policy records retain their previous fail-closed meaning.
+
 **Consequences.** Agents cannot accidentally execute against whichever PC most
 recently sent a heartbeat, and a response from another PC cannot satisfy a
 targeted request. Common operations remain typed and auditable while raw shell

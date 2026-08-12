@@ -206,6 +206,7 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
       grants: outcome.meta.grants,
       ttlExpiresAt: outcome.meta.ttlExpiresAt,
       endpointRole: target.endpointRole,
+      initializeAccessPolicy: true,
       ...(autoGrant ? { toolsConsented: true } : {})
     })
     process.stdout.write(t.okLine('Paired. Token stored in ~/.hermes/remote-sessions.json') + '\n')
@@ -228,11 +229,8 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
         )
       }
     } else {
-      // Nudge the daemon-first workflow: most users who pair from a terminal
-      // want desktop tools, and discovering --grant-tools after the fact means
-      // an extra `shell` round-trip. Surface it once, here.
       process.stdout.write(
-        t.muted('  tip: add --grant-tools to also enable desktop tools (needed for `daemon`).') + '\n'
+        t.muted('  desktop access: Ask Every Time (start `daemon`; each operation requires local approval).') + '\n'
       )
     }
 

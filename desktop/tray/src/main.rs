@@ -563,6 +563,8 @@ mod app {
         for host in &mut hosts {
             if host.access_mode == "full_access" {
                 host.access_mode = "full-access".to_string();
+            } else if host.access_mode == "ask_every_time" {
+                host.access_mode = "ask-every-time".to_string();
             }
         }
         let daemon = run_json(&["daemon", "status", "--json"])
@@ -720,7 +722,7 @@ mod app {
     fn set_host_access(remote: String, mode: String) -> Result<(), String> {
         if !matches!(
             mode.as_str(),
-            "ask" | "structured" | "trusted" | "full-access"
+            "ask" | "ask-every-time" | "structured" | "trusted" | "full-access"
         ) {
             return Err("invalid host access mode".to_string());
         }

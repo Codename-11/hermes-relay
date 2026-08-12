@@ -38,6 +38,8 @@ function args(positional: string[], flags: Record<string, string | true> = {}): 
 
 test('access mode parser accepts simplified names and compatibility aliases', () => {
   assert.equal(parseAccessMode('restricted'), 'ask')
+  assert.equal(parseAccessMode('ask-every-time'), 'ask_every_time')
+  assert.equal(parseAccessMode('prompt'), 'ask_every_time')
   assert.equal(parseAccessMode('standard'), 'structured')
   assert.equal(parseAccessMode('ask'), 'ask')
   assert.equal(parseAccessMode('trusted'), 'trusted')
@@ -47,10 +49,27 @@ test('access mode parser accepts simplified names and compatibility aliases', ()
   assert.equal(parseAccessMode('custom'), null)
   assert.equal(parseAccessMode('always'), null)
   assert.equal(displayAccessMode('ask'), 'restricted')
+  assert.equal(displayAccessMode('ask_every_time'), 'ask-every-time')
   assert.equal(displayAccessMode('structured'), 'standard')
   assert.equal(displayAccessMode('trusted'), 'custom')
   assert.equal(displayAccessMode('custom'), 'custom')
   assert.equal(displayAccessMode('full_access'), 'full-access')
+})
+
+test('a fresh paired session gets Ask Every Time while an existing policy is preserved', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hermes-new-pair-policy-'))
+  temporaryRoots.push(root)
+  setStorePath(join(root, 'sessions.json'))
+  setDesktopConfigPath(join(root, 'desktop-control.json'))
+  process.env.HERMES_RELAY_HOST_ACCESS_POLICY_PATH = join(root, 'host-access.json')
+  const url = 'wss://new.example.test:8767'
+
+  await saveSession(url, 'first-token', '1.2.3', { initializeAccessPolicy: true })
+  assert.equal(await getHostAccessMode(url), 'ask_every_time')
+
+  await hostsCommand(args(['access', 'restricted'], { remote: url, 'no-color': true }))
+  await saveSession(url, 'refreshed-token', '1.2.4', { initializeAccessPolicy: true })
+  assert.equal(await getHostAccessMode(url), 'ask')
 })
 
 test('USB capability policy requires confirmation for allow and rejects unavailable brokers', async () => {

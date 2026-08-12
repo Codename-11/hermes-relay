@@ -99,13 +99,15 @@ device tools for ordinary work. `desktop_terminal`, `desktop_powershell`,
 detached commands, and command jobs are intentionally labeled `system.execute`:
 because they run as your Windows user, they can indirectly access files and
 attached hardware. **Standard** mode withholds those four escape hatches.
-Raw USB defaults Off, can Ask through the local
+Newly paired hosts default to **Ask Every Time**, which routes every available
+command, file, screen/input, and USB operation through the local approval card.
+Raw USB can independently be Off, Ask through the local
 approval card for every operation, or can Allow after explicit confirmation.
 It governs host-wide direct execution of native/vendor USB utilities and all
 enabled USB services; it is not scoped to one physical device. ADB remains a
 secondary service and its device operations require an exact serial. Full
-Access overrides every available capability; changing one gate creates a
-Custom policy. Camera and microphone remain unavailable and unadvertised until
+Access overrides every available capability; changing one gate selects a matching
+preset automatically and otherwise creates a Custom policy. Camera and microphone remain unavailable and unadvertised until
 controlled paths exist.
 
 The router heartbeats `desktop.status` every 30 s, advertising the full handler-name list, so the server's `desktop` channel knows which tools your client can service. Servers ping `/desktop/_ping?tool=<name>` to fail fast when a tool isn't advertised.

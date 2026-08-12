@@ -7,6 +7,8 @@ import { promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+import { initializePairedHostAccessPolicy } from './lib/hostAccessPolicy.js'
+
 export interface RemoteSessionRecord {
   token: string
   serverVersion: string | null
@@ -149,6 +151,9 @@ export interface SaveSessionOptions {
   endpointRole?: string | null
   toolsConsented?: boolean
   computerUseConsented?: boolean
+  /** Set only on a successful fresh pairing. Existing sessions and policy are
+   * never rewritten by routine token/session refreshes. */
+  initializeAccessPolicy?: boolean
 }
 
 export const saveSession = async (
@@ -185,6 +190,9 @@ export const saveSession = async (
           : (prev?.computer_use_consented ?? false)
     })
     await writeFile(file)
+    if (!prev && options.initializeAccessPolicy) {
+      await initializePairedHostAccessPolicy(url)
+    }
   } catch {
     // Persistence failures are non-fatal — next run just re-pairs.
   }

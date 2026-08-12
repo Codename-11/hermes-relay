@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-export const HOST_ACCESS_MODES = ['ask', 'structured', 'trusted', 'full_access', 'custom'] as const
+export const HOST_ACCESS_MODES = ['ask', 'ask_every_time', 'structured', 'trusted', 'full_access', 'custom'] as const
 export const DESKTOP_CAPABILITIES = ['commands', 'files', 'screen_input'] as const
 export const HARDWARE_CAPABILITIES = ['usb', 'microphone', 'camera'] as const
 export const HOST_CAPABILITIES = [...DESKTOP_CAPABILITIES, ...HARDWARE_CAPABILITIES] as const
@@ -41,6 +41,9 @@ type PresetAccessMode = Exclude<HostAccessMode, 'custom'>
 
 export const PRESET_CAPABILITY_POLICIES: Readonly<Record<PresetAccessMode, CapabilityPolicies>> = Object.freeze({
   ask: Object.freeze({ ...DEFAULT_CAPABILITY_POLICIES }),
+  ask_every_time: Object.freeze({
+    commands: 'ask', files: 'ask', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled'
+  }),
   structured: Object.freeze({
     commands: 'disabled', files: 'allow', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled'
   }),
@@ -154,7 +157,7 @@ function mergePolicy(
 }
 
 export function inferAccessMode(capabilities: CapabilityPolicies): HostAccessMode {
-  for (const mode of ['ask', 'structured', 'trusted', 'full_access'] as const) {
+  for (const mode of ['ask', 'ask_every_time', 'structured', 'trusted', 'full_access'] as const) {
     if (sameCapabilities(capabilities, PRESET_CAPABILITY_POLICIES[mode])) return mode
   }
   return 'custom'
@@ -251,6 +254,28 @@ export async function setHostAccessMode(
   return policy
 }
 
+/** Initialize a newly paired host without changing an existing or migrated
+ * policy. Missing policy records otherwise keep the legacy fail-closed
+ * Restricted behavior. */
+export async function initializePairedHostAccessPolicy(
+  relayUrl: string,
+  filePath = hostAccessPolicyPath()
+): Promise<HostAccessPolicy> {
+  const canonical = canonicalRelayUrl(relayUrl)
+  if (!canonical) throw new Error('host access policy requires a valid ws:// or wss:// relay URL')
+  const store = await readHostAccessPolicies(filePath)
+  const existing = store.hosts[canonical]
+  if (existing) return existing
+  const policy: HostAccessPolicy = {
+    access_mode: 'ask_every_time',
+    capabilities: presetCapabilityPolicies('ask_every_time'),
+    updated_at: new Date().toISOString()
+  }
+  store.hosts[canonical] = policy
+  await writeJsonAtomic(filePath, store)
+  return policy
+}
+
 export async function getHostCapabilityPolicies(
   relayUrl: string,
   filePath = hostAccessPolicyPath()
@@ -279,10 +304,11 @@ export async function setHostCapabilityPolicy(
   if (current.capabilities[capability] === mode) return current
   const policy: HostAccessPolicy = {
     ...current,
-    access_mode: 'custom',
     capabilities: { ...current.capabilities, [capability]: mode },
+    access_mode: 'custom',
     updated_at: new Date().toISOString()
   }
+  policy.access_mode = inferAccessMode(policy.capabilities)
   store.hosts[canonical] = policy
   await writeJsonAtomic(filePath, store)
   return policy

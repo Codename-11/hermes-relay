@@ -155,6 +155,7 @@ export async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
     const relay = new RelayTransport(cfg)
     relay.onAuthSuccess((token, ver, meta) => {
       void saveSession(url, token, ver, {
+        initializeAccessPolicy: true,
         grants: meta.grants,
         ttlExpiresAt: meta.ttlExpiresAt,
         endpointRole

@@ -55,6 +55,7 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "resolve_grant",
         "Standard",
         "Restricted",
+        "Ask Every Time",
         "Capabilities",
         "Raw USB access",
         "Android Debug Bridge",

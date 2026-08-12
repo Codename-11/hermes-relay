@@ -114,6 +114,7 @@ export async function toolsCommand(args: ParsedArgs): Promise<number> {
   const relay = new RelayTransport(relayCfg)
   relay.onAuthSuccess((token, ver, meta) => {
     void saveSession(url, token, ver, {
+      initializeAccessPolicy: true,
       grants: meta.grants,
       ttlExpiresAt: meta.ttlExpiresAt,
       endpointRole

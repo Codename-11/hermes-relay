@@ -13,6 +13,7 @@ Full reference for every `hermes-relay` verb. Flags map one-to-one with env vars
 | `status` | Local view of stored sessions. Default-redacts tokens. |
 | `tools` | Server-side tool inventory (`tools.list` RPC). |
 | `devices` | Server-side paired-device management — list / revoke / extend. |
+| `hosts` | Select locally paired hosts and configure per-host access and capabilities. |
 | `relay` | Inspect the relay server — `info`, `security`, injected `context`. |
 | `daemon` | Headless tool router — keeps `desktop_*` tools advertised even with no shell open. `daemon start` runs it in the background. |
 | `computer-use` | Persistently enable/disable experimental screenshot and input tools; show or cancel the active grant. |
@@ -23,6 +24,21 @@ Full reference for every `hermes-relay` verb. Flags map one-to-one with env vars
 | `workspace` | Print local workspace context (cwd / git / editor / shell) — same envelope shipped to the relay on connect. |
 | `logo` | Print the Hermes Relay banner. |
 | `help` | Print full help. |
+
+## `hermes-relay hosts`
+
+Manage which paired Hermes host the desktop daemon serves and its local access policy. New pairings default to **Ask Every Time**; legacy `ask` remains a compatibility alias for **Restricted**.
+
+```bash
+hermes-relay hosts list
+hermes-relay hosts select wss://home.example:8767
+hermes-relay hosts access restricted --remote wss://home.example:8767
+hermes-relay hosts access ask-every-time --remote wss://home.example:8767
+hermes-relay hosts access standard --remote wss://home.example:8767
+hermes-relay hosts access full-access --remote wss://home.example:8767 --yes
+```
+
+Capability changes automatically select a matching preset; combinations that do not match one are shown as **Custom**.
 
 ## `hermes-relay` (bare — defaults to `shell`)
 

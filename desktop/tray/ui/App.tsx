@@ -143,6 +143,7 @@ function friendlyUpdateError(error: unknown): string {
 
 const accessCopy: Record<AccessMode, string> = {
   ask: 'All desktop capabilities are off. The relay connection stays ready.',
+  'ask-every-time': 'Each available command, file, screen, input, or USB operation asks first.',
   structured: 'Files are allowed. Screen, input, and USB ask first. Raw commands stay off.',
   trusted: 'Individual capabilities use the settings migrated from the former Trusted preset.',
   'full-access': 'Every available capability is allowed without task grants.',
@@ -150,7 +151,7 @@ const accessCopy: Record<AccessMode, string> = {
 }
 
 const accessLabel: Record<AccessMode, string> = {
-  ask: 'Restricted', structured: 'Standard', trusted: 'Custom', 'full-access': 'Full Access', custom: 'Custom'
+  ask: 'Restricted', 'ask-every-time': 'Ask Every Time', structured: 'Standard', trusted: 'Custom', 'full-access': 'Full Access', custom: 'Custom'
 }
 
 const capabilityLabel: Record<CapabilityMode, string> = {
@@ -189,9 +190,9 @@ function ManagementApp() {
           name: h.name || displayHost(h.url),
           capabilities: {
             commands: capabilities.commands ?? (h.access_mode === 'full-access' ? 'allow' : h.access_mode === 'trusted' ? 'allow' : 'disabled'),
-            files: capabilities.files ?? (h.access_mode === 'ask' ? 'disabled' : 'allow'),
+            files: capabilities.files ?? (h.access_mode === 'ask' ? 'disabled' : h.access_mode === 'ask-every-time' ? 'ask' : 'allow'),
             screen_input: capabilities.screen_input ?? (h.access_mode === 'full-access' ? 'allow' : h.access_mode === 'ask' ? 'disabled' : 'ask'),
-            usb: capabilities.usb ?? 'disabled',
+            usb: capabilities.usb ?? (h.access_mode === 'ask-every-time' ? 'ask' : 'disabled'),
             microphone: capabilities.microphone ?? 'disabled',
             camera: capabilities.camera ?? 'disabled'
           }
@@ -384,7 +385,7 @@ function ManagementApp() {
     {pending && <div className="modal-backdrop" role="presentation"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <div className="modal-icon">{pending.type === 'revoke' ? <UserRoundX /> : pending.type === 'clear-activity' ? <Trash2 /> : <AlertTriangle />}</div>
       <h2 id="confirm-title">{pending.type === 'access' ? `Give ${host?.name} full access?` : pending.type === 'capability' ? `Always allow ${pending.capability.replace('_', ' & ')} for ${host?.name}?` : pending.type === 'revoke' ? `Deauthorize ${pending.client.device_name ?? pending.client.token_prefix}?` : 'Clear local activity?'}</h2>
-      <p>{pending.type === 'access' ? 'Every available capability will be allowed without task grants. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This changes the host to Custom and allows this capability without per-operation approval.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
+      <p>{pending.type === 'access' ? 'Every available capability will be allowed without task grants. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This allows the capability without per-operation approval. The matching preset is selected automatically; otherwise the policy becomes Custom.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
       <div className="modal-actions"><button className="secondary" onClick={() => setPending(null)}>Cancel</button><button className="danger" onClick={confirmPending}>{pending.type === 'access' ? 'Enable Full Access' : pending.type === 'capability' ? 'Allow capability' : pending.type === 'revoke' ? 'Deauthorize' : 'Clear activity'}</button></div>
     </div></div>}
   </div>
@@ -556,6 +557,7 @@ function AccessPage({ host, busy, onBack, onChoose }: { host: Host | null; busy:
   const customPolicy = host.access_mode === 'custom' || host.access_mode === 'trusted'
   const options: Array<{ mode: AccessMode; Icon: typeof CircleHelp }> = [
     { mode: 'ask', Icon: LockKeyhole },
+    { mode: 'ask-every-time', Icon: CircleHelp },
     { mode: 'structured', Icon: ShieldCheck },
     { mode: 'full-access', Icon: Monitor }
   ]
@@ -576,7 +578,7 @@ function CapabilitiesPage({ host, availability, busy, onBack, onChoose }: { host
   if (!host) return <div className="page-panel large-empty"><SlidersHorizontal /><h2>No host selected</h2><button onClick={onBack}>Back to Overview</button></div>
   return <section className="page-panel policy-detail-page">
     <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Overview</button><p>{host.name}</p><h1>Capabilities</h1></div></div>
-    <p className="page-intro">Presets set these together. Changing one capability creates a Custom policy.</p>
+    <p className="page-intro">Presets set these together. Capability changes select a matching preset automatically; other combinations become Custom.</p>
     <div className="capability-list">
       <CapabilityRow capability="commands" title="Command execution" copy="PowerShell, terminal and process launch" icon={<TerminalSquare />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy} onChoose={onChoose} />
       <CapabilityRow capability="files" title="Files" copy="Read, write, search and transfer" icon={<FileText />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy} onChoose={onChoose} />

@@ -45,14 +45,19 @@ together. The installer download is verified against the release
 running daemon, and relaunches the tray after the silent replacement.
 
 Access is selected per host. **Restricted** keeps the connection available but
-attaches no desktop tools. **Standard** enables typed operations while withholding
+attaches no desktop tools. **Ask Every Time** advertises available command, file,
+screen/input, and USB operations but requires local approval for each one. It is
+the default for newly paired hosts; existing hosts retain their stored policy.
+**Standard** enables typed operations while withholding
 raw terminal, PowerShell, detached-process, and command-job launch. **Full Access**
 allows every available capability without task grants for that host;
 authentication, audit, deauthorization, emergency stop, and UAC boundaries
 still apply. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera
-form one per-host capability ledger. Changing an individual gate creates a
+form one per-host capability ledger. Changing an individual gate selects an exact
+preset when the resulting combination matches one and otherwise creates a
 **Custom** policy. Existing `ask`, `structured`, and `trusted` CLI values remain
-accepted as compatibility aliases. Raw USB gates direct native/vendor USB utility
+accepted as compatibility aliases; legacy `ask` still means Restricted, while
+the new preset is `ask-every-time`. Raw USB gates direct native/vendor USB utility
 execution plus secondary services such as ADB. Microphone and camera remain
 unavailable until their controlled paths exist.
 
@@ -280,6 +285,7 @@ Select a host policy from the tray or use the CLI:
 ```sh
 hermes-relay hosts list --json
 hermes-relay hosts select ws://192.168.1.100:8767
+hermes-relay hosts access ask-every-time --remote ws://192.168.1.100:8767
 hermes-relay hosts access standard --remote ws://192.168.1.100:8767
 hermes-relay hosts capability commands allow --remote ws://192.168.1.100:8767 --yes
 hermes-relay hosts capability files ask --remote ws://192.168.1.100:8767

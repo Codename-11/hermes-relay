@@ -1,4 +1,4 @@
-export type AccessMode = 'ask' | 'structured' | 'trusted' | 'full-access' | 'custom'
+export type AccessMode = 'ask' | 'ask-every-time' | 'structured' | 'trusted' | 'full-access' | 'custom'
 export type CapabilityMode = 'disabled' | 'ask' | 'allow'
 export type Capability = 'commands' | 'files' | 'screen_input' | 'usb' | 'microphone' | 'camera'
 

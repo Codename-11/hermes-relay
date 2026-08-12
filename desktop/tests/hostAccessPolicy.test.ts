@@ -11,6 +11,7 @@ import {
   getHostCapabilityPolicies,
   getHostAccessMode,
   hasFullAccess,
+  initializePairedHostAccessPolicy,
   parseHostAccessPolicyFile,
   readHostAccessPolicies,
   removeHostAccessPolicy,
@@ -102,6 +103,7 @@ test('duplicate canonical entries choose the most restrictive valid policy', () 
 
 test('routing helpers bypass task grants only for full access', () => {
   assert.equal(requiresTaskGrant('ask'), true)
+  assert.equal(requiresTaskGrant('ask_every_time'), true)
   assert.equal(requiresTaskGrant('structured'), true)
   assert.equal(requiresTaskGrant('trusted'), true)
   assert.equal(requiresTaskGrant('full_access'), false)
@@ -109,7 +111,7 @@ test('routing helpers bypass task grants only for full access', () => {
   assert.equal(hasFullAccess('full_access'), true)
 })
 
-test('capability changes create Custom while presets replace the full capability set', async () => {
+test('capability changes recognize exact presets while other combinations remain Custom', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hermes-host-access-'))
   const filePath = join(dir, 'desktop-host-access.json')
   try {
@@ -119,12 +121,39 @@ test('capability changes create Custom while presets replace the full capability
     })
     await setHostCapabilityPolicy('wss://relay.example', 'usb', 'ask', filePath)
     assert.equal(await getHostAccessMode('wss://relay.example', filePath), 'custom')
+    await setHostAccessMode('wss://relay.example', 'ask_every_time', filePath)
+    assert.deepEqual(await getHostCapabilityPolicies('wss://relay.example', filePath), {
+      commands: 'ask', files: 'ask', screen_input: 'ask',
+      usb: 'ask', microphone: 'disabled', camera: 'disabled'
+    })
+    await setHostCapabilityPolicy('wss://relay.example', 'commands', 'disabled', filePath)
+    assert.equal(await getHostAccessMode('wss://relay.example', filePath), 'custom')
+    await setHostCapabilityPolicy('wss://relay.example', 'files', 'allow', filePath)
+    assert.equal(await getHostAccessMode('wss://relay.example', filePath), 'structured')
     await setHostAccessMode('wss://relay.example', 'structured', filePath)
     assert.equal(await getHostAccessMode('wss://relay.example', filePath), 'structured')
     assert.deepEqual(await getHostCapabilityPolicies('wss://relay.example', filePath), {
       commands: 'disabled', files: 'allow', screen_input: 'ask',
       usb: 'ask', microphone: 'disabled', camera: 'disabled'
     })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('new pairing initialization defaults to Ask Every Time without overwriting existing hosts', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hermes-host-access-'))
+  const filePath = join(dir, 'desktop-host-access.json')
+  try {
+    const created = await initializePairedHostAccessPolicy('wss://relay.example', filePath)
+    assert.equal(created.access_mode, 'ask_every_time')
+    assert.deepEqual(created.capabilities, {
+      commands: 'ask', files: 'ask', screen_input: 'ask',
+      usb: 'ask', microphone: 'disabled', camera: 'disabled'
+    })
+    await setHostAccessMode('wss://relay.example', 'ask', filePath)
+    const preserved = await initializePairedHostAccessPolicy('WSS://RELAY.EXAMPLE:443/', filePath)
+    assert.equal(preserved.access_mode, 'ask')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

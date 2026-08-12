@@ -25,15 +25,15 @@ const HOSTS_USAGE: UsageSpec = {
     'hosts [list] [--json]',
     'hosts select <relay-url>',
     'hosts rename <relay-url> <name>',
-    'hosts access <restricted|standard|full-access> [--remote <url>] [--yes]',
+    'hosts access <restricted|ask-every-time|standard|full-access> [--remote <url>] [--yes]',
     'hosts capability <commands|files|screen-input|usb|microphone|camera> <disabled|ask|allow> [--remote <url>] [--yes]'
   ],
   subcommands: [
     { verb: 'list', desc: 'List locally paired Hermes hosts (default)' },
     { verb: 'select <url>', desc: 'Choose the host used by the tray and daemon' },
     { verb: 'rename <url> <name>', desc: 'Set a local display name for a paired host' },
-    { verb: 'access <mode>', desc: 'Set a Restricted, Standard, or Full Access preset' },
-    { verb: 'capability <name> <mode>', desc: 'Set one capability; creates a Custom policy' }
+    { verb: 'access <mode>', desc: 'Set a Restricted, Ask Every Time, Standard, or Full Access preset' },
+    { verb: 'capability <name> <mode>', desc: 'Set one capability; exact presets are recognized automatically' }
   ],
   flags: [
     { flag: '--remote <url>', desc: 'Host targeted by the access command' },
@@ -43,6 +43,7 @@ const HOSTS_USAGE: UsageSpec = {
   examples: [
     'hermes-relay hosts --json',
     'hermes-relay hosts select wss://home.example:8767',
+    'hermes-relay hosts access ask-every-time --remote wss://home.example:8767',
     'hermes-relay hosts access standard --remote wss://home.example:8767',
     'hermes-relay hosts capability usb ask --remote wss://home.example:8767'
   ]
@@ -70,12 +71,14 @@ function hostLabel(url: string): string {
 export function parseAccessMode(value: string | undefined): HostAccessMode | null {
   const normalized = value?.trim().toLowerCase().replaceAll('-', '_')
   if (normalized === 'restricted') return 'ask'
+  if (normalized === 'prompt' || normalized === 'ask_every_time') return 'ask_every_time'
   if (normalized === 'standard') return 'structured'
   return isHostAccessMode(normalized) && normalized !== 'custom' ? normalized : null
 }
 
 export function displayAccessMode(mode: HostAccessMode): string {
   if (mode === 'ask') return 'restricted'
+  if (mode === 'ask_every_time') return 'ask-every-time'
   if (mode === 'structured') return 'standard'
   if (mode === 'trusted' || mode === 'custom') return 'custom'
   return 'full-access'
@@ -159,7 +162,7 @@ async function selectHost(args: ParsedArgs): Promise<number> {
 async function setAccess(args: ParsedArgs): Promise<number> {
   const mode = parseAccessMode(args.positional[0])
   if (!mode) {
-    process.stderr.write('error: access mode must be restricted, standard, or full-access\n')
+    process.stderr.write('error: access mode must be restricted, ask-every-time, standard, or full-access\n')
     return 2
   }
   const requested = typeof args.flags.remote === 'string' ? args.flags.remote.trim() : ''
@@ -237,7 +240,7 @@ async function setCapability(args: ParsedArgs): Promise<number> {
   else {
     const t = makeTheme({ noColor: !!args.flags['no-color'] })
     const label = normalizedCapability === 'usb' ? 'Raw USB' : normalizedCapability.replace('_', '/')
-    process.stdout.write(t.okLine(`${hostLabel(url)} ${label} access set to ${mode} (Custom)`) + '\n')
+    process.stdout.write(t.okLine(`${hostLabel(url)} ${label} access set to ${mode} (${displayAccessMode(policy.access_mode)})`) + '\n')
     process.stdout.write(t.muted('Restart the daemon to apply this policy.') + '\n')
   }
   return 0
