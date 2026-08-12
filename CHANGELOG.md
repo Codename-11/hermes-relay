@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
+- Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.
 
 ### Changed
 

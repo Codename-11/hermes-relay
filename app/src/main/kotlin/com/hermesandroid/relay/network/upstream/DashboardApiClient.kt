@@ -38,13 +38,18 @@ import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import okio.BufferedSink
 
 // Status/session/provider snapshots are @Serializable so the Manage tab's
 // disk cache (DashboardManageDiskCache) can persist Loaded entries verbatim.
@@ -175,6 +180,71 @@ data class DashboardCustomEndpointValidation(
     val message: String,
     val models: List<String>,
 )
+
+internal class BoundedStreamRequestBody(
+    private val declaredLength: Long?,
+    private val limitBytes: Long,
+    private val openStream: () -> InputStream,
+) : RequestBody() {
+    init {
+        require(limitBytes > 0)
+        require(declaredLength == null || declaredLength >= 0)
+        require(declaredLength == null || declaredLength <= limitBytes) {
+            "Backup archive exceeds the ${limitBytes / (1024 * 1024)} MB upload limit."
+        }
+    }
+
+    override fun contentType() = "application/zip".toMediaType()
+
+    override fun contentLength(): Long = declaredLength ?: -1L
+
+    override fun writeTo(sink: BufferedSink) {
+        openStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var written = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                written += read
+                if (written > limitBytes) {
+                    throw IOException("Backup archive exceeds the ${limitBytes / (1024 * 1024)} MB upload limit.")
+                }
+                sink.write(buffer, 0, read)
+            }
+            if (declaredLength != null && written != declaredLength) {
+                throw IOException("Backup archive changed while it was being read.")
+            }
+        }
+    }
+}
+
+internal fun copyBounded(
+    input: InputStream,
+    output: OutputStream,
+    declaredLength: Long?,
+    limitBytes: Long,
+): Long {
+    require(limitBytes > 0)
+    require(declaredLength == null || declaredLength >= 0)
+    require(declaredLength == null || declaredLength <= limitBytes) {
+        "Backup archive exceeds the ${limitBytes / (1024 * 1024)} MB download limit."
+    }
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    var written = 0L
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        written += read
+        if (written > limitBytes) {
+            throw IOException("Backup archive exceeds the ${limitBytes / (1024 * 1024)} MB download limit.")
+        }
+        output.write(buffer, 0, read)
+    }
+    if (declaredLength != null && written != declaredLength) {
+        throw IOException("Backup archive changed while it was being downloaded.")
+    }
+    return written
+}
 
 /** One entry from `GET /api/audio/elevenlabs/voices` — non-secret voice metadata. */
 data class ElevenLabsVoice(
@@ -526,6 +596,157 @@ class DashboardApiClient(
     /** Create a host-owned Hermes backup, distinct from Android settings export. */
     suspend fun createServerBackup(): Result<JsonObject> =
         postJsonObject("/api/ops/backup")
+
+    /** Download only archives created inside upstream's guarded dashboard backup directory. */
+    suspend fun downloadServerBackup(
+        archive: String,
+        openOutput: () -> OutputStream,
+    ): Result<String> = download(
+        path = "/api/ops/backup/download?archive=${queryValue(archive)}",
+        operation = "Hermes backup",
+        openOutput = openOutput,
+    )
+
+    /** Import a server-local archive path after the user confirms the destructive restore. */
+    suspend fun importServerBackup(archive: String): Result<JsonObject> =
+        postJsonObject(
+            path = "/api/ops/import",
+            payload = buildJsonObject { put("archive", archive) },
+        )
+
+    /** Upload an Android-selected zip to upstream's guarded staging directory and start import. */
+    suspend fun uploadServerBackup(
+        filename: String,
+        contentLength: Long?,
+        openStream: () -> InputStream,
+        force: Boolean = false,
+    ): Result<JsonObject> = withContext(Dispatchers.IO) {
+        val path = "/api/ops/import-upload"
+        val httpUrl = resolveUrl(path) ?: return@withContext Result.failure(invalidUrlException())
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("force", force.toString())
+            .addFormDataPart(
+                "file",
+                filename.ifBlank { "hermes-backup.zip" },
+                runCatching {
+                    BoundedStreamRequestBody(contentLength, MAX_BACKUP_TRANSFER_BYTES, openStream)
+                }.getOrElse { return@withContext Result.failure(it) },
+            )
+            .build()
+        executeJson(Request.Builder().url(httpUrl).post(body).build(), path)
+    }
+
+    suspend fun getLearningNode(id: String, profile: String? = null): Result<JsonObject> =
+        getJsonObject("/api/learning/node?id=${queryValue(id)}${profileQuerySuffix(profile)}")
+
+    suspend fun updateLearningNode(
+        id: String,
+        content: String,
+        profile: String? = null,
+    ): Result<JsonObject> = putJsonObject(
+        path = "/api/learning/node",
+        payload = buildJsonObject {
+            put("id", id)
+            put("content", content)
+            profile?.trim()?.takeIf(String::isNotBlank)?.let { put("profile", it) }
+        },
+    )
+
+    suspend fun deleteLearningNode(id: String, profile: String? = null): Result<JsonObject> =
+        deleteJsonObjectWithBody(
+            path = "/api/learning/node",
+            payload = buildJsonObject {
+                put("id", id)
+                profile?.trim()?.takeIf(String::isNotBlank)?.let { put("profile", it) }
+            },
+        )
+
+    suspend fun selectMemoryProvider(provider: String): Result<JsonObject> =
+        putJsonObject(
+            path = "/api/memory/provider",
+            payload = buildJsonObject { put("provider", provider) },
+        )
+
+    /** Activate an already-configured provider inside the selected upstream profile. */
+    suspend fun activateMemoryProvider(provider: String, profile: String? = null): Result<JsonObject> =
+        updateMemoryProviderConfig(provider, JsonObject(emptyMap()), profile)
+
+    suspend fun getMemoryProviderConfig(
+        provider: String,
+        profile: String? = null,
+    ): Result<JsonObject> = getJsonObject(
+        "/api/memory/providers/${pathSegment(provider)}/config${profileQuery(profile)}",
+    )
+
+    suspend fun updateMemoryProviderConfig(
+        provider: String,
+        values: JsonObject,
+        profile: String? = null,
+    ): Result<JsonObject> = putJsonObject(
+        path = "/api/memory/providers/${pathSegment(provider)}/config${profileQuery(profile)}",
+        payload = buildJsonObject { put("values", values) },
+    )
+
+    suspend fun setupMemoryProvider(provider: String): Result<JsonObject> =
+        postJsonObject(
+            path = "/api/memory/providers/${pathSegment(provider)}/setup",
+            // Dependency installation is host-global upstream. Do not submit
+            // profile-owned values through this unscoped route.
+            payload = buildJsonObject { put("values", JsonObject(emptyMap())) },
+        )
+
+    suspend fun startWhatsAppOnboarding(
+        mode: String,
+        allowedUsers: String,
+        profile: String? = null,
+    ): Result<JsonObject> = postJsonObject(
+        path = "/api/messaging/whatsapp/onboarding/start",
+        payload = buildJsonObject {
+            put("mode", mode)
+            put("allowed_users", allowedUsers)
+            profile?.trim()?.takeIf(String::isNotBlank)?.let { put("profile", it) }
+        },
+    )
+
+    suspend fun getWhatsAppOnboarding(pairingId: String): Result<JsonObject> =
+        getJsonObject("/api/messaging/whatsapp/onboarding/${pathSegment(pairingId)}")
+
+    suspend fun applyWhatsAppOnboarding(
+        pairingId: String,
+        mode: String,
+        allowedUsers: String,
+        profile: String? = null,
+    ): Result<JsonObject> = postJsonObject(
+        path = "/api/messaging/whatsapp/onboarding/${pathSegment(pairingId)}/apply",
+        payload = buildJsonObject {
+            put("mode", mode)
+            put("allowed_users", allowedUsers)
+            profile?.trim()?.takeIf(String::isNotBlank)?.let { put("profile", it) }
+        },
+    )
+
+    suspend fun cancelWhatsAppOnboarding(pairingId: String): Result<JsonObject> =
+        deleteJsonObject("/api/messaging/whatsapp/onboarding/${pathSegment(pairingId)}")
+
+    suspend fun setMessagingPlatformEnabled(
+        platform: String,
+        enabled: Boolean,
+        profile: String? = null,
+    ): Result<JsonObject> = putJsonObject(
+        path = "/api/messaging/platforms/${pathSegment(platform)}${profileQuery(profile)}",
+        payload = buildJsonObject {
+            put("enabled", enabled)
+            put("env", JsonObject(emptyMap()))
+            put("clear_env", JsonArray(emptyList()))
+            profile?.trim()?.takeIf(String::isNotBlank)?.let { put("profile", it) }
+        },
+    )
+
+    suspend fun testMessagingPlatform(platform: String, profile: String? = null): Result<JsonObject> =
+        postJsonObject(
+            "/api/messaging/platforms/${pathSegment(platform)}/test${profileQuery(profile)}",
+        )
 
     suspend fun setProfileDescription(name: String, description: String): Result<JsonObject> =
         putJsonObject(
@@ -1246,10 +1467,44 @@ class DashboardApiClient(
         }
     }
 
+    private suspend fun download(
+        path: String,
+        operation: String,
+        openOutput: () -> OutputStream,
+    ): Result<String> =
+        withContext(Dispatchers.IO) {
+            val httpUrl = resolveUrl(path) ?: return@withContext Result.failure(invalidUrlException())
+            val request = Request.Builder().url(httpUrl).get().build()
+            try {
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext Result.failure(apiFailure(response, operation))
+                    val disposition = response.header("Content-Disposition").orEmpty()
+                    val filename = Regex("filename=\\\"?([^\\\";]+)").find(disposition)?.groupValues?.get(1)
+                        ?: "hermes-backup.zip"
+                    val body = response.body
+                    val declaredLength = body.contentLength().takeIf { it >= 0 }
+                    if (declaredLength != null && declaredLength > MAX_BACKUP_TRANSFER_BYTES) {
+                        throw IOException("Backup archive exceeds the ${MAX_BACKUP_TRANSFER_BYTES / (1024 * 1024)} MB download limit.")
+                    }
+                    openOutput().use { output ->
+                        body.byteStream().use { input ->
+                            copyBounded(input, output, declaredLength, MAX_BACKUP_TRANSFER_BYTES)
+                        }
+                    }
+                    Result.success(filename)
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         private const val DEFAULT_SESSION_PROFILE_SCOPE = "__dashboard_default__"
         internal const val ACTIVE_SESSION_PR_MISS_TTL_MILLIS = 60_000L
+        // Mirrors current upstream `_MANAGED_FILE_MAX_BYTES`; enforcing it
+        // client-side avoids uploading a body the Dashboard will reject.
+        internal const val MAX_BACKUP_TRANSFER_BYTES = 100L * 1024L * 1024L
 
         fun pathSegment(value: String): String =
             URLEncoder.encode(value, "UTF-8").replace("+", "%20")
@@ -1305,6 +1560,11 @@ class DashboardApiClient(
         private fun profileQuery(profile: String?): String {
             val trimmed = profile?.trim().orEmpty()
             return if (trimmed.isBlank()) "" else "?profile=${pathSegment(trimmed)}"
+        }
+
+        private fun profileQuerySuffix(profile: String?): String {
+            val trimmed = profile?.trim().orEmpty()
+            return if (trimmed.isBlank()) "" else "&profile=${queryValue(trimmed)}"
         }
 
         private fun profileLimitQuery(profile: String?, limit: Int): String {

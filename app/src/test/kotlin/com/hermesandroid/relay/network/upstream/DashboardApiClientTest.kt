@@ -14,8 +14,13 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
+import okio.Buffer
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 
 class DashboardApiClientTest {
 
@@ -1556,6 +1561,153 @@ class DashboardApiClientTest {
 
         assertEquals(true, settings.showReasoning)
         assertEquals("off", settings.toolDisplay)
+    }
+
+    @Test
+    fun serverBackup_createDownloadAndImport_useUpstreamContracts() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"archive":"/srv/backups/a.zip"}"""))
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/zip")
+                .setHeader("Content-Disposition", "attachment; filename=\"a.zip\"")
+                .setBody("archive-bytes"),
+        )
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"name":"import"}"""))
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"name":"import"}"""))
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val created = client.createServerBackup().getOrThrow()
+        val downloadSink = ByteArrayOutputStream()
+        val downloadedFilename = client.downloadServerBackup(created["archive"]!!.toString().trim('"')) {
+            downloadSink
+        }.getOrThrow()
+        client.importServerBackup("/srv/backups/a.zip").getOrThrow()
+        val uploadBytes = "zip-data".encodeToByteArray()
+        client.uploadServerBackup("phone.zip", uploadBytes.size.toLong()) {
+            ByteArrayInputStream(uploadBytes)
+        }.getOrThrow()
+
+        assertEquals("POST", server.takeRequest().method)
+        val downloadRequest = server.takeRequest()
+        assertEquals("/api/ops/backup/download", downloadRequest.requestUrl!!.encodedPath)
+        assertEquals("/srv/backups/a.zip", downloadRequest.requestUrl!!.queryParameter("archive"))
+        assertEquals("a.zip", downloadedFilename)
+        assertEquals("archive-bytes", downloadSink.toString(Charsets.UTF_8.name()))
+        val importRequest = server.takeRequest()
+        assertEquals("/api/ops/import", importRequest.requestUrl!!.encodedPath)
+        assertTrue(importRequest.body.readUtf8().contains(""""archive":"/srv/backups/a.zip""""))
+        val upload = server.takeRequest()
+        assertEquals("/api/ops/import-upload", upload.requestUrl!!.encodedPath)
+        val uploadBody = upload.body.readUtf8()
+        assertTrue(uploadBody.contains("filename=\"phone.zip\""))
+        assertTrue(uploadBody.contains("zip-data"))
+    }
+
+    @Test
+    fun boundedStreamRequestBody_streamsAndEnforcesDeclaredAndObservedLimits() {
+        val payload = "streamed-archive".encodeToByteArray()
+        val sink = Buffer()
+        BoundedStreamRequestBody(payload.size.toLong(), 32L) {
+            ByteArrayInputStream(payload)
+        }.writeTo(sink)
+        assertEquals("streamed-archive", sink.readUtf8())
+
+        assertThrows(IllegalArgumentException::class.java) {
+            BoundedStreamRequestBody(declaredLength = 33L, limitBytes = 32L) {
+                ByteArrayInputStream(byteArrayOf())
+            }
+        }
+
+        val oversizedUnknownLength = BoundedStreamRequestBody(null, 8L) {
+            ByteArrayInputStream("ninebytes".encodeToByteArray())
+        }
+        assertThrows(IOException::class.java) { oversizedUnknownLength.writeTo(Buffer()) }
+    }
+
+    @Test
+    fun copyBounded_streamsDownloadAndRejectsDeclaredAndObservedOverflow() {
+        val output = ByteArrayOutputStream()
+        val copied = copyBounded(
+            ByteArrayInputStream("download".encodeToByteArray()),
+            output,
+            declaredLength = 8L,
+            limitBytes = 16L,
+        )
+        assertEquals(8L, copied)
+        assertEquals("download", output.toString(Charsets.UTF_8.name()))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            copyBounded(ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), 17L, 16L)
+        }
+        assertThrows(IOException::class.java) {
+            copyBounded(
+                ByteArrayInputStream("seventeen-byte-doc".encodeToByteArray()),
+                ByteArrayOutputStream(),
+                declaredLength = null,
+                limitBytes = 16L,
+            )
+        }
+    }
+
+    @Test
+    fun downloadServerBackup_rejectsDeclaredOversizeBeforeOpeningDestination() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/zip")
+                .setHeader("Content-Length", DashboardApiClient.MAX_BACKUP_TRANSFER_BYTES + 1),
+        )
+        var destinationOpened = false
+        val result = DashboardApiClient(baseUrl = server.url("/").toString())
+            .downloadServerBackup("/srv/backups/oversize.zip") {
+                destinationOpened = true
+                ByteArrayOutputStream()
+            }
+
+        assertTrue(result.isFailure)
+        assertFalse(destinationOpened)
+    }
+
+    @Test
+    fun learningMutations_preserveNodeIdAndProfile() = runTest {
+        repeat(3) { server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"content":"body"}""")) }
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+
+        client.getLearningNode("memory:MEMORY.md:0", "worker").getOrThrow()
+        client.updateLearningNode("memory:MEMORY.md:0", "replacement", "worker").getOrThrow()
+        client.deleteLearningNode("memory:MEMORY.md:0", "worker").getOrThrow()
+
+        val get = server.takeRequest()
+        assertEquals("memory:MEMORY.md:0", get.requestUrl!!.queryParameter("id"))
+        assertEquals("worker", get.requestUrl!!.queryParameter("profile"))
+        val put = server.takeRequest()
+        assertEquals("PUT", put.method)
+        assertTrue(put.body.readUtf8().contains(""""profile":"worker""""))
+        val delete = server.takeRequest()
+        assertEquals("DELETE", delete.method)
+        assertTrue(delete.body.readUtf8().contains(""""id":"memory:MEMORY.md:0""""))
+    }
+
+    @Test
+    fun memoryProviderAndWhatsApp_calls_areProfileScoped() = runTest {
+        repeat(5) { server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"pairing_id":"pair-1","status":"waiting"}""")) }
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val values = Json.parseToJsonElement("""{"url":"https://memory.example"}""").jsonObject
+
+        client.getMemoryProviderConfig("honcho", "worker").getOrThrow()
+        client.updateMemoryProviderConfig("honcho", values, "worker").getOrThrow()
+        client.selectMemoryProvider("honcho").getOrThrow()
+        client.startWhatsAppOnboarding("self-chat", "15551234567", "worker").getOrThrow()
+        client.applyWhatsAppOnboarding("pair-1", "self-chat", "15551234567", "worker").getOrThrow()
+
+        assertEquals("worker", server.takeRequest().requestUrl!!.queryParameter("profile"))
+        assertTrue(server.takeRequest().body.readUtf8().contains(""""values":{"url":"https://memory.example"}"""))
+        assertTrue(server.takeRequest().body.readUtf8().contains(""""provider":"honcho""""))
+        val start = server.takeRequest()
+        assertEquals("/api/messaging/whatsapp/onboarding/start", start.requestUrl!!.encodedPath)
+        assertTrue(start.body.readUtf8().contains(""""profile":"worker""""))
+        val apply = server.takeRequest()
+        assertEquals("/api/messaging/whatsapp/onboarding/pair-1/apply", apply.requestUrl!!.encodedPath)
+        assertTrue(apply.body.readUtf8().contains(""""profile":"worker""""))
     }
 }
 

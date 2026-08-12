@@ -54,6 +54,14 @@ internal enum class DashboardActionKind {
     ValidateCustomEndpoint,
     ActivateCustomEndpoint,
     DeleteCustomEndpoint,
+    EditLearningNode,
+    DeleteLearningNode,
+    ConfigureMemoryProvider,
+    ActivateMemoryProvider,
+    SetupWhatsApp,
+    EnableChannel,
+    DisableChannel,
+    TestChannel,
 
     // Input-backed kinds — intercepted before runAction and routed to a
     // text-input or model-picker dialog instead of firing immediately.
