@@ -591,7 +591,7 @@ class GatewayEventMapperTest {
     fun `subagent lifecycle maps phases and fields`() {
         val r = Recorder()
         val mapper = mapperWith(r)
-        mapper.onEvent("subagent.start", obj("""{"goal":"research topic","task_index":1,"task_count":3}"""))
+        mapper.onEvent("subagent.start", obj("""{"goal":"research topic","task_index":1,"task_count":3,"subagent_id":"child-17"}"""))
         mapper.onEvent("subagent.thinking", obj("""{"goal":"research topic","task_index":1,"task_count":3,"text":"hmm"}"""))
         mapper.onEvent(
             "subagent.tool",
@@ -617,6 +617,7 @@ class GatewayEventMapperTest {
         assertEquals(1, start.taskIndex)
         assertEquals(3, start.taskCount)
         assertEquals("research topic", start.goal)
+        assertEquals("child-17", start.subagentId)
         assertEquals("hmm", r.subagentEvents[1].preview)
         val tool = r.subagentEvents[2]
         assertEquals("web_search", tool.toolName)

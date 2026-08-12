@@ -25,8 +25,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -73,11 +76,13 @@ fun SubagentLane(
     taskIndex: Int,
     calls: List<ToolCall>,
     modifier: Modifier = Modifier,
+    onSteer: ((subagentId: String, instruction: String) -> Unit)? = null,
 ) {
     val anyRunning = calls.any { !it.isComplete }
     val allComplete = calls.isNotEmpty() && calls.all { it.isComplete }
     val anyFailed = calls.any { it.isComplete && it.success == false }
     val runningCount = calls.count { !it.isComplete }
+    val steerableId = calls.firstNotNullOfOrNull { it.subagentId?.takeIf(String::isNotBlank) }
 
     val laneLabel = calls.firstNotNullOfOrNull { call ->
         call.taskLabel?.takeIf { it.isNotBlank() }
@@ -106,6 +111,8 @@ fun SubagentLane(
     val failureLabel = stringResource(R.string.cd_subagent_failed)
 
     var expanded by remember { mutableStateOf(!allComplete) }
+    var showSteerDialog by remember { mutableStateOf(false) }
+    var steerText by remember { mutableStateOf("") }
 
     // Auto-collapse when the last child completes — same pattern as
     // ToolProgressCard's LaunchedEffect(toolCall.isComplete).
@@ -162,6 +169,12 @@ fun SubagentLane(
                     modifier = Modifier.weight(1f),
                 )
 
+                if (anyRunning && steerableId != null && onSteer != null) {
+                    TextButton(onClick = { showSteerDialog = true }) {
+                        Text("Redirect")
+                    }
+                }
+
                 Text(
                     text = statusMeta,
                     style = relayMetadataStyle(),
@@ -201,5 +214,34 @@ fun SubagentLane(
                 }
             }
         }
+    }
+
+    if (showSteerDialog && steerableId != null && onSteer != null) {
+        AlertDialog(
+            onDismissRequest = { showSteerDialog = false },
+            title = { Text("Redirect subagent") },
+            text = {
+                OutlinedTextField(
+                    value = steerText,
+                    onValueChange = { steerText = it },
+                    label = { Text("New instruction") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val instruction = steerText.trim()
+                        showSteerDialog = false
+                        steerText = ""
+                        onSteer(steerableId, instruction)
+                    },
+                    enabled = steerText.isNotBlank(),
+                ) { Text("Redirect") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSteerDialog = false }) { Text("Cancel") }
+            },
+        )
     }
 }

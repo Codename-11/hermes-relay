@@ -2318,6 +2318,25 @@ class ChatViewModel : ViewModel() {
     private val _transientNotice = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val transientNotice: SharedFlow<String> = _transientNotice.asSharedFlow()
 
+    fun steerSubagent(subagentId: String, instruction: String) {
+        val gateway = gatewayClient ?: return
+        if (subagentId.isBlank() || instruction.isBlank()) return
+        viewModelScope.launch {
+            gateway.steerSubagent(subagentId, instruction).fold(
+                onSuccess = { result ->
+                    val status = result.stringValue("status") ?: "queued"
+                    _transientNotice.tryEmit(
+                        if (status == "rejected") "Subagent redirect was rejected."
+                        else "Subagent redirect queued.",
+                    )
+                },
+                onFailure = { error ->
+                    _transientNotice.tryEmit("Couldn't redirect subagent: ${error.message ?: "unknown error"}")
+                },
+            )
+        }
+    }
+
     /**
      * Composer prefill requests from server command dispatch
      * (`{type:"prefill"}` — e.g. `/undo`). ChatScreen collects and sets the

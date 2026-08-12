@@ -1181,6 +1181,7 @@ class ChatHandler {
         cardLineBuffer.clear()
         dispatchedCardMarkers.clear()
         subagentLabels.clear()
+        subagentIds.clear()
     }
 
     /**
@@ -2957,6 +2958,7 @@ class ChatHandler {
      * [onStreamComplete] / [clearMessages].
      */
     private val subagentLabels = mutableMapOf<Int, String>()
+    private val subagentIds = mutableMapOf<Int, String>()
 
     /**
      * Apply one gateway `subagent.*` lifecycle event to the streaming
@@ -2972,6 +2974,9 @@ class ChatHandler {
         when (event.phase) {
             GatewaySubagentEvent.Phase.START -> {
                 if (label != null) subagentLabels[event.taskIndex] = label
+                event.subagentId?.takeIf(String::isNotBlank)?.let {
+                    subagentIds[event.taskIndex] = it
+                }
             }
 
             GatewaySubagentEvent.Phase.TOOL -> {
@@ -2986,6 +2991,8 @@ class ChatHandler {
                     isComplete = false,
                     taskIndex = event.taskIndex,
                     taskLabel = laneLabel,
+                    subagentId = event.subagentId?.takeIf(String::isNotBlank)
+                        ?: subagentIds[event.taskIndex],
                 )
                 _messages.update { messages ->
                     val target = messages.findLast {
@@ -3025,6 +3032,7 @@ class ChatHandler {
                 // "interrupted" lanes never finished — not a success either.
                 val failed = event.status == "failed" || event.status == "interrupted"
                 val laneLabel = subagentLabels.remove(event.taskIndex) ?: label
+                val subagentId = subagentIds.remove(event.taskIndex) ?: event.subagentId
                 val summaryId = "subagent-${event.taskIndex}-${syntheticToolSeq++}"
                 _messages.update { messages ->
                     messages.map { msg ->
@@ -3057,6 +3065,7 @@ class ChatHandler {
                                 completedAt = System.currentTimeMillis(),
                                 taskIndex = event.taskIndex,
                                 taskLabel = laneLabel,
+                                subagentId = subagentId,
                             )
                         }
                         msg.copy(toolCalls = withSummary)
@@ -3314,6 +3323,7 @@ class ChatHandler {
             }
         }
         subagentLabels.clear()
+        subagentIds.clear()
     }
 
     fun onStreamError(message: String) {
@@ -3343,6 +3353,7 @@ class ChatHandler {
             }
         }
         subagentLabels.clear()
+        subagentIds.clear()
     }
 
     fun onThinkingDelta(messageId: String, delta: String) {

@@ -298,6 +298,7 @@ class GatewayEventMapper(
                         // text; thinking/progress carry text only.
                         preview = payload.string("tool_preview") ?: payload.string("text"),
                         durationSeconds = payload.double("duration_seconds"),
+                        subagentId = payload.string("subagent_id"),
                     ),
                 )
             }

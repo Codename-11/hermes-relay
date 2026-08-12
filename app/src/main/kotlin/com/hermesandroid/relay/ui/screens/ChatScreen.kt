@@ -3173,6 +3173,7 @@ fun ChatScreen(
                                     SubagentLane(
                                         taskIndex = taskIndex,
                                         calls = laneGroups.getValue(taskIndex),
+                                        onSteer = chatViewModel::steerSubagent,
                                     )
                                 }
                             }

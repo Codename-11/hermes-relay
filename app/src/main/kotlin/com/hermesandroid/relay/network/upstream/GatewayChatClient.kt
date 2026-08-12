@@ -1489,6 +1489,23 @@ class GatewayChatClient(
             },
         )
 
+    /** Redirect one running child agent without interrupting the parent turn. */
+    suspend fun steerSubagent(subagentId: String, text: String): Result<JsonObject> {
+        val sessionId = liveSessionId
+            ?: return Result.failure(IllegalStateException("No live gateway session"))
+        if (subagentId.isBlank() || text.isBlank()) {
+            return Result.failure(IllegalArgumentException("Subagent and instruction are required"))
+        }
+        return rpc(
+            "subagent.steer",
+            buildJsonObject {
+                put("session_id", sessionId)
+                put("subagent_id", subagentId)
+                put("text", text.trim())
+            },
+        )
+    }
+
     /** Fetch the session/global reasoning effort and display mode. */
     suspend fun getReasoningSettings(): Result<GatewayReasoningSettings> {
         if (webSocket == null || readySignal?.isCompleted != true) {

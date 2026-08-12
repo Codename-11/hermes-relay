@@ -251,6 +251,7 @@ class GatewayClientHarness(
                     put("status", steerStatus)
                     put("text", (params["text"] as? JsonPrimitive)?.contentOrNull ?: "")
                 }
+                "subagent.steer" -> buildJsonObject { put("status", steerStatus) }
                 "session.compress" -> compressPayload
                 "slash.exec" -> buildJsonObject {
                     put("output", "legacy compression started")
@@ -1350,6 +1351,22 @@ class GatewayChatClientTest {
         assertEquals(SteerResult.Failed, runBlocking { client.steer("nothing running") })
         assertTrue(harness.rpcLog.none { it.first == "session.redirect" })
         assertTrue(harness.rpcLog.none { it.first == "session.steer" })
+    }
+
+    @Test
+    fun `subagent redirect carries exact parent and child identity`() = runBlocking {
+        val recorder = Recorder()
+        client.sendTurn(null, "delegate", null, recorder.callbacks) { recorder.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val result = client.steerSubagent("child-17", "focus on Android")
+
+        assertEquals("queued", (result.getOrThrow()["status"] as? JsonPrimitive)?.contentOrNull)
+        val params = harness.awaitRpc("subagent.steer")
+        assertEquals("live-1", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("child-17", (params["subagent_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("focus on Android", (params["text"] as? JsonPrimitive)?.contentOrNull)
     }
 
     @Test
