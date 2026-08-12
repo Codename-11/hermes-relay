@@ -252,6 +252,7 @@ class GatewayClientHarness(
                     put("text", (params["text"] as? JsonPrimitive)?.contentOrNull ?: "")
                 }
                 "subagent.steer" -> buildJsonObject { put("status", steerStatus) }
+                "message.react" -> buildJsonObject { put("row_id", 17) }
                 "session.compress" -> compressPayload
                 "slash.exec" -> buildJsonObject {
                     put("output", "legacy compression started")
@@ -1818,6 +1819,23 @@ class GatewayChatClientTest {
     }
 
     // --- Pet thumbnails ---
+
+    @Test
+    fun `message reaction targets newest role without guessing a row id`() {
+        client.sendTurn("stored-1", "hi", null, Recorder().callbacks) {}
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        val result = runBlocking { client.reactToNewest("assistant", "👍") }
+
+        assertTrue(result.isSuccess)
+        val params = harness.awaitRpc("message.react")
+        assertEquals("live-resumed", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("assistant", (params["newest_role"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("👍", (params["emoji"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("user", (params["author"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse("row_id" in params)
+    }
 
     @Test
     fun `pet thumbnail connects on demand and sends upstream params`() {

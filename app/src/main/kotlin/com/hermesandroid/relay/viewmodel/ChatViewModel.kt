@@ -1623,6 +1623,9 @@ class ChatViewModel : ViewModel() {
     val backgroundProcessesLoading: StateFlow<Boolean> = gatewayProcessController.loading
     val stoppingProcessIds: StateFlow<Set<String>> = gatewayProcessController.stoppingProcessIds
 
+    private val _messageReactionsSupported = MutableStateFlow(true)
+    val messageReactionsSupported: StateFlow<Boolean> = _messageReactionsSupported.asStateFlow()
+
     fun refreshBackgroundProcesses() {
         gatewayProcessController.refresh()
     }
@@ -1649,6 +1652,7 @@ class ChatViewModel : ViewModel() {
         gatewayClient = client
         if (changed) {
             resetApprovalModeState()
+            _messageReactionsSupported.value = true
             gatewayProcessSource = client?.let(::GatewayChatProcessSource)
             gatewayProcessController.bind(
                 newSource = gatewayProcessSource,
@@ -2317,6 +2321,26 @@ class ChatViewModel : ViewModel() {
      */
     private val _transientNotice = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val transientNotice: SharedFlow<String> = _transientNotice.asSharedFlow()
+
+    fun reactToNewest(role: MessageRole, emoji: String?) {
+        val gateway = gatewayClient ?: return
+        if (role != MessageRole.USER && role != MessageRole.ASSISTANT) return
+        viewModelScope.launch {
+            gateway.reactToNewest(role.name.lowercase(), emoji).fold(
+                onSuccess = {
+                    _transientNotice.tryEmit(if (emoji == null) "Reaction removed." else "Reaction added.")
+                },
+                onFailure = { error ->
+                    if ((error as? GatewayRpcException)?.code == -32601) {
+                        _messageReactionsSupported.value = false
+                        _transientNotice.tryEmit("Message reactions aren't supported by this gateway.")
+                    } else {
+                        _transientNotice.tryEmit("Couldn't update reaction: ${error.message ?: "unknown error"}")
+                    }
+                },
+            )
+        }
+    }
 
     fun steerSubagent(subagentId: String, instruction: String) {
         val gateway = gatewayClient ?: return

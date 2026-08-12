@@ -23,6 +23,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -1488,6 +1489,26 @@ class GatewayChatClient(
                 liveSessionId?.let { put("session_id", it) }
             },
         )
+
+    /**
+     * React to the newest message for a role without guessing a transcript row
+     * id. This follows the upstream gateway contract, which resolves the row
+     * atomically inside the active session. A null emoji removes the reaction.
+     */
+    suspend fun reactToNewest(role: String, emoji: String?): Result<JsonObject> {
+        require(role == "user" || role == "assistant") { "unsupported reaction role" }
+        val sid = liveSessionId
+            ?: return Result.failure(GatewayRpcException("no live session"))
+        return rpc(
+            "message.react",
+            buildJsonObject {
+                put("session_id", sid)
+                put("newest_role", role)
+                if (emoji == null) put("emoji", JsonNull) else put("emoji", emoji)
+                put("author", "user")
+            },
+        )
+    }
 
     /** Redirect one running child agent without interrupting the parent turn. */
     suspend fun steerSubagent(subagentId: String, text: String): Result<JsonObject> {

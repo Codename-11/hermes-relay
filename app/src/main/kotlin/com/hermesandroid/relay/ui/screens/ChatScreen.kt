@@ -743,6 +743,13 @@ fun ChatScreen(
 
 
     val messages by chatViewModel.messages.collectAsState()
+    val messageReactionsSupported by chatViewModel.messageReactionsSupported.collectAsState()
+    val newestReactableMessageKeys = remember(messages) {
+        setOfNotNull(
+            messages.lastOrNull { it.role == MessageRole.USER }?.uiKey,
+            messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.uiKey,
+        )
+    }
     val isStreaming by chatViewModel.isStreaming.collectAsState()
     // Keep the screen on for the two "actively engaged, hands-off-keyboard"
     // cases: voice mode is a call-like continuous session (mirrors Assistant/
@@ -3039,6 +3046,16 @@ fun ChatScreen(
                                                 )
                                             }
                                         }
+                                    },
+                                    onReact = if (
+                                        isGatewayTransport &&
+                                        messageReactionsSupported &&
+                                        !message.isStreaming &&
+                                        message.uiKey in newestReactableMessageKeys
+                                    ) {
+                                        { emoji -> chatViewModel.reactToNewest(message.role, emoji) }
+                                    } else {
+                                        null
                                     },
                                     onEditMessage = if (
                                         isGatewayTransport &&

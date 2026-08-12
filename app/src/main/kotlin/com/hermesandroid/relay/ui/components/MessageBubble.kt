@@ -116,6 +116,8 @@ fun MessageBubble(
     onNavigateToMessage: ((String) -> Unit)? = null,
     /** Open an upstream @session:<profile>/<id> reference in app. */
     onSessionReference: ((SessionReference) -> Unit)? = null,
+    /** React to the newest message for this role; null removes the reaction. */
+    onReact: ((String?) -> Unit)? = null,
     /**
      * Reads a completed assistant response through the active voice renderer.
      * Null hides the entry; the owning screen uses that to limit the action to
@@ -453,7 +455,7 @@ fun MessageBubble(
         val showEditAction = onEditMessage != null && isUser
         val showSpeakAction = shouldShowSpeakResponseAction(message, onSpeakMessage != null)
         val showStopSpeakingAction = shouldShowStopSpeakingAction(message, onStopSpeaking != null)
-        if (onQuoteMessage != null || showEditAction || showSpeakAction || showStopSpeakingAction) {
+        if (onQuoteMessage != null || onReact != null || showEditAction || showSpeakAction || showStopSpeakingAction) {
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
@@ -642,6 +644,24 @@ fun MessageBubble(
                     ) {
                         SelectionContainer { messageTextContent() }
                     }
+                }
+                if (onReact != null) {
+                    listOf("👍", "❤️", "😂").forEach { emoji ->
+                        DropdownMenuItem(
+                            text = { Text("React $emoji") },
+                            onClick = {
+                                showMessageActions = false
+                                onReact(emoji)
+                            },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text("Remove reaction") },
+                        onClick = {
+                            showMessageActions = false
+                            onReact(null)
+                        },
+                    )
                 }
 
                 if (onSessionReference != null && sessionReferences.isNotEmpty()) {
