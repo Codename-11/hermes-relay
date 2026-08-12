@@ -49,7 +49,7 @@
     "dev:install": "node scripts/dev-install.mjs",
     "dev:install:tray": "npm run dev:install && node scripts/dev-install-tray.mjs",
     "type-check": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "tsx --test --test-concurrency=1 tests/**/*.test.ts",
     "clean": "rimraf dist"
   },
   "engines": {
