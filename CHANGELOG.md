@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Desktop access uses three clear presets.** Restricted, Standard, and Full Access configure Commands, Files, Screen & Input, Raw USB, Microphone, and Camera per host; editing one capability produces an explicit Custom policy. Existing Ask, Structured, and Trusted policies retain their effective permissions through compatibility aliases and migration. Full Access is a real override that allows every available capability without task grants, while unavailable microphone and camera brokers remain unadvertised.
 - **The connected-host control is visibly interactive.** The compact Agent-to-PC route now gives the selected host a labeled server icon, host identity, Change affordance, stronger card treatment, and responsive width instead of presenting the host name as a cramped status pill.
+- **The connection route shows real bidirectional traffic.** Staggered data packets now travel continuously from Agent to PC and PC to Agent, pass behind the selected host as the relay hop, and stop animating when the tunnel is offline or reduced motion is requested.
 - **Desktop activity supports evidence-first drilldown.** Overview shows the latest three events; the full activity view opens each event into bounded, locally stored request, stdout, stderr, structured result, exit, timing, and truncation details with sensitive request fields excluded.
 
 ### Fixed

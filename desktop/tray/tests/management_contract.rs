@@ -175,6 +175,10 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
     assert!(ui.contains("<AccessPage"));
     assert!(ui.contains("<CapabilitiesPage"));
     assert!(ui.contains("snapshot.activity.slice(-3).reverse()"));
+    assert!(ui.contains("packet packet-outbound"));
+    assert!(ui.contains("packet packet-inbound"));
+    assert!(styles.contains("@keyframes packet-outbound"));
+    assert!(styles.contains("@keyframes packet-inbound"));
     assert!(ui.contains("setPage('activity-detail')"));
     assert!(ui.contains("['Request', entry.request_detail"));
     assert!(ui.contains("Standard output"));

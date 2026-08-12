@@ -316,7 +316,7 @@ function ManagementApp() {
             <button className="empty-pair" onClick={() => action('pair_host')}><Link2 /><span><strong>Pair host</strong><small>Connect this PC to a Hermes instance</small></span><ChevronRight /></button> :
             <div className="route-grid" ref={selectorRef}>
               <span className="route-endpoint"><Bot /><small>Agent</small></span>
-              <i className="route-link left"><b /></i>
+              <i className="route-link left" />
               <div className="route-host">
                 <button className="route-host-button" aria-expanded={selectorOpen} aria-label={`Connected host: ${host?.name}. Change host`} onClick={() => setSelectorOpen(value => !value)}>
                   <span className="route-host-icon"><Server /></span>
@@ -328,8 +328,12 @@ function ManagementApp() {
                 <button className="pair-option" onClick={() => { setSelectorOpen(false); action('pair_host') }}><Link2 /><span><strong>Pair host</strong><small>Connect another Hermes instance</small></span></button>
               </div>}
               </div>
-              <i className="route-link right"><b /></i>
+              <i className="route-link right" />
               <span className="route-endpoint"><Monitor /><small>This PC</small></span>
+              {connected && <span className="route-traffic" aria-hidden="true">
+                <i className="packet packet-outbound" /><i className="packet packet-outbound packet-late" />
+                <i className="packet packet-inbound" /><i className="packet packet-inbound packet-late" />
+              </span>}
               <div className="route-status"><strong>{connected ? 'Connected' : 'Disconnected'}</strong><span>·</span><small>{connected ? 'secure relay tunnel active' : 'relay tunnel offline'}</small></div>
             </div>}
         </section>

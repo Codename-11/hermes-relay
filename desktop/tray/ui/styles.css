@@ -66,13 +66,26 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .route-endpoint { display: grid; place-items: center; gap: 2px; color: #fff; }
 .route-endpoint svg { width: 21px; height: 21px; stroke-width: 2.4; }
 .route-endpoint small { font-size: 10px; font-weight: 550; white-space: nowrap; }
-.route-link { position: relative; display: block; height: 1px; border-top: 1.5px dashed #4fdf72; opacity: .9; }
+.route-link { position: relative; z-index: 0; display: block; height: 1px; border-top: 1.5px dashed #4fdf72; opacity: .9; }
 .connection-route.offline .route-link { border-color: #66717d; opacity: .55; }
-.route-link b { position: absolute; top: -3px; width: 11px; height: 4px; border-radius: 3px; background: #86f49a; box-shadow: 0 0 8px #5bea75; animation: route-pulse 2.4s ease-in-out infinite; }
-.route-link.left b { left: 12%; }
-.route-link.right b { right: 12%; animation-delay: 1.2s; }
-@keyframes route-pulse { 0%, 18% { opacity: 0; transform: translateX(0); } 35% { opacity: 1; } 75%, 100% { opacity: 0; transform: translateX(24px); } }
-.route-host { position: relative; min-width: 0; }
+.route-traffic { position: absolute; z-index: 1; pointer-events: none; left: 49px; right: 49px; top: 29px; height: 1px; overflow: hidden; }
+.packet { position: absolute; top: -2px; left: 0; width: 9px; height: 5px; border-radius: 2px; background: #a3f9b2; box-shadow: 0 0 4px #72ed89, 0 0 10px #52df70; opacity: 0; }
+.packet::after { content: ''; position: absolute; inset: 1px 2px; border-radius: 1px; background: #effff2; }
+.packet-outbound { animation: packet-outbound 3.2s linear infinite; }
+.packet-inbound { left: auto; right: 0; animation: packet-inbound 3.2s linear infinite; animation-delay: .8s; }
+.packet-late { animation-delay: 1.6s; }
+.packet-inbound.packet-late { animation-delay: 2.4s; }
+@keyframes packet-outbound {
+  0% { left: 0; opacity: 0; transform: scale(.75); }
+  5%, 93% { opacity: 1; transform: scale(1); }
+  100% { left: calc(100% - 9px); opacity: 0; transform: scale(.75); }
+}
+@keyframes packet-inbound {
+  0% { right: 0; opacity: 0; transform: scale(.75); }
+  5%, 93% { opacity: 1; transform: scale(1); }
+  100% { right: calc(100% - 9px); opacity: 0; transform: scale(.75); }
+}
+.route-host { position: relative; z-index: 2; min-width: 0; }
 .route-host > button { width: 100%; min-height: 50px; border: 1px solid #52606d; border-radius: 9px; background: #121c25; color: var(--text); padding: 5px 8px; display: flex; align-items: center; gap: 7px; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; box-shadow: 0 5px 18px #0005; transition: border-color .14s ease, background .14s ease, box-shadow .14s ease; }
 .route-host > button:hover { border-color: var(--green); background: #17232c; box-shadow: 0 6px 22px #0007, 0 0 13px #4bd7651c; }
 .route-host > button:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
