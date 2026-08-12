@@ -1,8 +1,8 @@
 # Hermes-Relay-Server v__VERSION__
 
-**Release Date:** August 11, 2026
+**Release Date:** August 12, 2026
 
-This patch improves gateway recovery diagnostics and prevents clients from reconnecting in lockstep after a shared restart.
+This patch adds safe simultaneous routing for multiple connected desktop PCs and makes host selection explicit across command, file, screen, USB, and ADB operations.
 
 Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
@@ -10,8 +10,14 @@ Standard chat, session history, and Vanilla Hermes voice remain upstream-owned a
 
 ### Fixed
 
-- **Bounded prior-exit diagnostics.** Relay Doctor and `/relay/info` distinguish a clean stop, an unclean exit, and unknown history, with an optional suspected out-of-memory hint. Raw logs are never returned through the API.
-- **Desynchronized recovery.** Ordinary exponential reconnect delays use full jitter so multiple Relay clients do not retry in lockstep after the gateway restarts. Explicit reconnects and server-directed retry timing remain unchanged.
+- **No more latest-client-wins routing.** Connecting a second desktop no longer evicts the first. Requests are bound to the selected desktop WebSocket, and a response from another PC cannot satisfy them.
+- **Ambiguous calls fail closed.** With more than one desktop online, client-routed tools require a stable device ID or unambiguous computer name instead of silently choosing the latest heartbeat.
+- **Pairing preserves existing PCs.** Placeholder legacy device identifiers no longer collide and revoke another desktop's session.
+
+### Added
+
+- **Target discovery.** `desktop_health` lists every connected desktop with its stable ID, name, and advertised tools.
+- **Two-level USB targeting.** USB and ADB tools use `device` for the host PC; ADB operations retain `serial` for the attached Android device.
 
 ## Install / update
 
@@ -26,6 +32,7 @@ Standard chat, session history, and Vanilla Hermes voice remain upstream-owned a
 ## Verify
 
     hermes relay doctor
+    # Agent/tool callers can use desktop_health to list desktop targets.
     python scripts/check-plugin-version-sync.py --expect __VERSION__
 
 ---

@@ -28,13 +28,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Mixed desktop capability policies are labeled Custom.** Overview no longer presents a misleading preset when individual capability controls differ.
 - **Desktop pairing and connection security are explicit.** The management UI supports URL/code pairing directly and distinguishes encrypted `wss://` relay connections from unencrypted `ws://` routes.
 - **Windows tray placement follows the notification-area monitor at its real DPI.** The management popup now derives responsive logical dimensions from the tray monitor's work area instead of guessing scale from the icon slot, keeping compact and high-DPI desktops consistently anchored.
-- **Pairing a second desktop no longer revokes the first desktop's credentials.** Each CLI installation persists a private stable device identifier, while the Relay treats legacy `unknown` identifiers as absent rather than as shared device ownership.
-- **Desktop RPC targets the requested PC and fails closed on ambiguity.** Every client-routed tool accepts a stable device ID or unambiguous computer name, pending responses are bound to that WebSocket, and health output enumerates connected targets.
 - **PowerShell success output is complete and self-describing.** Scripts execute through a private UTF-8 temporary file, native exit status propagates, stdout and stderr are drained independently, and bounded output reports total, captured, and truncated bytes instead of returning unexplained empty success.
 - **Phone is discoverable as a proactive delivery target.** The Relay phone adapter now publishes its configured home destination through Hermes' standard channel directory, so target listings can offer `phone` before any historical phone session exists.
 - **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
+
+## [1.6.4] - 2026-08-12
+
+### Added
+
+- **Desktop tools support explicit host targeting.** Every client-routed desktop tool accepts a stable device ID or unambiguous computer name, and `/desktop/health` enumerates connected targets and their advertised tools.
+- **USB operations retain both routing scopes.** Raw USB and ADB tools use `device` to select the desktop PC, while ADB operations continue to use `serial` to select hardware attached to that PC.
+
+### Fixed
+
+- **Multiple desktop clients remain connected simultaneously.** The Relay no longer replaces the previous desktop when another heartbeat arrives; concurrent requests are bound to their selected WebSockets, responses from another PC are ignored, and an untargeted call fails closed when several desktops are online.
+- **Pairing another desktop preserves existing credentials.** Legacy placeholder device identifiers are treated as absent instead of shared ownership, preventing an unrelated PC from revoking the first desktop's session.
 
 ## [1.6.3] - 2026-08-11
 
