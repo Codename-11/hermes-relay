@@ -53,6 +53,10 @@ export interface Snapshot {
   activity: Activity[]
   pending_grants: PendingGrantRequest[]
   startup_enabled: boolean
+  daemon_autostart_enabled?: boolean
+  ui_version?: string | null
+  cli_version?: string | null
+  cli_path?: string | null
   hardware_availability: { usb: boolean; adb: boolean; microphone: boolean; camera: boolean }
 }
 

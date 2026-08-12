@@ -113,3 +113,21 @@ test('rename stores a local display name for a paired host', async () => {
   assert.equal(await hostsCommand(args(['rename', url, 'Office', 'Hermes'], { 'no-color': true })), 0)
   assert.deepEqual(await getDesktopHostAliases(), { [url]: 'Office Hermes' })
 })
+
+test('forget requires confirmation and removes only the targeted local host state', async () => {
+  const { url } = await setup()
+  const second = 'wss://second.example.test:8767'
+  await saveSession(second, 'second-token', '1.2.3')
+  await hostsCommand(args(['rename', url, 'Office'], { 'no-color': true }))
+  await hostsCommand(args(['access', 'standard'], { remote: url, 'no-color': true }))
+  await hostsCommand(args(['select', url], { 'no-color': true }))
+
+  assert.equal(await hostsCommand(args(['forget', url], { 'no-color': true })), 2)
+  assert.ok(await getSession(url))
+  assert.equal(await hostsCommand(args(['forget', url], { yes: true, 'no-color': true })), 0)
+  assert.equal(await getSession(url), null)
+  assert.equal(await getHostAccessMode(url), 'ask')
+  assert.deepEqual(await getDesktopHostAliases(), {})
+  assert.equal(await getActiveDesktopRelayUrl(), second)
+  assert.ok(await getSession(second))
+})

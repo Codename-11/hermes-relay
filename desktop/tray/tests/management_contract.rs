@@ -49,6 +49,10 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "Clear activity",
         "HostDetailPage",
         "rename_host",
+        "Re-pair host",
+        "Forget host",
+        "forget_host",
+        "Remote access",
         "duration_ms",
         "exit_code",
         "pending_grants",
@@ -63,6 +67,26 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "hardware_availability",
         "Secondary USB service",
         "Devices",
+        "CLI & diagnostics",
+        "restart_daemon_as_administrator",
+        "restart_daemon_as_user",
+        "open_terminal",
+        "open_cli_terminal",
+        "open_logs",
+        "run_diagnostics",
+        "Help & About",
+        "HelpPage",
+        "open_external_url",
+        "Documentation",
+        "Troubleshooting",
+        "Release notes",
+        "cli_version",
+        "cli_path",
+        "ui_version",
+        "daemon_autostart_enabled",
+        "set_daemon_autostart",
+        "Start UI at sign-in",
+        "Start daemon with UI",
     ] {
         assert!(
             source.contains(required),
@@ -183,6 +207,9 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
     assert!(styles.contains("@keyframes packet-outbound"));
     assert!(styles.contains("@keyframes packet-inbound"));
     assert!(ui.contains("setPage('activity-detail')"));
+    assert!(ui.contains("page !== 'host-detail' || !detailUrl"));
+    assert!(ui.contains("list_authorized_clients', { remote: detailUrl }"));
+    assert!(ui.contains("setPolicyBack('host-detail')"));
     assert!(ui.contains("['Request', entry.request_detail"));
     assert!(ui.contains("Standard output"));
     assert!(ui.contains("Standard error"));

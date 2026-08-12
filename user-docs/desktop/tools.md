@@ -182,7 +182,7 @@ Consent is stored per-URL in `~/.hermes/remote-sessions.json` as `toolsConsented
 The desktop tools run **in-process on your machine** with your full user privileges. That's a real risk — a compromised relay or a misaligned agent could ask to `rm -rf /`, exfiltrate tokens, or rewrite your `.ssh/config`. The walls:
 
 1. **Consent per-URL, not per-run.** Once you say yes to `ws://hermes.example.com`, the agent on THAT server has persistent tool access. A different URL re-prompts.
-2. **User privilege by default; explicit elevation only.** All tools inherit the daemon's privilege. The Windows tray remains unprivileged and requests UAC only when you explicitly choose **Start/Restart daemon as Administrator…**. While an Administrator daemon is active, approved shell and input actions run elevated; the tray labels that state and displays a stronger warning for an active control grant.
+2. **User privilege by default; explicit elevation only.** All tools inherit the daemon's privilege. The Windows tray remains unprivileged and requests UAC only when you explicitly choose **Restart as Administrator...**. **Return to user mode** stops the elevated daemon once and starts it normally. While an Administrator daemon is active, approved shell and input actions run elevated; the tray labels that state and displays a stronger warning for an active control grant.
 3. **Per-call AbortController ceiling.** 30 seconds per tool call hard stop. A long-running compromise would trip this.
 4. **Handler implementations are defensive:**
    - `desktop_read_file` caps at `max_bytes` (default 1 MB) and truncates with a marker.
@@ -280,7 +280,7 @@ If `connected: true` but the agent still says the tool is missing:
 
 Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log. The management UI previews the latest three events and opens each event into bounded request, stdout, stderr, result, exit, timing, and truncation details. Sensitive request inputs are excluded.
 
-`daemon start` covers "background, this session." On Windows, the optional tray can start at sign-in and starts the daemon when it launches; this is a per-user login entry, not a Windows service. For Linux/macOS or a machine-level lifetime, wrap foreground `hermes-relay daemon` with your service manager of choice.
+`daemon start` covers "background, this session." On Windows, **Start UI at sign-in** registers the optional tray as a per-user login entry. **Start daemon with UI** separately opts into connecting remote access when the tray launches and defaults off for existing installs. Neither is a Windows service. For Linux/macOS or a machine-level lifetime, wrap foreground `hermes-relay daemon` with your service manager of choice.
 
 ## Related
 

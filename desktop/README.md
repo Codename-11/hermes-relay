@@ -32,15 +32,26 @@ binary and one set of state files; the tray does not bundle a private sidecar.
 
 Clicking the tray icon toggles the management popup. Paired Hermes instances are
 shown as **Hosts**; clients authenticated to the selected host appear separately
-under Settings and can be deauthorized there. **Pair another host...** is the
+in that host's detail page and can be deauthorized there. **Pair another host...** is the
 last host-selector option, or the selector's only action when no hosts exist.
 
 The tray cross-checks the daemon heartbeat and PID, labels the account as
 **User** or **Administrator**, and disables lifecycle actions that do not apply
-to the current state. **Start/Restart daemon as Administrator...** uses the
-standard Windows UAC prompt; the tray itself stays unelevated. Settings can
-check the Desktop release channel and self-update the CLI and management UI
-together. The installer download is verified against the release
+to the current state. **Restart as Administrator...** uses the standard Windows
+UAC prompt; the tray itself stays unelevated. **Return to user mode** stops the
+elevated daemon once and starts it again with normal user privileges. Because
+every approved command and input action inherits the daemon's privilege,
+Administrator mode is an explicit action rather than a persistent toggle.
+
+Settings is reserved for this PC. **Start UI at sign-in** controls only the tray
+startup entry; the separate **Start daemon with UI** preference decides whether
+opening the tray also connects remote access. Automatic daemon startup is off
+for existing installs until explicitly enabled. Settings also exposes **Open
+terminal**, **Open Hermes CLI**, **View daemon log**, and **Run diagnostics**,
+and manages Desktop release updates. **Help &
+About** reports the UI, CLI, and connected Relay versions and links to the docs,
+troubleshooting, release notes, logs, and diagnostics. The installer download is
+verified against the release
 `SHA256SUMS.txt`, preserves the startup preference, restores a previously
 running daemon, and relaunches the tray after the silent replacement.
 
@@ -76,9 +87,13 @@ shown separately because probing commands may legitimately use them. **Clear**
 removes both current and rotated local audit history after confirmation.
 
 Clicking a card under **Hosts** opens that host's detail page; it does not change
-the active connection. The detail page can set a local display name and has an
-explicit connect action. Local names are stored in `desktop-control.json` and
-do not rename the remote Hermes instance.
+the active connection. The detail page is the per-host hub for its local display
+name, connection state, Relay address and version, pairing/session details,
+access, capabilities, and authorized clients. It also provides explicit connect,
+re-pair, deauthorize-client, and guarded **Forget host** actions. Local names are
+stored in `desktop-control.json` and do not rename the remote Hermes instance.
+Forgetting removes the local session, alias, and access policy; deauthorization
+is the separate action that removes a server-side client session.
 
 ## Install
 
@@ -555,6 +570,8 @@ hermes-relay relay security    # runtime auth toggles (run on the relay host)
 hermes-relay daemon start      # run in the background (no console window)
 hermes-relay daemon status     # state + uptime of the running daemon
 hermes-relay daemon restart    # restart with the caller's current privileges
+hermes-relay daemon restart --administrator  # Windows: request UAC and run elevated
+hermes-relay daemon restart --user           # Windows: return to normal user mode
 hermes-relay daemon stop       # stop it
 hermes-relay daemon            # run in the FOREGROUND (current console)
 ```
@@ -577,15 +594,18 @@ hermes-relay daemon
 `status` reads the heartbeat file a running daemon maintains and cross-checks that the pid is alive — it exits non-zero (and says "not running") when the daemon is gone, so scripts can branch on it.
 
 On Windows, keep the tray and normal daemon unelevated for routine operation.
-Use **Start/Restart daemon as Administrator...** only when a desktop action
-requires administrator access. Windows displays UAC consent, and the elevated
-daemon records its privilege level in the same status file so later stop and
-restart actions preserve the required elevation.
+Use **Restart as Administrator...** only when a desktop action requires
+administrator access. Windows displays UAC consent, and the elevated daemon
+records its privilege level in the same status file so the UI can label it
+clearly. Use **Return to user mode** to stop it once and start a normal daemon.
+The equivalent CLI actions are `daemon restart --administrator` and `daemon
+restart --user`; both are Windows-only and mutually exclusive.
 
-> **Auto-start on boot/login:** the Windows menu can start the tray at user
-> sign-in; it intentionally does not auto-elevate or silently start an
-> Administrator daemon. Starting the daemon itself as a service still needs an
-> OS service, systemd user unit, or launchd agent.
+> **Auto-start on boot/login:** **Start UI at sign-in** registers the tray at
+> user sign-in. **Start daemon with UI** is a separate opt-in and remains off
+> for existing installs until enabled. Neither option auto-elevates or starts
+> an Administrator daemon. Starting the daemon itself as a machine service
+> still needs an OS service, systemd user unit, or launchd agent.
 
 ## Flags and environment
 

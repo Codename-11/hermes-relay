@@ -6,6 +6,7 @@ import {
   getHostCapabilityPolicies,
   getHostAccessMode,
   isHostAccessMode,
+  removeHostAccessPolicy,
   setHostAccessMode,
   setHostCapabilityPolicy,
   HOST_CAPABILITIES,
@@ -16,7 +17,7 @@ import {
 } from '../lib/hostAccessPolicy.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec, unknownSubcommand } from '../lib/usage.js'
-import { getSession, listSessions, saveSession } from '../remoteSessions.js'
+import { deleteSession, getSession, listSessions, saveSession } from '../remoteSessions.js'
 
 const HOSTS_USAGE: UsageSpec = {
   name: 'hosts',
@@ -25,6 +26,7 @@ const HOSTS_USAGE: UsageSpec = {
     'hosts [list] [--json]',
     'hosts select <relay-url>',
     'hosts rename <relay-url> <name>',
+    'hosts forget <relay-url> --yes',
     'hosts access <restricted|ask-every-time|standard|full-access> [--remote <url>] [--yes]',
     'hosts capability <commands|files|screen-input|usb|microphone|camera> <disabled|ask|allow> [--remote <url>] [--yes]'
   ],
@@ -32,13 +34,14 @@ const HOSTS_USAGE: UsageSpec = {
     { verb: 'list', desc: 'List locally paired Hermes hosts (default)' },
     { verb: 'select <url>', desc: 'Choose the host used by the tray and daemon' },
     { verb: 'rename <url> <name>', desc: 'Set a local display name for a paired host' },
+    { verb: 'forget <url>', desc: 'Remove the local pairing, alias, and access policy' },
     { verb: 'access <mode>', desc: 'Set a Restricted, Ask Every Time, Standard, or Full Access preset' },
     { verb: 'capability <name> <mode>', desc: 'Set one capability; exact presets are recognized automatically' }
   ],
   flags: [
     { flag: '--remote <url>', desc: 'Host targeted by the access command' },
     { flag: '--json', desc: 'Emit machine-readable host state' },
-    { flag: '--yes', desc: 'Confirm Full Access or hardware Allow non-interactively' }
+    { flag: '--yes', desc: 'Confirm Full Access, hardware Allow, or forgetting a host' }
   ],
   examples: [
     'hermes-relay hosts --json',
@@ -246,6 +249,38 @@ async function setCapability(args: ParsedArgs): Promise<number> {
   return 0
 }
 
+async function forgetHost(args: ParsedArgs): Promise<number> {
+  const url = args.positional[0]?.trim() ?? ''
+  if (!url || !(await getSession(url))) {
+    process.stderr.write('error: `hosts forget` requires a locally paired relay URL\n')
+    return 1
+  }
+  if (args.flags.yes !== true) {
+    process.stderr.write('error: forgetting a host removes its local session, display name, and access policy. Pass --yes to confirm.\n')
+    return 2
+  }
+  const active = await getActiveDesktopRelayUrl()
+  await Promise.all([
+    deleteSession(url),
+    removeHostAccessPolicy(url),
+    setDesktopHostAlias(url, null)
+  ])
+  let nextActive = active
+  if (active === url) {
+    const remaining = Object.keys(await listSessions()).sort()
+    nextActive = remaining[0] ?? null
+    await setActiveDesktopRelayUrl(nextActive)
+  }
+  const payload = { ok: true, forgotten_url: url, active_url: nextActive, restart_required: active === url }
+  if (args.flags.json) process.stdout.write(JSON.stringify(payload, null, 2) + '\n')
+  else {
+    const t = makeTheme({ noColor: !!args.flags['no-color'] })
+    process.stdout.write(t.okLine(`forgot host ${hostLabel(url)}`) + '\n')
+    if (active === url) process.stdout.write(t.muted(nextActive ? `Selected ${hostLabel(nextActive)} as the active host.` : 'No active host remains.') + '\n')
+  }
+  return 0
+}
+
 export async function hostsCommand(args: ParsedArgs): Promise<number> {
   if (args.flags.help) {
     printUsage(HOSTS_USAGE, makeTheme({ noColor: !!args.flags['no-color'] }))
@@ -255,6 +290,7 @@ export async function hostsCommand(args: ParsedArgs): Promise<number> {
   if (subcommand === 'list') return listHosts(args)
   if (subcommand === 'select') return selectHost(args)
   if (subcommand === 'rename') return renameHost(args)
+  if (subcommand === 'forget') return forgetHost(args)
   if (subcommand === 'access') return setAccess(args)
   if (subcommand === 'capability') return setCapability(args)
   return unknownSubcommand(HOSTS_USAGE, subcommand, makeTheme({ noColor: !!args.flags['no-color'] }))

@@ -2869,3 +2869,54 @@ targeted request. Common operations remain typed and auditable while raw shell
 power is labeled honestly. Structured mode makes the USB policy enforceable,
 and device operations appear as their own local Activity category. Microphone
 and camera controls are not shipped as cosmetic switches.
+
+---
+
+## ADR 52 — Desktop management separates host scope from local-PC scope
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** The compact Windows tray had accumulated per-host connection and
+authorization information alongside local daemon, update, and application
+controls. That made Settings difficult to scan and left common operator tasks—
+opening the CLI, viewing the daemon log, running diagnostics, or returning an
+elevated daemon to normal user privileges—dependent on external instructions.
+The tray must remain a small management utility rather than regrow into an
+embedded terminal or general desktop client.
+
+**Decision.** The three top-level destinations remain Overview, Hosts, and
+Settings, with scope determining ownership:
+
+- A Host detail page is the hub for one paired Relay instance. It owns the local
+  display name, connection state, Relay address/version, pairing and session
+  details, access preset, capabilities, authorized clients, explicit connect,
+  re-pair, client deauthorization, and guarded Forget host actions. Opening the
+  page never silently selects or connects the host.
+- Settings owns this Windows PC and the installed application. It contains
+  daemon lifecycle and sign-in behavior, CLI launchers, logs and diagnostics,
+  bundle updates, and Help & About. **Start UI at sign-in** controls only the
+  per-user tray startup entry. **Start daemon with UI** is a separate opt-in,
+  defaults off for existing installs, and never implies elevation. Per-host
+  access and client lists do not appear there.
+- **Open terminal** starts a normal terminal with `hermes-relay` available.
+  **Open Hermes CLI** starts the paired remote Hermes TUI in a real terminal;
+  neither action embeds a terminal emulator in the tray.
+- **View daemon log** opens the local daemon log. **Run diagnostics** delegates
+  to the CLI diagnostic contract rather than creating a second health model.
+- Help & About reports UI, CLI, and connected Relay versions and links to the
+  documentation, troubleshooting guide, and release notes through the default
+  browser. Log and diagnostic shortcuts remain available there as well.
+
+The tray always remains unelevated. **Restart as Administrator...** is an
+explicit UAC-mediated action that elevates only the daemon. **Return to user
+mode** performs one elevated-daemon stop followed by a normal daemon start.
+Elevation is not stored as a toggle or sign-in preference because every approved
+command and input action inherits the daemon's privilege.
+
+**Consequences.** Relay-specific actions are discoverable from the corresponding
+host without making global Settings wider. Routine CLI and support workflows no
+longer require users to find paths or commands manually. Administrator state is
+visible and reversible, while the management UI and automatic startup retain
+normal user privilege. The product stays a thin CLI/TUI plus compact Windows
+management surface; chat, plugins, voice, and terminal rendering remain outside
+the tray.

@@ -51,9 +51,17 @@ For a CLI-only installation, add the UI with `hermes-relay ui install`.
 
 ## The daemon is User but I need Administrator access
 
-Normal-user operation is the safe default. Open UI Settings and choose **Start daemon as Administrator…** or **Restart daemon as Administrator…**, then approve the Windows UAC prompt. The UI remains a normal user process; only the daemon and its approved tool/input actions are elevated.
+Normal-user operation is the safe default. Open UI Settings and choose **Restart as Administrator...**, then approve the Windows UAC prompt. The UI remains a normal user process; only the daemon and its approved tool/input actions are elevated.
 
 Use `hermes-relay daemon status` or the tray status row to confirm the privilege. Elevation is never automatic and is not required for ordinary user files/apps.
+
+When elevated access is no longer needed, choose **Return to user mode**. The tray stops the elevated daemon once and starts a normal daemon; it does not retain elevation as a startup preference.
+
+## I need the CLI, logs, or a diagnostic report
+
+Open UI Settings and use **Open terminal** for a normal command prompt with `hermes-relay` available, or **Open Hermes CLI** to start the paired Hermes TUI directly. **View daemon log** opens the local daemon log, while **Run diagnostics** uses the CLI diagnostic path so the UI and `hermes-relay doctor` report the same local install state.
+
+The **Help & About** page links to the [desktop documentation](https://hermes-relay.dev/docs/desktop/), [troubleshooting guide](https://hermes-relay.dev/docs/desktop/troubleshooting/), and [release notes](https://github.com/Codename-11/hermes-relay/releases?q=desktop) in your default browser and also provides the log and diagnostic shortcuts.
 
 ## Changing host access did not change the daemon's tools
 

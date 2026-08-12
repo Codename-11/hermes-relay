@@ -14,7 +14,7 @@ mod app {
         io::Write,
         os::windows::process::CommandExt,
         path::{Path, PathBuf},
-        process::{Command, Output},
+        process::{Command, Output, Stdio},
         sync::{mpsc, Arc, Mutex},
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -50,12 +50,21 @@ mod app {
 
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "HermesRelayTray";
+    const SETTINGS_KEY: &str = r"HKCU\Software\Hermes-Relay CLI UI";
+    const DAEMON_AUTOSTART_VALUE: &str = "DaemonAutostart";
     const POPUP_GAP: f64 = 10.0;
     const MONITOR_MARGIN: f64 = 8.0;
     const MAIN_LOGICAL_WIDTH: f64 = 380.0;
     const MAIN_LOGICAL_HEIGHT: f64 = 620.0;
     const MAIN_MIN_LOGICAL_WIDTH: f64 = 340.0;
     const MAIN_MIN_LOGICAL_HEIGHT: f64 = 460.0;
+    const OFFICIAL_URLS: &[&str] = &[
+        "https://hermes-relay.dev/docs/",
+        "https://hermes-relay.dev/docs/desktop/",
+        "https://hermes-relay.dev/docs/desktop/troubleshooting/",
+        "https://github.com/Codename-11/hermes-relay",
+        "https://github.com/Codename-11/hermes-relay/releases",
+    ];
 
     #[derive(Clone, Copy, Debug)]
     struct TrayAnchor {
@@ -301,7 +310,11 @@ mod app {
         activity: Vec<Activity>,
         pending_grants: Vec<PendingGrantRequest>,
         startup_enabled: bool,
+        daemon_autostart_enabled: bool,
         hardware_availability: HardwareAvailability,
+        ui_version: &'static str,
+        cli_version: Option<String>,
+        cli_path: Option<String>,
     }
 
     #[derive(Debug, Serialize)]
@@ -406,6 +419,33 @@ mod app {
         let output = run_cli_checked(args)?;
         serde_json::from_str(&output)
             .map_err(|e| format!("invalid JSON from hermes-relay {}: {e}", args.join(" ")))
+    }
+
+    fn cli_details() -> (Option<String>, Option<String>) {
+        let Ok(path) = resolve_cli() else {
+            return (None, None);
+        };
+        let version = Command::new(&path)
+            .arg("--version")
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| clean_cli_version(&String::from_utf8_lossy(&output.stdout)))
+            .filter(|value| !value.is_empty());
+        (version, Some(path.display().to_string()))
+    }
+
+    fn clean_cli_version(output: &str) -> String {
+        output
+            .trim()
+            .strip_prefix("hermes-relay ")
+            .unwrap_or_else(|| output.trim())
+            .to_string()
+    }
+
+    fn is_official_url(url: &str) -> bool {
+        OFFICIAL_URLS.contains(&url)
     }
 
     fn active_url() -> Option<String> {
@@ -530,6 +570,14 @@ mod app {
             .is_ok_and(|s| s.success())
     }
 
+    fn daemon_autostart_enabled() -> bool {
+        Command::new("reg.exe")
+            .args(["query", SETTINGS_KEY, "/v", DAEMON_AUTOSTART_VALUE])
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
     fn hardware_availability() -> HardwareAvailability {
         let adb = env::var_os("HERMES_RELAY_ADB_PATH")
             .filter(|value| !value.is_empty())
@@ -575,6 +623,7 @@ mod app {
             .ok()
             .and_then(|value| serde_json::from_value::<Vec<PendingGrantRequest>>(value).ok())
             .unwrap_or_default();
+        let (cli_version, cli_path) = cli_details();
         Ok(Snapshot {
             hosts,
             active_url: selected,
@@ -582,7 +631,11 @@ mod app {
             activity: read_activity(),
             pending_grants,
             startup_enabled: startup_enabled(),
+            daemon_autostart_enabled: daemon_autostart_enabled(),
             hardware_availability: hardware_availability(),
+            ui_version: env!("CARGO_PKG_VERSION"),
+            cli_version,
+            cli_path,
         })
     }
 
@@ -824,26 +877,187 @@ mod app {
         Ok(())
     }
 
-    fn open_pair_terminal() -> Result<(), String> {
+    fn spawn_cli_terminal(cli_args: &[&str]) -> Result<(), String> {
         let cli = resolve_cli()?;
-        let escaped = cli.display().to_string().replace('\'', "''");
-        Command::new("powershell.exe")
-            .args([
-                "-NoLogo",
-                "-NoExit",
-                "-Command",
-                &format!("& '{escaped}' pair"),
-            ])
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| format!("failed to open PowerShell: {e}"))
+        let args = serde_json::to_string(cli_args)
+            .map_err(|error| format!("cannot serialize CLI arguments: {error}"))?;
+        let powershell_args = [
+            "-NoLogo",
+            "-NoExit",
+            "-NoProfile",
+            "-Command",
+            "& $env:HERMES_RELAY_CLI @((ConvertFrom-Json $env:HERMES_RELAY_ARGS))",
+        ];
+        let terminal = Command::new("wt.exe")
+            .arg("new-tab")
+            .arg("powershell.exe")
+            .args(powershell_args)
+            .env("HERMES_RELAY_CLI", &cli)
+            .env("HERMES_RELAY_ARGS", &args)
+            .spawn();
+        match terminal {
+            Ok(_) => Ok(()),
+            Err(_) => Command::new("powershell.exe")
+                .args(powershell_args)
+                .env("HERMES_RELAY_CLI", cli)
+                .env("HERMES_RELAY_ARGS", args)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("failed to open a terminal: {error}")),
+        }
     }
 
     #[tauri::command]
-    fn pair_host() -> Result<(), String> {
-        open_pair_terminal()?;
+    fn pair_host(remote: Option<String>) -> Result<(), String> {
+        if let Some(remote) = remote.as_deref() {
+            spawn_cli_terminal(&["pair", "--remote", remote])?;
+        } else {
+            spawn_cli_terminal(&["pair"])?;
+        }
         append_management_event("host.pair", "Pairing opened", None, None);
         Ok(())
+    }
+
+    fn wait_for_daemon_privilege(expected: Option<&str>) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while std::time::Instant::now() < deadline {
+            let status = run_json(&["daemon", "status", "--json"])
+                .ok()
+                .and_then(|value| serde_json::from_value::<DaemonStatus>(value).ok());
+            let matches = match (expected, status) {
+                (None, None) => true,
+                (Some(privilege), Some(status)) => {
+                    status.running && status.privilege.as_deref() == Some(privilege)
+                }
+                _ => false,
+            };
+            if matches {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Err(match expected {
+            Some(privilege) => format!("daemon did not become ready as {privilege}"),
+            None => "daemon did not stop after the Administrator request".to_string(),
+        })
+    }
+
+    #[tauri::command]
+    async fn restart_daemon_as_administrator() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "restart", "--administrator"])?;
+            wait_for_daemon_privilege(Some("administrator"))?;
+            append_management_event(
+                "daemon.restart_admin",
+                "Relay daemon restarted as Administrator",
+                None,
+                None,
+            );
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("Administrator restart task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn restart_daemon_as_user() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "restart", "--user"])?;
+            wait_for_daemon_privilege(Some("user"))?;
+            append_management_event(
+                "daemon.restart_user",
+                "Relay daemon restarted as standard user",
+                None,
+                None,
+            );
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("standard-user restart task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn open_terminal() -> Result<(), String> {
+        let home = home_dir()?;
+        let terminal = Command::new("wt.exe").args(["-d"]).arg(&home).spawn();
+        match terminal {
+            Ok(_) => Ok(()),
+            Err(_) => Command::new("powershell.exe")
+                .args(["-NoLogo", "-NoExit"])
+                .current_dir(home)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("failed to open a terminal: {error}")),
+        }
+    }
+
+    #[tauri::command]
+    fn open_cli_terminal() -> Result<(), String> {
+        spawn_cli_terminal(&[])
+    }
+
+    #[tauri::command]
+    fn open_logs() -> Result<(), String> {
+        let path = home_dir()?.join(".hermes").join("daemon.log");
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("cannot create daemon log directory: {error}"))?;
+            }
+            fs::write(&path, b"")
+                .map_err(|error| format!("cannot create daemon log file: {error}"))?;
+        }
+        Command::new("notepad.exe")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("failed to open daemon logs: {error}"))
+    }
+
+    #[tauri::command]
+    fn run_diagnostics() -> Result<(), String> {
+        spawn_cli_terminal(&["doctor"])
+    }
+
+    #[tauri::command]
+    fn open_external_url(url: String) -> Result<(), String> {
+        if !is_official_url(&url) {
+            return Err("URL is not an approved Hermes-Relay destination".to_string());
+        }
+        Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", &url])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("failed to open the link: {error}"))
+    }
+
+    #[tauri::command]
+    async fn forget_host(remote: String) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            let selected_before = active_url();
+            let was_active = selected_before.as_deref() == Some(remote.as_str());
+            let was_running = daemon_is_running();
+            if was_active && was_running {
+                run_cli_checked(&["daemon", "stop"])?;
+            }
+            if let Err(error) = run_cli_checked(&["hosts", "forget", &remote, "--yes"]) {
+                if was_active && was_running {
+                    let _ = run_cli_checked(&["daemon", "start"]);
+                }
+                return Err(error);
+            }
+            let selected_after = active_url();
+            if was_active && was_running && selected_after.is_some() {
+                run_cli_checked(&["daemon", "start"])?;
+            }
+            append_management_event("host.forget", "Host forgotten", Some(&remote), None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("forget host task failed: {error}"))?
     }
 
     #[tauri::command]
@@ -896,6 +1110,53 @@ mod app {
             Ok(())
         } else {
             Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    }
+
+    #[tauri::command]
+    fn set_daemon_autostart(enabled: bool) -> Result<(), String> {
+        if !enabled && !daemon_autostart_enabled() {
+            return Ok(());
+        }
+        let mut command = Command::new("reg.exe");
+        if enabled {
+            command.args([
+                "add",
+                SETTINGS_KEY,
+                "/v",
+                DAEMON_AUTOSTART_VALUE,
+                "/t",
+                "REG_SZ",
+                "/d",
+                "1",
+                "/f",
+            ]);
+        } else {
+            command.args(["delete", SETTINGS_KEY, "/v", DAEMON_AUTOSTART_VALUE, "/f"]);
+        }
+        let output = command
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .output()
+            .map_err(|error| format!("failed to update daemon autostart setting: {error}"))?;
+        if output.status.success() {
+            append_management_event(
+                "daemon.autostart",
+                if enabled {
+                    "Automatic daemon start enabled"
+                } else {
+                    "Automatic daemon start disabled"
+                },
+                None,
+                None,
+            );
+            Ok(())
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(if error.is_empty() {
+                "failed to update daemon autostart setting".to_string()
+            } else {
+                error
+            })
         }
     }
 
@@ -1215,10 +1476,19 @@ mod app {
                 revoke_authorized_client,
                 resolve_grant,
                 pair_host,
+                forget_host,
                 connect_daemon,
                 disconnect_daemon,
                 restart_daemon,
+                restart_daemon_as_administrator,
+                restart_daemon_as_user,
+                open_terminal,
+                open_cli_terminal,
+                open_logs,
+                run_diagnostics,
+                open_external_url,
                 set_startup,
+                set_daemon_autostart,
                 clear_activity,
                 present_grant_window
             ])
@@ -1285,16 +1555,25 @@ mod app {
             .expect("failed to build Hermes-Relay CLI UI");
 
         app.run(move |handle, event| match event {
-            RunEvent::Ready if show_on_launch => {
-                let anchor = current_tray_anchor(handle);
-                if let (Some(anchor), Some(state)) =
-                    (anchor, handle.try_state::<TrayPositionState>())
-                {
-                    if let Ok(mut stored) = state.0.lock() {
-                        *stored = Some(anchor);
-                    }
+            RunEvent::Ready => {
+                if daemon_autostart_enabled() {
+                    thread::spawn(|| {
+                        if !daemon_is_running() {
+                            let _ = run_cli_checked(&["daemon", "start"]);
+                        }
+                    });
                 }
-                reveal_main_window(handle, anchor);
+                if show_on_launch {
+                    let anchor = current_tray_anchor(handle);
+                    if let (Some(anchor), Some(state)) =
+                        (anchor, handle.try_state::<TrayPositionState>())
+                    {
+                        if let Ok(mut stored) = state.0.lock() {
+                            *stored = Some(anchor);
+                        }
+                    }
+                    reveal_main_window(handle, anchor);
+                }
             }
             RunEvent::ExitRequested {
                 api, code: None, ..
@@ -1334,6 +1613,26 @@ mod app {
                 candidates[2],
                 Path::new(r"C:\Users\example\.hermes\bin\hermes-relay.exe")
             );
+        }
+
+        #[test]
+        fn cli_version_is_clean_for_the_about_page() {
+            assert_eq!(
+                clean_cli_version("hermes-relay 0.4.0-alpha.7\r\n"),
+                "0.4.0-alpha.7"
+            );
+        }
+
+        #[test]
+        fn external_links_require_an_exact_official_destination() {
+            assert!(is_official_url("https://hermes-relay.dev/docs/desktop/"));
+            assert!(is_official_url(
+                "https://github.com/Codename-11/hermes-relay/releases"
+            ));
+            assert!(!is_official_url("https://hermes-relay.dev.evil.test/docs/"));
+            assert!(!is_official_url(
+                "https://github.com/Codename-11/hermes-relay/issues/new"
+            ));
         }
 
         #[test]

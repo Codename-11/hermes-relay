@@ -234,6 +234,9 @@ Run the tool router headless — no PTY, no Ink TUI, just the WSS connection + `
 ```bash
 hermes-relay daemon start                        # background — no console window, survives terminal close
 hermes-relay daemon status                       # state, uptime, relay, advertised-tool count
+hermes-relay daemon restart                      # restart with the caller's current privileges
+hermes-relay daemon restart --administrator      # Windows: request UAC and run elevated
+hermes-relay daemon restart --user               # Windows: return an elevated daemon to user mode
 hermes-relay daemon stop                         # stop the background daemon
 hermes-relay daemon                              # FOREGROUND (current console) — handy for watching logs live
 hermes-relay daemon --log-json                   # foreground: force JSON-line lifecycle events on stderr
@@ -241,6 +244,13 @@ hermes-relay daemon --token <t> --allow-tools    # skip stored-consent gate (onl
 ```
 
 `daemon start` (alias `daemon --detach`) re-spawns the foreground daemon detached: no console window, stdio redirected to `~/.hermes/daemon.log`, and it keeps running after you close the terminal. `daemon status` reads the heartbeat file the running daemon maintains and cross-checks that the pid is alive, so a crashed daemon whose file lingers reads as "not running" (and `status` exits non-zero, for scripts). Bare `hermes-relay daemon` still runs in the foreground.
+
+On Windows, `--administrator` is an explicit UAC boundary for `start`, `stop`,
+or `restart`; it never elevates the tray. `daemon restart --user` is intended
+for an unelevated caller returning an Administrator daemon to normal operation:
+it requests elevation only to stop the existing process, then starts the
+replacement from the original user process. The two privilege flags are
+mutually exclusive and do not apply to `status`.
 
 ```
 $ hermes-relay daemon status
@@ -268,7 +278,7 @@ transport_exited      → reconnect budget exhausted; exit 1 so service manager 
 **Fails closed:** no stored session + no `--token` → exits 1. No `toolsConsented: true` on the stored record → exits 1 unless `--allow-tools` is passed alongside an explicit `--token` (a headless binary must never be the thing that first grants tool access).
 
 ::: tip Background ≠ system service
-`daemon start` survives closing the terminal, but **not a reboot or logout**. On Windows, install the optional systray and enable **Start tray at sign-in**; the tray starts the daemon when it launches. This is a per-user login entry, not a Windows service. On Linux/macOS, or when a machine-level service is required, wrap foreground `hermes-relay daemon` with your service manager.
+`daemon start` survives closing the terminal, but **not a reboot or logout**. On Windows, **Start UI at sign-in** registers the optional tray as a per-user login entry. Enable the separate **Start daemon with UI** preference when tray launch should also connect remote access; it defaults off for existing installs. Neither setting is a Windows service or elevates the daemon. On Linux/macOS, or when a machine-level service is required, wrap foreground `hermes-relay daemon` with your service manager.
 :::
 
 ## `hermes-relay computer-use`
@@ -362,8 +372,18 @@ hermes-relay ui install     # install or repair the matching CLI + UI bundle
 The Windows PowerShell one-liner installs the UI bundle by default, so `ui
 install` is mainly for machines originally installed with
 `HERMES_RELAY_INSTALL_SURFACE=cli`. The UI manages hosts, access, approvals,
-activity, updates, authorized clients, and daemon settings. It does not embed
-chat, the remote Hermes TUI, a terminal, plugins, or voice.
+activity, updates, authorized clients, and daemon settings. A host detail page
+owns Relay-specific identity, session, access, client-deauthorization, re-pair,
+and guarded-forget actions. Settings owns this PC's daemon lifecycle, CLI
+launchers, logs, diagnostics, updates, and Help & About links. **Open terminal**
+opens a normal prompt; **Open Hermes CLI** launches the paired remote TUI in a
+real terminal. It does not embed chat, the remote Hermes TUI, a terminal
+emulator, plugins, or voice.
+
+The UI remains a normal user process. **Restart as Administrator...** asks
+Windows for UAC approval and elevates only the daemon. **Return to user mode**
+stops that elevated daemon once and starts a normal daemon; elevation is not a
+persistent toggle.
 
 POSIX uses atomic `fs.rename` (the running daemon keeps its inode); Windows uses a cooperative `.new.exe` swap on the next start.
 
