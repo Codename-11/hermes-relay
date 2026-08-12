@@ -1089,12 +1089,15 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "desktop_health": {
         "name": "desktop_health",
         "description": (
-            "Report every connected desktop target's stable ID and name plus the "
-            "latest client's platform, version, pid, uptime, advertised tools, last error, and the most "
+            "List every connected desktop target's stable device_id, name, and "
+            "advertised tools, plus compatibility diagnostics for the most recent "
+            "client and the most "
             "recent commands the relay has dispatched. Answered by the relay "
             "directly — does NOT round-trip through the client — so it works "
-            "even when other tools are wedged. Use this to debug 'why isn't "
-            "desktop_terminal responding?' before giving up."
+            "even when other tools are wedged. When several desktops are listed, "
+            "choose one and pass its device_id in the device field of every "
+            "client-routed call. USB/ADB calls use device for the host PC and "
+            "serial for attached hardware where required."
         ),
         "parameters": {"type": "object", "properties": {}},
     },

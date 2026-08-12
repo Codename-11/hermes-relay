@@ -196,6 +196,67 @@ class DesktopMultiDeviceTests(unittest.IsolatedAsyncioTestCase):
         result = await asyncio.wait_for(task, timeout=1)
         self.assertEqual(result["result"]["content"], "x")
 
+    async def test_two_pcs_can_execute_concurrently_without_cross_talk(self) -> None:
+        handler, office, laptop = await _register_two()
+        office_task = asyncio.create_task(
+            handler.handle_command(
+                "desktop_powershell",
+                {"script": "'office'"},
+                device="desktop-1",
+            )
+        )
+        laptop_task = asyncio.create_task(
+            handler.handle_command(
+                "desktop_powershell",
+                {"script": "'laptop'"},
+                device="desktop-2",
+            )
+        )
+        await asyncio.sleep(0)
+
+        self.assertEqual(len(office.sent), 1)
+        self.assertEqual(len(laptop.sent), 1)
+        office_request_id = office.sent[0]["payload"]["request_id"]
+        laptop_request_id = laptop.sent[0]["payload"]["request_id"]
+        self.assertNotEqual(office_request_id, laptop_request_id)
+
+        # Complete them in reverse order to prove correlation is by request
+        # and target WebSocket, not by the latest status or response.
+        await handler.handle(
+            laptop,  # type: ignore[arg-type]
+            {
+                "channel": "desktop",
+                "type": "desktop.response",
+                "payload": {
+                    "request_id": laptop_request_id,
+                    "ok": True,
+                    "result": {"stdout": "laptop", "exit_code": 0},
+                },
+            },
+        )
+        self.assertFalse(office_task.done())
+        await handler.handle(
+            office,  # type: ignore[arg-type]
+            {
+                "channel": "desktop",
+                "type": "desktop.response",
+                "payload": {
+                    "request_id": office_request_id,
+                    "ok": True,
+                    "result": {"stdout": "office", "exit_code": 0},
+                },
+            },
+        )
+
+        office_result, laptop_result = await asyncio.gather(
+            office_task,
+            laptop_task,
+        )
+        self.assertEqual(office_result["result"]["stdout"], "office")
+        self.assertEqual(laptop_result["result"]["stdout"], "laptop")
+        self.assertEqual(office_result["target"]["device_id"], "desktop-1")
+        self.assertEqual(laptop_result["target"]["device_id"], "desktop-2")
+
     async def test_health_snapshot_lists_connected_desktops(self) -> None:
         handler, _office, _laptop = await _register_two()
         clients = handler.status_snapshot()["clients"]

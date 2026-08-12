@@ -100,10 +100,11 @@ class DesktopSession:
     """Per-WebSocket scratch space.
 
     Holds BOTH:
-      * The single-client tool-routing latch fields (``advertised_tools``
-        / ``client_status`` / ``last_seen_at``) — these are mirrored on
-        the outer :class:`DesktopHandler` for the latched client and
-        kept here per-WS for diagnostics + future multi-client support.
+      * The routing identity and capability fields (``device_id``,
+        ``advertised_tools``, ``client_status``, and ``last_seen_at``).
+        These are authoritative for targeted multi-client dispatch; the
+        outer :class:`DesktopHandler` mirrors the most recent status only
+        for backward-compatible diagnostics.
       * The workspace + active-editor snapshots advertised by the
         desktop CLI (alpha.6).
 
@@ -128,10 +129,9 @@ class DesktopSession:
         self.active_editor: dict[str, Any] | None = None
         self.active_editor_received_at: float | None = None
 
-        # Per-WS view of the latest ``desktop.status`` envelope. The
-        # outer handler also keeps a flattened copy for the latched
-        # client; storing it here makes future multi-client diagnostics
-        # straightforward.
+        # Per-WS view of the latest ``desktop.status`` envelope. The outer
+        # handler also keeps a flattened compatibility snapshot, while all
+        # routing decisions use this per-client state.
         self.advertised_tools: set[str] = set()
         self.client_status: dict[str, Any] = {}
         self.last_seen_at: float | None = None
@@ -158,13 +158,10 @@ class DesktopHandler:
     """
 
     def __init__(self) -> None:
-        # The currently-connected desktop client's WebSocket. Assigned
-        # when a client sends its first desktop envelope and cleared via
-        # :meth:`detach_ws` when the client disconnects.
-        #
-        # TODO(multi-client): graduate to a dict keyed by session_id +
-        # per-tool routing. For the MVP the latest-wins model matches
-        # bridge.py exactly.
+        # Backward-compatible pointer to the most recently active desktop.
+        # It is never used to choose among multiple connected clients;
+        # targeted routing uses ``_sessions`` and fails closed if the caller
+        # omits a selector while multiple desktops are online.
         self.client_ws: web.WebSocketResponse | None = None
 
         # Tools advertised by the currently-attached client. Populated
@@ -189,10 +186,9 @@ class DesktopHandler:
             maxlen=RECENT_COMMANDS_MAX
         )
 
-        # ws → DesktopSession. Cleared per-ws in :meth:`detach_ws` so
-        # disconnected clients don't leak session structs. Lives
-        # alongside the single-client tool-routing fields above; the
-        # latched client always has an entry here too.
+        # ws → DesktopSession. This is the authoritative connected-target
+        # registry. Cleared per-ws in :meth:`detach_ws` so disconnected
+        # clients don't leak session structs.
         self._sessions: dict[web.WebSocketResponse, DesktopSession] = {}
 
     # ── Envelope dispatch ────────────────────────────────────────────────
@@ -301,11 +297,12 @@ class DesktopHandler:
         await self.handle_envelope(ws, envelope, auth_session=session)
 
     async def _latch_client_ws(self, ws: web.WebSocketResponse) -> None:
-        """Opportunistically latch ``ws`` as the active tool-routing client.
+        """Refresh the legacy most-recent-client diagnostics pointer.
 
-        Mirrors alpha.1's behaviour: the first envelope wins, but a new
-        ws can take over and any pending futures bound to the old ws are
-        failed with a ``replaced by new client`` error.
+        Existing clients and their in-flight requests remain attached.
+        Actual dispatch is resolved from the complete per-WebSocket session
+        registry, never from this compatibility pointer when several targets
+        are connected.
         """
         if self.client_ws is ws:
             return
@@ -594,8 +591,8 @@ class DesktopHandler:
                 name for name in advertised if isinstance(name, str) and name
             }
 
-        # Mirror onto the per-WS session so future multi-client
-        # diagnostics can see exactly what each client advertised.
+        # Mirror onto the authoritative per-WS session used for targeted
+        # routing and multi-client diagnostics.
         if session is None:
             session = self._sessions.get(ws)
         if session is not None:
@@ -682,10 +679,7 @@ class DesktopHandler:
         return self._sessions.get(ws)
 
     def all_sessions(self) -> list[DesktopSession]:
-        """Snapshot every known session. Useful for a future
-        ``/desktop/sessions`` debug route that lists what every
-        connected client has advertised.
-        """
+        """Snapshot every known desktop session."""
         return list(self._sessions.values())
 
     # ── Activity feed ───────────────────────────────────────────────────
@@ -728,11 +722,9 @@ class DesktopHandler:
     ) -> None:
         """Drop per-ws state when a client disconnects.
 
-        Cleans up BOTH:
-          * Tool-routing state — if ``ws`` is the latched client, clear
-            the latch and fail any in-flight futures with a
-            "client disconnected" ConnectionError.
-          * Workspace state — pop the per-ws DesktopSession entry.
+        Cleans up BOTH the per-client routing/workspace state and only the
+        pending futures bound to this WebSocket. Other connected desktops and
+        their concurrent commands remain intact.
 
         Called from the main ``_on_disconnect`` path in ``server.py``.
         """
