@@ -45,6 +45,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -81,6 +83,7 @@ import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.HermesCardField
 import com.hermesandroid.relay.data.HermesCardInput
+import com.hermesandroid.relay.data.encodeClarifyMultiSelectAnswer
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import kotlinx.coroutines.coroutineScope
@@ -389,7 +392,8 @@ private fun ChoseRow(
 /**
  * The interactive answer surface for ask cards, composed from the
  * [HermesCardInput] flags rather than the card type:
- *  - [HermesCardInput.choices] → AssistChip row, one tap dispatches.
+ *  - [HermesCardInput.choices] → one-tap AssistChips, or independently
+ *    selected FilterChips plus explicit submit for multi-select clarifies.
  *  - [HermesCardInput.allowFreeText] → [InlineAnswerField] mini pill +
  *    18dp send affordance.
  *  - [HermesCardInput.masked] → password-style OutlinedTextField with a
@@ -411,6 +415,8 @@ private fun CardInputSlot(
     // never be written into the saved-instance-state Bundle.
     var answerText by remember { mutableStateOf("") }
     var reveal by remember { mutableStateOf(false) }
+    var selectedChoices by remember(input.choices) { mutableStateOf(emptyList<String>()) }
+    val isMultiSelect = input.multiSelect && input.choices.isNotEmpty()
 
     val showFreeText = !input.masked && (
         input.allowFreeText ||
@@ -428,16 +434,45 @@ private fun CardInputSlot(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 input.choices.forEach { choice ->
-                    AssistChip(
-                        onClick = { onSubmit(choice) },
-                        label = {
-                            Text(choice, style = MaterialTheme.typography.labelMedium)
-                        },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            labelColor = MaterialTheme.colorScheme.onSurface,
-                        ),
-                    )
+                    if (isMultiSelect) {
+                        val selected = choice in selectedChoices
+                        FilterChip(
+                            selected = selected,
+                            onClick = {
+                                selectedChoices = if (selected) {
+                                    selectedChoices - choice
+                                } else {
+                                    selectedChoices + choice
+                                }
+                            },
+                            label = { Text(choice, style = MaterialTheme.typography.labelMedium) },
+                            leadingIcon = if (selected) {
+                                {
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            ),
+                        )
+                    } else {
+                        AssistChip(
+                            onClick = { onSubmit(choice) },
+                            label = {
+                                Text(choice, style = MaterialTheme.typography.labelMedium)
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                labelColor = MaterialTheme.colorScheme.onSurface,
+                            ),
+                        )
+                    }
                 }
             }
         }
@@ -482,18 +517,35 @@ private fun CardInputSlot(
                     onValueChange = { answerText = it },
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(
-                    onClick = { onSubmit(answerText.trim()) },
-                    enabled = answerText.isNotBlank(),
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = stringResource(R.string.card_send_answer_a11y),
-                        tint = if (answerText.isNotBlank()) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
+                if (!isMultiSelect) {
+                    IconButton(
+                        onClick = { onSubmit(answerText.trim()) },
+                        enabled = answerText.isNotBlank(),
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = stringResource(R.string.card_send_answer_a11y),
+                            tint = if (answerText.isNotBlank()) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
+            }
+        }
+
+        if (isMultiSelect) {
+            val answers = selectedChoices +
+                listOfNotNull(answerText.trim().takeIf(String::isNotEmpty))
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { onSubmit(encodeClarifyMultiSelectAnswer(answers)) },
+                enabled = answers.isNotEmpty(),
+            ) {
+                Text(
+                    stringResource(R.string.card_submit),
+                    style = MaterialTheme.typography.labelMedium,
+                )
             }
         }
 

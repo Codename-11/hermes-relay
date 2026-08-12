@@ -50,6 +50,34 @@ class SessionDrawerTest {
     }
 
     @Test
+    fun `session work labels use a safe repo name branch and pull request number`() {
+        val session = ChatSession(
+            sessionId = "coding-1",
+            title = "Ship it",
+            model = null,
+            gitRepoRoot = "C:\\worktrees\\hermes-relay\\",
+            gitBranch = "feature/android-session-context",
+            pullRequestNumber = 134,
+            pullRequestUrl = "https://github.com/example/hermes-relay/pull/134",
+            pullRequestState = "open",
+        )
+
+        assertEquals(
+            listOf("hermes-relay", "feature/android-session-context", "PR #134 · Open"),
+            sessionWorkLabels(session),
+        )
+    }
+
+    @Test
+    fun `session work labels stay empty on older hosts`() {
+        assertTrue(
+            sessionWorkLabels(
+                ChatSession(sessionId = "legacy", title = null, model = null),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
     fun `reordered leading session remains visible after drawer refresh`() {
         var sessions by mutableStateOf(
             List(15) { index ->

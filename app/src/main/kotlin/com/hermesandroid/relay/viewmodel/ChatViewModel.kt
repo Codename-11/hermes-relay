@@ -4235,6 +4235,7 @@ class ChatViewModel : ViewModel() {
                         HermesCardInput.Kinds.CHOICE
                     },
                     choices = ask.choices.orEmpty(),
+                    multiSelect = ask.multiSelect,
                     allowFreeText = true,
                     expiresAtMillis = expiresAt,
                 ),
@@ -5041,6 +5042,7 @@ class ChatViewModel : ViewModel() {
                     requestId = ask.ask.requestId,
                     text = ask.ask.text,
                     choices = ask.ask.choices,
+                    multiSelect = ask.ask.multiSelect,
                     smartDenied = ask.ask.smartDenied,
                     envVar = ask.ask.envVar,
                     timeoutSeconds = ask.ask.timeoutSeconds,
@@ -5225,6 +5227,7 @@ class ChatViewModel : ViewModel() {
                 requestId = saved.requestId,
                 text = saved.text,
                 choices = saved.choices,
+                multiSelect = saved.multiSelect,
                 smartDenied = saved.smartDenied,
                 envVar = saved.envVar,
                 timeoutSeconds = saved.timeoutSeconds,

@@ -95,6 +95,18 @@ class SessionModelsTest {
     }
 
     @Test
+    fun sessionItem_deserializesOptionalWorkspaceMetadata() {
+        val item = json.decodeFromString<SessionItem>(
+            """{"id":"s1","cwd":"/work/repo","git_branch":"feature/mobile","git_repo_root":"/work/repo"}""",
+        )
+
+        assertEquals("/work/repo", item.cwd)
+        assertEquals("feature/mobile", item.gitBranch)
+        assertEquals("/work/repo", item.gitRepoRoot)
+        assertNull(item.pullRequest)
+    }
+
+    @Test
     fun sessionItem_deserialization_acceptsIsoUpdatedAtFallback() {
         val jsonStr = """
             {
@@ -133,6 +145,10 @@ class SessionModelsTest {
         assertNull(item.outputTokens)
         assertEquals(false, item.pinned)
         assertEquals(false, item.archived)
+        assertNull(item.cwd)
+        assertNull(item.gitBranch)
+        assertNull(item.gitRepoRoot)
+        assertNull(item.pullRequest)
     }
 
     // --- SessionListResponse ---

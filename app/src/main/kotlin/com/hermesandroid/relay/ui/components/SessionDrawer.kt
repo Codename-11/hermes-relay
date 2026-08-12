@@ -104,6 +104,25 @@ data class ProfileSessionRow(
     val session: ChatSession,
 )
 
+internal fun sessionWorkLabels(session: ChatSession): List<String> = buildList {
+    val repo = (session.gitRepoRoot ?: session.workingDirectory)
+        ?.trimEnd('/', '\\')
+        ?.substringAfterLast('/')
+        ?.substringAfterLast('\\')
+        ?.takeIf { it.isNotBlank() }
+    repo?.let(::add)
+    session.gitBranch?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
+    session.pullRequestNumber?.takeIf { it > 0 }?.let { number ->
+        val status = when {
+            session.pullRequestDraft -> "Draft"
+            !session.pullRequestState.isNullOrBlank() ->
+                session.pullRequestState.lowercase().replaceFirstChar { it.uppercaseChar() }
+            else -> null
+        }
+        add(listOfNotNull("PR #$number", status).joinToString(" · "))
+    }
+}
+
 internal fun sessionPinIcon(pinned: Boolean) =
     if (pinned) Icons.Filled.Star else Icons.Outlined.StarBorder
 
@@ -206,7 +225,8 @@ fun SessionDrawerContent(
             needle.isBlank() ||
                 session.sessionId.contains(needle, ignoreCase = true) ||
                 session.title.orEmpty().contains(needle, ignoreCase = true) ||
-                session.model.orEmpty().contains(needle, ignoreCase = true)
+                session.model.orEmpty().contains(needle, ignoreCase = true) ||
+                sessionWorkLabels(session).any { it.contains(needle, ignoreCase = true) }
         }
         .sortedWith(
             compareByDescending<ChatSession> { it.pinned }
@@ -648,7 +668,8 @@ fun SessionDrawerContent(
             needle.isBlank() ||
                 row.profile.contains(needle, ignoreCase = true) ||
                 row.session.title.orEmpty().contains(needle, ignoreCase = true) ||
-                row.session.sessionId.contains(needle, ignoreCase = true)
+                row.session.sessionId.contains(needle, ignoreCase = true) ||
+                sessionWorkLabels(row.session).any { it.contains(needle, ignoreCase = true) }
         }
         AlertDialog(
             onDismissRequest = { allProfilesOpen = false },
@@ -693,6 +714,15 @@ fun SessionDrawerContent(
                                         style = relayMetadataStyle(),
                                         color = RelayRefresh.Relay,
                                     )
+                                    sessionWorkLabels(row.session).takeIf { it.isNotEmpty() }?.let { labels ->
+                                        Text(
+                                            labels.joinToString(" • "),
+                                            style = relayMetadataStyle(),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -771,6 +801,28 @@ private fun SessionItem(
                     MaterialTheme.colorScheme.onSurface
                 }
             )
+            val workLabels = sessionWorkLabels(session)
+            if (workLabels.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .horizontalScroll(rememberScrollState()),
+                ) {
+                    workLabels.forEach { label ->
+                        Text(
+                            text = label,
+                            style = relayMetadataStyle(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(horizontal = 6.dp, vertical = 1.dp),
+                        )
+                    }
+                }
+            }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,

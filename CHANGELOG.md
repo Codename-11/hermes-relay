@@ -6,11 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-- Show a bounded command or action preview in Ask-mode approval cards, with full context in the expandable detail view.
-- Label mixed per-capability policies as Custom on the desktop Overview instead of showing a misleading preset.
-- Distinguish encrypted `wss://` relay connections from unencrypted `ws://` routes and support URL/code pairing directly in the management UI.
-- Let compact approval notifications open the live request in the main UI for full review and resolution.
-
 ### Added
 
 - **Windows management separates each Relay host from this PC.** Host detail is now the per-host hub for identity, connection and pairing/session metadata, access, capabilities, authorized-client deauthorization, re-pairing, and guarded removal. Settings owns local daemon lifecycle, separate UI-at-sign-in and daemon-with-UI preferences, explicit UAC elevation and return to user mode, terminal/CLI launchers, daemon logs, diagnostics, updates, and a Help & About page with version details and documentation links. Existing installs keep automatic daemon startup off until enabled.
@@ -19,13 +14,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **The connection route shows real bidirectional traffic.** Staggered data packets now travel continuously from Agent to PC and PC to Agent, pass behind the selected host as the relay hop, and stop animating when the tunnel is offline or reduced motion is requested.
 - **Nested management pages have a clear return control.** Host access, capabilities, activity, and host detail views now use a bordered Back button with a larger target, visible focus treatment, and explicit destination. Access copy also spells out that Standard allows files, asks for screen/input/USB, and keeps raw commands off.
 - **Desktop activity supports evidence-first drilldown.** Overview shows the latest three events; the full activity view opens each event into bounded, locally stored request, stdout, stderr, structured result, exit, timing, and truncation details with sensitive request fields excluded.
+- **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
+- Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.
+
+### Changed
+
+- **Relay voice custom transports follow upstream provider security options.** Relay-owned OpenAI/xAI realtime and TTS clients now honor explicit custom headers, custom CA bundles, the standard CA environment precedence, and an opt-in warned `ssl_verify=false` development mode without changing public-provider defaults or logging header values.
+- **Voice Lab xAI sign-in uses device authorization.** The standalone xAI login now shows a verification URL and user code and polls for approval, matching upstream Hermes and removing the loopback callback/SSH-tunnel requirement while preserving existing Voice Lab token files and refresh behavior.
 
 ### Fixed
 
+- **Ask-mode approval cards show the requested action.** A bounded command or action preview appears in the compact card, with full context in the expandable detail view and an option to review the live request in the main UI.
+- **Mixed desktop capability policies are labeled Custom.** Overview no longer presents a misleading preset when individual capability controls differ.
+- **Desktop pairing and connection security are explicit.** The management UI supports URL/code pairing directly and distinguishes encrypted `wss://` relay connections from unencrypted `ws://` routes.
 - **Windows tray placement follows the notification-area monitor at its real DPI.** The management popup now derives responsive logical dimensions from the tray monitor's work area instead of guessing scale from the icon slot, keeping compact and high-DPI desktops consistently anchored.
 - **Pairing a second desktop no longer revokes the first desktop's credentials.** Each CLI installation persists a private stable device identifier, while the Relay treats legacy `unknown` identifiers as absent rather than as shared device ownership.
 - **Desktop RPC targets the requested PC and fails closed on ambiguity.** Every client-routed tool accepts a stable device ID or unambiguous computer name, pending responses are bound to that WebSocket, and health output enumerates connected targets.
 - **PowerShell success output is complete and self-describing.** Scripts execute through a private UTF-8 temporary file, native exit status propagates, stdout and stderr are drained independently, and bounded output reports total, captured, and truncated bytes instead of returning unexplained empty success.
+- **Phone is discoverable as a proactive delivery target.** The Relay phone adapter now publishes its configured home destination through Hermes' standard channel directory, so target listings can offer `phone` before any historical phone session exists.
+- **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
 
