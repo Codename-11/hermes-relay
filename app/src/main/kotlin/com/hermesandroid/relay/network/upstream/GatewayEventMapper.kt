@@ -207,7 +207,11 @@ class GatewayEventMapper(
                     }
                     else -> syntheticToolId(name)
                 }
-                val argsPreview = payload.string("args_text")
+                val argsPreview = payload?.get("args")
+                    ?.takeUnless { it is JsonPrimitive && it.contentOrNull.isNullOrBlank() }
+                    ?.toString()
+                    ?.takeIf { it.isNotBlank() && it != "null" }
+                    ?: payload.string("args_text")
                     ?.takeIf { it.isNotBlank() }
                     ?: payload.string("context")?.takeIf { it.isNotBlank() }
                 callbacks.onToolCallStart(toolId, name, argsPreview)
@@ -294,6 +298,7 @@ class GatewayEventMapper(
                         // text; thinking/progress carry text only.
                         preview = payload.string("tool_preview") ?: payload.string("text"),
                         durationSeconds = payload.double("duration_seconds"),
+                        subagentId = payload.string("subagent_id"),
                     ),
                 )
             }

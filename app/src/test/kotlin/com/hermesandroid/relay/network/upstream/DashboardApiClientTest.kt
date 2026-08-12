@@ -690,24 +690,30 @@ class DashboardApiClientTest {
             apiKey = "never-persist-this",
         )
 
-        val listed = client.getCustomEndpoints().getOrThrow()
-        client.saveCustomEndpoint(draft).getOrThrow()
+        val listed = client.getCustomEndpoints("work profile").getOrThrow()
+        client.saveCustomEndpoint(draft, "work profile").getOrThrow()
         val validation = client.validateCustomEndpoint(draft).getOrThrow()
-        client.activateCustomEndpoint("local").getOrThrow()
-        client.deleteCustomEndpoint("local").getOrThrow()
+        client.activateCustomEndpoint("local", "work profile").getOrThrow()
+        client.deleteCustomEndpoint("local", "work profile").getOrThrow()
 
         assertEquals("local", listed.currentProvider)
         assertTrue(listed.endpoints.single().hasApiKey)
         assertEquals(listOf("qwen"), validation.models)
-        assertEquals("/api/providers/custom-endpoints", server.takeRequest().path)
+        assertEquals("/api/providers/custom-endpoints?profile=work%20profile", server.takeRequest().path)
         val save = server.takeRequest()
-        assertEquals("/api/providers/custom-endpoints", save.path)
+        assertEquals("/api/providers/custom-endpoints?profile=work%20profile", save.path)
         val saveBody = save.body.readUtf8()
         assertTrue(saveBody.contains("never-persist-this"))
         assertTrue(saveBody.contains(""""models":["qwen","qwen-vl"]"""))
         assertEquals("/api/providers/custom-endpoints/validate", server.takeRequest().path)
-        assertEquals("/api/providers/custom-endpoints/local/activate", server.takeRequest().path)
-        assertEquals("/api/providers/custom-endpoints/local", server.takeRequest().path)
+        assertEquals(
+            "/api/providers/custom-endpoints/local/activate?profile=work%20profile",
+            server.takeRequest().path,
+        )
+        assertEquals(
+            "/api/providers/custom-endpoints/local?profile=work%20profile",
+            server.takeRequest().path,
+        )
     }
 
     @Test
@@ -731,6 +737,30 @@ class DashboardApiClientTest {
         assertEquals("/api/profiles/research%20profile/soul", soul.path)
         assertEquals("DELETE", delete.method)
         assertEquals("/api/profiles/old%20profile", delete.path)
+    }
+
+    @Test
+    fun profileCreationCarriesMcpServersAndServerBackupIsDistinct() = runTest {
+        repeat(2) {
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true}"""),
+            )
+        }
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+
+        client.createProfile(
+            name = "research",
+            description = "Deep work",
+            mcpServers = listOf("github", "memory"),
+        ).getOrThrow()
+        client.createServerBackup().getOrThrow()
+
+        val create = server.takeRequest()
+        assertEquals("/api/profiles", create.path)
+        assertTrue(create.body.readUtf8().contains(""""mcp_servers":["github","memory"]"""))
+        val backup = server.takeRequest()
+        assertEquals("POST", backup.method)
+        assertEquals("/api/ops/backup", backup.path)
     }
 
     @Test
@@ -832,6 +862,28 @@ class DashboardApiClientTest {
         assertEquals(1250.5, sessions[0].lastActive!!, 0.001)
         assertEquals("Refactor the session API", sessions[0].preview)
         assertEquals("Review title fallbacks", sessions[1].preview)
+    }
+
+    @Test
+    fun listAllProfileSessions_preservesOwnerAndCompositeIdentity() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"sessions":[{"id":"same","title":"A","profile":"default"},{"id":"same","title":"B","profile":"work"},{"id":"unsafe"}],"total":3}""",
+                ),
+        )
+
+        val sessions = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listAllProfileSessions()
+            .getOrThrow()
+
+        val url = server.takeRequest().requestUrl!!
+        assertEquals("/api/profiles/sessions", url.encodedPath)
+        assertEquals("all", url.queryParameter("profile"))
+        assertEquals("include", url.queryParameter("archived"))
+        assertEquals(listOf("default", "work"), sessions.map { it.profile })
+        assertEquals(listOf("A", "B"), sessions.map { it.title })
     }
 
     @Test

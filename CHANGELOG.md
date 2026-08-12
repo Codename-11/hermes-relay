@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
+- **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
+
+## [1.6.3] - 2026-08-11
+
+### Fixed
+
+- **Relay diagnostics distinguish a prior clean stop from a crash.** Doctor and `/relay/info` expose only bounded clean, unclean, or unknown gateway-exit state with an optional suspected out-of-memory hint, without returning raw log evidence.
+- **Relay reconnects spread out after shared gateway restarts.** Ordinary exponential reconnect delays use full jitter while explicit reconnects and server-directed retry timing retain their exact behavior.
+
 ## [0.4.0-alpha.7] - 2026-08-11
 
 ### Fixed

@@ -3913,4 +3913,26 @@
     <string name="pet_creator_step_review">检查并导入</string>
     <string name="pet_creator_review_desc">请先检查返回的图片或 ZIP。导入会将经过验证的文件复制到应用专属存储空间，不会发布它们。</string>
     <string name="pet_creator_import">导入完成的宠物</string>
+    <string name="dashboard_tab_memory">记忆</string>
+    <string name="dashboard_tab_learning">学习</string>
+    <string name="dashboard_tab_channels">频道</string>
+    <string name="dashboard_tab_operations">运维</string>
+    <string name="dashboard_tab_memory_lower">记忆</string>
+    <string name="dashboard_tab_learning_lower">学习</string>
+    <string name="dashboard_tab_channels_lower">频道</string>
+    <string name="dashboard_tab_operations_lower">运维</string>
+    <string name="dashboard_section_action_server_backup">创建服务器备份</string>
+    <string name="dashboard_profile_mcp_servers_optional">MCP 服务器（可选）</string>
+    <string name="dashboard_profile_mcp_servers_help">用逗号或换行分隔服务器名称。凭据仍由服务器保管。</string>
+    <string name="dashboard_tile_memory_title">记忆</string>
+    <string name="dashboard_tile_memory_sub">提供商状态和服务器端记忆配置</string>
+    <string name="dashboard_tile_learning_title">学习图谱</string>
+    <string name="dashboard_tile_learning_sub">查看当前配置文件的已学习节点</string>
+    <string name="dashboard_tile_channels_title">频道</string>
+    <string name="dashboard_tile_channels_sub">消息平台状态，包括 WhatsApp</string>
+    <string name="dashboard_tile_operations_title">服务器运维</string>
+    <string name="dashboard_tile_operations_sub">主机健康状况和服务器整体备份</string>
+    <string name="drawer_all_profiles">所有配置文件</string>
+    <string name="drawer_no_profile_sessions">没有匹配的配置文件会话。</string>
+    <string name="drawer_close">关闭</string>
 </resources>

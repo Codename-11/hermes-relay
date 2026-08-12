@@ -99,6 +99,11 @@ internal enum class SessionDrawerFilter {
 internal const val SESSION_DRAWER_LIST_TAG = "session-drawer-list"
 internal const val UNPINNED_STAR_ALPHA = 0.45f
 
+data class ProfileSessionRow(
+    val profile: String,
+    val session: ChatSession,
+)
+
 internal fun sessionPinIcon(pinned: Boolean) =
     if (pinned) Icons.Filled.Star else Icons.Outlined.StarBorder
 
@@ -149,6 +154,10 @@ fun SessionDrawerContent(
     hiddenSources: Set<String> = emptySet(),
     /** Toggle a source's visibility (persisted). Null hides the source filter. */
     onToggleSourceHidden: ((String, Boolean) -> Unit)? = null,
+    allProfileSessions: List<ProfileSessionRow> = emptyList(),
+    allProfileSessionsLoading: Boolean = false,
+    onRefreshAllProfiles: (() -> Unit)? = null,
+    onSelectProfileSession: ((String, String) -> Unit)? = null,
 ) {
     var renameDialogSession by remember { mutableStateOf<ChatSession?>(null) }
     var newThreadDialog by remember { mutableStateOf(false) }
@@ -157,6 +166,7 @@ fun SessionDrawerContent(
     var query by remember { mutableStateOf("") }
     var searchExpanded by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
+    var allProfilesOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val trimmedQuery = query.trim()
     // Threads affordance shows when the capability is active OR there's already at least one
@@ -354,6 +364,16 @@ fun SessionDrawerContent(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (onRefreshAllProfiles != null && onSelectProfileSession != null) {
+                TextButton(
+                    onClick = {
+                        allProfilesOpen = true
+                        onRefreshAllProfiles()
+                    },
+                ) {
+                    Text(stringResource(R.string.drawer_all_profiles))
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -618,6 +638,72 @@ fun SessionDrawerContent(
                     Text(stringResource(R.string.drawer_cancel))
                 }
             }
+        )
+    }
+
+    if (allProfilesOpen) {
+        var allQuery by remember { mutableStateOf("") }
+        val needle = allQuery.trim()
+        val rows = allProfileSessions.filter { row ->
+            needle.isBlank() ||
+                row.profile.contains(needle, ignoreCase = true) ||
+                row.session.title.orEmpty().contains(needle, ignoreCase = true) ||
+                row.session.sessionId.contains(needle, ignoreCase = true)
+        }
+        AlertDialog(
+            onDismissRequest = { allProfilesOpen = false },
+            title = { Text(stringResource(R.string.drawer_all_profiles)) },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = allQuery,
+                        onValueChange = { allQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                        placeholder = { Text(stringResource(R.string.drawer_search_placeholder)) },
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    when {
+                        allProfileSessionsLoading && allProfileSessions.isEmpty() ->
+                            CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                        rows.isEmpty() -> Text(
+                            stringResource(R.string.drawer_no_profile_sessions),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        else -> LazyColumn(modifier = Modifier.height(420.dp)) {
+                            items(rows, key = { "${it.profile}:${it.session.sessionId}" }) { row ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            allProfilesOpen = false
+                                            onSelectProfileSession?.invoke(row.profile, row.session.sessionId)
+                                        }
+                                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                                ) {
+                                    Text(
+                                        row.session.title?.takeIf { it.isNotBlank() }
+                                            ?: stringResource(R.string.drawer_untitled),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        row.profile,
+                                        style = relayMetadataStyle(),
+                                        color = RelayRefresh.Relay,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { allProfilesOpen = false }) {
+                    Text(stringResource(R.string.drawer_close))
+                }
+            },
         )
     }
 }

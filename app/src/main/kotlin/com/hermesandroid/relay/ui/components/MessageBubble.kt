@@ -46,6 +46,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
@@ -113,6 +114,10 @@ fun MessageBubble(
     onQuoteMessage: ((ChatMessage) -> Unit)? = null,
     /** Navigate a rendered quote chip to its original message id. */
     onNavigateToMessage: ((String) -> Unit)? = null,
+    /** Open an upstream @session:<profile>/<id> reference in app. */
+    onSessionReference: ((SessionReference) -> Unit)? = null,
+    /** React to the newest message for this role; null removes the reaction. */
+    onReact: ((String?) -> Unit)? = null,
     /**
      * Reads a completed assistant response through the active voice renderer.
      * Null hides the entry; the owning screen uses that to limit the action to
@@ -170,6 +175,7 @@ fun MessageBubble(
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
+    val sessionReferences = remember(message.content) { parseSessionReferences(message.content) }
 
     // Phone/voice-origin action bubble marker.
     //
@@ -449,7 +455,7 @@ fun MessageBubble(
         val showEditAction = onEditMessage != null && isUser
         val showSpeakAction = shouldShowSpeakResponseAction(message, onSpeakMessage != null)
         val showStopSpeakingAction = shouldShowStopSpeakingAction(message, onStopSpeaking != null)
-        if (onQuoteMessage != null || showEditAction || showSpeakAction || showStopSpeakingAction) {
+        if (onQuoteMessage != null || onReact != null || showEditAction || showSpeakAction || showStopSpeakingAction) {
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
@@ -637,6 +643,35 @@ fun MessageBubble(
                         ),
                     ) {
                         SelectionContainer { messageTextContent() }
+                    }
+                }
+                if (onReact != null) {
+                    listOf("👍", "❤️", "😂").forEach { emoji ->
+                        DropdownMenuItem(
+                            text = { Text("React $emoji") },
+                            onClick = {
+                                showMessageActions = false
+                                onReact(emoji)
+                            },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text("Remove reaction") },
+                        onClick = {
+                            showMessageActions = false
+                            onReact(null)
+                        },
+                    )
+                }
+
+                if (onSessionReference != null && sessionReferences.isNotEmpty()) {
+                    sessionReferences.forEach { reference ->
+                        TextButton(
+                            onClick = { onSessionReference(reference) },
+                            modifier = Modifier.padding(top = 2.dp),
+                        ) {
+                            Text("Open ${reference.label}")
+                        }
                     }
                 }
 

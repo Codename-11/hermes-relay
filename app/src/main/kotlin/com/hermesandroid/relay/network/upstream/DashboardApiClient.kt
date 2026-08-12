@@ -500,6 +500,7 @@ class DashboardApiClient(
         name: String,
         cloneFromDefault: Boolean = true,
         description: String? = null,
+        mcpServers: List<String> = emptyList(),
     ): Result<JsonObject> =
         postJsonObject(
             path = "/api/profiles",
@@ -507,8 +508,15 @@ class DashboardApiClient(
                 put("name", name)
                 put("clone_from_default", cloneFromDefault)
                 if (!description.isNullOrBlank()) put("description", description)
+                if (mcpServers.isNotEmpty()) {
+                    put("mcp_servers", JsonArray(mcpServers.map(::JsonPrimitive)))
+                }
             },
         )
+
+    /** Create a host-owned Hermes backup, distinct from Android settings export. */
+    suspend fun createServerBackup(): Result<JsonObject> =
+        postJsonObject("/api/ops/backup")
 
     suspend fun setProfileDescription(name: String, description: String): Result<JsonObject> =
         putJsonObject(
@@ -605,15 +613,16 @@ class DashboardApiClient(
         )
     }
 
-    suspend fun getCustomEndpoints(): Result<DashboardCustomEndpoints> =
-        getJsonObject("/api/providers/custom-endpoints")
+    suspend fun getCustomEndpoints(profile: String? = null): Result<DashboardCustomEndpoints> =
+        getJsonObject("/api/providers/custom-endpoints${profileQuery(profile)}")
             .mapCatching(::parseCustomEndpoints)
 
     suspend fun saveCustomEndpoint(
         draft: DashboardCustomEndpointDraft,
+        profile: String? = null,
     ): Result<DashboardCustomEndpoints> =
         postJsonObject(
-            "/api/providers/custom-endpoints",
+            "/api/providers/custom-endpoints${profileQuery(profile)}",
             customEndpointPayload(draft),
         ).mapCatching(::parseCustomEndpoints)
 
@@ -634,13 +643,19 @@ class DashboardApiClient(
 
     suspend fun activateCustomEndpoint(
         id: String,
+        profile: String? = null,
     ): Result<JsonObject> =
-        postJsonObject("/api/providers/custom-endpoints/${pathSegment(id)}/activate")
+        postJsonObject(
+            "/api/providers/custom-endpoints/${pathSegment(id)}/activate${profileQuery(profile)}",
+        )
 
     suspend fun deleteCustomEndpoint(
         id: String,
+        profile: String? = null,
     ): Result<DashboardCustomEndpoints> =
-        deleteJsonObject("/api/providers/custom-endpoints/${pathSegment(id)}")
+        deleteJsonObject(
+            "/api/providers/custom-endpoints/${pathSegment(id)}${profileQuery(profile)}",
+        )
             .mapCatching(::parseCustomEndpoints)
 
     suspend fun installMcpCatalogEntry(
@@ -751,6 +766,27 @@ class DashboardApiClient(
             }
             Result.success(sessions.values.take(limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)))
         }
+
+    /**
+     * Read the bounded, authoritative session window across every profile.
+     * Every usable row must retain its owning profile; rows without one are
+     * skipped rather than risking a cross-profile transcript or mutation.
+     */
+    suspend fun listAllProfileSessions(
+        limit: Int = SESSION_LIST_WINDOW_LIMIT,
+    ): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
+        val boundedLimit = limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)
+        getJson(
+            "/api/profiles/sessions?limit=$boundedLimit&offset=0&order=recent" +
+                "&min_messages=1&archived=include&profile=all",
+        ).mapCatching { root ->
+            val parsed = json.decodeFromJsonElement(SessionListResponse.serializer(), root)
+            (parsed.sessions ?: parsed.items ?: parsed.data ?: emptyList())
+                .filter { it.id.isNotBlank() && !it.profile.isNullOrBlank() }
+                .distinctBy { "${it.profile}:${it.id}" }
+                .take(boundedLimit)
+        }
+    }
 
     /**
      * A session's message history, scoped to its owning profile via the dashboard

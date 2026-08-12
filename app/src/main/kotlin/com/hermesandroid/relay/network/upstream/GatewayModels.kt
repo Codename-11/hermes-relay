@@ -270,6 +270,7 @@ data class GatewaySubagentEvent(
     val toolName: String? = null,
     val preview: String? = null,
     val durationSeconds: Double? = null,
+    val subagentId: String? = null,
 ) {
     enum class Phase { START, THINKING, TOOL, PROGRESS, COMPLETE }
 }

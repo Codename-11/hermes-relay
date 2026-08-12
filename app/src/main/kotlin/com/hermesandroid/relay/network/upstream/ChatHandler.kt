@@ -90,12 +90,9 @@ class ChatHandler {
         // Fallback form (no relay): `MEDIA:/absolute/path` — relay wasn't
         //   reachable when the tool fired, so we render an "unavailable"
         //   placeholder instead of attempting a fetch.
-        private val mediaRelayRegex = Regex("""MEDIA:hermes-relay://([A-Za-z0-9_-]+)""")
-        // `/.+?` (not `/\S+`) so absolute paths containing spaces — e.g.
-        // `MEDIA:/mnt/media/Coralee Adshade/undressher.jpg` — still match. The
-        // trailing `\s*$` trims any trailing whitespace; non-greedy keeps the
-        // capture to the path. OkHttp re-encodes the space for /media/by-path.
-        private val mediaBarePathRegex = Regex("""^\s*MEDIA:(/.+?)\s*$""")
+        private val mediaRelayPayloadRegex = Regex("""^hermes-relay://([A-Za-z0-9_-]+)$""")
+        private val mediaMarkerPrefixRegex = Regex("MEDIA:")
+        private val windowsAbsoluteMediaPathRegex = Regex("""^[A-Za-z]:[\\/].+""")
         // Rich card marker — single line, full JSON object payload.
         //
         // Agents emit:
@@ -188,6 +185,7 @@ class ChatHandler {
      * post-stream finalize reconciliation pass.
      */
     private var mediaLineBuffer = StringBuilder()
+    private var mediaFenceDelimiter: String? = null
     private val dispatchedMediaMarkers = mutableSetOf<String>()
 
     /**
@@ -1176,12 +1174,14 @@ class ChatHandler {
         // Drop any pending line buffers / dedupe state so a fresh session
         // doesn't inherit leftovers from the previous one.
         mediaLineBuffer.clear()
+        mediaFenceDelimiter = null
         dispatchedMediaMarkers.clear()
         annotationLineBuffer.clear()
         activeAnnotationTools.clear()
         cardLineBuffer.clear()
         dispatchedCardMarkers.clear()
         subagentLabels.clear()
+        subagentIds.clear()
     }
 
     /**
@@ -1771,7 +1771,7 @@ class ChatHandler {
         for (line in text.lines()) {
             val t = line.trim()
             if (t.isEmpty()) continue
-            if (mediaRelayRegex.containsMatchIn(t) || mediaBarePathRegex.containsMatchIn(t)) continue
+            if (parseMediaMarkerLine(t).isNotEmpty()) continue
             if (PersistedImageReferenceParser.parse(t).paths.isNotEmpty()) continue
             if (cardMarkerRegex.containsMatchIn(t)) continue
             if (sb.isNotEmpty()) sb.append('\n')
@@ -1789,6 +1789,51 @@ class ChatHandler {
     }
 
     /**
+     * Parse one marker-only line using upstream-compatible wrappers and
+     * boundaries. Prose and malformed examples remain ordinary text; a whole
+     * inline-code or emphasis wrapper is accepted, as are adjacent markers,
+     * sentence-final punctuation, POSIX paths, and Windows absolute paths.
+     */
+    private fun parseMediaMarkerLine(line: String): List<MediaMarkerHit> {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty() || trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+            return emptyList()
+        }
+        val starts = mediaMarkerPrefixRegex.findAll(trimmed).map { it.range.first }.toList()
+        if (starts.isEmpty()) return emptyList()
+        val prefix = trimmed.substring(0, starts.first())
+        if (prefix.any { !it.isWhitespace() && it !in "`*_~" }) return emptyList()
+
+        val hits = ArrayList<MediaMarkerHit>(starts.size)
+        for ((index, start) in starts.withIndex()) {
+            val payloadStart = start + "MEDIA:".length
+            val payloadEnd = starts.getOrNull(index + 1) ?: trimmed.length
+            val payload = trimmed.substring(payloadStart, payloadEnd)
+                .trim()
+                .trimEnd { it in "`*_~.,;:)}]" }
+                .trim()
+            if (payload.isEmpty()) return emptyList()
+            val relay = mediaRelayPayloadRegex.matchEntire(payload)
+            when {
+                relay != null -> hits += MediaMarkerHit.RelayToken(relay.groupValues[1])
+                payload.startsWith("/") || windowsAbsoluteMediaPathRegex.matches(payload) ->
+                    hits += MediaMarkerHit.BarePath(payload)
+                else -> return emptyList()
+            }
+        }
+        return hits
+    }
+
+    private fun fenceDelimiter(line: String): String? {
+        val trimmed = line.trimStart()
+        return when {
+            trimmed.startsWith("```") -> "```"
+            trimmed.startsWith("~~~") -> "~~~"
+            else -> null
+        }
+    }
+
+    /**
      * Scan loaded (non-streaming) message content line-by-line for media
      * markers, append hits to [out], and return the content with matched
      * lines removed. Pure function — does NOT mutate [_messages] or fire
@@ -1800,24 +1845,20 @@ class ChatHandler {
         out: MutableList<Pair<String, MediaMarkerHit>>,
     ): String {
         var cleaned = content
+        var openFence: String? = null
         for (rawLine in content.lines()) {
             val trimmed = rawLine.trim()
             if (trimmed.isEmpty()) continue
-
-            val relayMatch = mediaRelayRegex.find(trimmed)
-            if (relayMatch != null) {
-                out.add(messageId to MediaMarkerHit.RelayToken(relayMatch.groupValues[1]))
-                cleaned = cleaned
-                    .replace("\n$rawLine\n", "\n")
-                    .replace("\n$rawLine", "")
-                    .replace("$rawLine\n", "")
-                    .replace(rawLine, "")
+            val delimiter = fenceDelimiter(rawLine)
+            if (delimiter != null) {
+                openFence = if (openFence == delimiter) null else if (openFence == null) delimiter else openFence
                 continue
             }
+            if (openFence != null) continue
 
-            val bareMatch = mediaBarePathRegex.find(trimmed)
-            if (bareMatch != null) {
-                out.add(messageId to MediaMarkerHit.BarePath(bareMatch.groupValues[1]))
+            val hits = parseMediaMarkerLine(trimmed)
+            if (hits.isNotEmpty()) {
+                hits.forEach { out.add(messageId to it) }
                 cleaned = cleaned
                     .replace("\n$rawLine\n", "\n")
                     .replace("\n$rawLine", "")
@@ -2265,6 +2306,18 @@ class ChatHandler {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) continue
 
+            fenceDelimiter(line)?.let { delimiter ->
+                mediaFenceDelimiter = if (mediaFenceDelimiter == delimiter) {
+                    null
+                } else if (mediaFenceDelimiter == null) {
+                    delimiter
+                } else {
+                    mediaFenceDelimiter
+                }
+                continue
+            }
+            if (mediaFenceDelimiter != null) continue
+
             if (tryDispatchMediaMarker(messageId, trimmed)) {
                 stripLineFromContent(messageId, trimmed)
             }
@@ -2394,29 +2447,26 @@ class ChatHandler {
      * Returns true when a marker was matched so the caller can strip the line.
      */
     private fun tryDispatchMediaMarker(messageId: String, line: String): Boolean {
-        val relayMatch = mediaRelayRegex.find(line)
-        if (relayMatch != null) {
-            val token = relayMatch.groupValues[1]
-            val dedupeKey = "$messageId:relay:$token"
-            if (dispatchedMediaMarkers.add(dedupeKey)) {
-                Log.d(TAG, "Media marker (relay): token=$token")
-                onMediaAttachmentRequested(messageId, token)
+        val hits = parseMediaMarkerLine(line)
+        for (hit in hits) {
+            when (hit) {
+                is MediaMarkerHit.RelayToken -> {
+                    val dedupeKey = "$messageId:relay:${hit.token}"
+                    if (dispatchedMediaMarkers.add(dedupeKey)) {
+                        Log.d(TAG, "Media marker (relay): token=${hit.token}")
+                        onMediaAttachmentRequested(messageId, hit.token)
+                    }
+                }
+                is MediaMarkerHit.BarePath -> {
+                    val dedupeKey = "$messageId:bare:${hit.path}"
+                    if (dispatchedMediaMarkers.add(dedupeKey)) {
+                        Log.d(TAG, "Media marker (bare-path): ${hit.path}")
+                        onMediaBarePathRequested(messageId, hit.path)
+                    }
+                }
             }
-            return true
         }
-
-        val bareMatch = mediaBarePathRegex.find(line)
-        if (bareMatch != null) {
-            val path = bareMatch.groupValues[1]
-            val dedupeKey = "$messageId:bare:$path"
-            if (dispatchedMediaMarkers.add(dedupeKey)) {
-                Log.d(TAG, "Media marker (bare-path, unavailable): $path")
-                onMediaBarePathRequested(messageId, path)
-            }
-            return true
-        }
-
-        return false
+        return hits.isNotEmpty()
     }
 
     /**
@@ -2555,10 +2605,11 @@ class ChatHandler {
         if (mediaLineBuffer.isNotEmpty()) {
             val remaining = mediaLineBuffer.toString().trim()
             mediaLineBuffer.clear()
-            if (remaining.isNotEmpty() && tryDispatchMediaMarker(messageId, remaining)) {
+            if (mediaFenceDelimiter == null && remaining.isNotEmpty() && tryDispatchMediaMarker(messageId, remaining)) {
                 stripLineFromContent(messageId, remaining)
             }
         }
+        mediaFenceDelimiter = null
 
         // Post-stream reconciliation: re-scan the final content for markers
         // that raced with stripLineFromContent during streaming.
@@ -2567,12 +2618,16 @@ class ChatHandler {
                 if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
                 var cleaned = msg.content
                 var changed = false
+                var openFence: String? = null
                 for (rawLine in msg.content.lines()) {
                     val trimmed = rawLine.trim()
                     if (trimmed.isEmpty()) continue
-                    if (mediaRelayRegex.containsMatchIn(trimmed) ||
-                        mediaBarePathRegex.containsMatchIn(trimmed)
-                    ) {
+                    val delimiter = fenceDelimiter(rawLine)
+                    if (delimiter != null) {
+                        openFence = if (openFence == delimiter) null else if (openFence == null) delimiter else openFence
+                        continue
+                    }
+                    if (openFence == null && parseMediaMarkerLine(trimmed).isNotEmpty()) {
                         tryDispatchMediaMarker(messageId, trimmed)
                         cleaned = cleaned
                             .replace("\n$rawLine\n", "\n")
@@ -2903,6 +2958,7 @@ class ChatHandler {
      * [onStreamComplete] / [clearMessages].
      */
     private val subagentLabels = mutableMapOf<Int, String>()
+    private val subagentIds = mutableMapOf<Int, String>()
 
     /**
      * Apply one gateway `subagent.*` lifecycle event to the streaming
@@ -2918,6 +2974,9 @@ class ChatHandler {
         when (event.phase) {
             GatewaySubagentEvent.Phase.START -> {
                 if (label != null) subagentLabels[event.taskIndex] = label
+                event.subagentId?.takeIf(String::isNotBlank)?.let {
+                    subagentIds[event.taskIndex] = it
+                }
             }
 
             GatewaySubagentEvent.Phase.TOOL -> {
@@ -2932,6 +2991,8 @@ class ChatHandler {
                     isComplete = false,
                     taskIndex = event.taskIndex,
                     taskLabel = laneLabel,
+                    subagentId = event.subagentId?.takeIf(String::isNotBlank)
+                        ?: subagentIds[event.taskIndex],
                 )
                 _messages.update { messages ->
                     val target = messages.findLast {
@@ -2971,6 +3032,7 @@ class ChatHandler {
                 // "interrupted" lanes never finished — not a success either.
                 val failed = event.status == "failed" || event.status == "interrupted"
                 val laneLabel = subagentLabels.remove(event.taskIndex) ?: label
+                val subagentId = subagentIds.remove(event.taskIndex) ?: event.subagentId
                 val summaryId = "subagent-${event.taskIndex}-${syntheticToolSeq++}"
                 _messages.update { messages ->
                     messages.map { msg ->
@@ -3003,6 +3065,7 @@ class ChatHandler {
                                 completedAt = System.currentTimeMillis(),
                                 taskIndex = event.taskIndex,
                                 taskLabel = laneLabel,
+                                subagentId = subagentId,
                             )
                         }
                         msg.copy(toolCalls = withSummary)
@@ -3260,6 +3323,7 @@ class ChatHandler {
             }
         }
         subagentLabels.clear()
+        subagentIds.clear()
     }
 
     fun onStreamError(message: String) {
@@ -3289,6 +3353,7 @@ class ChatHandler {
             }
         }
         subagentLabels.clear()
+        subagentIds.clear()
     }
 
     fun onThinkingDelta(messageId: String, delta: String) {

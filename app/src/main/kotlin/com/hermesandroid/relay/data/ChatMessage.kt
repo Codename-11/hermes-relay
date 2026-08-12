@@ -366,6 +366,8 @@ data class ToolCall(
      * header can render without a separate lane registry.
      */
     val taskLabel: String? = null,
+    /** Live upstream child id used by subagent.steer while this lane runs. */
+    val subagentId: String? = null,
     /** Deterministic non-low output risk reported by upstream for this call. */
     val outputRisk: String? = null,
     /** Human-readable deterministic findings; rendered as untrusted metadata. */

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 DEFAULT_STALE_AFTER_S = 90.0
+MAX_EXIT_DIAG_BYTES = 256 * 1024
 
 
 def hermes_home() -> Path:
@@ -110,3 +111,54 @@ def assess_gateway_heartbeat(
         "supported": True,
         "age_seconds": int(age),
     }
+
+
+def assess_gateway_prior_exit(*, home: Path | None = None) -> dict[str, Any]:
+    """Return a bounded label for the gateway life before the current start.
+
+    The upstream exit log can include argv, paths, process details, and memory
+    evidence. Relay deliberately emits only the classification and optional
+    OOM hint; raw records never cross this boundary.
+    """
+    root = home if home is not None else hermes_home()
+    path = root / "logs" / "gateway-exit-diag.log"
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(0, size - MAX_EXIT_DIAG_BYTES))
+            raw = handle.read(MAX_EXIT_DIAG_BYTES)
+    except OSError:
+        return {"prior_exit": "unknown"}
+
+    records: list[dict[str, Any]] = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        try:
+            value = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(value, dict) and isinstance(value.get("tag"), str):
+            records.append(value)
+
+    starts = [index for index, record in enumerate(records) if record.get("tag") == "gateway.start"]
+    if not starts:
+        return {"prior_exit": "unknown"}
+    current_start = starts[-1]
+    if current_start == 0:
+        return {"prior_exit": "unknown"}
+
+    previous = records[current_start - 1]
+    if previous.get("tag") == "gateway.previous_unclean_exit":
+        result: dict[str, Any] = {"prior_exit": "unclean"}
+        if previous.get("suspected_oom") is True:
+            result["suspected_oom"] = True
+        return result
+
+    clean_exit_tags = {
+        "atexit.hook",
+        "asyncio.run.return",
+        "asyncio.run.SystemExit",
+        "asyncio.run.KeyboardInterrupt",
+    }
+    if previous.get("tag") in clean_exit_tags:
+        return {"prior_exit": "clean"}
+    return {"prior_exit": "unknown"}

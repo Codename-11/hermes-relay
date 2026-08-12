@@ -1493,6 +1493,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listProfileScopedSessions(limit)
 
+    suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? =
+        profileController.listAllProfileSessions(limit)
+
     suspend fun loadProfileScopedMessages(
         sessionId: String,
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,

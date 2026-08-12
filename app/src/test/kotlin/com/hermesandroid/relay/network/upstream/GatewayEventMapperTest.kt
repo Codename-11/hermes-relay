@@ -484,6 +484,23 @@ class GatewayEventMapperTest {
     }
 
     @Test
+    fun `structured tool arguments win over legacy previews`() {
+        val recorder = Recorder()
+        val mapper = mapperWith(recorder)
+        mapper.onEvent(
+            "tool.start",
+            obj(
+                """{"tool_id":"t3","name":"terminal","args":{"command":"echo live","timeout":30},"args_text":"stale","context":"older"}""",
+            ),
+        )
+
+        assertEquals(
+            listOf("t3" to "{\"command\":\"echo live\",\"timeout\":30}"),
+            recorder.toolStartArgs,
+        )
+    }
+
+    @Test
     fun `tool complete with error routes to failed`() {
         val r = Recorder()
         val mapper = mapperWith(r)
@@ -574,7 +591,7 @@ class GatewayEventMapperTest {
     fun `subagent lifecycle maps phases and fields`() {
         val r = Recorder()
         val mapper = mapperWith(r)
-        mapper.onEvent("subagent.start", obj("""{"goal":"research topic","task_index":1,"task_count":3}"""))
+        mapper.onEvent("subagent.start", obj("""{"goal":"research topic","task_index":1,"task_count":3,"subagent_id":"child-17"}"""))
         mapper.onEvent("subagent.thinking", obj("""{"goal":"research topic","task_index":1,"task_count":3,"text":"hmm"}"""))
         mapper.onEvent(
             "subagent.tool",
@@ -600,6 +617,7 @@ class GatewayEventMapperTest {
         assertEquals(1, start.taskIndex)
         assertEquals(3, start.taskCount)
         assertEquals("research topic", start.goal)
+        assertEquals("child-17", start.subagentId)
         assertEquals("hmm", r.subagentEvents[1].preview)
         val tool = r.subagentEvents[2]
         assertEquals("web_search", tool.toolName)

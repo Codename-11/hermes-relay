@@ -251,6 +251,8 @@ class GatewayClientHarness(
                     put("status", steerStatus)
                     put("text", (params["text"] as? JsonPrimitive)?.contentOrNull ?: "")
                 }
+                "subagent.steer" -> buildJsonObject { put("status", steerStatus) }
+                "message.react" -> buildJsonObject { put("row_id", 17) }
                 "session.compress" -> compressPayload
                 "slash.exec" -> buildJsonObject {
                     put("output", "legacy compression started")
@@ -675,6 +677,55 @@ class GatewayChatClientTest {
         assertEquals(0, r.reconcileRequests.get())
         assertTrue(r.errors.isEmpty())
         assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `global reclaim settles active turn once and next send resumes durable session`() {
+        val first = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "first",
+            newSessionTitle = "first",
+            callbacks = first.callbacks,
+            onPreflightFailure = { first.preflightFailures += it },
+        )
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        val reclaim = harness.eventFrame(
+            "session.reclaimed",
+            buildJsonObject {
+                put("session_id", "live-1")
+                put("stored_session_id", "20260612_120000_abc123")
+                put("reason", "idle_timeout")
+            },
+            null,
+        )
+        serverWs.send(reclaim)
+        serverWs.send(reclaim)
+
+        assertTrue("reclaimed turn never settled", first.completeLatch.await(5, TimeUnit.SECONDS))
+        waitUntil { first.errors.size == 1 }
+
+        val second = Recorder()
+        client.sendTurn(
+            sessionId = "20260612_120000_abc123",
+            text = "continue",
+            newSessionTitle = null,
+            callbacks = second.callbacks,
+            onPreflightFailure = { second.preflightFailures += it },
+        )
+        harness.awaitRpc("session.resume")
+        harness.awaitRpcCount("prompt.submit", 2)
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "resumed") },
+                "live-resumed",
+            ),
+        )
+
+        assertTrue("resumed turn never completed", second.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(second.errors.isEmpty())
     }
 
     @Test
@@ -1304,6 +1355,22 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `subagent redirect carries exact parent and child identity`() = runBlocking {
+        val recorder = Recorder()
+        client.sendTurn(null, "delegate", null, recorder.callbacks) { recorder.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val result = client.steerSubagent("child-17", "focus on Android")
+
+        assertEquals("queued", (result.getOrThrow()["status"] as? JsonPrimitive)?.contentOrNull)
+        val params = harness.awaitRpc("subagent.steer")
+        assertEquals("live-1", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("child-17", (params["subagent_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("focus on Android", (params["text"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
     fun `compress session uses dedicated rpc and parses authoritative messages`() {
         val r = Recorder()
         client.sendTurn(null, "long job", null, r.callbacks) { r.preflightFailures += it }
@@ -1752,6 +1819,23 @@ class GatewayChatClientTest {
     }
 
     // --- Pet thumbnails ---
+
+    @Test
+    fun `message reaction targets newest role without guessing a row id`() {
+        client.sendTurn("stored-1", "hi", null, Recorder().callbacks) {}
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        val result = runBlocking { client.reactToNewest("assistant", "👍") }
+
+        assertTrue(result.isSuccess)
+        val params = harness.awaitRpc("message.react")
+        assertEquals("live-resumed", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("assistant", (params["newest_role"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("👍", (params["emoji"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("user", (params["author"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse("row_id" in params)
+    }
 
     @Test
     fun `pet thumbnail connects on demand and sends upstream params`() {

@@ -3984,4 +3984,26 @@
     <string name="pet_creator_step_review">確認してインポート</string>
     <string name="pet_creator_review_desc">返された画像またはZIPを最初に確認してください。インポートすると検証済みファイルがアプリ専用ストレージにコピーされますが、公開はされません。</string>
     <string name="pet_creator_import">完成したペットをインポート</string>
+    <string name="dashboard_tab_memory">メモリ</string>
+    <string name="dashboard_tab_learning">学習</string>
+    <string name="dashboard_tab_channels">チャンネル</string>
+    <string name="dashboard_tab_operations">運用</string>
+    <string name="dashboard_tab_memory_lower">メモリ</string>
+    <string name="dashboard_tab_learning_lower">学習</string>
+    <string name="dashboard_tab_channels_lower">チャンネル</string>
+    <string name="dashboard_tab_operations_lower">運用</string>
+    <string name="dashboard_section_action_server_backup">サーバーバックアップを作成</string>
+    <string name="dashboard_profile_mcp_servers_optional">MCP サーバー（任意）</string>
+    <string name="dashboard_profile_mcp_servers_help">サーバー名をカンマまたは改行で区切ります。認証情報はサーバー側に保持されます。</string>
+    <string name="dashboard_tile_memory_title">メモリ</string>
+    <string name="dashboard_tile_memory_sub">プロバイダーの状態とサーバー側のメモリ設定</string>
+    <string name="dashboard_tile_learning_title">学習グラフ</string>
+    <string name="dashboard_tile_learning_sub">アクティブなプロファイルの学習済みノードを確認</string>
+    <string name="dashboard_tile_channels_title">チャンネル</string>
+    <string name="dashboard_tile_channels_sub">WhatsApp を含むメッセージプラットフォームの状態</string>
+    <string name="dashboard_tile_operations_title">サーバー運用</string>
+    <string name="dashboard_tile_operations_sub">ホストの状態とサーバー全体のバックアップ</string>
+    <string name="drawer_all_profiles">すべてのプロファイル</string>
+    <string name="drawer_no_profile_sessions">一致するプロファイルセッションはありません。</string>
+    <string name="drawer_close">閉じる</string>
 </resources>

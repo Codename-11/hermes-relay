@@ -231,6 +231,7 @@ import com.hermesandroid.relay.ui.components.ThinkingIndicatorStyle
 import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
 import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
+import com.hermesandroid.relay.ui.components.ProfileSessionRow
 import com.hermesandroid.relay.ui.components.ProfileDisplayManagerDialog
 import com.hermesandroid.relay.ui.components.ProfileShelf
 import com.hermesandroid.relay.ui.components.ProfileSwitcherSheet
@@ -743,6 +744,13 @@ fun ChatScreen(
 
 
     val messages by chatViewModel.messages.collectAsState()
+    val messageReactionsSupported by chatViewModel.messageReactionsSupported.collectAsState()
+    val newestReactableMessageKeys = remember(messages) {
+        setOfNotNull(
+            messages.lastOrNull { it.role == MessageRole.USER }?.uiKey,
+            messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.uiKey,
+        )
+    }
     val isStreaming by chatViewModel.isStreaming.collectAsState()
     // Keep the screen on for the two "actively engaged, hands-off-keyboard"
     // cases: voice mode is a call-like continuous session (mirrors Assistant/
@@ -1128,6 +1136,8 @@ fun ChatScreen(
     }
     val listState = rememberLazyListState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
+    var allProfileSessionsLoading by remember { mutableStateOf(false) }
     PetInteractionLayer(
         owner = "chat-interaction-layer",
         active = shouldHideChatPet(
@@ -2106,6 +2116,57 @@ fun ChatScreen(
                 onToggleSourceHidden = { source, hidden ->
                     connectionViewModel.setSourceHidden(source, hidden)
                 },
+                allProfileSessions = allProfileSessions,
+                allProfileSessionsLoading = allProfileSessionsLoading,
+                onRefreshAllProfiles = {
+                    if (!allProfileSessionsLoading) scope.launch {
+                        allProfileSessionsLoading = true
+                        val result = connectionViewModel.listAllProfileSessions()
+                        result?.fold(
+                            onSuccess = { items ->
+                                allProfileSessions = items.mapNotNull { item ->
+                                    val owner = item.profile?.takeIf { it.isNotBlank() }
+                                        ?: return@mapNotNull null
+                                    ProfileSessionRow(
+                                        profile = owner,
+                                        session = com.hermesandroid.relay.data.ChatSession(
+                                            sessionId = item.id,
+                                            title = item.title ?: item.preview,
+                                            model = item.model,
+                                            messageCount = item.messageCount ?: 0,
+                                            startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
+                                            lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
+                                            source = item.source,
+                                            pinned = item.pinned,
+                                            archived = item.archived,
+                                        ),
+                                    )
+                                }
+                            },
+                            onFailure = { error ->
+                                snackbarHostState.showSnackbar(
+                                    "Couldn't load all profiles: ${error.message ?: "unsupported"}",
+                                )
+                            },
+                        )
+                        allProfileSessionsLoading = false
+                    }
+                },
+                onSelectProfileSession = { profileName, sessionId ->
+                    val target = agentProfiles.firstOrNull {
+                        it.name.equals(profileName, ignoreCase = true)
+                    }
+                    if (target != null || profileName.equals("default", ignoreCase = true)) {
+                        connectionViewModel.selectProfile(target)
+                        chatViewModel.activateGatewayProfile(target)
+                        chatViewModel.switchSession(sessionId)
+                        scope.launch { drawerState.close() }
+                    } else {
+                        scope.launch {
+                            snackbarHostState.showSnackbar("Profile $profileName is not available.")
+                        }
+                    }
+                },
             )
         }
     ) {
@@ -3023,6 +3084,33 @@ fun ChatScreen(
                                     },
                                     onCardAction = handleCardAction,
                                     onCardInput = handleCardInput,
+                                    onSessionReference = { reference ->
+                                        val target = agentProfiles.firstOrNull {
+                                            it.name.equals(reference.profile, ignoreCase = true)
+                                        }
+                                        if (target != null) {
+                                            connectionViewModel.selectProfile(target)
+                                            chatViewModel.activateGatewayProfile(target)
+                                            chatViewModel.switchSession(reference.sessionId)
+                                        } else {
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    message = "Profile ${reference.profile} is not available.",
+                                                    duration = SnackbarDuration.Short,
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onReact = if (
+                                        isGatewayTransport &&
+                                        messageReactionsSupported &&
+                                        !message.isStreaming &&
+                                        message.uiKey in newestReactableMessageKeys
+                                    ) {
+                                        { emoji -> chatViewModel.reactToNewest(message.role, emoji) }
+                                    } else {
+                                        null
+                                    },
                                     onEditMessage = if (
                                         isGatewayTransport &&
                                         !isStreaming &&
@@ -3156,6 +3244,7 @@ fun ChatScreen(
                                     SubagentLane(
                                         taskIndex = taskIndex,
                                         calls = laneGroups.getValue(taskIndex),
+                                        onSteer = chatViewModel::steerSubagent,
                                     )
                                 }
                             }

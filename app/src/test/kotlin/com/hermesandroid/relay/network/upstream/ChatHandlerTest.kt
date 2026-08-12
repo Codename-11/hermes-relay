@@ -145,6 +145,43 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun mediaMarkers_acceptUpstreamWrappersPunctuationAdjacentAndWindowsPaths() {
+        val paths = mutableListOf<String>()
+        handler.onMediaBarePathRequested = { _, path -> paths += path }
+
+        handler.onTextDelta("assist-1", "`MEDIA:/tmp/report.csv.`\n")
+        handler.onTextDelta(
+            "assist-1",
+            "**MEDIA:C:\\exports\\shot.png**, MEDIA:/tmp/other report.pdf\n",
+        )
+
+        assertEquals(
+            listOf(
+                "/tmp/report.csv",
+                "C:\\exports\\shot.png",
+                "/tmp/other report.pdf",
+            ),
+            paths,
+        )
+        assertEquals("", handler.messages.value.single().content)
+    }
+
+    @Test
+    fun mediaMarkers_preserveFencedAndProseExamples() {
+        val paths = mutableListOf<String>()
+        handler.onMediaBarePathRequested = { _, path -> paths += path }
+
+        handler.onTextDelta(
+            "assist-1",
+            "```text\nMEDIA:/tmp/example.png\n```\nExample: `MEDIA:/tmp/example.pdf`\n",
+        )
+
+        assertTrue(paths.isEmpty())
+        assertTrue(handler.messages.value.single().content.contains("MEDIA:/tmp/example.png"))
+        assertTrue(handler.messages.value.single().content.contains("MEDIA:/tmp/example.pdf"))
+    }
+
+    @Test
     fun onTextDelta_setsStreamingFlag() {
         handler.onTextDelta("assist-1", "delta")
 
