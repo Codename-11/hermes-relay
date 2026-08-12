@@ -1981,6 +1981,7 @@
     <string name="dashboard_section_action_import_backup">Import backup</string>
     <string name="dashboard_backup_create_first">Create a backup in this session before downloading it.</string>
     <string name="dashboard_backup_download_failed">Backup could not be downloaded.</string>
+    <string name="dashboard_backup_saved">Backup saved as %1$s.</string>
     <string name="dashboard_import_title">Import server backup?</string>
     <string name="dashboard_import_warning">This uploads the selected zip to Hermes and starts its authenticated server import. It can replace configuration and data. Create and save a current backup first.</string>
     <string name="dashboard_import_confirm">Import</string>

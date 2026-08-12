@@ -512,7 +512,7 @@ fun DashboardManagementScreen(
                         ?: throw IOException("The selected destination could not be opened.")
                 }
             }.fold(
-                onSuccess = { actionMessage = "Backup saved as $it." },
+                onSuccess = { actionMessage = context.getString(R.string.dashboard_backup_saved, it) },
                 onFailure = {
                     withContext(Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
                     actionMessage = it.message ?: context.getString(R.string.dashboard_backup_download_failed)
