@@ -678,6 +678,55 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `global reclaim settles active turn once and next send resumes durable session`() {
+        val first = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "first",
+            newSessionTitle = "first",
+            callbacks = first.callbacks,
+            onPreflightFailure = { first.preflightFailures += it },
+        )
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        val reclaim = harness.eventFrame(
+            "session.reclaimed",
+            buildJsonObject {
+                put("session_id", "live-1")
+                put("stored_session_id", "20260612_120000_abc123")
+                put("reason", "idle_timeout")
+            },
+            null,
+        )
+        serverWs.send(reclaim)
+        serverWs.send(reclaim)
+
+        assertTrue("reclaimed turn never settled", first.completeLatch.await(5, TimeUnit.SECONDS))
+        waitUntil { first.errors.size == 1 }
+
+        val second = Recorder()
+        client.sendTurn(
+            sessionId = "20260612_120000_abc123",
+            text = "continue",
+            newSessionTitle = null,
+            callbacks = second.callbacks,
+            onPreflightFailure = { second.preflightFailures += it },
+        )
+        harness.awaitRpc("session.resume")
+        harness.awaitRpcCount("prompt.submit", 2)
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "resumed") },
+                "live-resumed",
+            ),
+        )
+
+        assertTrue("resumed turn never completed", second.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(second.errors.isEmpty())
+    }
+
+    @Test
     fun `unsolicited assistant turn for resumed session streams without sendTurn`() = runBlocking {
         val r = Recorder()
         val registrations = ConcurrentLinkedQueue<String>()

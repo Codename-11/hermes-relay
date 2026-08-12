@@ -38,6 +38,7 @@ class RelayInfoRouteTests(AioHTTPTestCase):
             "media_entry_count",
             "health",
             "gateway_heartbeat",
+            "gateway_prior_exit",
         }
         self.assertTrue(required.issubset(set(body.keys())))
 
@@ -54,6 +55,7 @@ class RelayInfoRouteTests(AioHTTPTestCase):
         self.assertNotIn("pid", body["gateway_heartbeat"])
         self.assertNotIn("path", body["gateway_heartbeat"])
         self.assertNotIn("updated_at", body["gateway_heartbeat"])
+        self.assertLessEqual(set(body["gateway_prior_exit"]), {"prior_exit", "suspected_oom"})
 
         for counter in (
             "uptime_seconds",

@@ -2182,7 +2182,7 @@ async def handle_relay_info(request: web.Request) -> web.Response:
     else:
         server, _session = _require_bearer_session(request)
 
-    from ..gateway_diagnostics import assess_gateway_heartbeat
+    from ..gateway_diagnostics import assess_gateway_heartbeat, assess_gateway_prior_exit
     from ..profiles import discover_profile_configs, relay_state
 
     profiles = [
@@ -2220,6 +2220,7 @@ async def handle_relay_info(request: web.Request) -> web.Response:
             # Read-only upstream signal. It is intentionally separate from
             # Relay's own health and never drives restart/fallback behavior.
             "gateway_heartbeat": assess_gateway_heartbeat(),
+            "gateway_prior_exit": assess_gateway_prior_exit(),
         }
     )
 

@@ -19,6 +19,7 @@ import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import com.hermesandroid.relay.network.relay.models.Envelope
 import com.hermesandroid.relay.network.shared.EndpointResolver
 import com.hermesandroid.relay.network.shared.EndpointSurface
+import com.hermesandroid.relay.network.shared.fullJitterDelayMs
 import com.hermesandroid.relay.network.shutdownOffMainThread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -139,6 +140,8 @@ class ConnectionManager(
      * non-null — the manager falls back to the single-URL path.
      */
     private val deviceIdProvider: (suspend () -> String?)? = null,
+    /** Random source for ordinary reconnect full-jitter; exact backoffs never use it. */
+    private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
 ) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
@@ -1213,8 +1216,9 @@ class ConnectionManager(
                 SLOW_POLL_BACKOFF_MS
             }
             else -> {
-                val ms = (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
+                val capMs = (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
                     .coerceAtMost(MAX_BACKOFF_MS)
+                val ms = fullJitterDelayMs(capMs, reconnectJitterUnit())
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Info,

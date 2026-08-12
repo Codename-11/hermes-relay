@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import com.hermesandroid.relay.network.shared.fullJitterDelayMs
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -86,6 +87,8 @@ class GatewayChatClient(
     private val promptSubmitTimeoutMs: Long = PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
     /** Test seam — idle-progress watchdog base. Production keeps [TURN_TIMEOUT_MS]. */
     private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
+    /** Random source for ordinary reconnect full-jitter. */
+    private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
 ) {
     /** Existing upstream rich-chat vocabulary; do not invent a Relay-only source. */
     private val sessionSource = "webui"
@@ -2094,6 +2097,42 @@ class GatewayChatClient(
             return
         }
 
+        // Upstream emits session.reclaimed process-wide, so it is identified
+        // by payload rather than params.session_id. Retire only an exact live
+        // runtime we own; preserve the durable id so the next send resumes it.
+        if (type == "session.reclaimed") {
+            val reclaimedLiveId = payload?.stringField("session_id")
+            val reclaimedStoredId = payload?.stringField("stored_session_id")
+            val reason = payload?.stringField("reason")
+            val supportedReason = reason in setOf("idle_timeout", "lru_evict", "ws_orphan_reap")
+            if (!reclaimedLiveId.isNullOrBlank() && supportedReason) {
+                val background = backgroundTurns.remove(reclaimedLiveId)
+                if (background != null) {
+                    callbackDispatcher {
+                        unmatchedTurnCompleteListener?.invoke(
+                            GatewayBackgroundTurnCompletion(
+                                storedSessionId = reclaimedStoredId?.takeIf(String::isNotBlank)
+                                    ?: background.storedSessionId,
+                                liveSessionId = reclaimedLiveId,
+                                profile = background.profile,
+                                expectedAssistantText = null,
+                            ),
+                        )
+                    }
+                }
+                if (reclaimedLiveId == liveSessionId) {
+                    liveSessionId = null
+                    reclaimedStoredId?.takeIf(String::isNotBlank)?.let { storedSessionId = it }
+                    val turn = activeTurn
+                    if (turn != null && !turn.ended) {
+                        activeTurn = null
+                        turn.failFromTransport("Gateway reclaimed the inactive session")
+                    }
+                }
+            }
+            return
+        }
+
         // read_terminal is a renderer query, not a user decision. Android has
         // no xterm pane on the Gateway chat surface, so mirror upstream
         // desktop's no-live-pane behavior and answer with empty text instead
@@ -2412,7 +2451,7 @@ class GatewayChatClient(
                 Log.i(TAG, "Gateway socket rejoined for ${backgroundTurns.size} detached turn(s)")
                 return
             }
-            delay(backoffMs)
+            delay(fullJitterDelayMs(backoffMs, reconnectJitterUnit()))
             backoffMs = (backoffMs * 2).coerceAtMost(5_000L)
         }
     }
@@ -2505,7 +2544,7 @@ class GatewayChatClient(
                 )
                 return
             }
-            delay(backoffMs)
+            delay(fullJitterDelayMs(backoffMs, reconnectJitterUnit()))
             backoffMs = (backoffMs * 2).coerceAtMost(5_000L)
         }
         if (activeTurn === turn) activeTurn = null
