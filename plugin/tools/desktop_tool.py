@@ -11,7 +11,7 @@ Tools registered (Phase B + remote-PC ergonomics, alpha.7):
 
   Shell:
     - desktop_terminal         run a shell command (bash/cmd) — bounded 30s
-    - desktop_powershell       run a PowerShell script via stdin (no quote-mangling)
+    - desktop_powershell       run a private PowerShell script (no quote-mangling)
 
   Process management:
     - desktop_spawn_detached   fire-and-forget process; returns pid + log path
@@ -34,6 +34,11 @@ Tools registered (Phase B + remote-PC ergonomics, alpha.7):
   Diagnostics:
     - desktop_health           connected client name, uptime, advertised tools,
                                 last error — answered by the relay (no client RTT)
+
+  USB:
+    - desktop_usb_devices      enumerate host-visible USB devices
+    - desktop_usb_run          direct-spawn a native/vendor USB utility
+    - desktop_adb_*            serial-bound Android Debug Bridge conveniences
 
   Experimental computer-use (observe-first):
     - desktop_computer_status          local display/grant/permission summary
@@ -66,9 +71,13 @@ from __future__ import annotations
 
 import json
 import os
+from contextvars import ContextVar
 from typing import Any, Optional
 
 import requests
+
+
+_DESKTOP_TARGET: ContextVar[str | None] = ContextVar("desktop_target", default=None)
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -96,18 +105,22 @@ def _auth_headers() -> dict:
     return {}
 
 
-def _post(path: str, payload: dict) -> dict:
+def _post(path: str, payload: dict, *, timeout: Optional[float] = None) -> dict:
     """POST ``payload`` to ``<relay>/desktop/<path>`` and return the JSON body.
 
     Surface network / HTTP failures as structured ``{"error": ...}`` dicts
     so the tool handlers can always return JSON to Hermes.
     """
+    payload = dict(payload)
+    target = _DESKTOP_TARGET.get()
+    if target:
+        payload["device"] = target
     try:
         r = requests.post(
             f"{_relay_url()}{path}",
             json=payload,
             headers=_auth_headers(),
-            timeout=_timeout(),
+            timeout=_timeout() if timeout is None else timeout,
         )
     except requests.RequestException as exc:
         return {"error": f"Relay unreachable: {exc}"}
@@ -251,6 +264,120 @@ def desktop_powershell(
         payload["prefer"] = prefer
     data = _post("/desktop/desktop_powershell", payload)
     return json.dumps(data)
+
+
+# ── Host-gated raw USB + ADB services ───────────────────────────────────────
+
+
+def desktop_usb_devices(reason: Optional[str] = None) -> str:
+    """List USB devices visible to the targeted desktop host."""
+    payload: dict[str, Any] = {}
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post("/desktop/desktop_usb_devices", payload, timeout=_adb_http_timeout())
+    )
+
+
+def desktop_usb_run(
+    executable: str,
+    arguments: Optional[list[str]] = None,
+    cwd: Optional[str] = None,
+    timeout: int = 30,
+    reason: Optional[str] = None,
+) -> str:
+    """Direct-spawn a native or vendor USB utility without a shell."""
+    payload: dict[str, Any] = {
+        "executable": executable,
+        "arguments": list(arguments or []),
+        "timeout": int(timeout),
+    }
+    if cwd is not None:
+        payload["cwd"] = cwd
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post("/desktop/desktop_usb_run", payload, timeout=_adb_http_timeout(timeout))
+    )
+
+
+def _adb_http_timeout(operation_timeout: int = 30) -> float:
+    """Cover the local approval window plus the bounded ADB operation."""
+    return max(_timeout(), min(max(int(operation_timeout), 1), 120) + 130.0)
+
+
+def desktop_adb_devices(reason: Optional[str] = None) -> str:
+    payload: dict[str, Any] = {}
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post("/desktop/desktop_adb_devices", payload, timeout=_adb_http_timeout())
+    )
+
+
+def desktop_adb_shell(serial: str, command: str, timeout: int = 30, reason: Optional[str] = None) -> str:
+    payload: dict[str, Any] = {"serial": serial, "command": command, "timeout": int(timeout)}
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post(
+            "/desktop/desktop_adb_shell",
+            payload,
+            timeout=_adb_http_timeout(timeout),
+        )
+    )
+
+
+def desktop_adb_push(serial: str, source: str, destination: str, timeout: int = 60, reason: Optional[str] = None) -> str:
+    payload: dict[str, Any] = {"serial": serial, "source": source, "destination": destination, "timeout": int(timeout)}
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post(
+            "/desktop/desktop_adb_push",
+            payload,
+            timeout=_adb_http_timeout(timeout),
+        )
+    )
+
+
+def desktop_adb_pull(serial: str, source: str, destination: str, timeout: int = 60, reason: Optional[str] = None) -> str:
+    payload: dict[str, Any] = {"serial": serial, "source": source, "destination": destination, "timeout": int(timeout)}
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post(
+            "/desktop/desktop_adb_pull",
+            payload,
+            timeout=_adb_http_timeout(timeout),
+        )
+    )
+
+
+def desktop_adb_install(serial: str, apk: str, replace: bool = True, timeout: int = 120, reason: Optional[str] = None) -> str:
+    payload: dict[str, Any] = {"serial": serial, "apk": apk, "replace": bool(replace), "timeout": int(timeout)}
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post(
+            "/desktop/desktop_adb_install",
+            payload,
+            timeout=_adb_http_timeout(timeout),
+        )
+    )
+
+
+def desktop_adb_logcat(serial: str, lines: int = 500, timeout: int = 30, reason: Optional[str] = None) -> str:
+    payload: dict[str, Any] = {"serial": serial, "lines": int(lines), "timeout": int(timeout)}
+    if reason is not None:
+        payload["reason"] = reason
+    return json.dumps(
+        _post(
+            "/desktop/desktop_adb_logcat",
+            payload,
+            timeout=_adb_http_timeout(timeout),
+        )
+    )
 
 
 # ── Process management ────────────────────────────────────────────────────────
@@ -627,12 +754,13 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "desktop_powershell": {
         "name": "desktop_powershell",
         "description": (
-            "Run a PowerShell script on the desktop client, with the script text "
-            "fed to PowerShell via stdin (no cmd.exe quote-mangling). Use this "
+            "Run a PowerShell script on the targeted desktop client through a "
+            "private temporary UTF-8 file (no cmd.exe quote-mangling). Use this "
             "instead of desktop_terminal('powershell -Command \"...\"') — the "
             "latter loses quotes, here-strings, and dollar-vars to nested parsers. "
             "Picks `pwsh` when present, falls back to Windows PowerShell on "
-            "Windows. Returns {stdout, stderr, exit_code, duration_ms, shell}."
+            "Windows. Returns stdout, stderr, exit_code, shell, and explicit "
+            "per-stream byte/truncation metadata. The required payload field is script."
         ),
         "parameters": {
             "type": "object",
@@ -649,6 +777,85 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["script"],
         },
+    },
+    "desktop_usb_devices": {
+        "name": "desktop_usb_devices",
+        "description": (
+            "List USB devices visible to the targeted desktop. Governed by the "
+            "host's Raw USB Off/Ask/Allow policy."
+        ),
+        "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}},
+    },
+    "desktop_usb_run": {
+        "name": "desktop_usb_run",
+        "description": (
+            "Run a native or vendor USB utility by direct executable + argument "
+            "array, without shell parsing. This is host-wide Raw USB access and "
+            "is governed by the selected desktop's USB Off/Ask/Allow policy."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "executable": {"type": "string", "description": "Executable name or path."},
+                "arguments": {"type": "array", "items": {"type": "string"}, "maxItems": 128, "default": []},
+                "cwd": {"type": "string", "description": "Working directory for the utility."},
+                "timeout": {"type": "integer", "default": 30, "maximum": 120},
+                "reason": {"type": "string"},
+            },
+            "required": ["executable"],
+        },
+    },
+    "desktop_adb_devices": {
+        "name": "desktop_adb_devices",
+        "description": "List Android devices visible to the targeted desktop's brokered ADB backend.",
+        "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}},
+    },
+    "desktop_adb_shell": {
+        "name": "desktop_adb_shell",
+        "description": "Run a bounded ADB shell command against one explicit device serial.",
+        "parameters": {"type": "object", "properties": {
+            "serial": {"type": "string"}, "command": {"type": "string"},
+            "timeout": {"type": "integer", "default": 30, "maximum": 120},
+            "reason": {"type": "string"},
+        }, "required": ["serial", "command"]},
+    },
+    "desktop_adb_push": {
+        "name": "desktop_adb_push",
+        "description": "Push one local file to one explicit Android device serial.",
+        "parameters": {"type": "object", "properties": {
+            "serial": {"type": "string"}, "source": {"type": "string"},
+            "destination": {"type": "string"}, "timeout": {"type": "integer", "default": 60, "maximum": 120},
+            "reason": {"type": "string"},
+        }, "required": ["serial", "source", "destination"]},
+    },
+    "desktop_adb_pull": {
+        "name": "desktop_adb_pull",
+        "description": "Pull one file from one explicit Android device serial.",
+        "parameters": {"type": "object", "properties": {
+            "serial": {"type": "string"}, "source": {"type": "string"},
+            "destination": {"type": "string"}, "timeout": {"type": "integer", "default": 60, "maximum": 120},
+            "reason": {"type": "string"},
+        }, "required": ["serial", "source", "destination"]},
+    },
+    "desktop_adb_install": {
+        "name": "desktop_adb_install",
+        "description": "Install one APK on one explicit Android device serial through the broker.",
+        "parameters": {"type": "object", "properties": {
+            "serial": {"type": "string"}, "apk": {"type": "string"},
+            "replace": {"type": "boolean", "default": True},
+            "timeout": {"type": "integer", "default": 120, "maximum": 120},
+            "reason": {"type": "string"},
+        }, "required": ["serial", "apk"]},
+    },
+    "desktop_adb_logcat": {
+        "name": "desktop_adb_logcat",
+        "description": "Return a bounded recent logcat snapshot from one explicit Android device serial.",
+        "parameters": {"type": "object", "properties": {
+            "serial": {"type": "string"},
+            "lines": {"type": "integer", "default": 500, "minimum": 1, "maximum": 5000},
+            "timeout": {"type": "integer", "default": 30, "maximum": 120},
+            "reason": {"type": "string"},
+        }, "required": ["serial"]},
     },
     # ── Process management ────────────────────────────────────────────────
     "desktop_spawn_detached": {
@@ -882,12 +1089,15 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "desktop_health": {
         "name": "desktop_health",
         "description": (
-            "Report the connected desktop client's identity (host, platform, "
-            "version, pid), uptime, advertised tools, last error, and the most "
+            "List every connected desktop target's stable device_id, name, and "
+            "advertised tools, plus compatibility diagnostics for the most recent "
+            "client and the most "
             "recent commands the relay has dispatched. Answered by the relay "
             "directly — does NOT round-trip through the client — so it works "
-            "even when other tools are wedged. Use this to debug 'why isn't "
-            "desktop_terminal responding?' before giving up."
+            "even when other tools are wedged. When several desktops are listed, "
+            "choose one and pass its device_id in the device field of every "
+            "client-routed call. USB/ADB calls use device for the host PC and "
+            "serial for attached hardware where required."
         ),
         "parameters": {"type": "object", "properties": {}},
     },
@@ -1082,6 +1292,14 @@ _HANDLERS: dict[str, Any] = {
     "desktop_patch":         lambda args, **kw: desktop_patch(**args),
     # Shell
     "desktop_powershell":    lambda args, **kw: desktop_powershell(**args),
+    "desktop_usb_devices": lambda args, **kw: desktop_usb_devices(**args),
+    "desktop_usb_run": lambda args, **kw: desktop_usb_run(**args),
+    "desktop_adb_devices": lambda args, **kw: desktop_adb_devices(**args),
+    "desktop_adb_shell": lambda args, **kw: desktop_adb_shell(**args),
+    "desktop_adb_push": lambda args, **kw: desktop_adb_push(**args),
+    "desktop_adb_pull": lambda args, **kw: desktop_adb_pull(**args),
+    "desktop_adb_install": lambda args, **kw: desktop_adb_install(**args),
+    "desktop_adb_logcat": lambda args, **kw: desktop_adb_logcat(**args),
     # Process management
     "desktop_spawn_detached":  lambda args, **kw: desktop_spawn_detached(**args),
     "desktop_list_processes":  lambda args, **kw: desktop_list_processes(**args),
@@ -1107,6 +1325,84 @@ _HANDLERS: dict[str, Any] = {
     "desktop_computer_grant_request": lambda args, **kw: desktop_computer_grant_request(**args),
     "desktop_computer_cancel":        lambda args, **kw: desktop_computer_cancel(**args),
 }
+
+
+def _targeted_handler(handler: Any) -> Any:
+    """Consume the relay-only device selector before calling a tool function."""
+
+    def invoke(args: dict[str, Any], **kwargs: Any) -> Any:
+        call_args = dict(args)
+        target = call_args.pop("device", None) or call_args.pop("device_id", None)
+        token = _DESKTOP_TARGET.set(str(target).strip() if target else None)
+        try:
+            return handler(call_args, **kwargs)
+        finally:
+            _DESKTOP_TARGET.reset(token)
+
+    return invoke
+
+
+for _tool_name, _handler in list(_HANDLERS.items()):
+    if _tool_name != "desktop_health":
+        _HANDLERS[_tool_name] = _targeted_handler(_handler)
+
+_DEVICE_SELECTOR_SCHEMA = {
+    "type": "string",
+    "description": (
+        "Target desktop device_id or unambiguous device/host name. Required when "
+        "more than one desktop daemon is connected; use desktop_health to list clients."
+    ),
+}
+_TOOL_CAPABILITIES = {
+    "desktop_read_file": "files.read",
+    "desktop_search_files": "files.read",
+    "desktop_checksum": "files.read",
+    "desktop_write_file": "files.write",
+    "desktop_patch": "files.write",
+    "desktop_copy_directory": "files.write",
+    "desktop_zip": "files.write",
+    "desktop_unzip": "files.write",
+    "desktop_terminal": "system.execute",
+    "desktop_powershell": "system.execute",
+    "desktop_usb_devices": "devices.usb",
+    "desktop_usb_run": "devices.usb",
+    "desktop_adb_devices": "devices.usb",
+    "desktop_adb_shell": "devices.usb",
+    "desktop_adb_push": "devices.usb",
+    "desktop_adb_pull": "devices.usb",
+    "desktop_adb_install": "devices.usb",
+    "desktop_adb_logcat": "devices.usb",
+    "desktop_spawn_detached": "system.execute",
+    "desktop_job_start": "system.execute",
+    "desktop_job_status": "process.manage",
+    "desktop_job_logs": "process.manage",
+    "desktop_job_cancel": "process.manage",
+    "desktop_job_list": "process.manage",
+    "desktop_list_processes": "process.manage",
+    "desktop_kill_process": "process.manage",
+    "desktop_find_pid_by_port": "process.manage",
+    "desktop_clipboard_read": "clipboard.read",
+    "desktop_clipboard_write": "clipboard.write",
+    "desktop_screenshot": "screen.observe",
+    "desktop_open_in_editor": "user_context.open",
+    "desktop_computer_status": "screen.observe",
+    "desktop_computer_screenshot": "screen.observe",
+    "desktop_computer_action": "input.control",
+    "desktop_computer_grant_request": "permissions.request",
+    "desktop_computer_cancel": "permissions.revoke",
+}
+for _tool_name, _schema in _SCHEMAS.items():
+    if _tool_name == "desktop_health":
+        continue
+    _parameters = _schema.get("parameters")
+    if isinstance(_parameters, dict):
+        _properties = _parameters.setdefault("properties", {})
+        if isinstance(_properties, dict):
+            _properties["device"] = dict(_DEVICE_SELECTOR_SCHEMA)
+    _capability = _TOOL_CAPABILITIES.get(_tool_name)
+    if _capability:
+        _schema["x-hermes-capability"] = _capability
+        _schema["x-hermes-raw-system-access"] = _capability == "system.execute"
 
 
 # Tools whose check_fn should ping the relay rather than a specific client tool.

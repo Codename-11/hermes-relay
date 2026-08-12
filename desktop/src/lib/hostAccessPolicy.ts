@@ -2,21 +2,66 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-export const HOST_ACCESS_MODES = ['ask', 'trusted', 'full_access'] as const
+export const HOST_ACCESS_MODES = ['ask', 'ask_every_time', 'structured', 'trusted', 'full_access', 'custom'] as const
+export const DESKTOP_CAPABILITIES = ['commands', 'files', 'screen_input'] as const
+export const HARDWARE_CAPABILITIES = ['usb', 'microphone', 'camera'] as const
+export const HOST_CAPABILITIES = [...DESKTOP_CAPABILITIES, ...HARDWARE_CAPABILITIES] as const
+export const CAPABILITY_ACCESS_MODES = ['disabled', 'ask', 'allow'] as const
 
 export type HostAccessMode = (typeof HOST_ACCESS_MODES)[number]
+export type DesktopCapability = (typeof DESKTOP_CAPABILITIES)[number]
+export type HardwareCapability = (typeof HARDWARE_CAPABILITIES)[number]
+export type HostCapability = (typeof HOST_CAPABILITIES)[number]
+export type CapabilityAccessMode = (typeof CAPABILITY_ACCESS_MODES)[number]
+
+export type CapabilityPolicies = Record<HostCapability, CapabilityAccessMode>
 
 export interface HostAccessPolicy {
   access_mode: HostAccessMode
+  capabilities: CapabilityPolicies
   updated_at?: string
 }
 
 export interface HostAccessPolicyFile {
-  version: 1
+  version: 2
   hosts: Record<string, HostAccessPolicy>
 }
 
-const STORE_VERSION = 1 as const
+const STORE_VERSION = 2 as const
+export const DEFAULT_CAPABILITY_POLICIES: CapabilityPolicies = Object.freeze({
+  commands: 'disabled',
+  files: 'disabled',
+  screen_input: 'disabled',
+  usb: 'disabled',
+  microphone: 'disabled',
+  camera: 'disabled'
+})
+
+type PresetAccessMode = Exclude<HostAccessMode, 'custom'>
+
+export const PRESET_CAPABILITY_POLICIES: Readonly<Record<PresetAccessMode, CapabilityPolicies>> = Object.freeze({
+  ask: Object.freeze({ ...DEFAULT_CAPABILITY_POLICIES }),
+  ask_every_time: Object.freeze({
+    commands: 'ask', files: 'ask', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled'
+  }),
+  structured: Object.freeze({
+    commands: 'disabled', files: 'allow', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled'
+  }),
+  trusted: Object.freeze({
+    commands: 'allow', files: 'allow', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled'
+  }),
+  full_access: Object.freeze({
+    commands: 'allow', files: 'allow', screen_input: 'allow', usb: 'allow', microphone: 'allow', camera: 'allow'
+  })
+})
+
+export function presetCapabilityPolicies(mode: HostAccessMode): CapabilityPolicies {
+  return { ...(mode === 'custom' ? DEFAULT_CAPABILITY_POLICIES : PRESET_CAPABILITY_POLICIES[mode]) }
+}
+
+function sameCapabilities(left: CapabilityPolicies, right: CapabilityPolicies): boolean {
+  return HOST_CAPABILITIES.every(capability => left[capability] === right[capability])
+}
 
 export function hostAccessPolicyPath(): string {
   return process.env.HERMES_RELAY_HOST_ACCESS_POLICY_PATH ??
@@ -48,17 +93,39 @@ export function isHostAccessMode(value: unknown): value is HostAccessMode {
 
 const emptyStore = (): HostAccessPolicyFile => ({ version: STORE_VERSION, hosts: {} })
 
-const restrictiveness = (mode: HostAccessMode): number => HOST_ACCESS_MODES.indexOf(mode)
+const capabilityRestrictiveness = (mode: CapabilityAccessMode): number => CAPABILITY_ACCESS_MODES.indexOf(mode)
 
 function parsePolicy(value: unknown): HostAccessPolicy | null {
-  if (isHostAccessMode(value)) return { access_mode: value }
+  if (isHostAccessMode(value)) {
+    return { access_mode: value, capabilities: presetCapabilityPolicies(value) }
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
 
   const raw = value as Record<string, unknown>
   const mode = raw.access_mode ?? raw.mode
   if (!isHostAccessMode(mode)) return null
+  const rawCapabilities = raw.capabilities && typeof raw.capabilities === 'object' && !Array.isArray(raw.capabilities)
+    ? raw.capabilities as Record<string, unknown>
+    : {}
+  const capabilities = presetCapabilityPolicies(mode)
+  let hasExplicitCapabilities = false
+  for (const capability of HOST_CAPABILITIES) {
+    const value = rawCapabilities[capability]
+    if (typeof value === 'string' && CAPABILITY_ACCESS_MODES.includes(value as CapabilityAccessMode)) {
+      capabilities[capability] = value as CapabilityAccessMode
+      hasExplicitCapabilities = true
+    }
+  }
+  // Full Access is intentionally a real override. Older stores could retain
+  // an independent USB Ask value, which was misleading because unrestricted
+  // commands could already reach that hardware.
+  if (mode === 'full_access') Object.assign(capabilities, PRESET_CAPABILITY_POLICIES.full_access)
+  const normalizedMode = mode !== 'custom' && hasExplicitCapabilities && !sameCapabilities(capabilities, PRESET_CAPABILITY_POLICIES[mode])
+    ? 'custom'
+    : mode
   return {
-    access_mode: mode,
+    access_mode: normalizedMode,
+    capabilities,
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : undefined
   }
 }
@@ -72,9 +139,28 @@ function mergePolicy(
   if (!url) return
 
   const current = hosts[url]
-  if (!current || restrictiveness(policy.access_mode) < restrictiveness(current.access_mode)) {
+  if (!current) {
     hosts[url] = policy
+    return
   }
+  const capabilities = Object.fromEntries(HOST_CAPABILITIES.map(capability => {
+      const currentMode = current.capabilities[capability]
+      const incomingMode = policy.capabilities[capability]
+      return [capability, capabilityRestrictiveness(incomingMode) < capabilityRestrictiveness(currentMode)
+        ? incomingMode
+        : currentMode]
+    })) as CapabilityPolicies
+  hosts[url] = {
+    access_mode: inferAccessMode(capabilities),
+    capabilities
+  }
+}
+
+export function inferAccessMode(capabilities: CapabilityPolicies): HostAccessMode {
+  for (const mode of ['ask', 'ask_every_time', 'structured', 'trusted', 'full_access'] as const) {
+    if (sameCapabilities(capabilities, PRESET_CAPABILITY_POLICIES[mode])) return mode
+  }
+  return 'custom'
 }
 
 /**
@@ -103,7 +189,12 @@ export function parseHostAccessPolicyFile(value: unknown): HostAccessPolicyFile 
     const urls = raw[field]
     if (!Array.isArray(urls)) continue
     for (const url of urls) {
-      if (typeof url === 'string') mergePolicy(hosts, url, { access_mode: mode })
+      if (typeof url === 'string') {
+        mergePolicy(hosts, url, {
+          access_mode: mode,
+          capabilities: presetCapabilityPolicies(mode)
+        })
+      }
     }
   }
 
@@ -150,10 +241,74 @@ export async function setHostAccessMode(
   if (!isHostAccessMode(accessMode)) throw new Error(`unsupported host access mode: ${String(accessMode)}`)
 
   const store = await readHostAccessPolicies(filePath)
+  const current = store.hosts[canonical]
   const policy: HostAccessPolicy = {
     access_mode: accessMode,
+    capabilities: accessMode === 'custom'
+      ? current?.capabilities ?? { ...DEFAULT_CAPABILITY_POLICIES }
+      : presetCapabilityPolicies(accessMode),
     updated_at: new Date().toISOString()
   }
+  store.hosts[canonical] = policy
+  await writeJsonAtomic(filePath, store)
+  return policy
+}
+
+/** Initialize a newly paired host without changing an existing or migrated
+ * policy. Missing policy records otherwise keep the legacy fail-closed
+ * Restricted behavior. */
+export async function initializePairedHostAccessPolicy(
+  relayUrl: string,
+  filePath = hostAccessPolicyPath()
+): Promise<HostAccessPolicy> {
+  const canonical = canonicalRelayUrl(relayUrl)
+  if (!canonical) throw new Error('host access policy requires a valid ws:// or wss:// relay URL')
+  const store = await readHostAccessPolicies(filePath)
+  const existing = store.hosts[canonical]
+  if (existing) return existing
+  const policy: HostAccessPolicy = {
+    access_mode: 'ask_every_time',
+    capabilities: presetCapabilityPolicies('ask_every_time'),
+    updated_at: new Date().toISOString()
+  }
+  store.hosts[canonical] = policy
+  await writeJsonAtomic(filePath, store)
+  return policy
+}
+
+export async function getHostCapabilityPolicies(
+  relayUrl: string,
+  filePath = hostAccessPolicyPath()
+): Promise<CapabilityPolicies> {
+  const canonical = canonicalRelayUrl(relayUrl)
+  if (!canonical) return { ...DEFAULT_CAPABILITY_POLICIES }
+  return (await readHostAccessPolicies(filePath)).hosts[canonical]?.capabilities ??
+    { ...DEFAULT_CAPABILITY_POLICIES }
+}
+
+export async function setHostCapabilityPolicy(
+  relayUrl: string,
+  capability: HostCapability,
+  mode: CapabilityAccessMode,
+  filePath = hostAccessPolicyPath()
+): Promise<HostAccessPolicy> {
+  const canonical = canonicalRelayUrl(relayUrl)
+  if (!canonical) throw new Error('host capability policy requires a valid relay URL')
+  if (!HOST_CAPABILITIES.includes(capability)) throw new Error(`unsupported capability: ${capability}`)
+  if (!CAPABILITY_ACCESS_MODES.includes(mode)) throw new Error(`unsupported capability mode: ${mode}`)
+  const store = await readHostAccessPolicies(filePath)
+  const current = store.hosts[canonical] ?? {
+    access_mode: 'ask' as HostAccessMode,
+    capabilities: { ...DEFAULT_CAPABILITY_POLICIES }
+  }
+  if (current.capabilities[capability] === mode) return current
+  const policy: HostAccessPolicy = {
+    ...current,
+    capabilities: { ...current.capabilities, [capability]: mode },
+    access_mode: 'custom',
+    updated_at: new Date().toISOString()
+  }
+  policy.access_mode = inferAccessMode(policy.capabilities)
   store.hosts[canonical] = policy
   await writeJsonAtomic(filePath, store)
   return policy
@@ -190,4 +345,14 @@ export function effectiveHostAccessMode(
   legacyToolsConsented: boolean
 ): HostAccessMode {
   return storedMode === 'ask' && legacyToolsConsented ? 'trusted' : storedMode
+}
+
+export function effectiveHostCapabilityPolicies(
+  storedMode: HostAccessMode,
+  legacyToolsConsented: boolean,
+  storedCapabilities: CapabilityPolicies
+): CapabilityPolicies {
+  return storedMode === 'ask' && legacyToolsConsented
+    ? presetCapabilityPolicies('trusted')
+    : { ...storedCapabilities }
 }

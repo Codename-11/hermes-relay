@@ -2847,3 +2847,111 @@ Relay dependency or a GitHub credential path. Repository and branch state can
 still appear when PR recovery is unsupported, while legacy hosts show no new
 badges and active sessions can surface a PR created after their first drawer
 refresh without allowing cross-profile cache collisions.
+
+---
+
+## ADR 52 — Desktop RPC is explicitly device-targeted and capability-honest
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** A Relay can retain several authorized desktop sessions, but the
+desktop channel historically latched one latest WebSocket. Pairing two PCs could
+therefore make an agent command change targets implicitly. The desktop surface
+also mixes typed file/process/screen operations with unrestricted terminal and
+PowerShell execution. Camera, microphone, and attached-device toggles cannot be
+claimed as security boundaries while unrestricted code still runs as the same
+Windows user.
+
+**Decision.** Every desktop advertises a stable installation `device_id` and
+display name. The Relay keeps all connected desktop WebSockets, accepts a
+`device` selector on every client-routed tool, binds pending responses to that
+WebSocket, and fails closed when more than one desktop is connected without an
+explicit target. Health reports enumerate valid targets, and successful RPCs
+identify the resolved target.
+
+Typed tools are the preferred automation surface and declare a capability such
+as `files.read`, `files.write`, `process.manage`, `screen.observe`, or
+`input.control`. `desktop_terminal`, `desktop_powershell`, detached processes,
+and background command jobs declare `system.execute`. This capability is an
+escape hatch: at user privilege it can transitively reach files, processes,
+USB devices, camera, or microphone through operating-system APIs. The UI must
+not present independent hardware-deny toggles as enforceable while
+`system.execute` remains enabled.
+
+Existing local policy remains authoritative on each target PC: Ask does not
+start the headless tool router without consent; Structured withholds
+`desktop_terminal`, `desktop_powershell`, detached process launch, and command
+job start; Trusted permits typed and execution tools but retains task grants for
+screen/input; Full Access bypasses those task grants for that Relay host.
+
+Hardware policy is separate and per host. USB defaults Disabled and exposes
+only typed, serial-bound ADB list, shell, push, pull, install, and bounded
+logcat operations. Ask raises the dedicated local approval card for every
+operation; Allow requires explicit confirmation. Full Access does not override
+the USB policy. Disabled or unavailable backends are omitted from advertised
+tools. Microphone and camera remain visibly unavailable until bounded
+brokers, active-use indication, and cancellation exist.
+
+The management UI names the legacy no-tools Ask state **Restricted**. A separate
+**Ask Every Time** preset advertises each available command, file, screen/input,
+and USB operation behind a per-operation local approval; unavailable brokers
+remain disabled. New pairings receive Ask Every Time explicitly, while missing
+or existing legacy policy records retain their previous fail-closed meaning.
+
+**Consequences.** Agents cannot accidentally execute against whichever PC most
+recently sent a heartbeat, and a response from another PC cannot satisfy a
+targeted request. Common operations remain typed and auditable while raw shell
+power is labeled honestly. Structured mode makes the USB policy enforceable,
+and device operations appear as their own local Activity category. Microphone
+and camera controls are not shipped as cosmetic switches.
+
+---
+
+## ADR 53 — Desktop management separates host scope from local-PC scope
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** The compact Windows tray had accumulated per-host connection and
+authorization information alongside local daemon, update, and application
+controls. That made Settings difficult to scan and left common operator tasks—
+opening the CLI, viewing the daemon log, running diagnostics, or returning an
+elevated daemon to normal user privileges—dependent on external instructions.
+The tray must remain a small management utility rather than regrow into an
+embedded terminal or general desktop client.
+
+**Decision.** The three top-level destinations remain Overview, Hosts, and
+Settings, with scope determining ownership:
+
+- A Host detail page is the hub for one paired Relay instance. It owns the local
+  display name, connection state, Relay address/version, pairing and session
+  details, access preset, capabilities, authorized clients, explicit connect,
+  re-pair, client deauthorization, and guarded Forget host actions. Opening the
+  page never silently selects or connects the host.
+- Settings owns this Windows PC and the installed application. It contains
+  daemon lifecycle and sign-in behavior, CLI launchers, logs and diagnostics,
+  bundle updates, and Help & About. **Start UI at sign-in** controls only the
+  per-user tray startup entry. **Start daemon with UI** is a separate opt-in,
+  defaults off for existing installs, and never implies elevation. Per-host
+  access and client lists do not appear there.
+- **Open terminal** starts a normal terminal with `hermes-relay` available.
+  **Open Hermes CLI** starts the paired remote Hermes TUI in a real terminal;
+  neither action embeds a terminal emulator in the tray.
+- **View daemon log** opens the local daemon log. **Run diagnostics** delegates
+  to the CLI diagnostic contract rather than creating a second health model.
+- Help & About reports UI, CLI, and connected Relay versions and links to the
+  documentation, troubleshooting guide, and release notes through the default
+  browser. Log and diagnostic shortcuts remain available there as well.
+
+The tray always remains unelevated. **Restart as Administrator...** is an
+explicit UAC-mediated action that elevates only the daemon. **Return to user
+mode** performs one elevated-daemon stop followed by a normal daemon start.
+Elevation is not stored as a toggle or sign-in preference because every approved
+command and input action inherits the daemon's privilege.
+
+**Consequences.** Relay-specific actions are discoverable from the corresponding
+host without making global Settings wider. Routine CLI and support workflows no
+longer require users to find paths or commands manually. Administrator state is
+visible and reversible, while the management UI and automatic startup retain
+normal user privilege. The product stays a thin CLI/TUI plus compact Windows
+management surface; chat, plugins, voice, and terminal rendering remain outside
+the tray.

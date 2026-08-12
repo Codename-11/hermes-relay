@@ -13,6 +13,7 @@ Full reference for every `hermes-relay` verb. Flags map one-to-one with env vars
 | `status` | Local view of stored sessions. Default-redacts tokens. |
 | `tools` | Server-side tool inventory (`tools.list` RPC). |
 | `devices` | Server-side paired-device management — list / revoke / extend. |
+| `hosts` | Select locally paired hosts and configure per-host access and capabilities. |
 | `relay` | Inspect the relay server — `info`, `security`, injected `context`. |
 | `daemon` | Headless tool router — keeps `desktop_*` tools advertised even with no shell open. `daemon start` runs it in the background. |
 | `computer-use` | Persistently enable/disable experimental screenshot and input tools; show or cancel the active grant. |
@@ -23,6 +24,21 @@ Full reference for every `hermes-relay` verb. Flags map one-to-one with env vars
 | `workspace` | Print local workspace context (cwd / git / editor / shell) — same envelope shipped to the relay on connect. |
 | `logo` | Print the Hermes Relay banner. |
 | `help` | Print full help. |
+
+## `hermes-relay hosts`
+
+Manage which paired Hermes host the desktop daemon serves and its local access policy. New pairings default to **Ask Every Time**; legacy `ask` remains a compatibility alias for **Restricted**.
+
+```bash
+hermes-relay hosts list
+hermes-relay hosts select wss://home.example:8767
+hermes-relay hosts access restricted --remote wss://home.example:8767
+hermes-relay hosts access ask-every-time --remote wss://home.example:8767
+hermes-relay hosts access standard --remote wss://home.example:8767
+hermes-relay hosts access full-access --remote wss://home.example:8767 --yes
+```
+
+Capability changes automatically select a matching preset; combinations that do not match one are shown as **Custom**.
 
 ## `hermes-relay` (bare — defaults to `shell`)
 
@@ -218,6 +234,9 @@ Run the tool router headless — no PTY, no Ink TUI, just the WSS connection + `
 ```bash
 hermes-relay daemon start                        # background — no console window, survives terminal close
 hermes-relay daemon status                       # state, uptime, relay, advertised-tool count
+hermes-relay daemon restart                      # restart with the caller's current privileges
+hermes-relay daemon restart --administrator      # Windows: request UAC and run elevated
+hermes-relay daemon restart --user               # Windows: return an elevated daemon to user mode
 hermes-relay daemon stop                         # stop the background daemon
 hermes-relay daemon                              # FOREGROUND (current console) — handy for watching logs live
 hermes-relay daemon --log-json                   # foreground: force JSON-line lifecycle events on stderr
@@ -225,6 +244,13 @@ hermes-relay daemon --token <t> --allow-tools    # skip stored-consent gate (onl
 ```
 
 `daemon start` (alias `daemon --detach`) re-spawns the foreground daemon detached: no console window, stdio redirected to `~/.hermes/daemon.log`, and it keeps running after you close the terminal. `daemon status` reads the heartbeat file the running daemon maintains and cross-checks that the pid is alive, so a crashed daemon whose file lingers reads as "not running" (and `status` exits non-zero, for scripts). Bare `hermes-relay daemon` still runs in the foreground.
+
+On Windows, `--administrator` is an explicit UAC boundary for `start`, `stop`,
+or `restart`; it never elevates the tray. `daemon restart --user` is intended
+for an unelevated caller returning an Administrator daemon to normal operation:
+it requests elevation only to stop the existing process, then starts the
+replacement from the original user process. The two privilege flags are
+mutually exclusive and do not apply to `status`.
 
 ```
 $ hermes-relay daemon status
@@ -252,7 +278,7 @@ transport_exited      → reconnect budget exhausted; exit 1 so service manager 
 **Fails closed:** no stored session + no `--token` → exits 1. No `toolsConsented: true` on the stored record → exits 1 unless `--allow-tools` is passed alongside an explicit `--token` (a headless binary must never be the thing that first grants tool access).
 
 ::: tip Background ≠ system service
-`daemon start` survives closing the terminal, but **not a reboot or logout**. On Windows, install the optional systray and enable **Start tray at sign-in**; the tray starts the daemon when it launches. This is a per-user login entry, not a Windows service. On Linux/macOS, or when a machine-level service is required, wrap foreground `hermes-relay daemon` with your service manager.
+`daemon start` survives closing the terminal, but **not a reboot or logout**. On Windows, **Start UI at sign-in** registers the optional tray as a per-user login entry. Enable the separate **Start daemon with UI** preference when tray launch should also connect remote access; it defaults off for existing installs. Neither setting is a Windows service or elevates the daemon. On Linux/macOS, or when a machine-level service is required, wrap foreground `hermes-relay daemon` with your service manager.
 :::
 
 ## `hermes-relay computer-use`
@@ -281,7 +307,7 @@ hermes-relay grants approve <id>
 hermes-relay grants reject <id> --reason "Not expected"
 ```
 
-Interactive review shows the requested mode, duration, and reason before asking for confirmation. The Windows tray raises a native alert when a request arrives and opens this command when you choose **Review pending grants…**; approval never happens inside a hidden GUI.
+Interactive review shows the requested mode, duration, reason, and scope before asking for confirmation. The Windows tray raises a dedicated borderless approval card without opening the main management UI; `hermes-relay grants` remains the CLI review path.
 
 ## `hermes-relay audit`
 
@@ -294,7 +320,7 @@ hermes-relay audit --json        # raw entries for scripting
 ```
 
 ```
-Desktop-tool activity (4 most recent)
+Desktop-tool activity (3 most recent)
 
   WHEN     TOOL                STATUS   DETAIL
   12s ago  desktop_read_file   ● ok     path=C:\src\app.ts
@@ -346,8 +372,18 @@ hermes-relay ui install     # install or repair the matching CLI + UI bundle
 The Windows PowerShell one-liner installs the UI bundle by default, so `ui
 install` is mainly for machines originally installed with
 `HERMES_RELAY_INSTALL_SURFACE=cli`. The UI manages hosts, access, approvals,
-activity, updates, authorized clients, and daemon settings. It does not embed
-chat, the remote Hermes TUI, a terminal, plugins, or voice.
+activity, updates, authorized clients, and daemon settings. A host detail page
+owns Relay-specific identity, session, access, client-deauthorization, re-pair,
+and guarded-forget actions. Settings owns this PC's daemon lifecycle, CLI
+launchers, logs, diagnostics, updates, and Help & About links. **Open terminal**
+opens a normal prompt; **Open Hermes CLI** launches the paired remote TUI in a
+real terminal. It does not embed chat, the remote Hermes TUI, a terminal
+emulator, plugins, or voice.
+
+The UI remains a normal user process. **Restart as Administrator...** asks
+Windows for UAC approval and elevates only the daemon. **Return to user mode**
+stops that elevated daemon once and starts a normal daemon; elevation is not a
+persistent toggle.
 
 POSIX uses atomic `fs.rename` (the running daemon keeps its inode); Windows uses a cooperative `.new.exe` swap on the next start.
 

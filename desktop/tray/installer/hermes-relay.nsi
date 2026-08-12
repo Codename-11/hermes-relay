@@ -63,6 +63,7 @@ tray_stop:
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\HermesRelay" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\HermesRelay" "Publisher" "Axiom Labs"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\HermesRelay" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\HermesRelay" "DisplayIcon" '"$INSTDIR\hermes-relay-tray.exe",0'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\HermesRelay" "UninstallString" '"$INSTDIR\uninstall-hermes-relay.exe"'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\HermesRelay" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\HermesRelay" "NoRepair" 1
@@ -73,8 +74,8 @@ tray_stop:
   Delete "$SMPROGRAMS\Hermes Relay\Uninstall Hermes Relay.lnk"
   RMDir "$SMPROGRAMS\Hermes Relay"
   CreateDirectory "$SMPROGRAMS\Hermes-Relay CLI"
-  CreateShortCut "$SMPROGRAMS\Hermes-Relay CLI\Hermes-Relay CLI.lnk" "$INSTDIR\hermes-relay.exe"
-  CreateShortCut "$SMPROGRAMS\Hermes-Relay CLI\Hermes-Relay CLI UI.lnk" "$INSTDIR\hermes-relay-ui.cmd"
+  CreateShortCut "$SMPROGRAMS\Hermes-Relay CLI\Hermes-Relay CLI.lnk" "$INSTDIR\hermes-relay.exe" "" "$INSTDIR\hermes-relay-tray.exe" 0
+  CreateShortCut "$SMPROGRAMS\Hermes-Relay CLI\Hermes-Relay CLI UI.lnk" "$INSTDIR\hermes-relay-ui.cmd" "" "$INSTDIR\hermes-relay-tray.exe" 0
   CreateShortCut "$SMPROGRAMS\Hermes-Relay CLI\Uninstall Hermes-Relay CLI.lnk" "$INSTDIR\uninstall-hermes-relay.exe"
 
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "HermesRelayTray"

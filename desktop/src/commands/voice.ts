@@ -400,6 +400,7 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
     relay.onAuthSuccess((token, ver, meta) => {
       mintedToken = token
       void saveSession(url, token, ver, {
+        initializeAccessPolicy: true,
         grants: meta.grants,
         ttlExpiresAt: meta.ttlExpiresAt,
         endpointRole
