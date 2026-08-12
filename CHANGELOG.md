@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Phone is discoverable as a proactive delivery target.** The Relay phone adapter now publishes its configured home destination through Hermes' standard channel directory, so target listings can offer `phone` before any historical phone session exists.
+- **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
 

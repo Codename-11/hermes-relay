@@ -153,11 +153,14 @@ class ChatTurnCheckpointStoreTest {
         priorUserMessageCount = 3,
         baselineAssistantCount = 3,
         pendingAsk = ChatTurnAskCheckpoint(
-            kind = "APPROVAL",
-            text = "Allow command?",
+            kind = "CLARIFY",
+            requestId = "clarify-1",
+            text = "Choose environments",
+            choices = listOf("dev", "prod"),
+            multiSelect = true,
             timeoutSeconds = 0,
             messageId = "ask-1",
-            cardKey = "approval-1",
+            cardKey = "clarify-1",
             receivedAt = 1_004L,
         ),
         queuedMessages = listOf(

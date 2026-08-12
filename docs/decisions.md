@@ -1965,7 +1965,8 @@ after the turn settles and therefore cannot restore the in-between UI.
 
 1. Persist active session-backed turns as a bounded set in the shared Android
    DataStore, keyed by connection/profile context plus durable session id, with a
-   24-hour expiry. Store each visible assistant state and server-issued ask, but
+   24-hour expiry. Store each visible assistant state and server-issued ask,
+   including clarify multi-select semantics, but
    never an entered password/secret or approval response.
 2. On reopen, restore that UI immediately, then recover in this order: exact
    `session.activate` using the saved live id; `session.resume` using the durable

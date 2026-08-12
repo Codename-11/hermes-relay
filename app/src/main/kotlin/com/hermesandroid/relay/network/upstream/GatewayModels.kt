@@ -218,13 +218,15 @@ data class GatewayAsk(
     val text: String,
     /** Server-advertised answers for clarify and approval requests. */
     val choices: List<String>? = null,
+    /** Clarify-only: several advertised choices may be returned together. */
+    val multiSelect: Boolean = false,
     /** Approval-only: the smart observer denied and the owner may override once. */
     val smartDenied: Boolean = false,
     /** Secret-only: the env var the value will be stored under. */
     val envVar: String? = null,
     /**
-     * Upstream blocking timeout (clarify/secret 300s, sudo 120s). 0 means no
-     * countdown — approvals are session-scoped and never expire on their own.
+     * Server-advertised blocking timeout. 0 means no client countdown; the
+     * authoritative `*.expire` event still retires the interaction.
      */
     val timeoutSeconds: Int,
 ) {
