@@ -462,5 +462,25 @@ class HomeChannelDefaultTests(_EnvIsolated):
         self.assertNotIn("PHONE_HOME_CHANNEL", os.environ)
 
 
+class ChannelDirectoryTests(_EnvIsolated):
+    """The adapter enumerates its home through upstream's directory hook."""
+
+    def test_lists_default_phone_home(self) -> None:
+        adapter = pp.PhoneAdapter.__new__(pp.PhoneAdapter)
+        self.assertEqual(
+            _run(adapter.list_channels()),
+            [{"id": "phone", "name": "Phone", "type": "dm"}],
+        )
+
+    def test_lists_operator_configured_home(self) -> None:
+        os.environ["PHONE_HOME_CHANNEL"] = "family-phone"
+        os.environ["PHONE_HOME_CHANNEL_NAME"] = "Family phone"
+        adapter = pp.PhoneAdapter.__new__(pp.PhoneAdapter)
+        self.assertEqual(
+            _run(adapter.list_channels()),
+            [{"id": "family-phone", "name": "Family phone", "type": "dm"}],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

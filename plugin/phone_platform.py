@@ -542,6 +542,23 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
         """Return basic info about the phone "chat"."""
         return {"name": self._home_channel_name or "Phone", "type": "dm"}
 
+    async def list_channels(self) -> List[Dict[str, str]]:
+        """Enumerate the adapter's single canonical phone destination.
+
+        The upstream channel directory calls this optional adapter hook during
+        its normal startup and periodic rebuilds. Returning the configured home
+        channel here makes the phone discoverable to ``send_message`` listings
+        without creating a Relay-owned target registry or relying on historical
+        sessions to have been written first.
+        """
+        return [
+            {
+                "id": _home_channel(),
+                "name": _home_channel_name(),
+                "type": "dm",
+            }
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Registry hooks (mirror ntfy)
