@@ -129,6 +129,7 @@ data class ChatTurnAskCheckpoint(
     val requestId: String? = null,
     val text: String,
     val choices: List<String>? = null,
+    val multiSelect: Boolean = false,
     val smartDenied: Boolean = false,
     val envVar: String? = null,
     val timeoutSeconds: Int,

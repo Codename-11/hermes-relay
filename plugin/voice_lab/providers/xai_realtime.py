@@ -15,6 +15,11 @@ from ..auth import (
     read_xai_oauth_token,
 )
 from ..metrics import MetricsRecorder
+from ..transport import (
+    header_lines,
+    merge_transport_headers,
+    resolve_voice_transport_options,
+)
 from .base import (
     ProviderInfo,
     ProviderRunError,
@@ -87,7 +92,7 @@ class XAIRealtimeProvider(VoiceProvider):
     )
 
     def __init__(self, socket_factory: SocketFactory | None = None) -> None:
-        self._socket_factory = socket_factory or _create_websocket
+        self._socket_factory = socket_factory
 
     def run_text(
         self,
@@ -113,7 +118,13 @@ class XAIRealtimeProvider(VoiceProvider):
         url = f"{url_base}?model={model}"
 
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
-        headers = [f"Authorization: Bearer {auth_token.value}"]
+        transport = resolve_voice_transport_options(options, base_url=url_base)
+        headers = header_lines(
+            merge_transport_headers(
+                {"Authorization": f"Bearer {auth_token.value}"},
+                transport,
+            )
+        )
 
         recorder.event(
             "request_started",
@@ -131,7 +142,15 @@ class XAIRealtimeProvider(VoiceProvider):
         audio_bytes = 0
         events_seen: list[str] = []
         try:
-            ws = self._socket_factory(url, headers, timeout)
+            if self._socket_factory is None:
+                ws = _create_websocket(
+                    url,
+                    headers,
+                    timeout,
+                    sslopt=transport.websocket_sslopt,
+                )
+            else:
+                ws = self._socket_factory(url, headers, timeout)
             recorder.event("websocket_connected", provider=self.info.id, model=model)
             _send_json(ws, _session_update(request, voice=voice))
             recorder.event("client_event_sent", client_event_type="session.update")
@@ -226,7 +245,13 @@ class XAIRealtimeProvider(VoiceProvider):
         )
 
 
-def _create_websocket(url: str, headers: list[str], timeout: float) -> WebSocketLike:
+def _create_websocket(
+    url: str,
+    headers: list[str],
+    timeout: float,
+    *,
+    sslopt: dict[str, Any] | None = None,
+) -> WebSocketLike:
     try:
         import websocket  # type: ignore
     except ImportError as exc:
@@ -235,7 +260,10 @@ def _create_websocket(url: str, headers: list[str], timeout: float) -> WebSocket
             "`pip install websocket-client`"
         ) from exc
 
-    return websocket.create_connection(url, header=headers, timeout=timeout)
+    kwargs: dict[str, Any] = {"header": headers, "timeout": timeout}
+    if sslopt is not None:
+        kwargs["sslopt"] = sslopt
+    return websocket.create_connection(url, **kwargs)
 
 
 def _session_update(request: VoiceRequest, *, voice: str) -> dict[str, Any]:

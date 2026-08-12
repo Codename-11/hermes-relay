@@ -92,8 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
     auth.add_argument(
         "--timeout",
         type=float,
-        default=180.0,
-        help="Seconds to wait for the local browser callback",
+        help="Optional maximum seconds to wait for device-code approval",
     )
     auth.add_argument("--json", action="store_true", help="Print JSON")
     auth.set_defaults(func=_cmd_auth)

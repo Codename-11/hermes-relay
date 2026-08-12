@@ -6,8 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
+- Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.
+
+### Changed
+
+- **Relay voice custom transports follow upstream provider security options.** Relay-owned OpenAI/xAI realtime and TTS clients now honor explicit custom headers, custom CA bundles, the standard CA environment precedence, and an opt-in warned `ssl_verify=false` development mode without changing public-provider defaults or logging header values.
+- **Voice Lab xAI sign-in uses device authorization.** The standalone xAI login now shows a verification URL and user code and polls for approval, matching upstream Hermes and removing the loopback callback/SSH-tunnel requirement while preserving existing Voice Lab token files and refresh behavior.
+
 ### Fixed
 
+- **Phone is discoverable as a proactive delivery target.** The Relay phone adapter now publishes its configured home destination through Hermes' standard channel directory, so target listings can offer `phone` before any historical phone session exists.
+- **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
 

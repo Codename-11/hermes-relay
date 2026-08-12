@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from ..auth import load_voice_lab_env_file, read_xai_oauth_token
 from ..metrics import MetricsRecorder
+from ..transport import merge_transport_headers, resolve_voice_transport_options
 from .base import (
     ProviderInfo,
     ProviderRunError,
@@ -64,7 +65,7 @@ class XAITTSProvider(VoiceProvider):
     )
 
     def __init__(self, stream_factory: HttpStreamFactory | None = None) -> None:
-        self._stream_factory = stream_factory or _urlopen_stream
+        self._stream_factory = stream_factory
 
     def run_text(
         self,
@@ -96,15 +97,20 @@ class XAITTSProvider(VoiceProvider):
             options=options,
         )
         payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
-        http_request = urllib.request.Request(
-            endpoint,
-            data=payload,
-            method="POST",
-            headers={
+        transport = resolve_voice_transport_options(options, base_url=base_url)
+        headers = merge_transport_headers(
+            {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/octet-stream",
             },
+            transport,
+        )
+        http_request = urllib.request.Request(
+            endpoint,
+            data=payload,
+            method="POST",
+            headers=headers,
         )
 
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +127,16 @@ class XAITTSProvider(VoiceProvider):
 
         audio_bytes = 0
         try:
-            with self._stream_factory(http_request, timeout) as response:
+            response_context = (
+                _urlopen_stream(
+                    http_request,
+                    timeout,
+                    context=transport.urllib_context,
+                )
+                if self._stream_factory is None
+                else self._stream_factory(http_request, timeout)
+            )
+            with response_context as response:
                 with wave.open(str(request.output_path), "wb") as wav:
                     wav.setnchannels(1)
                     wav.setsampwidth(2)
@@ -183,8 +198,13 @@ class XAITTSProvider(VoiceProvider):
 def _urlopen_stream(
     request: urllib.request.Request,
     timeout: float,
+    *,
+    context: Any = None,
 ) -> HttpResponseLike:
-    return urllib.request.urlopen(request, timeout=timeout)
+    kwargs: dict[str, Any] = {"timeout": timeout}
+    if context is not None:
+        kwargs["context"] = context
+    return urllib.request.urlopen(request, **kwargs)
 
 
 def _tts_endpoint(base_url: str) -> str:

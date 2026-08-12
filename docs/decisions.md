@@ -266,7 +266,7 @@ not require an API endpoint or API bearer when dashboard chat is ready.
 
 ### 12. Android as a Hermes Platform/Channel — "Threads" (Shipped 2026-06-28; unified-session model 2026-06-29)
 
-> **Status (2026-06-29):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); cron `deliver=phone` is the one remaining broken path. See TODO.md "Phone platform — usability roadmap".
+> **Status (2026-08-12):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); standalone cron delivery uses the registered sender, and the adapter publishes its canonical home destination through upstream's channel directory. Live cron certification remains tracked in TODO.md.
 >
 > **Decision (2026-06-29) — unified-session "Threads", not a separate surface:** the proactive agent↔phone conversation is **not** a separate app lane/tab/segment. It is a **source-tagged session inside the one Chat surface** — a **Thread** (`source=phone`). The three things distinguishing a Thread from a normal gateway chat are *session properties*, not a separate UI: (a) the agent can initiate a turn, (b) it rides the relay `proactive` transport and is relay-gated, (c) it's a standing/named DM. **Scrollback = the gateway session store** (same read path Chat uses); **live receive = the relay `proactive` push** (→ notification); **send = `proactive.reply`**. The local `ProactiveInboxStore` is demoted to a live-push cache + outbox (no parallel history). The Thread capability is surfaced in the **connection best-path/capability UI** (a relay-tier capability, like terminal/bridge/voice) and as a clean **Threads** entry (thread-spool icon, NOT a phone glyph) pinned atop the session drawer when active — never a connection-wizard step. Degrades cleanly: no relay plugin → no `source=phone` sessions → Chat is unchanged (standard-path-safe). This **supersedes the earlier "separate Agent lane / 4th nav segment" sketch** and folds in the "show chat source/platform attribution in Chat" goal in one stroke.
 >
@@ -1965,7 +1965,8 @@ after the turn settles and therefore cannot restore the in-between UI.
 
 1. Persist active session-backed turns as a bounded set in the shared Android
    DataStore, keyed by connection/profile context plus durable session id, with a
-   24-hour expiry. Store each visible assistant state and server-issued ask, but
+   24-hour expiry. Store each visible assistant state and server-issued ask,
+   including clarify multi-select semantics, but
    never an entered password/secret or approval response.
 2. On reopen, restore that UI immediately, then recover in this order: exact
    `session.activate` using the saved live id; `session.resume` using the durable
@@ -2812,3 +2813,37 @@ empty transcript.
 longer operate on a silent latest-500 subset. Recovery stays cheap for ordinary
 sessions without allowing a bounded window to replace the complete visible
 history. Older Hermes releases remain compatible.
+
+---
+
+## ADR 51 — Android coding-session context is optional upstream metadata
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** Current upstream Hermes records a session's working directory, Git
+branch, and repository root in its session database and returns those fields on
+Dashboard session-list routes. It also exposes a read-only profile-wide endpoint
+that recovers the pull request a session created from a narrowly validated tool
+result. Android previously discarded all of that context, making coding chats
+indistinguishable in the session drawer.
+
+**Decision.** Android maps optional `cwd`, `git_branch`, and `git_repo_root`
+fields from existing Dashboard list responses. For rows with workspace context,
+it asks `POST /api/profiles/sessions/pull-requests` and accepts only a positive
+PR number with a non-blank URL. Unresolved active sessions retry on a bounded
+cadence and receive one final scan after ending; resolved associations and
+terminal misses remain cached. Cache ownership is profile plus session id, and
+ambiguous duplicate ids in an all-profile response are never assigned a
+transcript result. Android then uses the repository-
+scoped `POST /api/git/review/pr-list` view to refresh the matching branch or
+known PR number's lifecycle state. The drawer displays only the repository
+basename, exact branch, PR number, and lifecycle state; it does not expose host
+paths. Both reads are best-effort. A missing route, unavailable GitHub CLI,
+malformed response, or API-server-only connection leaves ordinary session
+behavior intact and is not promoted to a session-list failure.
+
+**Consequences.** Coding sessions become recognizable without introducing a
+Relay dependency or a GitHub credential path. Repository and branch state can
+still appear when PR recovery is unsupported, while legacy hosts show no new
+badges and active sessions can surface a PR created after their first drawer
+refresh without allowing cross-profile cache collisions.

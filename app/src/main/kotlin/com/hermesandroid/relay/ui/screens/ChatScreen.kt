@@ -2139,6 +2139,13 @@ fun ChatScreen(
                                             source = item.source,
                                             pinned = item.pinned,
                                             archived = item.archived,
+                                            workingDirectory = item.cwd,
+                                            gitBranch = item.gitBranch,
+                                            gitRepoRoot = item.gitRepoRoot,
+                                            pullRequestNumber = item.pullRequest?.number,
+                                            pullRequestUrl = item.pullRequest?.url,
+                                            pullRequestState = item.pullRequest?.state,
+                                            pullRequestDraft = item.pullRequest?.draft == true,
                                         ),
                                     )
                                 }

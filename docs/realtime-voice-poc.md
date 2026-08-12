@@ -73,10 +73,12 @@ As of 2026-05-18, current provider references are:
 - xAI announcement for the advertised SuperGrok surfaces:
   <https://x.ai/news/grok-hermes>
 
-The lab implements its own browser-based OAuth 2.0 PKCE loopback flow and stores
-tokens in `voice-lab-runs/auth/xai-oauth.json` by default. It does not require
-the `hermes` command, does not read `~/.hermes/auth.json`, and does not scrape
-Grok.com or X browser/session cookies.
+The lab implements xAI's OAuth 2.0 device-code flow and stores tokens in
+`voice-lab-runs/auth/xai-oauth.json` by default. It prints the verification URL
+and user code, then polls while approval happens in any browser; headless hosts
+do not need an SSH port forward. It does not require the `hermes` command, does
+not read `~/.hermes/auth.json`, and does not scrape Grok.com or X browser/session
+cookies.
 
 ## Output Architecture Decision
 
@@ -416,6 +418,16 @@ python -m plugin.voice_lab realtime-text `
   --text "Read this in a calm, precise tone."
 ```
 
+Relay-owned OpenAI/xAI realtime and TTS transports also accept the upstream-
+compatible options `ssl_ca_cert`, `ssl_verify`, and `extra_headers`. The latter
+is a JSON object when passed through the CLI, for example
+`--provider-option extra_headers={"X-Gateway-Key":"..."}`. Provider-specific
+headers override built-in defaults and may contain credentials, so they are
+never logged. TLS CA resolution uses an explicit `ssl_ca_cert` first, then
+`HERMES_CA_BUNDLE`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, and
+`CURL_CA_BUNDLE`. `ssl_verify=false` is an unsafe local-development escape hatch
+and emits a warning.
+
 `websocket-client` is required for the OpenAI adapter. This environment already
 has it installed; on a new environment, install it with:
 
@@ -456,7 +468,9 @@ Grok provider auth:
 - Supported: lab-owned xAI OAuth credentials in
   `VOICE_LAB_HOME/auth/xai-oauth.json`, created by
   `python -m plugin.voice_lab auth --provider grok` or
-  `.\scripts\voice-lab.ps1 -Mode auth -Provider grok`.
+  `.\scripts\voice-lab.ps1 -Mode auth -Provider grok`. This uses xAI's device-
+  code flow, so `--no-browser` is suitable on a headless host without an SSH
+  callback tunnel.
 - Supported: `XAI_API_KEY`, `VOICE_TOOLS_XAI_KEY`, or an ephemeral xAI realtime
   client secret passed as `XAI_REALTIME_CLIENT_SECRET` / `XAI_EPHEMERAL_TOKEN`.
 - Convenience alias: `GROK_API_KEY` is accepted locally, but `XAI_API_KEY` is

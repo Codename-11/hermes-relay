@@ -170,10 +170,38 @@ data class SessionItem(
     /** Durable flags returned by current Dashboard and API-server session resources. */
     val pinned: Boolean = false,
     val archived: Boolean = false,
+    /** Optional workspace metadata added by newer Dashboard session lists. */
+    val cwd: String? = null,
+    @SerialName("git_branch") val gitBranch: String? = null,
+    @SerialName("git_repo_root") val gitRepoRoot: String? = null,
+    /** Best-effort association from the Dashboard's read-only transcript scan. */
+    val pullRequest: SessionPullRequest? = null,
 ) {
     val resolvedLastActivity: Double?
         get() = lastActive ?: lastActivity ?: lastActivityAt ?: updatedAt
 }
+
+@Serializable
+data class SessionPullRequest(
+    val number: Int,
+    val url: String,
+    val branch: String? = null,
+    val state: String? = null,
+    val draft: Boolean = false,
+    val title: String? = null,
+)
+
+@Serializable
+data class SessionPullRequestScanResponse(
+    @SerialName("pull_requests") val pullRequests: Map<String, SessionPullRequest> = emptyMap(),
+    val scanned: List<String> = emptyList(),
+)
+
+@Serializable
+data class RepositoryPullRequestListResponse(
+    val ghReady: Boolean = false,
+    val prs: List<SessionPullRequest> = emptyList(),
+)
 
 @Serializable
 data class CreateSessionRequest(
