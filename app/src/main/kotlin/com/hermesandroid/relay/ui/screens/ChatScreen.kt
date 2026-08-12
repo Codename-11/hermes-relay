@@ -3023,6 +3023,23 @@ fun ChatScreen(
                                     },
                                     onCardAction = handleCardAction,
                                     onCardInput = handleCardInput,
+                                    onSessionReference = { reference ->
+                                        val target = agentProfiles.firstOrNull {
+                                            it.name.equals(reference.profile, ignoreCase = true)
+                                        }
+                                        if (target != null) {
+                                            connectionViewModel.selectProfile(target)
+                                            chatViewModel.activateGatewayProfile(target)
+                                            chatViewModel.switchSession(reference.sessionId)
+                                        } else {
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    message = "Profile ${reference.profile} is not available.",
+                                                    duration = SnackbarDuration.Short,
+                                                )
+                                            }
+                                        }
+                                    },
                                     onEditMessage = if (
                                         isGatewayTransport &&
                                         !isStreaming &&
