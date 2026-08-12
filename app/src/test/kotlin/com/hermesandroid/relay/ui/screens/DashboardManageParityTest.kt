@@ -89,6 +89,10 @@ class DashboardManageParityTest {
             "/api/providers/custom-endpoints?profile=work%20profile",
             dashboardSectionRequestPath("/api/providers/custom-endpoints", "work profile"),
         )
+        assertEquals(
+            "/api/learning/graph?profile=work%20profile",
+            dashboardSectionRequestPath("/api/learning/graph", "work profile"),
+        )
         val scoped = scopeDashboardManageItems(
             "/api/mcp/servers",
             "work profile",

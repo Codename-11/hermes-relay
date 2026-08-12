@@ -148,6 +148,10 @@ private enum class DashboardManagementSection(val path: String) {
     Catalog("/api/mcp/catalog"),
     CustomEndpoints("/api/providers/custom-endpoints"),
     Profiles("/api/profiles"),
+    Memory("/api/memory"),
+    Learning("/api/learning/graph"),
+    Channels("/api/messaging/platforms"),
+    Operations("/api/status"),
     Models("/api/model/info"),
     Keys("/api/env"),
     Config("/api/config/schema");
@@ -160,6 +164,10 @@ private enum class DashboardManagementSection(val path: String) {
         Catalog -> stringResource(R.string.dashboard_tab_catalog)
         CustomEndpoints -> stringResource(R.string.dashboard_tab_custom_endpoints)
         Profiles -> stringResource(R.string.dashboard_tab_profiles)
+        Memory -> stringResource(R.string.dashboard_tab_memory)
+        Learning -> stringResource(R.string.dashboard_tab_learning)
+        Channels -> stringResource(R.string.dashboard_tab_channels)
+        Operations -> stringResource(R.string.dashboard_tab_operations)
         Models -> stringResource(R.string.dashboard_tab_models)
         Keys -> stringResource(R.string.dashboard_tab_keys)
         Config -> stringResource(R.string.dashboard_tab_config)
@@ -174,6 +182,10 @@ private enum class DashboardManagementSection(val path: String) {
         Catalog -> stringResource(R.string.dashboard_tab_catalog_lower)
         CustomEndpoints -> stringResource(R.string.dashboard_tab_custom_endpoints_lower)
         Profiles -> stringResource(R.string.dashboard_tab_profiles_lower)
+        Memory -> stringResource(R.string.dashboard_tab_memory_lower)
+        Learning -> stringResource(R.string.dashboard_tab_learning_lower)
+        Channels -> stringResource(R.string.dashboard_tab_channels_lower)
+        Operations -> stringResource(R.string.dashboard_tab_operations_lower)
         Models -> stringResource(R.string.dashboard_tab_models_lower)
         Keys -> stringResource(R.string.dashboard_tab_keys_lower)
         Config -> stringResource(R.string.dashboard_tab_config_lower)
@@ -185,7 +197,12 @@ private val managementSections: List<DashboardManagementSection> = DashboardMana
 internal fun dashboardSectionRequestPath(path: String, profile: String?): String {
     if (
         profile.isNullOrBlank() ||
-        path !in setOf("/api/mcp/servers", "/api/mcp/catalog", "/api/providers/custom-endpoints")
+        path !in setOf(
+            "/api/mcp/servers",
+            "/api/mcp/catalog",
+            "/api/providers/custom-endpoints",
+            "/api/learning/graph",
+        )
     ) return path
     val encoded = java.net.URLEncoder.encode(profile, Charsets.UTF_8.name()).replace("+", "%20")
     return "$path?profile=$encoded"
@@ -357,6 +374,7 @@ private enum class DashboardSectionAction {
     BrowseSkillsHub,
     UpdateSkillsHub,
     AddCustomEndpoint,
+    CreateServerBackup,
 }
 
 /** Editor session for a profile's SOUL.md — content is the FULL file from GET. */
@@ -761,7 +779,12 @@ fun DashboardManagementScreen(
         }
     }
 
-    fun submitCreateProfile(name: String, description: String, cloneFromDefault: Boolean) {
+    fun submitCreateProfile(
+        name: String,
+        description: String,
+        cloneFromDefault: Boolean,
+        mcpServers: List<String>,
+    ) {
         if (dashboardUrl.isBlank() || actionInFlight) return
         val actionPayloadKey = payloadKey
         actionInFlight = true
@@ -773,6 +796,7 @@ fun DashboardManagementScreen(
                         name = name,
                         cloneFromDefault = cloneFromDefault,
                         description = description.takeIf { it.isNotBlank() },
+                        mcpServers = mcpServers,
                     )
                 }
             } catch (e: Exception) {
@@ -787,6 +811,28 @@ fun DashboardManagementScreen(
                     context.getString(R.string.dashboard_profile_created, name)
                 },
                 onFailure = { err -> err.message ?: context.getString(R.string.dashboard_profile_create_failed) },
+            )
+            actionInFlight = false
+        }
+    }
+
+    fun runServerBackup() {
+        if (dashboardUrl.isBlank() || actionInFlight) return
+        actionInFlight = true
+        actionMessage = null
+        scope.launch {
+            val result = try {
+                withDashboardClient(clientFactory) { client -> client.createServerBackup() }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            actionMessage = result.fold(
+                onSuccess = { root ->
+                    root.stringField("message")
+                        ?: root.stringField("filename")?.let { "Server backup ready: $it" }
+                        ?: "Server backup created."
+                },
+                onFailure = { error -> error.message ?: "Server backup failed." },
             )
             actionInFlight = false
         }
@@ -957,6 +1003,7 @@ fun DashboardManagementScreen(
     if (showCreateProfile) {
         var newProfileName by remember { mutableStateOf("") }
         var newProfileDescription by remember { mutableStateOf("") }
+        var newProfileMcpServers by remember { mutableStateOf("") }
         var cloneFromDefault by remember { mutableStateOf(true) }
         AlertDialog(
             onDismissRequest = { showCreateProfile = false },
@@ -975,6 +1022,13 @@ fun DashboardManagementScreen(
                         onValueChange = { newProfileDescription = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.dashboard_description_optional)) },
+                    )
+                    OutlinedTextField(
+                        value = newProfileMcpServers,
+                        onValueChange = { newProfileMcpServers = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.dashboard_profile_mcp_servers_optional)) },
+                        supportingText = { Text(stringResource(R.string.dashboard_profile_mcp_servers_help)) },
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -998,6 +1052,12 @@ fun DashboardManagementScreen(
                             name = newProfileName.trim(),
                             description = newProfileDescription.trim(),
                             cloneFromDefault = cloneFromDefault,
+                            mcpServers = newProfileMcpServers
+                                .split(',', '\n')
+                                .map(String::trim)
+                                .filter(String::isNotBlank)
+                                .distinct()
+                                .take(64),
                         )
                     },
                     enabled = newProfileName.isNotBlank() && !actionInFlight,
@@ -1333,6 +1393,8 @@ fun DashboardManagementScreen(
                                                 customEndpointEditor = null
                                                 showCustomEndpointEditor = true
                                             }
+                                            DashboardSectionAction.CreateServerBackup ->
+                                                runServerBackup()
                                         }
                                     },
                                     mcpOAuthSupported = mcpOAuthStartAllowed,
@@ -1384,6 +1446,26 @@ private fun manageTileSpec(section: DashboardManagementSection): ManageTileSpec 
         icon = Icons.Filled.Person,
         title = stringResource(R.string.dashboard_tile_profiles_title),
         subtitle = stringResource(R.string.dashboard_tile_profiles_sub),
+    )
+    DashboardManagementSection.Memory -> ManageTileSpec(
+        icon = Icons.Filled.AutoAwesome,
+        title = stringResource(R.string.dashboard_tile_memory_title),
+        subtitle = stringResource(R.string.dashboard_tile_memory_sub),
+    )
+    DashboardManagementSection.Learning -> ManageTileSpec(
+        icon = Icons.Filled.AutoAwesome,
+        title = stringResource(R.string.dashboard_tile_learning_title),
+        subtitle = stringResource(R.string.dashboard_tile_learning_sub),
+    )
+    DashboardManagementSection.Channels -> ManageTileSpec(
+        icon = Icons.Filled.Link,
+        title = stringResource(R.string.dashboard_tile_channels_title),
+        subtitle = stringResource(R.string.dashboard_tile_channels_sub),
+    )
+    DashboardManagementSection.Operations -> ManageTileSpec(
+        icon = Icons.Filled.Tune,
+        title = stringResource(R.string.dashboard_tile_operations_title),
+        subtitle = stringResource(R.string.dashboard_tile_operations_sub),
     )
     DashboardManagementSection.Skills -> ManageTileSpec(
         icon = Icons.Filled.AutoAwesome,
@@ -2213,6 +2295,7 @@ private fun LoadedBody(
     val actionLabelBrowseHub = stringResource(R.string.dashboard_section_action_browse_hub)
     val actionLabelUpdateInstalled = stringResource(R.string.dashboard_section_action_update_installed)
     val actionLabelAddEndpoint = stringResource(R.string.dashboard_custom_endpoint_add)
+    val actionLabelServerBackup = stringResource(R.string.dashboard_section_action_server_backup)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -2239,6 +2322,9 @@ private fun LoadedBody(
             )
             DashboardManagementSection.CustomEndpoints -> listOf(
                 DashboardSectionAction.AddCustomEndpoint to actionLabelAddEndpoint,
+            )
+            DashboardManagementSection.Operations -> listOf(
+                DashboardSectionAction.CreateServerBackup to actionLabelServerBackup,
             )
             else -> emptyList()
         }
@@ -3707,6 +3793,16 @@ private fun summarize(
                     ?.map { (name, value) -> summarizeObjectItem(value, name) }
                 ?: listOf(summarizeObjectItem(root, "Profile"))
         }
+        DashboardManagementSection.Memory -> summarizeKeyValueOrList(root, "Memory")
+        DashboardManagementSection.Learning ->
+            root.arrayItems("nodes", "items")
+                ?.mapIndexed { index, item -> summarizeObjectItem(item, "Node ${index + 1}") }
+                ?: summarizeKeyValueOrList(root, "Learning")
+        DashboardManagementSection.Channels ->
+            root.arrayItems("platforms", "channels", "items")
+                ?.mapIndexed { index, item -> summarizeObjectItem(item, "Channel ${index + 1}") }
+                ?: summarizeKeyValueOrList(root, "Channel")
+        DashboardManagementSection.Operations -> summarizeKeyValueOrList(root, "Status")
         DashboardManagementSection.Models -> summarizeKeyValueOrList(root, "Model")
         DashboardManagementSection.Keys -> summarizeEnvVars(root)
         DashboardManagementSection.Config -> summarizeKeyValueOrList(root, "Config")

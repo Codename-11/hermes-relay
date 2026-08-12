@@ -500,6 +500,7 @@ class DashboardApiClient(
         name: String,
         cloneFromDefault: Boolean = true,
         description: String? = null,
+        mcpServers: List<String> = emptyList(),
     ): Result<JsonObject> =
         postJsonObject(
             path = "/api/profiles",
@@ -507,8 +508,15 @@ class DashboardApiClient(
                 put("name", name)
                 put("clone_from_default", cloneFromDefault)
                 if (!description.isNullOrBlank()) put("description", description)
+                if (mcpServers.isNotEmpty()) {
+                    put("mcp_servers", JsonArray(mcpServers.map(::JsonPrimitive)))
+                }
             },
         )
+
+    /** Create a host-owned Hermes backup, distinct from Android settings export. */
+    suspend fun createServerBackup(): Result<JsonObject> =
+        postJsonObject("/api/ops/backup")
 
     suspend fun setProfileDescription(name: String, description: String): Result<JsonObject> =
         putJsonObject(

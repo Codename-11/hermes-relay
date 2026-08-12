@@ -1862,6 +1862,10 @@
     <string name="dashboard_tab_models">Models</string>
     <string name="dashboard_tab_keys">Keys</string>
     <string name="dashboard_tab_config">Config</string>
+    <string name="dashboard_tab_memory">Memory</string>
+    <string name="dashboard_tab_learning">Learning</string>
+    <string name="dashboard_tab_channels">Channels</string>
+    <string name="dashboard_tab_operations">Operations</string>
     <!-- Lowercase tab labels for compact UI surfaces (KPI strip) -->
     <string name="dashboard_tab_skills_lower">skills</string>
     <string name="dashboard_tab_cron_lower">cron</string>
@@ -1872,6 +1876,10 @@
     <string name="dashboard_tab_models_lower">models</string>
     <string name="dashboard_tab_keys_lower">keys</string>
     <string name="dashboard_tab_config_lower">config</string>
+    <string name="dashboard_tab_memory_lower">memory</string>
+    <string name="dashboard_tab_learning_lower">learning</string>
+    <string name="dashboard_tab_channels_lower">channels</string>
+    <string name="dashboard_tab_operations_lower">operations</string>
 
     <!-- Tile titles + subtitles -->
     <string name="dashboard_tile_profiles_title">Profiles</string>
@@ -1968,6 +1976,17 @@
     <string name="dashboard_section_action_new_profile">New profile</string>
     <string name="dashboard_section_action_browse_hub">Browse hub</string>
     <string name="dashboard_section_action_update_installed">Update installed</string>
+    <string name="dashboard_section_action_server_backup">Create server backup</string>
+    <string name="dashboard_profile_mcp_servers_optional">MCP servers (optional)</string>
+    <string name="dashboard_profile_mcp_servers_help">Comma or line-separated server names. Credentials remain server-owned.</string>
+    <string name="dashboard_tile_memory_title">Memory</string>
+    <string name="dashboard_tile_memory_sub">Provider status and host-owned memory configuration</string>
+    <string name="dashboard_tile_learning_title">Learning graph</string>
+    <string name="dashboard_tile_learning_sub">Inspect learned nodes for the active profile</string>
+    <string name="dashboard_tile_channels_title">Channels</string>
+    <string name="dashboard_tile_channels_sub">Messaging platform status, including WhatsApp</string>
+    <string name="dashboard_tile_operations_title">Server operations</string>
+    <string name="dashboard_tile_operations_sub">Host health and server-wide backup</string>
 
     <!-- Action labels (rendered via kind → string) -->
     <string name="dashboard_action_set">Set</string>

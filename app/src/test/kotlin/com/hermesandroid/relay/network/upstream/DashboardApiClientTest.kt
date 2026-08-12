@@ -740,6 +740,30 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun profileCreationCarriesMcpServersAndServerBackupIsDistinct() = runTest {
+        repeat(2) {
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true}"""),
+            )
+        }
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+
+        client.createProfile(
+            name = "research",
+            description = "Deep work",
+            mcpServers = listOf("github", "memory"),
+        ).getOrThrow()
+        client.createServerBackup().getOrThrow()
+
+        val create = server.takeRequest()
+        assertEquals("/api/profiles", create.path)
+        assertTrue(create.body.readUtf8().contains(""""mcp_servers":["github","memory"]"""))
+        val backup = server.takeRequest()
+        assertEquals("POST", backup.method)
+        assertEquals("/api/ops/backup", backup.path)
+    }
+
+    @Test
     fun getActiveProfileScope_distinguishesStickyDefaultFromDashboardProcess() = runTest {
         server.enqueue(
             MockResponse()
