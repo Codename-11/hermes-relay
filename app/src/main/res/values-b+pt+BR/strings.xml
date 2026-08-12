@@ -3825,4 +3825,26 @@
     <string name="pet_creator_step_review">Revisar e importar</string>
     <string name="pet_creator_review_desc">Inspecione primeiro a imagem ou o ZIP retornado. A importação copia os arquivos validados para o armazenamento do app; ela não os publica.</string>
     <string name="pet_creator_import">Importar pet concluído</string>
+    <string name="dashboard_tab_memory">Memória</string>
+    <string name="dashboard_tab_learning">Aprendizado</string>
+    <string name="dashboard_tab_channels">Canais</string>
+    <string name="dashboard_tab_operations">Operações</string>
+    <string name="dashboard_tab_memory_lower">memória</string>
+    <string name="dashboard_tab_learning_lower">aprendizado</string>
+    <string name="dashboard_tab_channels_lower">canais</string>
+    <string name="dashboard_tab_operations_lower">operações</string>
+    <string name="dashboard_section_action_server_backup">Criar backup do servidor</string>
+    <string name="dashboard_profile_mcp_servers_optional">Servidores MCP (opcional)</string>
+    <string name="dashboard_profile_mcp_servers_help">Nomes de servidor separados por vírgulas ou linhas. As credenciais permanecem no servidor.</string>
+    <string name="dashboard_tile_memory_title">Memória</string>
+    <string name="dashboard_tile_memory_sub">Status do provedor e configuração de memória do servidor</string>
+    <string name="dashboard_tile_learning_title">Grafo de aprendizado</string>
+    <string name="dashboard_tile_learning_sub">Inspecione os nós aprendidos do perfil ativo</string>
+    <string name="dashboard_tile_channels_title">Canais</string>
+    <string name="dashboard_tile_channels_sub">Status das plataformas de mensagens, incluindo WhatsApp</string>
+    <string name="dashboard_tile_operations_title">Operações do servidor</string>
+    <string name="dashboard_tile_operations_sub">Integridade do host e backup geral do servidor</string>
+    <string name="drawer_all_profiles">Todos os perfis</string>
+    <string name="drawer_no_profile_sessions">Nenhuma sessão de perfil correspondente.</string>
+    <string name="drawer_close">Fechar</string>
 </resources>

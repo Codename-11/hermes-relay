@@ -3670,4 +3670,26 @@
     <string name="pet_creator_step_review">Revisar e importar</string>
     <string name="pet_creator_review_desc">Inspecciona primero la imagen o el ZIP recibido. Al importar se copian los archivos validados al almacenamiento de la aplicación; no se publican.</string>
     <string name="pet_creator_import">Importar mascota terminada</string>
+    <string name="dashboard_tab_memory">Memoria</string>
+    <string name="dashboard_tab_learning">Aprendizaje</string>
+    <string name="dashboard_tab_channels">Canales</string>
+    <string name="dashboard_tab_operations">Operaciones</string>
+    <string name="dashboard_tab_memory_lower">memoria</string>
+    <string name="dashboard_tab_learning_lower">aprendizaje</string>
+    <string name="dashboard_tab_channels_lower">canales</string>
+    <string name="dashboard_tab_operations_lower">operaciones</string>
+    <string name="dashboard_section_action_server_backup">Crear copia del servidor</string>
+    <string name="dashboard_profile_mcp_servers_optional">Servidores MCP (opcional)</string>
+    <string name="dashboard_profile_mcp_servers_help">Nombres de servidor separados por comas o líneas. Las credenciales permanecen en el servidor.</string>
+    <string name="dashboard_tile_memory_title">Memoria</string>
+    <string name="dashboard_tile_memory_sub">Estado del proveedor y configuración de memoria del servidor</string>
+    <string name="dashboard_tile_learning_title">Grafo de aprendizaje</string>
+    <string name="dashboard_tile_learning_sub">Inspecciona los nodos aprendidos del perfil activo</string>
+    <string name="dashboard_tile_channels_title">Canales</string>
+    <string name="dashboard_tile_channels_sub">Estado de plataformas de mensajería, incluido WhatsApp</string>
+    <string name="dashboard_tile_operations_title">Operaciones del servidor</string>
+    <string name="dashboard_tile_operations_sub">Estado del host y copia de seguridad del servidor</string>
+    <string name="drawer_all_profiles">Todos los perfiles</string>
+    <string name="drawer_no_profile_sessions">No hay sesiones de perfil coincidentes.</string>
+    <string name="drawer_close">Cerrar</string>
 </resources>

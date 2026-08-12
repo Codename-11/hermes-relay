@@ -3985,4 +3985,26 @@
     <string name="pet_creator_step_review">Prüfen und importieren</string>
     <string name="pet_creator_review_desc">Prüfen Sie zuerst das zurückgegebene Bild oder ZIP. Beim Import werden die validierten Dateien in den App-Speicher kopiert; sie werden nicht veröffentlicht.</string>
     <string name="pet_creator_import">Fertiges Pet importieren</string>
+    <string name="dashboard_tab_memory">Speicher</string>
+    <string name="dashboard_tab_learning">Lernen</string>
+    <string name="dashboard_tab_channels">Kanäle</string>
+    <string name="dashboard_tab_operations">Betrieb</string>
+    <string name="dashboard_tab_memory_lower">Speicher</string>
+    <string name="dashboard_tab_learning_lower">Lernen</string>
+    <string name="dashboard_tab_channels_lower">Kanäle</string>
+    <string name="dashboard_tab_operations_lower">Betrieb</string>
+    <string name="dashboard_section_action_server_backup">Server-Sicherung erstellen</string>
+    <string name="dashboard_profile_mcp_servers_optional">MCP-Server (optional)</string>
+    <string name="dashboard_profile_mcp_servers_help">Komma- oder zeilengetrennte Servernamen. Anmeldedaten verbleiben auf dem Server.</string>
+    <string name="dashboard_tile_memory_title">Speicher</string>
+    <string name="dashboard_tile_memory_sub">Anbieterstatus und servereigene Speicherkonfiguration</string>
+    <string name="dashboard_tile_learning_title">Lerngraph</string>
+    <string name="dashboard_tile_learning_sub">Gelernte Knoten des aktiven Profils prüfen</string>
+    <string name="dashboard_tile_channels_title">Kanäle</string>
+    <string name="dashboard_tile_channels_sub">Status der Nachrichtenplattformen einschließlich WhatsApp</string>
+    <string name="dashboard_tile_operations_title">Serverbetrieb</string>
+    <string name="dashboard_tile_operations_sub">Hostzustand und serverweite Sicherung</string>
+    <string name="drawer_all_profiles">Alle Profile</string>
+    <string name="drawer_no_profile_sessions">Keine passenden Profilsitzungen.</string>
+    <string name="drawer_close">Schließen</string>
 </resources>

@@ -3706,4 +3706,26 @@
     <string name="pet_creator_step_review">Проверить и импортировать</string>
     <string name="pet_creator_review_desc">Сначала проверьте полученное изображение или ZIP. При импорте проверенные файлы копируются в хранилище приложения и не публикуются.</string>
     <string name="pet_creator_import">Импортировать готового питомца</string>
+    <string name="dashboard_tab_memory">Память</string>
+    <string name="dashboard_tab_learning">Обучение</string>
+    <string name="dashboard_tab_channels">Каналы</string>
+    <string name="dashboard_tab_operations">Операции</string>
+    <string name="dashboard_tab_memory_lower">память</string>
+    <string name="dashboard_tab_learning_lower">обучение</string>
+    <string name="dashboard_tab_channels_lower">каналы</string>
+    <string name="dashboard_tab_operations_lower">операции</string>
+    <string name="dashboard_section_action_server_backup">Создать резервную копию сервера</string>
+    <string name="dashboard_profile_mcp_servers_optional">Серверы MCP (необязательно)</string>
+    <string name="dashboard_profile_mcp_servers_help">Имена серверов через запятую или с новой строки. Учётные данные остаются на сервере.</string>
+    <string name="dashboard_tile_memory_title">Память</string>
+    <string name="dashboard_tile_memory_sub">Состояние провайдера и серверная настройка памяти</string>
+    <string name="dashboard_tile_learning_title">Граф обучения</string>
+    <string name="dashboard_tile_learning_sub">Просмотр изученных узлов активного профиля</string>
+    <string name="dashboard_tile_channels_title">Каналы</string>
+    <string name="dashboard_tile_channels_sub">Состояние платформ сообщений, включая WhatsApp</string>
+    <string name="dashboard_tile_operations_title">Операции сервера</string>
+    <string name="dashboard_tile_operations_sub">Состояние хоста и резервная копия всего сервера</string>
+    <string name="drawer_all_profiles">Все профили</string>
+    <string name="drawer_no_profile_sessions">Нет подходящих сеансов профиля.</string>
+    <string name="drawer_close">Закрыть</string>
 </resources>
