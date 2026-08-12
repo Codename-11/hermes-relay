@@ -72,7 +72,7 @@ import {
   shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
-import { getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
+import { effectiveHostAccessMode, effectiveHostCapabilityPolicies, getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
 import { configureCapabilityPolicies } from '../tools/capabilityRuntime.js'
 import { adbBackendAvailable } from '../tools/handlers/adb.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
@@ -413,22 +413,24 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
     const consent = await ensureToolsConsent(url)
     if (consent.consented) {
       const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
-      const accessMode = await getHostAccessMode(url)
-      const structuredOnly = accessMode === 'structured'
-      const capabilities = await getHostCapabilityPolicies(url)
+      const storedAccessMode = await getHostAccessMode(url)
+      const accessMode = effectiveHostAccessMode(storedAccessMode, consent.consented)
+      const capabilities = effectiveHostCapabilityPolicies(storedAccessMode, consent.consented, await getHostCapabilityPolicies(url))
       configureCapabilityPolicies(capabilities)
       const usb = capabilities.usb !== 'disabled'
       const adb = usb && adbBackendAvailable()
       configureComputerUseRuntime({
         url,
         computerUseConsented: computerUseEnabled,
-        consentSource: consent.source ?? 'stored'
+        consentSource: consent.source ?? 'stored',
+        accessMode,
+        capabilities
       })
-      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled, structuredOnly, usb, adb })
+      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled, capabilities, usb, adb })
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
         hostUrl: url,
-        handlers: desktopHandlers({ computerUse: computerUseEnabled, structuredOnly, usb, adb }),
+        handlers: desktopHandlers({ computerUse: computerUseEnabled, capabilities, usb, adb }),
         advertisedTools: [...advertisedTools]
       })
       toolRouter.attach(relay)

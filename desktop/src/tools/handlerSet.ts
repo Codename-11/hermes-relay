@@ -53,6 +53,13 @@ import {
 } from './handlers/computer.js'
 import type { ToolHandler } from './router.js'
 import { readDesktopUseSettingsSync } from '../lib/desktopUseSettings.js'
+import { approveComputerGrant } from './computerActionApproval.js'
+import {
+  DEFAULT_CAPABILITY_POLICIES,
+  type CapabilityAccessMode,
+  type CapabilityPolicies,
+  type HostCapability
+} from '../lib/hostAccessPolicy.js'
 
 /** Experimental computer-use tools are registered in the local handler map
  * but heartbeat-advertised only when persistently enabled or explicitly
@@ -117,6 +124,13 @@ export const RAW_EXECUTION_TOOLS = Object.freeze([
   'desktop_spawn_detached',
   'desktop_job_start'
 ])
+export const FILE_TOOLS = Object.freeze([
+  'desktop_read_file', 'desktop_write_file', 'desktop_patch', 'desktop_search_files',
+  'desktop_copy_directory', 'desktop_zip', 'desktop_unzip', 'desktop_checksum', 'desktop_open_in_editor'
+])
+export const SCREEN_INPUT_TOOLS = Object.freeze([
+  'desktop_clipboard_read', 'desktop_clipboard_write', 'desktop_screenshot', ...DESKTOP_COMPUTER_USE_TOOLS
+])
 export const RAW_USB_TOOLS = Object.freeze([
   'desktop_usb_devices',
   'desktop_usb_run'
@@ -151,6 +165,7 @@ export interface DesktopAdvertiseOptions {
   structuredOnly?: boolean
   usb?: boolean
   adb?: boolean
+  capabilities?: CapabilityPolicies
 }
 
 function envEnabled(value: string | undefined): boolean {
@@ -179,15 +194,60 @@ export function shouldAdvertiseComputerUse(
 export function desktopHandlers(
   opts: DesktopAdvertiseOptions = {}
 ): Record<string, ToolHandler> {
-  const handlers = opts.computerUse === true ? DESKTOP_HANDLERS : BASE_DESKTOP_HANDLERS
+  const policies: CapabilityPolicies = opts.capabilities ?? {
+    ...DEFAULT_CAPABILITY_POLICIES,
+    commands: opts.structuredOnly === true ? 'disabled' : 'allow',
+    files: 'allow',
+    screen_input: opts.computerUse === true ? 'ask' : 'disabled',
+    usb: opts.usb === true ? 'allow' : 'disabled'
+  }
+  const handlers = opts.computerUse === true && policies.screen_input !== 'disabled'
+    ? DESKTOP_HANDLERS
+    : BASE_DESKTOP_HANDLERS
   const raw = new Set(RAW_EXECUTION_TOOLS)
+  const files = new Set(FILE_TOOLS)
+  const screenInput = new Set(SCREEN_INPUT_TOOLS)
   const rawUsb = new Set(RAW_USB_TOOLS)
   const adb = new Set(ADB_TOOLS)
-  return Object.fromEntries(Object.entries(handlers).filter(([name]) =>
-    (opts.structuredOnly !== true || !raw.has(name)) &&
-    (opts.usb === true || !rawUsb.has(name)) &&
-    (opts.adb === true || !adb.has(name))
-  ))
+  const capabilityFor = (name: string): HostCapability | null =>
+    raw.has(name) ? 'commands'
+      : files.has(name) ? 'files'
+        : screenInput.has(name) ? 'screen_input'
+          : rawUsb.has(name) || adb.has(name) ? 'usb'
+            : null
+  const guarded = Object.entries(handlers).flatMap(([name, handler]) => {
+    const capability = capabilityFor(name)
+    const mode = capability ? policies[capability] : 'allow'
+    if (mode === 'disabled') return []
+    if (adb.has(name) && opts.adb !== true) return []
+    if (mode !== 'ask' || name.startsWith('desktop_computer_') || name === 'desktop_patch') {
+      return [[name, handler] as const]
+    }
+    return [[name, guardCapabilityHandler(name, capability!, mode, handler)] as const]
+  })
+  return Object.fromEntries(guarded)
+}
+
+function guardCapabilityHandler(
+  tool: string,
+  capability: HostCapability,
+  mode: CapabilityAccessMode,
+  handler: ToolHandler
+): ToolHandler {
+  if (mode !== 'ask') return handler
+  return async (args, ctx) => {
+    const approval = await approveComputerGrant({
+      mode: `${capability}.${tool.replace(/^desktop_/, '')}`,
+      durationSeconds: 120,
+      reason: typeof args.reason === 'string' && args.reason.trim()
+        ? args.reason.trim()
+        : `Run ${tool.replaceAll('_', ' ')}`,
+      scope: { capability, tool },
+      interactive: ctx.interactive
+    })
+    if (!approval.approved) throw new Error(approval.reason || `${capability} request rejected locally`)
+    return handler(args, ctx)
+  }
 }
 
 /** Stable list of advertised tool names — what the heartbeat claims to

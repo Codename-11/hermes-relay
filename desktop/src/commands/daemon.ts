@@ -49,7 +49,7 @@ import {
   type DaemonStatus
 } from '../lib/daemonStatus.js'
 import { rpcErrorMessage, asRpcResult } from '../lib/rpc.js'
-import { effectiveHostAccessMode, getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
+import { effectiveHostAccessMode, effectiveHostCapabilityPolicies, getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
@@ -576,10 +576,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // connectivity itself a privileged operation.
   const consented = stored?.toolsConsented === true
   const allowToolsFlag = !!args.flags['allow-tools']
-  const accessMode = effectiveHostAccessMode(
-    await getHostAccessMode(url),
-    stored?.toolsConsented === true
-  )
+  const storedAccessMode = await getHostAccessMode(url)
+  const accessMode = effectiveHostAccessMode(storedAccessMode, stored?.toolsConsented === true)
   const toolsEnabled = consented || allowToolsFlag || accessMode !== 'ask'
 
   log.info({
@@ -680,19 +678,23 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // or redirected daemon still fails host input closed because no visible
   // local grant approval prompt can run.
   const interactive = !!process.stdin.isTTY && !!process.stderr.isTTY
+  const capabilities = effectiveHostCapabilityPolicies(
+    storedAccessMode,
+    stored?.toolsConsented === true,
+    await getHostCapabilityPolicies(url)
+  )
   configureComputerUseRuntime({
     url,
     computerUseConsented: computerUseEnabled,
     consentSource: consented ? 'stored' : toolsEnabled ? 'override' : 'none',
-    accessMode
+    accessMode,
+    capabilities
   })
-  const capabilities = await getHostCapabilityPolicies(url)
   configureCapabilityPolicies(capabilities)
-  const structuredOnly = accessMode === 'structured'
   const usb = capabilities.usb !== 'disabled'
   const adb = usb && adbBackendAvailable()
   const advertisedTools = toolsEnabled
-    ? advertisedDesktopTools({ computerUse: computerUseEnabled, structuredOnly, usb, adb })
+    ? advertisedDesktopTools({ computerUse: computerUseEnabled, capabilities, usb, adb })
     : []
   const toDaemonGrantStatus = (grant: ComputerGrant | null): DaemonComputerGrantStatus => ({
     active: grant !== null,
@@ -729,7 +731,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
         consentGranted: true,
         interactive,
         hostUrl: url,
-        handlers: desktopHandlers({ computerUse: computerUseEnabled, structuredOnly, usb, adb }),
+        handlers: desktopHandlers({ computerUse: computerUseEnabled, capabilities, usb, adb }),
         advertisedTools: [...advertisedTools]
       })
     : null

@@ -7,6 +7,7 @@ import test from 'node:test'
 import {
   canonicalRelayUrl,
   effectiveHostAccessMode,
+  effectiveHostCapabilityPolicies,
   getHostCapabilityPolicies,
   getHostAccessMode,
   hasFullAccess,
@@ -50,7 +51,7 @@ test('policy changes persist atomically under canonical host keys', async () => 
       version: number
       hosts: Record<string, { access_mode: string }>
     }
-    assert.equal(onDisk.version, 1)
+    assert.equal(onDisk.version, 2)
     assert.deepEqual(Object.keys(onDisk.hosts), ['wss://relay.example'])
     assert.equal(onDisk.hosts['wss://relay.example']?.access_mode, 'full_access')
 
@@ -108,19 +109,43 @@ test('routing helpers bypass task grants only for full access', () => {
   assert.equal(hasFullAccess('full_access'), true)
 })
 
-test('hardware capabilities default disabled and persist independently of access mode', async () => {
+test('capability changes create Custom while presets replace the full capability set', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hermes-host-access-'))
   const filePath = join(dir, 'desktop-host-access.json')
   try {
     assert.deepEqual(await getHostCapabilityPolicies('wss://relay.example', filePath), {
+      commands: 'disabled', files: 'disabled', screen_input: 'disabled',
       usb: 'disabled', microphone: 'disabled', camera: 'disabled'
     })
     await setHostCapabilityPolicy('wss://relay.example', 'usb', 'ask', filePath)
+    assert.equal(await getHostAccessMode('wss://relay.example', filePath), 'custom')
     await setHostAccessMode('wss://relay.example', 'structured', filePath)
     assert.equal(await getHostAccessMode('wss://relay.example', filePath), 'structured')
     assert.deepEqual(await getHostCapabilityPolicies('wss://relay.example', filePath), {
+      commands: 'disabled', files: 'allow', screen_input: 'ask',
       usb: 'ask', microphone: 'disabled', camera: 'disabled'
     })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('Full Access overrides legacy capability values and customization exits the preset', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hermes-host-access-'))
+  const filePath = join(dir, 'desktop-host-access.json')
+  try {
+    await writeFile(filePath, JSON.stringify({
+      version: 1,
+      hosts: { 'wss://relay.example': { access_mode: 'full_access', capabilities: { usb: 'ask' } } }
+    }))
+    assert.deepEqual(await getHostCapabilityPolicies('wss://relay.example', filePath), {
+      commands: 'allow', files: 'allow', screen_input: 'allow',
+      usb: 'allow', microphone: 'allow', camera: 'allow'
+    })
+    const customized = await setHostCapabilityPolicy('wss://relay.example', 'usb', 'ask', filePath)
+    assert.equal(customized.access_mode, 'custom')
+    assert.equal(customized.capabilities.commands, 'allow')
+    assert.equal(customized.capabilities.usb, 'ask')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -130,6 +155,13 @@ test('legacy tool consent migrates visibly to trusted until Ask is explicit', ()
   assert.equal(effectiveHostAccessMode('ask', true), 'trusted')
   assert.equal(effectiveHostAccessMode('ask', false), 'ask')
   assert.equal(effectiveHostAccessMode('full_access', true), 'full_access')
+  assert.deepEqual(effectiveHostCapabilityPolicies('ask', true, {
+    commands: 'disabled', files: 'disabled', screen_input: 'disabled',
+    usb: 'disabled', microphone: 'disabled', camera: 'disabled'
+  }), {
+    commands: 'allow', files: 'allow', screen_input: 'ask',
+    usb: 'ask', microphone: 'disabled', camera: 'disabled'
+  })
 })
 
 test('read normalizes stored keys and ignores invalid records', async () => {

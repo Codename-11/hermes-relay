@@ -57,9 +57,9 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "Capabilities",
         "Raw USB access",
         "Android Debug Bridge",
-        "Secondary serial-bound Android service",
+        "Secondary USB service",
         "hardware_availability",
-        "ADB access",
+        "Secondary USB service",
         "Devices",
     ] {
         assert!(
@@ -173,7 +173,11 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
     assert!(ui.contains("policy-ledger"));
     assert!(ui.contains("<AccessPage"));
     assert!(ui.contains("<CapabilitiesPage"));
-    assert!(ui.contains("snapshot.activity.slice(-2).reverse()"));
+    assert!(ui.contains("snapshot.activity.slice(-3).reverse()"));
+    assert!(ui.contains("setPage('activity-detail')"));
+    assert!(ui.contains("['Request', entry.request_detail"));
+    assert!(ui.contains("Standard output"));
+    assert!(ui.contains("Standard error"));
     assert!(styles.contains("position: fixed; inset: 0"));
     assert!(ui.contains("useState(true)"));
     assert!(ui.contains("hide().finally(() => setWindowVisible(true))"));

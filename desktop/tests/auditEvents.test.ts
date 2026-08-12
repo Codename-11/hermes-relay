@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { categorizeTool, resultExitCode, summarizeResult } from '../src/lib/auditLog.js'
+import { auditDetails, categorizeTool, resultExitCode, summarizeResult } from '../src/lib/auditLog.js'
 
 test('audit events classify the activity surfaces used by the tray', () => {
   assert.equal(categorizeTool('desktop_powershell'), 'command')
@@ -11,6 +11,18 @@ test('audit events classify the activity surfaces used by the tray', () => {
   assert.equal(categorizeTool('desktop_adb_shell'), 'devices')
   assert.equal(categorizeTool('daemon.connect'), 'system')
   assert.equal(categorizeTool('desktop_unknown'), 'other')
+})
+
+test('activity drilldown retains bounded command and stream evidence without sensitive inputs', () => {
+  const details = auditDetails(
+    { script: 'Write-Output "hello"', cwd: 'C:\\work', env: { SECRET: 'hidden' }, content: 'private file body' },
+    { exit_code: 0, stdout: 'hello\n', stderr: '', output: { stdout: { truncated: false } } }
+  )
+  assert.match(details.request_detail ?? '', /Write-Output/)
+  assert.doesNotMatch(details.request_detail ?? '', /SECRET|private file body/)
+  assert.equal(details.stdout, 'hello\n')
+  assert.equal(details.stderr, '')
+  assert.match(details.result_detail ?? '', /"exit_code": 0/)
 })
 
 test('audit events preserve process exit outcome separately from dispatch success', () => {

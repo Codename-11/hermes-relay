@@ -42,6 +42,7 @@ test('access mode parser accepts the user-facing full-access spelling', () => {
   assert.equal(parseAccessMode('structured'), 'structured')
   assert.equal(parseAccessMode('full-access'), 'full_access')
   assert.equal(parseAccessMode('full_access'), 'full_access')
+  assert.equal(parseAccessMode('custom'), null)
   assert.equal(parseAccessMode('always'), null)
 })
 
@@ -50,6 +51,7 @@ test('USB capability policy requires confirmation for allow and rejects unavaila
   assert.equal(await hostsCommand(args(['capability', 'usb', 'allow'], { remote: url })), 2)
   assert.equal(await hostsCommand(args(['capability', 'usb', 'allow'], { remote: url, yes: true, 'no-color': true })), 0)
   assert.equal((await getHostCapabilityPolicies(url)).usb, 'allow')
+  assert.equal(await getHostAccessMode(url), 'custom')
   assert.equal(await hostsCommand(args(['capability', 'camera', 'allow'], { remote: url, yes: true })), 2)
   assert.equal((await getHostCapabilityPolicies(url)).camera, 'disabled')
 })

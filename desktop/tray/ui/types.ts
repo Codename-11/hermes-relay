@@ -1,5 +1,6 @@
-export type AccessMode = 'ask' | 'structured' | 'trusted' | 'full-access'
+export type AccessMode = 'ask' | 'structured' | 'trusted' | 'full-access' | 'custom'
 export type CapabilityMode = 'disabled' | 'ask' | 'allow'
+export type Capability = 'commands' | 'files' | 'screen_input' | 'usb' | 'microphone' | 'camera'
 
 export interface Host {
   url: string
@@ -9,7 +10,7 @@ export interface Host {
   paired_at?: number | null
   is_active: boolean
   access_mode: AccessMode
-  capabilities: { usb: CapabilityMode; microphone: CapabilityMode; camera: CapabilityMode }
+  capabilities: Record<Capability, CapabilityMode>
 }
 
 export interface DaemonStatus {
@@ -34,6 +35,14 @@ export interface Activity {
   exit_code?: number
   summary?: string
   args_preview?: string
+  request_detail?: string
+  stdout?: string
+  stderr?: string
+  result_detail?: string
+  request_truncated?: boolean
+  stdout_truncated?: boolean
+  stderr_truncated?: boolean
+  result_truncated?: boolean
   error?: string
 }
 

@@ -27,6 +27,7 @@ import type { RelayTransport } from '../transport/RelayTransport.js'
 
 import {
   appendAudit,
+  auditDetails,
   categorizeTool,
   previewArgs,
   resultExitCode,
@@ -324,7 +325,8 @@ export class DesktopToolRouter {
         duration_ms: Date.now() - startedAt,
         exit_code: resultExitCode(result),
         args_preview: previewArgs(args),
-        summary: summarizeResult(result)
+        summary: summarizeResult(result),
+        ...auditDetails(args, result)
       })
     } catch (e) {
       clearTimeout(timeoutTimer)
@@ -353,6 +355,7 @@ export class DesktopToolRouter {
         host_url: this.hostUrl,
         duration_ms: Date.now() - startedAt,
         args_preview: previewArgs(args),
+        ...auditDetails(args),
         error: message
       })
     }

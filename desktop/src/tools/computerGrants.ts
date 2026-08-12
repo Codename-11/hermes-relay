@@ -1,4 +1,9 @@
-import type { HostAccessMode } from '../lib/hostAccessPolicy.js'
+import {
+  DEFAULT_CAPABILITY_POLICIES,
+  presetCapabilityPolicies,
+  type CapabilityPolicies,
+  type HostAccessMode
+} from '../lib/hostAccessPolicy.js'
 
 export type ComputerGrantMode = 'observe' | 'assist' | 'control'
 
@@ -22,6 +27,7 @@ export interface ComputerUseRuntime {
   computerUseConsented: boolean
   consentSource: 'stored' | 'prompted' | 'override' | 'none'
   accessMode: HostAccessMode
+  capabilities: CapabilityPolicies
 }
 
 let activeGrant: ComputerGrant | null = null
@@ -30,7 +36,8 @@ let runtime: ComputerUseRuntime = {
   url: null,
   computerUseConsented: false,
   consentSource: 'none',
-  accessMode: 'ask'
+  accessMode: 'ask',
+  capabilities: { ...DEFAULT_CAPABILITY_POLICIES }
 }
 
 function nowMs(): number {
@@ -101,13 +108,15 @@ export function getActiveComputerGrant(): ComputerGrant | null {
 }
 
 export function getComputerGrantSummary(): Record<string, unknown> {
-  if (runtime.accessMode === 'full_access') {
+  if (runtime.capabilities.screen_input === 'allow') {
     return {
       active: true,
-      mode: 'full_access',
+      mode: runtime.accessMode === 'full_access' ? 'full_access' : 'capability_allow',
       expires_at: null,
       scope: null,
-      reason: 'This host has Full Access.'
+      reason: runtime.accessMode === 'full_access'
+        ? 'This host has Full Access.'
+        : 'Screen and input are allowed by this host policy.'
     }
   }
   const grant = getActiveComputerGrant()
@@ -130,9 +139,11 @@ export function getComputerGrantSummary(): Record<string, unknown> {
 }
 
 export function configureComputerUseRuntime(next: Partial<ComputerUseRuntime>): void {
+  const capabilities = next.capabilities ?? (next.accessMode ? presetCapabilityPolicies(next.accessMode) : runtime.capabilities)
   runtime = {
     ...runtime,
-    ...next
+    ...next,
+    capabilities
   }
 }
 
@@ -142,7 +153,8 @@ export function getComputerUseRuntimeSummary(): Record<string, unknown> {
     consented: runtime.computerUseConsented,
     consent_source: runtime.consentSource,
     access_mode: runtime.accessMode,
-    full_access: runtime.accessMode === 'full_access'
+    full_access: runtime.accessMode === 'full_access',
+    capabilities: { ...runtime.capabilities }
   }
 }
 
@@ -154,10 +166,10 @@ export interface RequestComputerGrantInput {
 }
 
 export function requestComputerGrant(input: RequestComputerGrantInput): Record<string, unknown> {
-  if (runtime.accessMode === 'full_access') {
+  if (runtime.capabilities.screen_input === 'allow') {
     return {
       ok: true,
-      full_access: true,
+      full_access: runtime.accessMode === 'full_access',
       grant: getComputerGrantSummary(),
       message: 'This host already has Full Access; no task grant is required.'
     }
@@ -212,13 +224,13 @@ export function cancelComputerGrant(reason = 'cancelled'): Record<string, unknow
 }
 
 export function hasComputerInputGrant(): boolean {
-  if (runtime.accessMode === 'full_access') return true
+  if (runtime.capabilities.screen_input === 'allow') return true
   const grant = getActiveComputerGrant()
   return grant?.mode === 'assist' || grant?.mode === 'control'
 }
 
 export function hasComputerObserveGrant(): boolean {
-  return runtime.accessMode === 'full_access' || getActiveComputerGrant() !== null
+  return runtime.capabilities.screen_input === 'allow' || getActiveComputerGrant() !== null
 }
 
 export function hasFullHostAccess(): boolean {

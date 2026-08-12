@@ -264,6 +264,22 @@ mod app {
         #[serde(skip_serializing_if = "Option::is_none")]
         args_preview: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        request_detail: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stdout: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result_detail: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stdout_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     }
 
@@ -732,8 +748,11 @@ mod app {
 
     #[tauri::command]
     fn set_host_capability(remote: String, capability: String, mode: String) -> Result<(), String> {
-        if !matches!(capability.as_str(), "usb" | "microphone" | "camera") {
-            return Err("invalid hardware capability".to_string());
+        if !matches!(
+            capability.as_str(),
+            "commands" | "files" | "screen-input" | "usb" | "microphone" | "camera"
+        ) {
+            return Err("invalid host capability".to_string());
         }
         if !matches!(mode.as_str(), "disabled" | "ask" | "allow") {
             return Err("invalid capability access mode".to_string());

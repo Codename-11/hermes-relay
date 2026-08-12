@@ -294,7 +294,7 @@ hermes-relay audit --json        # raw entries for scripting
 ```
 
 ```
-Desktop-tool activity (4 most recent)
+Desktop-tool activity (3 most recent)
 
   WHEN     TOOL                STATUS   DETAIL
   12s ago  desktop_read_file   ● ok     path=C:\src\app.ts

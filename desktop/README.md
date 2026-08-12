@@ -48,10 +48,11 @@ Access is selected per host. **Ask** keeps the connection available but attaches
 no desktop tools. **Structured** enables typed operations while withholding raw
 terminal, PowerShell, detached-process, and command-job launch. **Trusted** adds
 those execution tools while screen/input still uses task grants. **Full Access**
-also allows screen, keyboard, and mouse without task grants for that host;
+allows every available capability without task grants for that host;
 authentication, audit, deauthorization, emergency stop, and UAC boundaries
-still apply. Raw USB is a separate per-host Disabled/Ask/Allow policy and Full
-Access does not override it. The policy gates direct native/vendor USB utility
+still apply. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera
+form one per-host capability ledger. Changing an individual gate creates a
+**Custom** policy. Raw USB gates direct native/vendor USB utility
 execution plus secondary services such as ADB. Microphone and camera remain
 unavailable until their controlled paths exist.
 
@@ -63,8 +64,9 @@ aborts, and non-zero process exits; and keeps request context collapsed until
 explicitly expanded. Events record handler duration and request ID where
 available. The compact Overview still shows only the three newest events.
 Settings also keeps activity compact: it previews the three newest events and
-opens a dedicated Activity detail page for wrapped filters and expandable
-records. Handler failures and aborts are **Issues**; non-zero process exits are
+opens a dedicated Activity page. Selecting an event opens bounded request,
+stdout, stderr, result, exit, timing, and truncation evidence; sensitive request
+inputs are excluded. Handler failures and aborts are **Issues**; non-zero process exits are
 shown separately because probing commands may legitimately use them. **Clear**
 removes both current and rotated local audit history after confirmation.
 
@@ -279,6 +281,9 @@ Select a host policy from the tray or use the CLI:
 hermes-relay hosts list --json
 hermes-relay hosts select ws://192.168.1.100:8767
 hermes-relay hosts access structured --remote ws://192.168.1.100:8767
+hermes-relay hosts capability commands allow --remote ws://192.168.1.100:8767 --yes
+hermes-relay hosts capability files ask --remote ws://192.168.1.100:8767
+hermes-relay hosts capability screen-input ask --remote ws://192.168.1.100:8767
 hermes-relay hosts capability usb ask --remote ws://192.168.1.100:8767
 hermes-relay daemon start
 ```
@@ -517,7 +522,7 @@ hermes-relay audit --json
 ```
 
 ```
-Desktop-tool activity (4 most recent)
+Desktop-tool activity (3 most recent)
 
   WHEN     TOOL                STATUS   DETAIL
   12s ago  desktop_read_file   ● ok     path=C:\src\app.ts

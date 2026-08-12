@@ -1,30 +1,30 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  Activity as ActivityIcon, AlertTriangle, Check, ChevronDown, ChevronRight,
+  Activity as ActivityIcon, AlertTriangle, Bot, Check, ChevronDown, ChevronRight,
   CircleHelp, Clock3, Download, Eye, FileText, Home, Laptop, Link2,
   LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
   Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X, Usb,
   LockKeyhole, SlidersHorizontal, Mic, Video
 } from 'lucide-react'
 import logo from '../icons/icon-256.png'
-import type { AccessMode, Activity, AuthorizedClient, CapabilityMode, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
+import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
 
-type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'host-detail' | 'settings' | 'activity'
-type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: 'usb'; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient } | { type: 'clear-activity' } | null
+type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'host-detail' | 'settings' | 'activity' | 'activity-detail'
+type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: Capability; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient } | { type: 'clear-activity' } | null
 
 const isGrantWindow = '__TAURI_INTERNALS__' in window && getCurrentWindow().label === 'grant'
 
 const demo: Snapshot = {
-  hosts: [{ url: 'wss://home-hermes.local:8767', name: 'Home Hermes', server_version: '0.9.0', endpoint_role: 'tailscale', paired_at: 1786458000, is_active: true, access_mode: 'structured', capabilities: { usb: 'ask', microphone: 'disabled', camera: 'disabled' } }],
+  hosts: [{ url: 'wss://home-hermes.local:8767', name: 'Docker-Server', server_version: '1.6.3', endpoint_role: 'tailscale', paired_at: 1786458000, is_active: true, access_mode: 'full-access', capabilities: { commands: 'allow', files: 'allow', screen_input: 'allow', usb: 'allow', microphone: 'allow', camera: 'allow' } }],
   active_url: 'wss://home-hermes.local:8767',
   daemon: { state: 'connected', running: true, url: 'wss://home-hermes.local:8767', privilege: 'user', username: 'Local user' },
   startup_enabled: true,
   hardware_availability: { usb: true, adb: true, microphone: false, camera: false },
   pending_grants: [],
   activity: [
-    { ts: Date.now() - 110_000, tool: 'desktop.shell', ok: true, summary: 'PowerShell command completed' },
+    { ts: Date.now() - 110_000, tool: 'desktop_powershell', ok: true, summary: 'exit 0', request_detail: '{\n  "script": "Get-Process | Select-Object -First 5"\n}', stdout: 'Handles  NPM(K)  PM(K)  WS(K)  CPU(s)  Id  ProcessName\n-------  ------  -----  -----  ------  --  -----------\n    412      31  74248  98312    4.18  812 powershell' },
     { ts: Date.now() - 260_000, tool: 'desktop.connect', ok: true, summary: 'Home Hermes connected' },
     { ts: Date.now() - 480_000, tool: 'daemon.start', ok: true, summary: 'Relay daemon started' }
   ]
@@ -145,11 +145,12 @@ const accessCopy: Record<AccessMode, string> = {
   ask: 'The connection stays ready, but this host cannot use desktop tools until you allow access.',
   structured: 'Typed file, process, screen, and enabled hardware tools only. Raw shell execution is unavailable.',
   trusted: 'This host may use command and file tools; screen and input still require a task grant.',
-  'full-access': 'This host may use commands, screen, mouse, and keyboard without asking.'
+  'full-access': 'Every available capability is allowed without task grants.',
+  custom: 'Individual capabilities use the settings you choose.'
 }
 
 const accessLabel: Record<AccessMode, string> = {
-  ask: 'Ask', structured: 'Structured', trusted: 'Trusted', 'full-access': 'Full Access'
+  ask: 'Ask', structured: 'Structured', trusted: 'Trusted', 'full-access': 'Full Access', custom: 'Custom'
 }
 
 const capabilityLabel: Record<CapabilityMode, string> = {
@@ -166,6 +167,8 @@ function ManagementApp() {
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null)
   const [detailUrl, setDetailUrl] = useState<string | null>(null)
   const [activityBack, setActivityBack] = useState<Page>('settings')
+  const [activityDetailBack, setActivityDetailBack] = useState<Page>('activity')
+  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null)
   const [selectorOpen, setSelectorOpen] = useState(false)
   const [clients, setClients] = useState<AuthorizedClient[]>([])
   const [busy, setBusy] = useState<string | null>(null)
@@ -185,6 +188,9 @@ function ManagementApp() {
           ...h,
           name: h.name || displayHost(h.url),
           capabilities: {
+            commands: capabilities.commands ?? (h.access_mode === 'full-access' ? 'allow' : h.access_mode === 'trusted' ? 'allow' : 'disabled'),
+            files: capabilities.files ?? (h.access_mode === 'ask' ? 'disabled' : 'allow'),
+            screen_input: capabilities.screen_input ?? (h.access_mode === 'full-access' ? 'allow' : h.access_mode === 'ask' ? 'disabled' : 'ask'),
             usb: capabilities.usb ?? 'disabled',
             microphone: capabilities.microphone ?? 'disabled',
             camera: capabilities.camera ?? 'disabled'
@@ -263,8 +269,8 @@ function ManagementApp() {
     else action('set_host_access', { remote: host.url, mode })
   }
 
-  const chooseCapability = (capability: 'usb' | 'microphone' | 'camera', mode: CapabilityMode) => {
-    if (!host || host.capabilities[capability] === mode || capability !== 'usb') return
+  const chooseCapability = (capability: Capability, mode: CapabilityMode) => {
+    if (!host || host.capabilities[capability] === mode || capability === 'microphone' || capability === 'camera') return
     if (mode === 'allow') setPending({ type: 'capability', capability, mode })
     else action('set_host_capability', { remote: host.url, capability, mode })
   }
@@ -305,37 +311,36 @@ function ManagementApp() {
 
     <main className="content" ref={contentRef}>
       {page === 'overview' && <>
-        <section className="connection-hero">
-          <div className={`status-ring ${connected ? 'online' : 'offline'}`}>{connected ? <Check /> : <Unplug />}</div>
-          <div><h1>{connected ? 'Connected' : 'Disconnected'}</h1><p>{connected ? 'Remote control tunnel active' : 'The remote control tunnel is offline'}</p></div>
-        </section>
-
-        <section className="section host-section">
-          <label>Connected host</label>
+        <section className={`connection-route ${connected ? 'online' : 'offline'}`}>
           {snapshot.hosts.length === 0 ?
             <button className="empty-pair" onClick={() => action('pair_host')}><Link2 /><span><strong>Pair host</strong><small>Connect this PC to a Hermes instance</small></span><ChevronRight /></button> :
-            <div className="host-selector" ref={selectorRef}>
-              <button className="selector-button" aria-expanded={selectorOpen} onClick={() => setSelectorOpen(value => !value)}>
-                <span className="host-icon"><Monitor /></span><span className="host-main"><strong>{host?.name}</strong><small>{host?.endpoint_role ? `${host.endpoint_role.replace(/^./, x => x.toUpperCase())} relay` : 'Hermes relay'} <i>• {connected ? 'Online' : 'Offline'}</i></small></span><ChevronDown className={selectorOpen ? 'rotated' : ''} />
-              </button>
+            <div className="route-grid" ref={selectorRef}>
+              <span className="route-endpoint"><Bot /><small>Agent</small></span>
+              <i className="route-link left"><b /></i>
+              <div className="route-host">
+                <button aria-expanded={selectorOpen} onClick={() => setSelectorOpen(value => !value)}>{host?.name}<ChevronDown /></button>
               {selectorOpen && <div className="selector-menu">
                 {snapshot.hosts.map(item => <button key={item.url} className={item.url === host?.url ? 'selected' : ''} onClick={() => selectHost(item.url)}><Monitor /><span><strong>{item.name}</strong><small>{item.url}</small></span>{item.url === host?.url && <Check />}</button>)}
                 <button className="pair-option" onClick={() => { setSelectorOpen(false); action('pair_host') }}><Link2 /><span><strong>Pair host</strong><small>Connect another Hermes instance</small></span></button>
               </div>}
+              </div>
+              <i className="route-link right"><b /></i>
+              <span className="route-endpoint"><Monitor /><small>This PC</small></span>
+              <div className="route-status"><strong>{connected ? 'Connected' : 'Disconnected'}</strong><span>·</span><small>{connected ? 'secure relay tunnel active' : 'relay tunnel offline'}</small></div>
             </div>}
         </section>
 
         {host && <section className="policy-ledger" aria-label="Host access and capabilities">
           <button onClick={() => setPage('access')}>
             <span className="policy-icon"><LockKeyhole /></span>
-            <span className="policy-name"><strong>Access</strong><small>What this host may do</small></span>
+            <span className="policy-name"><strong>Desktop access</strong><small>Preset for this host</small></span>
             <span className="policy-value">{accessLabel[host.access_mode]}</span>
             <ChevronRight />
           </button>
           <button onClick={() => setPage('capabilities')}>
             <span className="policy-icon"><SlidersHorizontal /></span>
-            <span className="policy-name"><strong>Capabilities</strong><small>Connected hardware</small></span>
-            <span className="capability-summary"><em><Usb />USB {snapshot.hardware_availability.usb ? capabilityLabel[host.capabilities.usb] : 'Unavailable'}</em><i>2 unavailable</i></span>
+            <span className="policy-name"><strong>Capabilities</strong><small>{host.access_mode === 'full-access' ? 'Included by Full Access' : 'Commands, files, screen and hardware'}</small></span>
+            <span className="capability-summary"><em>{host.access_mode === 'full-access' ? 'All Allow' : `USB ${capabilityLabel[host.capabilities.usb]}`}</em></span>
             <ChevronRight />
           </button>
         </section>}
@@ -344,7 +349,7 @@ function ManagementApp() {
 
         <section className="activity-section">
           <div className="section-heading"><h2>Recent activity</h2><button onClick={() => { setActivityBack('overview'); setPage('activity') }}>View all <ChevronRight /></button></div>
-          <ActivityList entries={snapshot.activity.slice(-2).reverse()} host={host} />
+          <ActivityList entries={snapshot.activity.slice(-3).reverse()} host={host} onOpen={entry => { setSelectedActivity(entry); setActivityDetailBack('overview'); setPage('activity-detail') }} />
         </section>
 
         {snapshot.daemon.privilege === 'administrator' && <aside className="admin-warning"><AlertTriangle /><span>Hermes-Relay CLI is running as Administrator.</span><button onClick={() => setPage('settings')}>Learn more</button></aside>}
@@ -355,8 +360,9 @@ function ManagementApp() {
 
       {page === 'hosts' && <HostsPage hosts={snapshot.hosts} selected={host} onOpen={url => { setDetailUrl(url); setPage('host-detail') }} onPair={() => action('pair_host')} />}
       {page === 'host-detail' && <HostDetailPage host={snapshot.hosts.find(item => item.url === detailUrl) ?? null} busy={busy !== null} onBack={() => setPage('hosts')} onConnect={connectHost} onRename={(remote, name) => action('rename_host', { remote, name })} />}
-      {page === 'settings' && <SettingsPage host={host} daemon={snapshot.daemon} startup={snapshot.startup_enabled} clients={clients} activity={snapshot.activity} onRestart={() => action('restart_daemon')} onStartup={value => action('set_startup', { enabled: value })} onRevoke={client => setPending({ type: 'revoke', client })} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} />}
-      {page === 'activity' && <ActivityPage entries={snapshot.activity} host={host} onBack={() => setPage(activityBack)} onClear={() => setPending({ type: 'clear-activity' })} />}
+      {page === 'settings' && <SettingsPage host={host} daemon={snapshot.daemon} startup={snapshot.startup_enabled} clients={clients} activity={snapshot.activity} onRestart={() => action('restart_daemon')} onStartup={value => action('set_startup', { enabled: value })} onRevoke={client => setPending({ type: 'revoke', client })} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} onOpenActivity={entry => { setSelectedActivity(entry); setActivityDetailBack('settings'); setPage('activity-detail') }} />}
+      {page === 'activity' && <ActivityPage entries={snapshot.activity} host={host} onBack={() => setPage(activityBack)} onClear={() => setPending({ type: 'clear-activity' })} onOpen={entry => { setSelectedActivity(entry); setActivityDetailBack('activity'); setPage('activity-detail') }} />}
+      {page === 'activity-detail' && <ActivityDetailPage entry={selectedActivity} host={host} onBack={() => setPage(activityDetailBack)} />}
     </main>
 
     {error && <div className="error-toast" role="alert"><AlertTriangle /><span>{error}</span><button onClick={() => setError(null)}><X /></button></div>}
@@ -364,14 +370,14 @@ function ManagementApp() {
     <nav className="bottom-nav">
       <button className={page === 'overview' || page === 'access' || page === 'capabilities' ? 'active' : ''} onClick={() => setPage('overview')}><Home /><span>Overview</span></button>
       <button className={page === 'hosts' || page === 'host-detail' ? 'active' : ''} onClick={() => setPage('hosts')}><Monitor /><span>Hosts</span></button>
-      <button className={page === 'settings' || page === 'activity' ? 'active' : ''} onClick={() => setPage('settings')}><Settings /><span>Settings</span></button>
+      <button className={page === 'settings' || page === 'activity' || page === 'activity-detail' ? 'active' : ''} onClick={() => setPage('settings')}><Settings /><span>Settings</span></button>
     </nav>
 
     {pending && <div className="modal-backdrop" role="presentation"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <div className="modal-icon">{pending.type === 'revoke' ? <UserRoundX /> : pending.type === 'clear-activity' ? <Trash2 /> : <AlertTriangle />}</div>
-      <h2 id="confirm-title">{pending.type === 'access' ? `Give ${host?.name} full access?` : pending.type === 'capability' ? `Always allow USB access for ${host?.name}?` : pending.type === 'revoke' ? `Deauthorize ${pending.client.device_name ?? pending.client.token_prefix}?` : 'Clear local activity?'}</h2>
-      <p>{pending.type === 'access' ? 'This host will be able to run commands and control this PC without asking. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This host may run native or vendor USB utilities and enabled USB services without asking for each operation.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
-      <div className="modal-actions"><button className="secondary" onClick={() => setPending(null)}>Cancel</button><button className="danger" onClick={confirmPending}>{pending.type === 'access' ? 'Enable Full Access' : pending.type === 'capability' ? 'Allow USB' : pending.type === 'revoke' ? 'Deauthorize' : 'Clear activity'}</button></div>
+      <h2 id="confirm-title">{pending.type === 'access' ? `Give ${host?.name} full access?` : pending.type === 'capability' ? `Always allow ${pending.capability.replace('_', ' & ')} for ${host?.name}?` : pending.type === 'revoke' ? `Deauthorize ${pending.client.device_name ?? pending.client.token_prefix}?` : 'Clear local activity?'}</h2>
+      <p>{pending.type === 'access' ? 'Every available capability will be allowed without task grants. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This changes the host to Custom and allows this capability without per-operation approval.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
+      <div className="modal-actions"><button className="secondary" onClick={() => setPending(null)}>Cancel</button><button className="danger" onClick={confirmPending}>{pending.type === 'access' ? 'Enable Full Access' : pending.type === 'capability' ? 'Allow capability' : pending.type === 'revoke' ? 'Deauthorize' : 'Clear activity'}</button></div>
     </div></div>}
   </div>
 }
@@ -441,16 +447,25 @@ function GrantWindow() {
     ?? (snapshot.daemon.url ? displayHost(snapshot.daemon.url) : 'Connected host')
   const scope = formatGrantScope(grant.scope)
   const minutes = Math.max(1, Math.round(grant.duration_seconds / 60))
-  const usbRequest = grant.mode.startsWith('usb.')
+  const grantCategory = grant.mode.split('.')[0]
+  const grantPresentation = grantCategory === 'usb'
+    ? { eyebrow: 'USB access request', title: 'Raw USB access', summary: 'wants to run one operation on a connected USB device.' }
+    : grantCategory === 'commands'
+      ? { eyebrow: 'Command execution request', title: 'Run command', summary: 'wants to run one command on this PC.' }
+      : grantCategory === 'files'
+        ? { eyebrow: 'File access request', title: 'Access files', summary: 'wants to access files on this PC.' }
+        : grantCategory === 'screen_input'
+          ? { eyebrow: 'Screen & input request', title: 'Control access', summary: `wants to view or control this PC for up to ${minutes} min.` }
+          : { eyebrow: 'Remote access request', title: `${grant.mode} access`, summary: `wants to use this PC for up to ${minutes} min.` }
 
   return <div className={`grant-shell ${visible ? 'window-visible' : ''} ${expanded ? 'expanded' : ''}`}>
     <section className="grant-card" role="dialog" aria-modal="true" aria-labelledby="grant-title">
       <div className="grant-head">
         <span className="grant-icon"><ShieldCheck /></span>
-        <span><small>{usbRequest ? 'Connected Android device request' : 'Remote access request'}</small><strong id="grant-title">{usbRequest ? 'ADB access' : `${grant.mode} access`}</strong></span>
+        <span><small>{grantPresentation.eyebrow}</small><strong id="grant-title">{grantPresentation.title}</strong></span>
         <button className="grant-expand" aria-expanded={expanded} aria-label={expanded ? 'Hide request details' : 'Show request details'} onClick={toggleExpanded}><ChevronDown /></button>
       </div>
-      <p className="grant-summary"><strong>{hostName}</strong> {usbRequest ? 'wants to run one brokered operation on a connected Android device.' : `wants to control this PC for up to ${minutes} min.`}</p>
+      <p className="grant-summary"><strong>{hostName}</strong> {grantPresentation.summary}</p>
       <div className="grant-details" aria-hidden={!expanded}>
         <dl><div><dt>Reason</dt><dd>{grant.reason || 'No reason provided'}</dd></div>{scope && <div><dt>Scope</dt><dd>{scope}</dd></div>}</dl>
       </div>
@@ -459,8 +474,7 @@ function GrantWindow() {
   </div>
 }
 
-function ActivityList({ entries, host, detailed = false }: { entries: Activity[]; host: Host | null; detailed?: boolean }) {
-  const [expanded, setExpanded] = useState<string | null>(null)
+function ActivityList({ entries, host, onOpen }: { entries: Activity[]; host: Host | null; onOpen?: (entry: Activity) => void }) {
   if (!entries.length) return <div className="empty-state"><Clock3 /><span>No remote activity yet</span></div>
   return <div className="activity-list">{entries.map((entry, i) => {
     const category = activityCategory(entry)
@@ -468,30 +482,19 @@ function ActivityList({ entries, host, detailed = false }: { entries: Activity[]
     const warning = isNonZeroExit(entry)
     const key = entry.request_id ?? `${entry.ts}-${i}`
     const Icon = category === 'command' ? TerminalSquare : category === 'files' ? FileText : category === 'screen' ? Eye : category === 'input' ? MousePointer2 : category === 'devices' ? Usb : category === 'system' ? LogOut : ActivityIcon
-    const open = detailed && expanded === key
     const detail = entry.error ?? entry.summary ?? (entry.aborted ? 'Request aborted' : 'Completed')
     const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
-    return <article className={`activity-item ${open ? 'expanded' : ''}`} key={key}>
-      <button className="activity-row" aria-expanded={detailed ? open : undefined} onClick={() => detailed && setExpanded(open ? null : key)}>
+    return <article className="activity-item" key={key}>
+      <button className="activity-row" disabled={!onOpen} onClick={() => onOpen?.(entry)}>
         <span className={`activity-icon ${attention || warning ? 'amber' : category === 'system' ? 'green' : 'violet'}`}><Icon /></span>
         <span className="activity-copy"><strong>{activityName(entry.tool)}</strong><small className={attention ? 'attention' : warning ? 'warning' : ''}>{detail} · {eventHost}</small></span>
-        <span className="activity-tail"><time>{formatTime(entry.ts)}</time>{detailed && <ChevronDown />}</span>
+        <span className="activity-tail"><time>{formatTime(entry.ts)}</time>{onOpen && <ChevronRight />}</span>
       </button>
-      {detailed && <div className="activity-details" aria-hidden={!open}>
-        <dl>
-          <div><dt>When</dt><dd>{formatDateTime(entry.ts)}</dd></div>
-          <div><dt>Duration</dt><dd>{formatDuration(entry.duration_ms)}</dd></div>
-          <div><dt>Status</dt><dd className={attention ? 'attention' : warning ? 'warning' : 'success'}>{entry.aborted ? 'Aborted' : !entry.ok ? 'Failed' : warning ? `Exit ${activityExitCode(entry)}` : 'Completed'}</dd></div>
-          <div><dt>Category</dt><dd>{category}</dd></div>
-        </dl>
-        {entry.args_preview && <div className="activity-context"><span>Request</span><code>{entry.args_preview}</code></div>}
-        {entry.request_id && <div className="activity-request-id">ID {entry.request_id}</div>}
-      </div>}
     </article>
   })}</div>
 }
 
-function ActivityPanel({ entries, host, onClear }: { entries: Activity[]; host: Host | null; onClear: () => void }) {
+function ActivityPanel({ entries, host, onClear, onOpen }: { entries: Activity[]; host: Host | null; onClear: () => void; onOpen: (entry: Activity) => void }) {
   const [filter, setFilter] = useState<ActivityFilter>('all')
   const newest = entries.slice().reverse()
   const attention = newest.filter(needsAttention).length
@@ -506,15 +509,37 @@ function ActivityPanel({ entries, host, onClear }: { entries: Activity[]; host: 
   return <div className="activity-panel">
     <div className="activity-summary"><span><ActivityIcon /><strong>{entries.length}</strong><small>Recent events</small></span><span className={attention ? 'has-attention' : ''}><AlertTriangle /><strong>{attention}</strong><small>Issues</small></span><em><i /> Live</em></div>
     <div className="activity-toolbar"><div className="activity-filters" aria-label="Filter activity">{filters.map(item => <button key={item.value} className={filter === item.value ? 'active' : ''} onClick={() => setFilter(item.value)}>{item.label}{item.value === 'attention' && attention > 0 ? ` ${attention}` : item.value === 'warning' && warnings > 0 ? ` ${warnings}` : ''}</button>)}</div><button className="clear-activity" disabled={!entries.length} onClick={onClear}><Trash2 /> Clear</button></div>
-    <div className="settings-card activity-card"><ActivityList entries={visible} host={host} detailed /></div>
+    <div className="settings-card activity-card"><ActivityList entries={visible} host={host} onOpen={onOpen} /></div>
   </div>
 }
 
-function ActivityPage({ entries, host, onBack, onClear }: { entries: Activity[]; host: Host | null; onBack: () => void; onClear: () => void }) {
+function ActivityPage({ entries, host, onBack, onClear, onOpen }: { entries: Activity[]; host: Host | null; onBack: () => void; onClear: () => void; onOpen: (entry: Activity) => void }) {
   return <section className="page-panel activity-page">
     <div className="page-title activity-page-title"><button className="back-button" onClick={onBack}><ChevronRight /> Settings</button><div><p>Local audit</p><h1>Activity</h1></div></div>
     <p className="page-intro">Remote actions and management changes recorded on this PC.</p>
-    <ActivityPanel entries={entries} host={host} onClear={onClear} />
+    <ActivityPanel entries={entries} host={host} onClear={onClear} onOpen={onOpen} />
+  </section>
+}
+
+function ActivityDetailPage({ entry, host, onBack }: { entry: Activity | null; host: Host | null; onBack: () => void }) {
+  if (!entry) return <section className="page-panel"><button className="back-button" onClick={onBack}><ChevronRight /> Activity</button><div className="large-empty"><ActivityIcon /><h2>Event unavailable</h2></div></section>
+  const attention = needsAttention(entry)
+  const warning = isNonZeroExit(entry)
+  const status = entry.aborted ? 'Aborted' : !entry.ok ? 'Failed' : warning ? `Exit ${activityExitCode(entry)}` : 'Completed'
+  const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
+  const blocks = [
+    ['Request', entry.request_detail ?? entry.args_preview, entry.request_truncated],
+    ['Standard output', entry.stdout, entry.stdout_truncated],
+    ['Standard error', entry.stderr, entry.stderr_truncated],
+    ['Result', entry.result_detail, entry.result_truncated],
+    ['Error', entry.error, false]
+  ] as const
+  return <section className="page-panel activity-detail-page">
+    <button className="back-button" onClick={onBack}><ChevronRight /> Activity</button>
+    <div className="activity-detail-title"><span className={`activity-icon ${attention || warning ? 'amber' : 'violet'}`}><TerminalSquare /></span><span><p>{activityCategory(entry)}</p><h1>{activityName(entry.tool)}</h1><small>{eventHost}</small></span></div>
+    <dl className="activity-detail-meta"><div><dt>Status</dt><dd className={attention ? 'attention' : warning ? 'warning' : 'success'}>{status}</dd></div><div><dt>When</dt><dd>{formatDateTime(entry.ts)}</dd></div><div><dt>Duration</dt><dd>{formatDuration(entry.duration_ms)}</dd></div></dl>
+    <div className="activity-output-list">{blocks.filter(([, value]) => value).map(([label, value, truncated]) => <section key={label}><header><strong>{label}</strong>{truncated && <em>Truncated</em>}</header><pre>{value}</pre></section>)}</div>
+    {entry.request_id && <div className="activity-request-id">Request ID {entry.request_id}</div>}
   </section>
 }
 
@@ -529,34 +554,38 @@ function AccessPage({ host, busy, onBack, onChoose }: { host: Host | null; busy:
   return <section className="page-panel policy-detail-page">
     <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ChevronRight />Overview</button><p>{host.name}</p><h1>Host access</h1></div></div>
     <p className="page-intro">Choose the broadest kind of work this Hermes host may perform on this PC.</p>
+    {host.access_mode === 'custom' && <div className="custom-policy-banner"><SlidersHorizontal /><span><strong>Custom policy</strong><small>Individual capabilities differ from the standard presets.</small></span></div>}
     <div className="access-options" role="radiogroup" aria-label="Host access">
       {options.map(({ mode, Icon }) => <button key={mode} role="radio" aria-checked={host.access_mode === mode} className={host.access_mode === mode ? 'active' : ''} disabled={busy} onClick={() => onChoose(mode)}>
         <span className="option-icon"><Icon /></span><span><strong>{accessLabel[mode]}</strong><small>{accessCopy[mode]}</small></span>{host.access_mode === mode ? <span className="selected-check"><Check /></span> : <ChevronRight />}
       </button>)}
     </div>
-    <p className="policy-footnote"><ShieldCheck />Hardware capabilities keep their own policy. Full Access does not override USB settings.</p>
+    {host.access_mode === 'custom' && <p className="policy-footnote"><SlidersHorizontal />Custom reflects individual capability choices. Selecting a preset replaces them.</p>}
   </section>
 }
 
-function CapabilitiesPage({ host, availability, busy, onBack, onChoose }: { host: Host | null; availability: Snapshot['hardware_availability']; busy: boolean; onBack: () => void; onChoose: (capability: 'usb' | 'microphone' | 'camera', mode: CapabilityMode) => void }) {
+function CapabilitiesPage({ host, availability, busy, onBack, onChoose }: { host: Host | null; availability: Snapshot['hardware_availability']; busy: boolean; onBack: () => void; onChoose: (capability: Capability, mode: CapabilityMode) => void }) {
   if (!host) return <div className="page-panel large-empty"><SlidersHorizontal /><h2>No host selected</h2><button onClick={onBack}>Back to Overview</button></div>
   return <section className="page-panel policy-detail-page">
     <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ChevronRight />Overview</button><p>{host.name}</p><h1>Capabilities</h1></div></div>
-    <p className="page-intro">Control host-wide hardware access separately from general desktop access.</p>
-    <div className="capability-detail-card">
-      <div className="capability-detail-head"><span className="option-icon"><Usb /></span><span><strong>Raw USB access</strong><small>Native and vendor USB utilities</small></span><em className={availability.usb ? 'available' : ''}>{availability.usb ? 'Available' : 'Unavailable'}</em></div>
-      <div className="capability-modes" role="radiogroup" aria-label="USB access">
-        {(['disabled', 'ask', 'allow'] as CapabilityMode[]).map(mode => <button key={mode} disabled={busy || !availability.usb} role="radio" aria-checked={host.capabilities.usb === mode} className={host.capabilities.usb === mode ? 'active' : ''} onClick={() => onChoose('usb', mode)}>{capabilityLabel[mode]}</button>)}
-      </div>
-      <p>{availability.usb ? 'Ask raises a local approval card for each raw USB or USB-service operation. Allow skips those prompts.' : 'Raw USB control is unavailable on this platform.'}</p>
-      <div className="supported-broker"><span><i className={availability.adb ? '' : 'offline'} /><strong>Android Debug Bridge</strong></span><small>Secondary serial-bound Android service</small><em>{availability.adb ? 'Available' : 'Unavailable'}</em></div>
+    <p className="page-intro">Presets set these together. Changing one capability creates a Custom policy.</p>
+    <div className="capability-list">
+      <CapabilityRow capability="commands" title="Command execution" copy="PowerShell, terminal and process launch" icon={<TerminalSquare />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy} onChoose={onChoose} />
+      <CapabilityRow capability="files" title="Files" copy="Read, write, search and transfer" icon={<FileText />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy} onChoose={onChoose} />
+      <CapabilityRow capability="screen_input" title="Screen & input" copy="Screenshots, clipboard, mouse and keyboard" icon={<MousePointer2 />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy} onChoose={onChoose} />
+      <CapabilityRow capability="usb" title="Raw USB" copy="Native utilities and enabled USB services" icon={<Usb />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy || !availability.usb} onChoose={onChoose} />
     </div>
+    <div className="supported-broker"><span><i className={availability.adb ? '' : 'offline'} /><strong>Android Debug Bridge</strong></span><small>Secondary USB service</small><em>{availability.adb ? 'Available' : 'Unavailable'}</em></div>
     <div className="unavailable-capabilities">
       <div><span className="option-icon"><Mic /></span><span><strong>Microphone</strong><small>A bounded broker is not available yet</small></span><em>Unavailable</em></div>
       <div><span className="option-icon"><Video /></span><span><strong>Camera</strong><small>A bounded broker is not available yet</small></span><em>Unavailable</em></div>
     </div>
-    <p className="policy-footnote"><LockKeyhole />Unavailable capabilities cannot be enabled or advertised to the agent.</p>
+    <p className="policy-footnote"><LockKeyhole />Full Access includes every available capability. Unavailable brokers still cannot be advertised.</p>
   </section>
+}
+
+function CapabilityRow({ capability, title, copy, icon, modes, host, busy, onChoose }: { capability: Capability; title: string; copy: string; icon: ReactNode; modes: CapabilityMode[]; host: Host; busy: boolean; onChoose: (capability: Capability, mode: CapabilityMode) => void }) {
+  return <section className="capability-row"><div className="capability-row-head"><span className="option-icon">{icon}</span><span><strong>{title}</strong><small>{copy}</small></span>{host.access_mode === 'full-access' && <em>Included</em>}</div><div className="capability-modes" role="radiogroup" aria-label={`${title} access`}>{modes.map(mode => <button key={mode} disabled={busy} role="radio" aria-checked={host.capabilities[capability] === mode} className={host.capabilities[capability] === mode ? 'active' : ''} onClick={() => onChoose(capability, mode)}>{capabilityLabel[mode]}</button>)}</div></section>
 }
 
 function HostsPage({ hosts, selected, onOpen, onPair }: { hosts: Host[]; selected: Host | null; onOpen: (url: string) => void; onPair: () => void }) {
@@ -581,7 +610,7 @@ function HostDetailPage({ host, busy, onBack, onConnect, onRename }: { host: Hos
   </section>
 }
 
-function SettingsPage({ host, daemon, startup, clients, activity, onRestart, onStartup, onRevoke, onViewActivity }: { host: Host | null; daemon: Snapshot['daemon']; startup: boolean; clients: AuthorizedClient[]; activity: Activity[]; onRestart: () => void; onStartup: (value: boolean) => void; onRevoke: (client: AuthorizedClient) => void; onViewActivity: () => void }) {
+function SettingsPage({ host, daemon, startup, clients, activity, onRestart, onStartup, onRevoke, onViewActivity, onOpenActivity }: { host: Host | null; daemon: Snapshot['daemon']; startup: boolean; clients: AuthorizedClient[]; activity: Activity[]; onRestart: () => void; onStartup: (value: boolean) => void; onRevoke: (client: AuthorizedClient) => void; onViewActivity: () => void; onOpenActivity: (entry: Activity) => void }) {
   const [update, setUpdate] = useState<UpdateReport | null>(null)
   const [updateBusy, setUpdateBusy] = useState<'check' | 'install' | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -619,6 +648,6 @@ function SettingsPage({ host, daemon, startup, clients, activity, onRestart, onS
     <div className="settings-group"><h2>Updates</h2><div className={`settings-card update-card ${updateError ? 'error' : update?.ahead_of_latest ? 'ahead' : update?.up_to_date ? 'current' : ''}`}><div className="setting-row update-row"><span><strong>Hermes-Relay CLI UI</strong><small>{updateSummary}</small></span>{update && !update.up_to_date && !update.ahead_of_latest && !update.installed ? <button className="compact-button update-button" disabled={updateBusy !== null} onClick={installUpdate}>{updateBusy === 'install' ? <LoaderCircle className="spin" /> : <Download />} Install</button> : <button className="compact-button" disabled={updateBusy !== null} onClick={checkUpdate}>{updateBusy === 'check' ? <LoaderCircle className="spin" /> : <RefreshCw />} Check</button>}</div></div><p className="group-help update-help">Updates the management UI and CLI together, then restarts the tray automatically.</p></div>
     {host && <div className="settings-group"><h2>Host details</h2><div className="settings-card host-detail"><div className="detail-head"><span className="host-icon"><Server /></span><span><strong>{host.name}</strong><small>{host.url}</small></span></div><dl><div><dt>Route</dt><dd>{host.endpoint_role ?? 'Custom'}</dd></div><div><dt>Version</dt><dd>{host.server_version ?? 'Unknown'}</dd></div><div><dt>Access</dt><dd>{host.access_mode === 'full-access' ? 'Full Access' : host.access_mode[0]!.toUpperCase() + host.access_mode.slice(1)}</dd></div></dl></div></div>}
     {host && <div className="settings-group"><h2>Authorized clients <span>{clients.length}</span></h2><p className="group-help">Clients authenticated to {host.name}. Deauthorizing a client removes its relay session.</p><div className="settings-card client-list">{clients.length ? clients.map(client => { const identity = [client.device_model, client.device_platform, client.client_surface].filter(Boolean).join(' · ') || client.transport_hint || 'Client'; return <div className="client-row" key={client.token_prefix}><span className="client-icon"><Laptop /></span><span><strong>{client.device_name ?? 'Unnamed client'} {client.is_current && <em>This PC</em>}</strong><small>{identity} · {age(client.last_seen)}</small></span><button onClick={() => onRevoke(client)} aria-label={`Deauthorize ${client.device_name ?? client.token_prefix}`}><UserRoundX /></button></div> }) : <div className="empty-state"><Radio /><span>No authorized clients reported</span></div>}</div></div>}
-    <div className="settings-group"><div className="settings-group-heading"><h2>Activity</h2><button onClick={onViewActivity}>View all <ChevronRight /></button></div><p className="group-help">Recent remote actions recorded on this PC.</p><div className="settings-card padded"><ActivityList entries={activity.slice(-3).reverse()} host={host} /></div></div>
+    <div className="settings-group"><div className="settings-group-heading"><h2>Activity</h2><button onClick={onViewActivity}>View all <ChevronRight /></button></div><p className="group-help">Recent remote actions recorded on this PC.</p><div className="settings-card padded"><ActivityList entries={activity.slice(-3).reverse()} host={host} onOpen={onOpenActivity} /></div></div>
   </section>
 }

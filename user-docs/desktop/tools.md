@@ -98,14 +98,15 @@ Prefer the typed file, process, job, transfer, screen, clipboard, and connected-
 device tools for ordinary work. `desktop_terminal`, `desktop_powershell`,
 detached commands, and command jobs are intentionally labeled `system.execute`:
 because they run as your Windows user, they can indirectly access files and
-attached hardware. **Structured** mode withholds those four escape hatches. Its
-separate per-host Raw USB policy defaults Off, can Ask through the local
+attached hardware. **Structured** mode withholds those four escape hatches.
+Raw USB defaults Off, can Ask through the local
 approval card for every operation, or can Allow after explicit confirmation.
 It governs host-wide direct execution of native/vendor USB utilities and all
 enabled USB services; it is not scoped to one physical device. ADB remains a
 secondary service and its device operations require an exact serial. Full
-Access does not bypass USB policy. Camera and microphone remain unavailable
-until controlled paths exist.
+Access overrides every available capability; changing one gate creates a
+Custom policy. Camera and microphone remain unavailable and unadvertised until
+controlled paths exist.
 
 The router heartbeats `desktop.status` every 30 s, advertising the full handler-name list, so the server's `desktop` channel knows which tools your client can service. Servers ping `/desktop/_ping?tool=<name>` to fail fast when a tool isn't advertised.
 
@@ -275,7 +276,7 @@ If `connected: true` but the agent still says the tool is missing:
 
 `hermes-relay daemon` runs the WSS connection + tool router headless, so the agent can reach your machine while you're in another window or VS Code or off making coffee. Use `hermes-relay daemon start` to run it in the **background** (no console window, survives closing the terminal), `daemon status` to check it, and `daemon stop` to stop it. See [Subcommands → daemon](./subcommands.md#hermes-relay-daemon) for full lifecycle/log details.
 
-Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log.
+Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log. The management UI previews the latest three events and opens each event into bounded request, stdout, stderr, result, exit, timing, and truncation details. Sensitive request inputs are excluded.
 
 `daemon start` covers "background, this session." On Windows, the optional tray can start at sign-in and starts the daemon when it launches; this is a per-user login entry, not a Windows service. For Linux/macOS or a machine-level lifetime, wrap foreground `hermes-relay daemon` with your service manager of choice.
 

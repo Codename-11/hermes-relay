@@ -8,7 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Structured desktop access provides an enforceable broker boundary.** Per-host Structured mode withholds terminal, PowerShell, detached process, and command-job launch while retaining typed operations. Host-wide Raw USB access is separately Disabled, Ask, or Allow, with direct-spawn native utility operations and ADB as a secondary service; microphone and camera remain unavailable until their brokers exist.
+- **Desktop access is a single capability ledger.** Ask, Structured, Trusted, and Full Access presets configure Commands, Files, Screen & Input, Raw USB, Microphone, and Camera per host; editing one capability produces an explicit Custom policy. Full Access is a real override that allows every available capability without task grants, while unavailable microphone and camera brokers remain unadvertised. Raw USB governs direct native utility operations, with ADB exposed as a secondary service.
+- **Desktop activity supports evidence-first drilldown.** Overview shows the latest three events; the full activity view opens each event into bounded, locally stored request, stdout, stderr, structured result, exit, timing, and truncation details with sensitive request fields excluded.
 
 ### Fixed
 
