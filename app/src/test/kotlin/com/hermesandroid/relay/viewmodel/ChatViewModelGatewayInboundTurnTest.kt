@@ -674,9 +674,9 @@ class ChatViewModelGatewayInboundTurnTest {
                     put("question", "Which environments?")
                     put("multi_select", true)
                     put("choices", buildJsonArray {
-                        add("dev")
-                        add("stage")
-                        add("prod")
+                        add(JsonPrimitive("dev"))
+                        add(JsonPrimitive("stage"))
+                        add(JsonPrimitive("prod"))
                     })
                 },
                 "live-resumed",
@@ -707,7 +707,7 @@ class ChatViewModelGatewayInboundTurnTest {
                 buildJsonObject {
                     put("request_id", "clarify-expired")
                     put("question", "Still there?")
-                    put("choices", buildJsonArray { add("yes") })
+                    put("choices", buildJsonArray { add(JsonPrimitive("yes")) })
                 },
                 "live-resumed",
             ),

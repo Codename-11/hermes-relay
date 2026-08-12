@@ -1583,9 +1583,11 @@ class DashboardApiClientTest {
         }.getOrThrow()
         client.importServerBackup("/srv/backups/a.zip").getOrThrow()
         val uploadBytes = "zip-data".encodeToByteArray()
-        client.uploadServerBackup("phone.zip", uploadBytes.size.toLong()) {
-            ByteArrayInputStream(uploadBytes)
-        }.getOrThrow()
+        client.uploadServerBackup(
+            filename = "phone.zip",
+            contentLength = uploadBytes.size.toLong(),
+            openStream = { ByteArrayInputStream(uploadBytes) },
+        ).getOrThrow()
 
         assertEquals("POST", server.takeRequest().method)
         val downloadRequest = server.takeRequest()
