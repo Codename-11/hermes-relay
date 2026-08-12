@@ -53,6 +53,12 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "exit_code",
         "pending_grants",
         "resolve_grant",
+        "Structured",
+        "Connected devices",
+        "Serial-bound ADB broker",
+        "hardware_availability",
+        "USB / ADB access",
+        "Devices",
     ] {
         assert!(
             source.contains(required),
@@ -99,7 +105,7 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("fn clear_activity"));
     assert!(native.contains("skip_serializing_if = \"Option::is_none\""));
     assert!(native.contains("popup_position"));
-    assert!(native.contains("physical_window_size"));
+    assert!(native.contains("window.outer_size()"));
     assert!(native.contains("run_cli_checked(&[\"daemon\", \"restart\"])"));
     assert!(native.contains("start_tray_action_worker"));
     assert!(native.contains("mpsc::channel::<TrayAction>()"));
@@ -107,6 +113,8 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("async fn get_snapshot"));
     assert!(native.contains("async fn check_desktop_update"));
     assert!(native.contains("async fn install_desktop_update"));
+    assert!(native.contains("fn set_host_capability"));
+    assert!(native.contains("fn hardware_availability"));
     assert!(
         native.contains("SHA256SUMS")
             || include_str!("../../src/updater.ts").contains("SHA256SUMS")
@@ -127,10 +135,10 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("activation_request_path"));
     assert!(native.contains("start_activation_watcher"));
     assert!(native.contains("tray-show-request"));
-    assert!(native.contains("MonitorFromPoint"));
-    assert!(native.contains("GetMonitorInfoW"));
-    assert!(!native.contains("window.available_monitors()"));
-    assert!(!native.contains("let Ok(Some(monitor)) = window.monitor_from_point"));
+    assert!(native.contains("window.monitor_from_point(center_x, center_y)"));
+    assert!(native.contains("responsive_logical_window_size(work_area, scale)"));
+    assert!(!native.contains("GetMonitorInfoW"));
+    assert!(!native.contains("TRAY_SLOT_LOGICAL_WIDTH"));
 }
 
 #[test]
@@ -152,7 +160,8 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
 
     assert!(config.contains("\"width\": 420"));
     assert!(config.contains("\"height\": 700"));
-    assert!(config.contains("\"minWidth\": 390"));
+    assert!(config.contains("\"minWidth\": 340"));
+    assert!(config.contains("\"minHeight\": 440"));
     assert!(config.contains("\"resizable\": false"));
     assert_eq!(config.matches("\"alwaysOnTop\": true").count(), 2);
     assert!(!ui.contains("toggleMaximize"));

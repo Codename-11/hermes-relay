@@ -7,13 +7,15 @@ import test from 'node:test'
 import {
   canonicalRelayUrl,
   effectiveHostAccessMode,
+  getHostCapabilityPolicies,
   getHostAccessMode,
   hasFullAccess,
   parseHostAccessPolicyFile,
   readHostAccessPolicies,
   removeHostAccessPolicy,
   requiresTaskGrant,
-  setHostAccessMode
+  setHostAccessMode,
+  setHostCapabilityPolicy
 } from '../src/lib/hostAccessPolicy.js'
 
 test('canonical relay identity normalizes host casing, default ports, and trailing slashes', () => {
@@ -89,18 +91,39 @@ test('duplicate canonical entries choose the most restrictive valid policy', () 
   const parsed = parseHostAccessPolicyFile({
     hosts: {
       'wss://relay.example': { access_mode: 'full_access' },
-      'WSS://RELAY.EXAMPLE:443/': { access_mode: 'ask' }
+      'WSS://RELAY.EXAMPLE:443/': { access_mode: 'ask', capabilities: { usb: 'allow' } },
+      'wss://relay.example/': { access_mode: 'trusted', capabilities: { usb: 'disabled' } }
     }
   })
   assert.equal(parsed.hosts['wss://relay.example']?.access_mode, 'ask')
+  assert.equal(parsed.hosts['wss://relay.example']?.capabilities.usb, 'disabled')
 })
 
 test('routing helpers bypass task grants only for full access', () => {
   assert.equal(requiresTaskGrant('ask'), true)
+  assert.equal(requiresTaskGrant('structured'), true)
   assert.equal(requiresTaskGrant('trusted'), true)
   assert.equal(requiresTaskGrant('full_access'), false)
   assert.equal(hasFullAccess('ask'), false)
   assert.equal(hasFullAccess('full_access'), true)
+})
+
+test('hardware capabilities default disabled and persist independently of access mode', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hermes-host-access-'))
+  const filePath = join(dir, 'desktop-host-access.json')
+  try {
+    assert.deepEqual(await getHostCapabilityPolicies('wss://relay.example', filePath), {
+      usb: 'disabled', microphone: 'disabled', camera: 'disabled'
+    })
+    await setHostCapabilityPolicy('wss://relay.example', 'usb', 'ask', filePath)
+    await setHostAccessMode('wss://relay.example', 'structured', filePath)
+    assert.equal(await getHostAccessMode('wss://relay.example', filePath), 'structured')
+    assert.deepEqual(await getHostCapabilityPolicies('wss://relay.example', filePath), {
+      usb: 'ask', microphone: 'disabled', camera: 'disabled'
+    })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('legacy tool consent migrates visibly to trusted until Ask is explicit', () => {

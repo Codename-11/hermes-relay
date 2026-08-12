@@ -2,9 +2,14 @@ import type { ParsedArgs } from '../cli.js'
 import { getActiveDesktopRelayUrl, getDesktopHostAliases, setActiveDesktopRelayUrl, setDesktopHostAlias } from '../desktopConfig.js'
 import {
   effectiveHostAccessMode,
+  getHostCapabilityPolicies,
   getHostAccessMode,
   isHostAccessMode,
   setHostAccessMode,
+  setHostCapabilityPolicy,
+  HARDWARE_CAPABILITIES,
+  CAPABILITY_ACCESS_MODES,
+  type CapabilityPolicies,
   type HostAccessMode
 } from '../lib/hostAccessPolicy.js'
 import { theme as makeTheme } from '../lib/theme.js'
@@ -18,23 +23,26 @@ const HOSTS_USAGE: UsageSpec = {
     'hosts [list] [--json]',
     'hosts select <relay-url>',
     'hosts rename <relay-url> <name>',
-    'hosts access <ask|trusted|full-access> [--remote <url>] [--yes]'
+    'hosts access <ask|structured|trusted|full-access> [--remote <url>] [--yes]',
+    'hosts capability <usb|microphone|camera> <disabled|ask|allow> [--remote <url>] [--yes]'
   ],
   subcommands: [
     { verb: 'list', desc: 'List locally paired Hermes hosts (default)' },
     { verb: 'select <url>', desc: 'Choose the host used by the tray and daemon' },
     { verb: 'rename <url> <name>', desc: 'Set a local display name for a paired host' },
-    { verb: 'access <mode>', desc: 'Set this PC access policy for one host' }
+    { verb: 'access <mode>', desc: 'Set this PC access policy for one host' },
+    { verb: 'capability <name> <mode>', desc: 'Set a brokered hardware capability policy' }
   ],
   flags: [
     { flag: '--remote <url>', desc: 'Host targeted by the access command' },
     { flag: '--json', desc: 'Emit machine-readable host state' },
-    { flag: '--yes', desc: 'Confirm Full Access non-interactively' }
+    { flag: '--yes', desc: 'Confirm Full Access or hardware Allow non-interactively' }
   ],
   examples: [
     'hermes-relay hosts --json',
     'hermes-relay hosts select wss://home.example:8767',
-    'hermes-relay hosts access full-access --remote wss://home.example:8767 --yes'
+    'hermes-relay hosts access structured --remote wss://home.example:8767',
+    'hermes-relay hosts capability usb ask --remote wss://home.example:8767'
   ]
 }
 
@@ -46,6 +54,7 @@ export interface LocalHostSummary {
   paired_at: number
   is_active: boolean
   access_mode: HostAccessMode
+  capabilities: CapabilityPolicies
 }
 
 function hostLabel(url: string): string {
@@ -73,7 +82,8 @@ async function localHosts(): Promise<LocalHostSummary[]> {
     access_mode: effectiveHostAccessMode(
       await getHostAccessMode(url),
       session.toolsConsented === true
-    )
+    ),
+    capabilities: await getHostCapabilityPolicies(url)
   }))).then(hosts => hosts.sort((a, b) =>
     Number(b.is_active) - Number(a.is_active) || b.paired_at - a.paired_at || a.url.localeCompare(b.url)
   ))
@@ -136,7 +146,7 @@ async function selectHost(args: ParsedArgs): Promise<number> {
 async function setAccess(args: ParsedArgs): Promise<number> {
   const mode = parseAccessMode(args.positional[0])
   if (!mode) {
-    process.stderr.write('error: access mode must be ask, trusted, or full-access\n')
+    process.stderr.write('error: access mode must be ask, structured, trusted, or full-access\n')
     return 2
   }
   const requested = typeof args.flags.remote === 'string' ? args.flags.remote.trim() : ''
@@ -173,6 +183,46 @@ async function setAccess(args: ParsedArgs): Promise<number> {
   return 0
 }
 
+async function setCapability(args: ParsedArgs): Promise<number> {
+  const capability = args.positional[0]?.trim().toLowerCase()
+  const mode = args.positional[1]?.trim().toLowerCase()
+  if (!HARDWARE_CAPABILITIES.includes(capability as typeof HARDWARE_CAPABILITIES[number])) {
+    process.stderr.write('error: capability must be usb, microphone, or camera\n')
+    return 2
+  }
+  if (!CAPABILITY_ACCESS_MODES.includes(mode as typeof CAPABILITY_ACCESS_MODES[number])) {
+    process.stderr.write('error: capability mode must be disabled, ask, or allow\n')
+    return 2
+  }
+  if (capability !== 'usb' && mode !== 'disabled') {
+    process.stderr.write(`error: ${capability} brokering is not available yet; leave it disabled\n`)
+    return 2
+  }
+  if (mode === 'allow' && args.flags.yes !== true) {
+    process.stderr.write(`error: allowing ${capability} permits brokered hardware operations without per-task approval. Pass --yes to confirm.\n`)
+    return 2
+  }
+  const requested = typeof args.flags.remote === 'string' ? args.flags.remote.trim() : ''
+  const url = requested || await getActiveDesktopRelayUrl() || ''
+  if (!url || !(await getSession(url))) {
+    process.stderr.write('error: select or pass a locally paired Hermes host\n')
+    return 1
+  }
+  const policy = await setHostCapabilityPolicy(
+    url,
+    capability as typeof HARDWARE_CAPABILITIES[number],
+    mode as typeof CAPABILITY_ACCESS_MODES[number]
+  )
+  const payload = { ok: true, url, capability, mode, capabilities: policy.capabilities, restart_required: true }
+  if (args.flags.json) process.stdout.write(JSON.stringify(payload, null, 2) + '\n')
+  else {
+    const t = makeTheme({ noColor: !!args.flags['no-color'] })
+    process.stdout.write(t.okLine(`${hostLabel(url)} ${capability} access set to ${mode}`) + '\n')
+    process.stdout.write(t.muted('Restart the daemon to apply this policy.') + '\n')
+  }
+  return 0
+}
+
 export async function hostsCommand(args: ParsedArgs): Promise<number> {
   if (args.flags.help) {
     printUsage(HOSTS_USAGE, makeTheme({ noColor: !!args.flags['no-color'] }))
@@ -183,6 +233,7 @@ export async function hostsCommand(args: ParsedArgs): Promise<number> {
   if (subcommand === 'select') return selectHost(args)
   if (subcommand === 'rename') return renameHost(args)
   if (subcommand === 'access') return setAccess(args)
+  if (subcommand === 'capability') return setCapability(args)
   return unknownSubcommand(HOSTS_USAGE, subcommand, makeTheme({ noColor: !!args.flags['no-color'] }))
 }
 

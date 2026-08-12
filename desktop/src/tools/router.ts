@@ -33,6 +33,7 @@ import {
   summarizeResult
 } from '../lib/auditLog.js'
 import { VERSION } from '../version.js'
+import { desktopDeviceId } from '../deviceIdentity.js'
 import { getComputerGrantSummary, getComputerUseRuntimeSummary } from './computerGrants.js'
 
 /** The payload shape server → client for a single tool invocation. */
@@ -234,7 +235,9 @@ export class DesktopToolRouter {
         pid: process.pid,
         started_at_ms: this.startedAtMs,
         uptime_ms: Date.now() - this.startedAtMs,
-        interactive: this.interactive
+        interactive: this.interactive,
+        device_id: desktopDeviceId(),
+        device_name: os.hostname()
       }
       if (this.advertisedTools.some(name => name.startsWith('desktop_computer_'))) {
         const runtime = getComputerUseRuntimeSummary()
@@ -286,7 +289,7 @@ export class DesktopToolRouter {
     }
 
     const controller = new AbortController()
-    const timeoutMs = tool.startsWith('desktop_computer_')
+    const timeoutMs = tool.startsWith('desktop_computer_') || tool.startsWith('desktop_adb_')
       ? COMPUTER_USE_HANDLER_TIMEOUT_MS
       : HANDLER_TIMEOUT_MS
     const timeoutTimer = setTimeout(() => {

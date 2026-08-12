@@ -49,7 +49,7 @@ import {
   type DaemonStatus
 } from '../lib/daemonStatus.js'
 import { rpcErrorMessage, asRpcResult } from '../lib/rpc.js'
-import { effectiveHostAccessMode, getHostAccessMode } from '../lib/hostAccessPolicy.js'
+import { effectiveHostAccessMode, getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
@@ -67,6 +67,8 @@ import {
   type ComputerGrant
 } from '../tools/computerGrants.js'
 import { DesktopToolRouter } from '../tools/router.js'
+import { configureCapabilityPolicies } from '../tools/capabilityRuntime.js'
+import { adbBackendAvailable } from '../tools/handlers/adb.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { grantBridgeDir } from '../lib/grantBridge.js'
@@ -684,8 +686,12 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     consentSource: consented ? 'stored' : toolsEnabled ? 'override' : 'none',
     accessMode
   })
+  const capabilities = await getHostCapabilityPolicies(url)
+  configureCapabilityPolicies(capabilities)
+  const structuredOnly = accessMode === 'structured'
+  const usb = capabilities.usb !== 'disabled' && adbBackendAvailable()
   const advertisedTools = toolsEnabled
-    ? advertisedDesktopTools({ computerUse: computerUseEnabled })
+    ? advertisedDesktopTools({ computerUse: computerUseEnabled, structuredOnly, usb })
     : []
   const toDaemonGrantStatus = (grant: ComputerGrant | null): DaemonComputerGrantStatus => ({
     active: grant !== null,
@@ -722,7 +728,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
         consentGranted: true,
         interactive,
         hostUrl: url,
-        handlers: desktopHandlers({ computerUse: computerUseEnabled }),
+        handlers: desktopHandlers({ computerUse: computerUseEnabled, structuredOnly, usb }),
         advertisedTools: [...advertisedTools]
       })
     : null

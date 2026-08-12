@@ -45,15 +45,19 @@ together. The installer download is verified against the release
 running daemon, and relaunches the tray after the silent replacement.
 
 Access is selected per host. **Ask** keeps the connection available but attaches
-no desktop tools. **Trusted** enables command and file tools while screen/input
-still uses task grants. **Full Access** also allows screen, keyboard, and mouse
-without task grants for that host; authentication, audit, deauthorization,
-emergency stop, and UAC boundaries still apply.
+no desktop tools. **Structured** enables typed operations while withholding raw
+terminal, PowerShell, detached-process, and command-job launch. **Trusted** adds
+those execution tools while screen/input still uses task grants. **Full Access**
+also allows screen, keyboard, and mouse without task grants for that host;
+authentication, audit, deauthorization, emergency stop, and UAC boundaries
+still apply. USB is a separate per-host Disabled/Ask/Allow policy and Full
+Access does not override it. Microphone and camera remain unavailable until
+their bounded brokers exist.
 
 The tray's **Activity** section is a live, local view of recent remote actions
 and management events such as daemon, host-access, grant, client, and update
 changes.
-It groups events into commands, files, screen, and input; highlights failures,
+It groups events into commands, files, screen, input, and connected devices; highlights failures,
 aborts, and non-zero process exits; and keeps request context collapsed until
 explicitly expanded. Events record handler duration and request ID where
 available. The compact Overview still shows only the three newest events.
@@ -241,6 +245,13 @@ relay one-shot code.
 
 Now subsequent `hermes-relay ...` calls reuse the stored session token. Tokens live at `~/.hermes/remote-sessions.json` (mode 0600) — same file the Ink TUI uses, so pairing once from either surface works for both.
 
+Each desktop installation also keeps a private stable identifier in
+`~/.hermes/desktop-device-id`. This lets several PCs retain independent paired
+sessions on one Relay. Re-pairing one PC replaces only that installation's old
+credential. Every desktop RPC accepts a stable device ID or unambiguous computer
+name. With several connected daemons the target is required, preventing an
+agent command from silently following the most recent connection.
+
 ### Terminal plugins
 
 The `hermes-relay plugins` command exposes optional terminal surfaces. The first
@@ -266,7 +277,8 @@ Select a host policy from the tray or use the CLI:
 ```sh
 hermes-relay hosts list --json
 hermes-relay hosts select ws://192.168.1.100:8767
-hermes-relay hosts access trusted --remote ws://192.168.1.100:8767
+hermes-relay hosts access structured --remote ws://192.168.1.100:8767
+hermes-relay hosts capability usb ask --remote ws://192.168.1.100:8767
 hermes-relay daemon start
 ```
 

@@ -207,6 +207,48 @@ class SessionPersistenceRoundtripTests(unittest.TestCase):
             )
         )
 
+    def test_legacy_unknown_desktop_ids_do_not_replace_other_pcs(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        desktop_a = mgr.create_session(
+            "Office PC",
+            "unknown",
+            issue_refresh_token=True,
+            client_surface="desktop",
+        )
+        desktop_b = mgr.create_session(
+            "Laptop",
+            "unknown",
+            issue_refresh_token=True,
+            client_surface="desktop",
+        )
+
+        self.assertIsNotNone(mgr.get_session(desktop_a.token))
+        self.assertIsNotNone(mgr.get_session(desktop_b.token))
+        self.assertEqual(len(mgr.list_sessions()), 2)
+
+    def test_legacy_desktop_refresh_upgrades_to_stable_installation_id(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        legacy = mgr.create_session(
+            "Office PC",
+            "unknown",
+            issue_refresh_token=True,
+            client_surface="desktop",
+        )
+        assert legacy.refresh_token is not None
+        stable_id = "8e751a5a-b562-4c8b-8a81-88b1b5962fbb"
+
+        refreshed = mgr.refresh_session(
+            legacy.refresh_token,
+            device_name="Office PC",
+            device_id=stable_id,
+            client_surface="desktop",
+        )
+
+        self.assertIsNotNone(refreshed)
+        assert refreshed is not None
+        self.assertEqual(refreshed.device_id, stable_id)
+        self.assertTrue(mgr.has_trusted_device(stable_id))
+
     def test_explicit_pair_keeps_other_devices(self) -> None:
         mgr = SessionManager(persistence_path=self.path)
         phone_a = mgr.create_session(

@@ -8,24 +8,14 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ## Structured desktop hardware capabilities
 
-Desktop command, PowerShell, process, and job tools currently execute with the
-desktop daemon's OS-user authority. Add typed hardware operations for reliable
-schemas, audit detail, and task-scoped approval, but do not present hardware
-toggles as isolation while an enabled general shell can reach the same device.
-
-- Define per-host capabilities for commands, files, processes, clipboard,
-  screen, input, connected devices, microphone, and camera. Disabled must win,
-  hardware-sensitive capabilities must default off, and unavailable backends
-  must appear unavailable rather than as inert toggles.
-- Add a **Structured only** access profile that withholds shell/process escape
-  hatches so individual capability toggles become enforceable boundaries.
-- Implement connected-device support first with typed, serial-bound ADB
-  operations (`list`, `shell`, `push`, `pull`, `install`, and bounded logcat)
-  instead of a generic device-exec wrapper.
+Structured access and per-host USB policy now ship with typed, serial-bound ADB
+list, shell, push, pull, install, and bounded logcat operations. Remaining work:
 - Add microphone and camera only with backend readiness detection, bounded local
   grants, active-use indicators, audit events, and immediate cancellation.
 - Reconcile legacy `desktop_screenshot` with the task-granted computer screenshot
   path so screen capture follows one policy.
+- Extend capability policy beyond hardware only where a typed broker provides a
+  meaningfully stronger boundary than Structured mode already provides.
 
 ---
 

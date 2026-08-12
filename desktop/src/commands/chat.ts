@@ -48,6 +48,9 @@ import {
   shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
+import { getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
+import { configureCapabilityPolicies } from '../tools/capabilityRuntime.js'
+import { adbBackendAvailable } from '../tools/handlers/adb.js'
 import { PROMPT_SUBMIT_REQUEST_TIMEOUT_MS, RelayTransport } from '../transport/RelayTransport.js'
 
 // (getSession is imported above with the other remoteSessions exports so we
@@ -584,16 +587,21 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
     const consent = await ensureToolsConsent(url)
     if (consent.consented) {
       const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
+      const accessMode = await getHostAccessMode(url)
+      const structuredOnly = accessMode === 'structured'
+      const capabilities = await getHostCapabilityPolicies(url)
+      configureCapabilityPolicies(capabilities)
+      const usb = capabilities.usb !== 'disabled' && adbBackendAvailable()
       configureComputerUseRuntime({
         url,
         computerUseConsented: computerUseEnabled,
         consentSource: consent.source ?? 'stored'
       })
-      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
+      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled, structuredOnly, usb })
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
         hostUrl: url,
-        handlers: desktopHandlers({ computerUse: computerUseEnabled }),
+        handlers: desktopHandlers({ computerUse: computerUseEnabled, structuredOnly, usb }),
         advertisedTools: [...advertisedTools]
       })
       toolRouter.attach(relay)

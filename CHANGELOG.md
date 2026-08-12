@@ -6,8 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Structured desktop access provides an enforceable broker boundary.** Per-host Structured mode withholds terminal, PowerShell, detached process, and command-job launch while retaining typed operations. USB/ADB access is separately Disabled, Ask, or Allow and exposes serial-bound list, shell, push, pull, install, and bounded logcat tools; microphone and camera remain unavailable until their brokers exist.
+
 ### Fixed
 
+- **Windows tray placement follows the notification-area monitor at its real DPI.** The management popup now derives responsive logical dimensions from the tray monitor's work area instead of guessing scale from the icon slot, keeping compact and high-DPI desktops consistently anchored.
+- **Pairing a second desktop no longer revokes the first desktop's credentials.** Each CLI installation persists a private stable device identifier, while the Relay treats legacy `unknown` identifiers as absent rather than as shared device ownership.
+- **Desktop RPC targets the requested PC and fails closed on ambiguity.** Every client-routed tool accepts a stable device ID or unambiguous computer name, pending responses are bound to that WebSocket, and health output enumerates connected targets.
+- **PowerShell success output is complete and self-describing.** Scripts execute through a private UTF-8 temporary file, native exit status propagates, stdout and stderr are drained independently, and bounded output reports total, captured, and truncated bytes instead of returning unexplained empty success.
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
 

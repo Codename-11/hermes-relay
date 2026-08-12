@@ -129,9 +129,14 @@ The UI and daemon run as your normal Windows user by default. Explicit Administr
 
 ## Can multiple people use the same Hermes host from different CLI clients?
 
-Right now the server tracks a single "active" desktop client per relay — if you pair from two machines, the most recently connected wins routing. v1.0 adds per-session-token routing (each hermes session binds to a specific desktop client) so multi-client is clean.
+Yes. Each desktop installation has its own stable device identity and paired
+session, so pairing or repairing one PC does not revoke another PC. The Relay
+can retain and manage all of those authorized sessions independently.
 
-For now: one desktop attached at a time. Or two if you pair them with different tokens and only one is connected.
+Remote desktop commands accept a stable device ID or unambiguous computer name.
+With one connected desktop the target is optional. With several connected
+desktops the Relay requires an explicit target and fails closed rather than
+silently choosing whichever daemon connected most recently.
 
 ## Is there voice mode?
 

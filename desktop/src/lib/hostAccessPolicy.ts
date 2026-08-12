@@ -2,12 +2,19 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-export const HOST_ACCESS_MODES = ['ask', 'trusted', 'full_access'] as const
+export const HOST_ACCESS_MODES = ['ask', 'structured', 'trusted', 'full_access'] as const
+export const HARDWARE_CAPABILITIES = ['usb', 'microphone', 'camera'] as const
+export const CAPABILITY_ACCESS_MODES = ['disabled', 'ask', 'allow'] as const
 
 export type HostAccessMode = (typeof HOST_ACCESS_MODES)[number]
+export type HardwareCapability = (typeof HARDWARE_CAPABILITIES)[number]
+export type CapabilityAccessMode = (typeof CAPABILITY_ACCESS_MODES)[number]
+
+export type CapabilityPolicies = Record<HardwareCapability, CapabilityAccessMode>
 
 export interface HostAccessPolicy {
   access_mode: HostAccessMode
+  capabilities: CapabilityPolicies
   updated_at?: string
 }
 
@@ -17,6 +24,11 @@ export interface HostAccessPolicyFile {
 }
 
 const STORE_VERSION = 1 as const
+export const DEFAULT_CAPABILITY_POLICIES: CapabilityPolicies = Object.freeze({
+  usb: 'disabled',
+  microphone: 'disabled',
+  camera: 'disabled'
+})
 
 export function hostAccessPolicyPath(): string {
   return process.env.HERMES_RELAY_HOST_ACCESS_POLICY_PATH ??
@@ -49,16 +61,30 @@ export function isHostAccessMode(value: unknown): value is HostAccessMode {
 const emptyStore = (): HostAccessPolicyFile => ({ version: STORE_VERSION, hosts: {} })
 
 const restrictiveness = (mode: HostAccessMode): number => HOST_ACCESS_MODES.indexOf(mode)
+const capabilityRestrictiveness = (mode: CapabilityAccessMode): number => CAPABILITY_ACCESS_MODES.indexOf(mode)
 
 function parsePolicy(value: unknown): HostAccessPolicy | null {
-  if (isHostAccessMode(value)) return { access_mode: value }
+  if (isHostAccessMode(value)) {
+    return { access_mode: value, capabilities: { ...DEFAULT_CAPABILITY_POLICIES } }
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
 
   const raw = value as Record<string, unknown>
   const mode = raw.access_mode ?? raw.mode
   if (!isHostAccessMode(mode)) return null
+  const rawCapabilities = raw.capabilities && typeof raw.capabilities === 'object' && !Array.isArray(raw.capabilities)
+    ? raw.capabilities as Record<string, unknown>
+    : {}
+  const capabilities = { ...DEFAULT_CAPABILITY_POLICIES }
+  for (const capability of HARDWARE_CAPABILITIES) {
+    const value = rawCapabilities[capability]
+    if (typeof value === 'string' && CAPABILITY_ACCESS_MODES.includes(value as CapabilityAccessMode)) {
+      capabilities[capability] = value as CapabilityAccessMode
+    }
+  }
   return {
     access_mode: mode,
+    capabilities,
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : undefined
   }
 }
@@ -72,8 +98,21 @@ function mergePolicy(
   if (!url) return
 
   const current = hosts[url]
-  if (!current || restrictiveness(policy.access_mode) < restrictiveness(current.access_mode)) {
+  if (!current) {
     hosts[url] = policy
+    return
+  }
+  hosts[url] = {
+    access_mode: restrictiveness(policy.access_mode) < restrictiveness(current.access_mode)
+      ? policy.access_mode
+      : current.access_mode,
+    capabilities: Object.fromEntries(HARDWARE_CAPABILITIES.map(capability => {
+      const currentMode = current.capabilities[capability]
+      const incomingMode = policy.capabilities[capability]
+      return [capability, capabilityRestrictiveness(incomingMode) < capabilityRestrictiveness(currentMode)
+        ? incomingMode
+        : currentMode]
+    })) as CapabilityPolicies
   }
 }
 
@@ -103,7 +142,12 @@ export function parseHostAccessPolicyFile(value: unknown): HostAccessPolicyFile 
     const urls = raw[field]
     if (!Array.isArray(urls)) continue
     for (const url of urls) {
-      if (typeof url === 'string') mergePolicy(hosts, url, { access_mode: mode })
+      if (typeof url === 'string') {
+        mergePolicy(hosts, url, {
+          access_mode: mode,
+          capabilities: { ...DEFAULT_CAPABILITY_POLICIES }
+        })
+      }
     }
   }
 
@@ -150,8 +194,45 @@ export async function setHostAccessMode(
   if (!isHostAccessMode(accessMode)) throw new Error(`unsupported host access mode: ${String(accessMode)}`)
 
   const store = await readHostAccessPolicies(filePath)
+  const current = store.hosts[canonical]
   const policy: HostAccessPolicy = {
     access_mode: accessMode,
+    capabilities: current?.capabilities ?? { ...DEFAULT_CAPABILITY_POLICIES },
+    updated_at: new Date().toISOString()
+  }
+  store.hosts[canonical] = policy
+  await writeJsonAtomic(filePath, store)
+  return policy
+}
+
+export async function getHostCapabilityPolicies(
+  relayUrl: string,
+  filePath = hostAccessPolicyPath()
+): Promise<CapabilityPolicies> {
+  const canonical = canonicalRelayUrl(relayUrl)
+  if (!canonical) return { ...DEFAULT_CAPABILITY_POLICIES }
+  return (await readHostAccessPolicies(filePath)).hosts[canonical]?.capabilities ??
+    { ...DEFAULT_CAPABILITY_POLICIES }
+}
+
+export async function setHostCapabilityPolicy(
+  relayUrl: string,
+  capability: HardwareCapability,
+  mode: CapabilityAccessMode,
+  filePath = hostAccessPolicyPath()
+): Promise<HostAccessPolicy> {
+  const canonical = canonicalRelayUrl(relayUrl)
+  if (!canonical) throw new Error('host capability policy requires a valid relay URL')
+  if (!HARDWARE_CAPABILITIES.includes(capability)) throw new Error(`unsupported capability: ${capability}`)
+  if (!CAPABILITY_ACCESS_MODES.includes(mode)) throw new Error(`unsupported capability mode: ${mode}`)
+  const store = await readHostAccessPolicies(filePath)
+  const current = store.hosts[canonical] ?? {
+    access_mode: 'ask' as HostAccessMode,
+    capabilities: { ...DEFAULT_CAPABILITY_POLICIES }
+  }
+  const policy: HostAccessPolicy = {
+    ...current,
+    capabilities: { ...current.capabilities, [capability]: mode },
     updated_at: new Date().toISOString()
   }
   store.hosts[canonical] = policy

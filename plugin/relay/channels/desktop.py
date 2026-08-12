@@ -6,11 +6,12 @@ Two jobs over the same WSS ``desktop`` envelope stream:
    channel for the Node thin-client CLI / future TUI. Agent-side
    Python tools in ``plugin/tools/desktop_tool.py`` POST to
    ``/desktop/*`` HTTP routes; the relay forwards them over the
-   ``desktop.command`` envelope; the connected client services them
-   locally and returns ``desktop.response``, which bubbles back as the
-   HTTP response. Single-client MVP — the most recent client wins
-   ``self.client_ws``. ``self.pending`` is asyncio-locked so concurrent
-   add/remove can't drop futures. Normal desktop tools keep the bridge-like
+   ``desktop.command`` envelope; the explicitly selected client services
+   them locally and returns ``desktop.response``, which bubbles back as the
+   HTTP response. Multiple clients are keyed by stable device identity;
+   untargeted dispatch fails closed when more than one is connected.
+   ``self.pending`` is asyncio-locked so concurrent add/remove can't drop
+   futures. Normal desktop tools keep the bridge-like
    30 s timeout; computer-use calls get a longer timeout because they may
    wait on a visible human approval prompt.
 
@@ -49,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 RESPONSE_TIMEOUT = 30.0  # seconds — matches bridge.RESPONSE_TIMEOUT
 COMPUTER_USE_RESPONSE_TIMEOUT = 180.0  # seconds — allows human approval prompts
+ADB_RESPONSE_TIMEOUT = 300.0  # seconds — approval plus a bounded 120 s operation
 
 # Keys whose values must never appear in the ring buffer. Matched
 # case-insensitively against the full key name.
@@ -112,6 +114,8 @@ class DesktopSession:
     """
 
     def __init__(self) -> None:
+        self.device_id: str = ""
+        self.device_name: str = ""
         # Latest ``desktop.workspace`` payload as-sent. Opaque dict — we
         # don't parse fields here because the wire schema is owned by
         # the client (versioned as ``version: 1``); future versions
@@ -177,6 +181,7 @@ class DesktopHandler:
         # command is sent; resolved by handle_response; cancelled with
         # ConnectionError on detach.
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self.pending_ws: dict[str, web.WebSocketResponse] = {}
         self._lock = asyncio.Lock()
 
         # Bounded ring buffer of recent commands.
@@ -196,6 +201,7 @@ class DesktopHandler:
         self,
         ws: web.WebSocketResponse,
         envelope: dict[str, Any],
+        auth_session: Any | None = None,
     ) -> None:
         """Route an incoming desktop-channel envelope from the client.
 
@@ -238,10 +244,14 @@ class DesktopHandler:
         if session is None:
             session = DesktopSession()
             self._sessions[ws] = session
+        if auth_session is not None:
+            auth_device_id = str(getattr(auth_session, "device_id", "") or "").strip()
+            if auth_device_id.casefold() not in {"", "unknown", "none", "null"}:
+                session.device_id = auth_device_id
+            session.device_name = str(getattr(auth_session, "device_name", "") or "").strip()
 
         if msg_type == "response":
             # Tool routing — client is replying to a pending command.
-            await self._latch_client_ws(ws)
             await self.handle_response(ws, envelope)
             return
 
@@ -286,8 +296,9 @@ class DesktopHandler:
         self,
         ws: web.WebSocketResponse,
         envelope: dict[str, Any],
+        session: Any | None = None,
     ) -> None:
-        await self.handle_envelope(ws, envelope)
+        await self.handle_envelope(ws, envelope, auth_session=session)
 
     async def _latch_client_ws(self, ws: web.WebSocketResponse) -> None:
         """Opportunistically latch ``ws`` as the active tool-routing client.
@@ -298,12 +309,81 @@ class DesktopHandler:
         """
         if self.client_ws is ws:
             return
-        if self.client_ws is not None and not self.client_ws.closed:
-            logger.info(
-                "desktop: replacing previous client ws — new client took over"
-            )
-            await self._fail_pending("replaced by new client")
+        # Keep the compatibility/default pointer, but do not evict another
+        # connected PC or fail its in-flight requests. Explicit routing uses
+        # the per-WebSocket session registry below.
         self.client_ws = ws
+
+    def _connected_targets(self) -> list[tuple[web.WebSocketResponse, DesktopSession]]:
+        return [(ws, session) for ws, session in self._sessions.items() if not ws.closed]
+
+    @staticmethod
+    def _normalized_selector(value: str) -> str:
+        return "".join(ch for ch in value.casefold() if ch.isalnum())
+
+    def _resolve_target(
+        self,
+        selector: str | None,
+    ) -> tuple[web.WebSocketResponse, DesktopSession | None]:
+        targets = self._connected_targets()
+        if selector and selector.strip():
+            raw = selector.strip()
+            normalized = self._normalized_selector(raw)
+            matches: list[tuple[web.WebSocketResponse, DesktopSession]] = []
+            for ws, session in targets:
+                status = session.client_status
+                candidates = {
+                    session.device_id,
+                    session.device_name,
+                    str(status.get("device_id", "")),
+                    str(status.get("device_name", "")),
+                    str(status.get("host", "")),
+                }
+                if any(
+                    candidate
+                    and (
+                        candidate.casefold() == raw.casefold()
+                        or self._normalized_selector(candidate) == normalized
+                    )
+                    for candidate in candidates
+                ):
+                    matches.append((ws, session))
+            if not matches:
+                available = [
+                    session.device_name
+                    or str(session.client_status.get("host", ""))
+                    or session.device_id
+                    for _, session in targets
+                ]
+                raise DesktopError(
+                    f"Unknown desktop device selector {raw!r}. Available: "
+                    f"{', '.join(filter(None, available)) or 'none'}"
+                )
+            if len(matches) > 1:
+                raise DesktopError(f"Ambiguous desktop device selector {raw!r}; use its device_id")
+            return matches[0]
+
+        if len(targets) == 1:
+            return targets[0]
+        if len(targets) > 1:
+            available = [
+                (
+                    f"{session.device_name or session.client_status.get('host') or 'desktop'} "
+                    f"({session.device_id or session.client_status.get('device_id') or 'legacy'})"
+                )
+                for _, session in targets
+            ]
+            raise DesktopError(
+                "Multiple desktop clients are connected; pass device or device_id explicitly. "
+                + "Available: "
+                + ", ".join(available)
+            )
+        ws = self.client_ws
+        if ws is not None and not ws.closed:
+            return ws, self._sessions.get(ws)
+        raise DesktopError(
+            "No desktop client connected. Start the Hermes desktop CLI and pair it."
+        )
 
     # ── Outbound commands (called from HTTP handlers) ────────────────────
 
@@ -311,6 +391,7 @@ class DesktopHandler:
         self,
         method: str,
         args: dict[str, Any] | None = None,
+        device: str | None = None,
     ) -> dict[str, Any]:
         """Dispatch a ``desktop_*`` tool call to the connected client.
 
@@ -319,20 +400,21 @@ class DesktopHandler:
         no client is connected, the send fails, or the client doesn't
         respond within the tool-specific response timeout.
         """
-        ws = self.client_ws
-        if ws is None or ws.closed:
-            raise DesktopError(
-                "No desktop client connected. Start the Hermes desktop CLI and pair it."
-            )
+        ws, target_session = self._resolve_target(device)
+        target_tools = (
+            target_session.advertised_tools
+            if target_session is not None
+            else self.advertised_tools
+        )
 
         # Fail-closed on tools the client hasn't advertised. This is what
         # lets the agent side's ``check_fn`` tell Hermes "this tool isn't
         # available right now" without even attempting a round-trip.
-        if method.startswith("desktop_computer_") and not self.advertised_tools:
+        if method.startswith("desktop_computer_") and not target_tools:
             raise DesktopError(
                 f"Desktop client has not advertised experimental computer-use tool {method!r}"
             )
-        if self.advertised_tools and method not in self.advertised_tools:
+        if target_tools and method not in target_tools:
             raise DesktopError(
                 f"Desktop client does not advertise tool {method!r}"
             )
@@ -342,11 +424,17 @@ class DesktopHandler:
 
         async with self._lock:
             self.pending[request_id] = future
+            self.pending_ws[request_id] = ws
 
         command_payload = {
             "request_id": request_id,
             "tool": method,
             "args": args or {},
+            "target_device_id": (
+                target_session.device_id
+                if target_session is not None
+                else None
+            ),
         }
         logger.info(
             "desktop >>> %s args=%s",
@@ -368,21 +456,41 @@ class DesktopHandler:
         except Exception as exc:
             async with self._lock:
                 self.pending.pop(request_id, None)
+                self.pending_ws.pop(request_id, None)
             record.decision = "error"
             record.error = f"Failed to send command to client: {exc}"
             logger.error("desktop: failed to send command: %s", exc)
             raise DesktopError(f"Failed to send command to client: {exc}") from exc
 
         timeout = (
-            COMPUTER_USE_RESPONSE_TIMEOUT
+            ADB_RESPONSE_TIMEOUT
+            if method.startswith("desktop_adb_")
+            else COMPUTER_USE_RESPONSE_TIMEOUT
             if method.startswith("desktop_computer_")
             else RESPONSE_TIMEOUT
         )
         try:
-            return await asyncio.wait_for(future, timeout=timeout)
+            response = await asyncio.wait_for(future, timeout=timeout)
+            response.setdefault(
+                "target",
+                {
+                    "device_id": (
+                        target_session.device_id
+                        if target_session is not None
+                        else None
+                    ),
+                    "device_name": (
+                        target_session.device_name
+                        if target_session is not None
+                        else None
+                    ),
+                },
+            )
+            return response
         except asyncio.TimeoutError:
             async with self._lock:
                 self.pending.pop(request_id, None)
+                self.pending_ws.pop(request_id, None)
             record.decision = "timeout"
             record.error = f"Desktop client did not respond within {timeout:.0f}s"
             logger.warning(
@@ -393,6 +501,11 @@ class DesktopHandler:
             raise DesktopError(
                 f"Desktop client did not respond within {timeout:.0f}s"
             ) from None
+        except asyncio.CancelledError:
+            async with self._lock:
+                self.pending.pop(request_id, None)
+                self.pending_ws.pop(request_id, None)
+            raise
 
     # ── Inbound response routing ────────────────────────────────────────
 
@@ -409,7 +522,15 @@ class DesktopHandler:
             return
 
         async with self._lock:
+            expected_ws = self.pending_ws.get(request_id)
+            if expected_ws is not None and expected_ws is not ws:
+                logger.warning(
+                    "desktop: ignored response from wrong target request_id=%s",
+                    request_id,
+                )
+                return
             future = self.pending.pop(request_id, None)
+            self.pending_ws.pop(request_id, None)
 
         self._update_record_from_response(request_id, payload)
 
@@ -478,6 +599,10 @@ class DesktopHandler:
         if session is None:
             session = self._sessions.get(ws)
         if session is not None:
+            session.device_id = session.device_id or str(payload.get("device_id", "") or "").strip()
+            session.device_name = session.device_name or str(
+                payload.get("device_name", "") or payload.get("host", "")
+            ).strip()
             session.client_status = dict(self.client_status)
             session.last_seen_at = self.last_seen_at
             session.advertised_tools = set(self.advertised_tools)
@@ -491,10 +616,9 @@ class DesktopHandler:
     # ── Public API for HTTP + tool handlers ─────────────────────────────
 
     def is_client_connected(self) -> bool:
-        ws = self.client_ws
-        return ws is not None and not ws.closed
+        return bool(self._connected_targets())
 
-    def has_client_for(self, tool_name: str) -> bool:
+    def has_client_for(self, tool_name: str, device: str | None = None) -> bool:
         """True if a client is connected AND advertises ``tool_name``.
 
         If the client never sent a ``desktop.status`` (empty advertised
@@ -502,14 +626,26 @@ class DesktopHandler:
         clients that don't advertise still work. Clients that DO
         advertise take the strict path.
         """
-        if not self.is_client_connected():
+        if device is None:
+            targets = self._connected_targets()
+            if not targets:
+                return False
+            return any(
+                bool(session.advertised_tools)
+                and tool_name in session.advertised_tools
+                for _, session in targets
+            ) or (
+                not tool_name.startswith("desktop_computer_")
+                and any(not session.advertised_tools for _, session in targets)
+            )
+        try:
+            _, session = self._resolve_target(device)
+        except DesktopError:
             return False
-        if tool_name.startswith("desktop_computer_") and not self.advertised_tools:
+        tools = session.advertised_tools if session is not None else self.advertised_tools
+        if tool_name.startswith("desktop_computer_") and not tools:
             return False
-        if not self.advertised_tools:
-            # Client hasn't advertised yet — assume it can handle the call.
-            return True
-        return tool_name in self.advertised_tools
+        return not tools or tool_name in tools
 
     def status_snapshot(self) -> dict[str, Any]:
         """Dict suitable for ``/desktop/_ping`` and diagnostics."""
@@ -519,6 +655,19 @@ class DesktopHandler:
             "client_status": dict(self.client_status),
             "last_seen_at": self.last_seen_at,
             "pending_commands": len(self.pending),
+            "clients": [
+                {
+                    "device_id": session.device_id or session.client_status.get("device_id"),
+                    "device_name": (
+                        session.device_name
+                        or session.client_status.get("device_name")
+                        or session.client_status.get("host")
+                    ),
+                    "advertised_tools": sorted(session.advertised_tools),
+                    "last_seen_at": session.last_seen_at,
+                }
+                for _, session in self._connected_targets()
+            ],
         }
 
     # ── Workspace / editor accessors (alpha.6) ──────────────────────────
@@ -557,6 +706,7 @@ class DesktopHandler:
         async with self._lock:
             pending = dict(self.pending)
             self.pending.clear()
+            self.pending_ws.clear()
         if pending:
             err = ConnectionError(
                 f"Desktop client disconnected ({reason})" if reason else
@@ -597,11 +747,33 @@ class DesktopHandler:
 
         # Tool-routing cleanup — only if this ws was the latched client.
         if self.client_ws is ws:
-            self.client_ws = None
-            self.advertised_tools = set()
+            remaining = self._connected_targets()
+            self.client_ws = remaining[-1][0] if remaining else None
+            if remaining:
+                replacement = remaining[-1][1]
+                self.advertised_tools = set(replacement.advertised_tools)
+                self.client_status = dict(replacement.client_status)
+                self.last_seen_at = replacement.last_seen_at
+            else:
+                self.advertised_tools = set()
             # keep client_status around for post-mortem diagnostics —
             # it's small and the next connect overwrites it anyway.
-            await self._fail_pending(reason)
+        async with self._lock:
+            request_ids = [
+                request_id
+                for request_id, target in self.pending_ws.items()
+                if target is ws
+            ]
+            futures = [
+                self.pending.pop(request_id)
+                for request_id in request_ids
+                if request_id in self.pending
+            ]
+            for request_id in request_ids:
+                self.pending_ws.pop(request_id, None)
+        for future in futures:
+            if not future.done():
+                future.set_exception(ConnectionError(f"Desktop client disconnected ({reason})"))
 
     async def close(self) -> None:
         """Server shutdown — cancel all pending commands, drop the

@@ -8,6 +8,7 @@ test('audit events classify the activity surfaces used by the tray', () => {
   assert.equal(categorizeTool('desktop_read_file'), 'files')
   assert.equal(categorizeTool('desktop_computer_screenshot'), 'screen')
   assert.equal(categorizeTool('desktop_computer_input'), 'input')
+  assert.equal(categorizeTool('desktop_adb_shell'), 'devices')
   assert.equal(categorizeTool('daemon.connect'), 'system')
   assert.equal(categorizeTool('desktop_unknown'), 'other')
 })

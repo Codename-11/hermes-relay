@@ -5,21 +5,22 @@ import {
   Activity as ActivityIcon, AlertTriangle, Check, ChevronDown, ChevronRight,
   CircleHelp, Clock3, Download, Eye, FileText, Home, Laptop, Link2,
   LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
-  Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X
+  Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X, Usb, LockKeyhole
 } from 'lucide-react'
 import logo from '../icons/icon-256.png'
-import type { AccessMode, Activity, AuthorizedClient, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
+import type { AccessMode, Activity, AuthorizedClient, CapabilityMode, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
 
 type Page = 'overview' | 'hosts' | 'host-detail' | 'settings' | 'activity'
-type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'revoke'; client: AuthorizedClient } | { type: 'clear-activity' } | null
+type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: 'usb'; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient } | { type: 'clear-activity' } | null
 
 const isGrantWindow = '__TAURI_INTERNALS__' in window && getCurrentWindow().label === 'grant'
 
 const demo: Snapshot = {
-  hosts: [{ url: 'wss://home-hermes.local:8767', name: 'Home Hermes', server_version: '0.9.0', endpoint_role: 'tailscale', paired_at: 1786458000, is_active: true, access_mode: 'trusted' }],
+  hosts: [{ url: 'wss://home-hermes.local:8767', name: 'Home Hermes', server_version: '0.9.0', endpoint_role: 'tailscale', paired_at: 1786458000, is_active: true, access_mode: 'structured', capabilities: { usb: 'ask', microphone: 'disabled', camera: 'disabled' } }],
   active_url: 'wss://home-hermes.local:8767',
   daemon: { state: 'connected', running: true, url: 'wss://home-hermes.local:8767', privilege: 'user', username: 'Local user' },
   startup_enabled: true,
+  hardware_availability: { usb: true, microphone: false, camera: false },
   pending_grants: [],
   activity: [
     { ts: Date.now() - 110_000, tool: 'desktop.shell', ok: true, summary: 'PowerShell command completed' },
@@ -71,6 +72,7 @@ type ActivityFilter = 'all' | ActivityCategory | 'attention' | 'warning'
 function activityCategory(entry: Activity): ActivityCategory {
   if (entry.category) return entry.category
   const tool = entry.tool.toLowerCase()
+  if (tool.includes('adb') || tool.includes('usb')) return 'devices'
   if (tool.includes('screenshot') || tool.includes('screen')) return 'screen'
   if (tool.includes('computer_') || tool.includes('mouse') || tool.includes('keyboard')) return 'input'
   if (tool.includes('file') || tool.includes('directory') || tool.includes('patch')) return 'files'
@@ -140,6 +142,7 @@ function friendlyUpdateError(error: unknown): string {
 
 const accessCopy: Record<AccessMode, string> = {
   ask: 'The connection stays ready, but this host cannot use desktop tools until you allow access.',
+  structured: 'Typed file, process, screen, and enabled hardware tools only. Raw shell execution is unavailable.',
   trusted: 'This host may use command and file tools; screen and input still require a task grant.',
   'full-access': 'This host may use commands, screen, mouse, and keyboard without asking.'
 }
@@ -166,7 +169,18 @@ function ManagementApp() {
   const refresh = useCallback(async () => {
     try {
       const next = await call<Snapshot>('get_snapshot')
-      next.hosts = next.hosts.map(h => ({ ...h, name: h.name || displayHost(h.url) }))
+      next.hosts = next.hosts.map(h => {
+        const capabilities = h.capabilities as Partial<Host['capabilities']>
+        return {
+          ...h,
+          name: h.name || displayHost(h.url),
+          capabilities: {
+            usb: capabilities.usb ?? 'disabled',
+            microphone: capabilities.microphone ?? 'disabled',
+            camera: capabilities.camera ?? 'disabled'
+          }
+        }
+      })
       setSnapshot(next)
       setSelectedUrl(current => current && next.hosts.some(h => h.url === current) ? current : next.active_url ?? next.hosts[0]?.url ?? null)
       setError(null)
@@ -223,6 +237,8 @@ function ManagementApp() {
     if (!work) return
     if (work.type === 'access' && host) {
       await action('set_host_access', { remote: host.url, mode: work.mode })
+    } else if (work.type === 'capability' && host) {
+      await action('set_host_capability', { remote: host.url, capability: work.capability, mode: work.mode })
     } else if (work.type === 'revoke' && host) {
       await action('revoke_authorized_client', { remote: host.url, prefix: work.client.token_prefix })
       setClients(await call<AuthorizedClient[]>('list_authorized_clients', { remote: host.url }))
@@ -235,6 +251,12 @@ function ManagementApp() {
     if (!host || host.access_mode === mode) return
     if (mode === 'full-access') setPending({ type: 'access', mode })
     else action('set_host_access', { remote: host.url, mode })
+  }
+
+  const chooseCapability = (capability: 'usb' | 'microphone' | 'camera', mode: CapabilityMode) => {
+    if (!host || host.capabilities[capability] === mode || capability !== 'usb') return
+    if (mode === 'allow') setPending({ type: 'capability', capability, mode })
+    else action('set_host_capability', { remote: host.url, capability, mode })
   }
 
   const hideWindow = useCallback(() => {
@@ -297,10 +319,19 @@ function ManagementApp() {
           <div className="label-row"><label>Access for this host</label><span title="Access applies only to the selected Hermes host."><CircleHelp /></span></div>
           <div className="access-control" role="radiogroup" aria-label="Host access">
             <button role="radio" aria-checked={host.access_mode === 'ask'} className={host.access_mode === 'ask' ? 'active' : ''} onClick={() => chooseAccess('ask')}><CircleHelp /><span>Ask</span></button>
+            <button role="radio" aria-checked={host.access_mode === 'structured'} className={host.access_mode === 'structured' ? 'active' : ''} onClick={() => chooseAccess('structured')}><LockKeyhole /><span>Structured</span></button>
             <button role="radio" aria-checked={host.access_mode === 'trusted'} className={host.access_mode === 'trusted' ? 'active' : ''} onClick={() => chooseAccess('trusted')}><ShieldCheck /><span>Trusted</span></button>
             <button role="radio" aria-checked={host.access_mode === 'full-access'} className={host.access_mode === 'full-access' ? 'active' : ''} onClick={() => chooseAccess('full-access')}><Monitor /><span>Full Access</span></button>
           </div>
           <p className="access-copy">{accessCopy[host.access_mode]}</p>
+          <div className="capability-panel">
+            <div className="capability-title"><Usb /><span><strong>Connected devices</strong><small>Serial-bound ADB broker</small></span></div>
+            <div className="capability-modes" role="radiogroup" aria-label="USB device access">
+              {(['disabled', 'ask', 'allow'] as CapabilityMode[]).map(mode => <button key={mode} disabled={!snapshot.hardware_availability.usb} role="radio" aria-checked={host.capabilities.usb === mode} className={host.capabilities.usb === mode ? 'active' : ''} onClick={() => chooseCapability('usb', mode)}>{mode === 'disabled' ? 'Off' : mode === 'ask' ? 'Ask' : 'Allow'}</button>)}
+            </div>
+            {!snapshot.hardware_availability.usb && <small className="capability-backend-note">ADB is not installed or not available on PATH.</small>}
+            <div className="capability-unavailable"><span>Microphone</span><small>Unavailable</small><span>Camera</span><small>Unavailable</small></div>
+          </div>
         </section>}
 
         <button className="tunnel-button" disabled={busy !== null} onClick={() => action(connected ? 'disconnect_daemon' : 'connect_daemon')}><Power />{connected ? 'Disconnect Tunnel' : 'Connect Tunnel'}</button>
@@ -329,9 +360,9 @@ function ManagementApp() {
 
     {pending && <div className="modal-backdrop" role="presentation"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <div className="modal-icon">{pending.type === 'revoke' ? <UserRoundX /> : pending.type === 'clear-activity' ? <Trash2 /> : <AlertTriangle />}</div>
-      <h2 id="confirm-title">{pending.type === 'access' ? `Give ${host?.name} full access?` : pending.type === 'revoke' ? `Deauthorize ${pending.client.device_name ?? pending.client.token_prefix}?` : 'Clear local activity?'}</h2>
-      <p>{pending.type === 'access' ? 'This host will be able to run commands and control this PC without asking. Only use Full Access with a Hermes host you control.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
-      <div className="modal-actions"><button className="secondary" onClick={() => setPending(null)}>Cancel</button><button className="danger" onClick={confirmPending}>{pending.type === 'access' ? 'Enable Full Access' : pending.type === 'revoke' ? 'Deauthorize' : 'Clear activity'}</button></div>
+      <h2 id="confirm-title">{pending.type === 'access' ? `Give ${host?.name} full access?` : pending.type === 'capability' ? `Always allow USB access for ${host?.name}?` : pending.type === 'revoke' ? `Deauthorize ${pending.client.device_name ?? pending.client.token_prefix}?` : 'Clear local activity?'}</h2>
+      <p>{pending.type === 'access' ? 'This host will be able to run commands and control this PC without asking. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This host may run serial-bound ADB operations without asking each time. It does not grant raw desktop command access.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
+      <div className="modal-actions"><button className="secondary" onClick={() => setPending(null)}>Cancel</button><button className="danger" onClick={confirmPending}>{pending.type === 'access' ? 'Enable Full Access' : pending.type === 'capability' ? 'Allow USB' : pending.type === 'revoke' ? 'Deauthorize' : 'Clear activity'}</button></div>
     </div></div>}
   </div>
 }
@@ -401,15 +432,16 @@ function GrantWindow() {
     ?? (snapshot.daemon.url ? displayHost(snapshot.daemon.url) : 'Connected host')
   const scope = formatGrantScope(grant.scope)
   const minutes = Math.max(1, Math.round(grant.duration_seconds / 60))
+  const usbRequest = grant.mode.startsWith('usb.')
 
   return <div className={`grant-shell ${visible ? 'window-visible' : ''} ${expanded ? 'expanded' : ''}`}>
     <section className="grant-card" role="dialog" aria-modal="true" aria-labelledby="grant-title">
       <div className="grant-head">
         <span className="grant-icon"><ShieldCheck /></span>
-        <span><small>Remote access request</small><strong id="grant-title">{grant.mode} access</strong></span>
+        <span><small>{usbRequest ? 'Connected device request' : 'Remote access request'}</small><strong id="grant-title">{usbRequest ? 'USB / ADB access' : `${grant.mode} access`}</strong></span>
         <button className="grant-expand" aria-expanded={expanded} aria-label={expanded ? 'Hide request details' : 'Show request details'} onClick={toggleExpanded}><ChevronDown /></button>
       </div>
-      <p className="grant-summary"><strong>{hostName}</strong> wants to control this PC for up to {minutes} min.</p>
+      <p className="grant-summary"><strong>{hostName}</strong> {usbRequest ? 'wants to run one brokered operation on a connected Android device.' : `wants to control this PC for up to ${minutes} min.`}</p>
       <div className="grant-details" aria-hidden={!expanded}>
         <dl><div><dt>Reason</dt><dd>{grant.reason || 'No reason provided'}</dd></div>{scope && <div><dt>Scope</dt><dd>{scope}</dd></div>}</dl>
       </div>
@@ -426,7 +458,7 @@ function ActivityList({ entries, host, detailed = false }: { entries: Activity[]
     const attention = needsAttention(entry)
     const warning = isNonZeroExit(entry)
     const key = entry.request_id ?? `${entry.ts}-${i}`
-    const Icon = category === 'command' ? TerminalSquare : category === 'files' ? FileText : category === 'screen' ? Eye : category === 'input' ? MousePointer2 : category === 'system' ? LogOut : ActivityIcon
+    const Icon = category === 'command' ? TerminalSquare : category === 'files' ? FileText : category === 'screen' ? Eye : category === 'input' ? MousePointer2 : category === 'devices' ? Usb : category === 'system' ? LogOut : ActivityIcon
     const open = detailed && expanded === key
     const detail = entry.error ?? entry.summary ?? (entry.aborted ? 'Request aborted' : 'Completed')
     const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
@@ -459,7 +491,7 @@ function ActivityPanel({ entries, host, onClear }: { entries: Activity[]; host: 
   const filters: Array<{ value: ActivityFilter; label: string }> = [
     { value: 'all', label: 'All' }, { value: 'command', label: 'Commands' },
     { value: 'files', label: 'Files' }, { value: 'screen', label: 'Screen' },
-    { value: 'input', label: 'Input' }, { value: 'system', label: 'System' },
+    { value: 'input', label: 'Input' }, { value: 'devices', label: 'Devices' }, { value: 'system', label: 'System' },
     { value: 'warning', label: 'Non-zero' }, { value: 'attention', label: 'Issues' }
   ]
   return <div className="activity-panel">

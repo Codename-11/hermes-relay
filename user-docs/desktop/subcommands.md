@@ -281,7 +281,7 @@ hermes-relay grants approve <id>
 hermes-relay grants reject <id> --reason "Not expected"
 ```
 
-Interactive review shows the requested mode, duration, and reason before asking for confirmation. The Windows tray raises a native alert when a request arrives and opens this command when you choose **Review pending grants…**; approval never happens inside a hidden GUI.
+Interactive review shows the requested mode, duration, reason, and scope before asking for confirmation. The Windows tray raises a dedicated borderless approval card without opening the main management UI; `hermes-relay grants` remains the CLI review path.
 
 ## `hermes-relay audit`
 

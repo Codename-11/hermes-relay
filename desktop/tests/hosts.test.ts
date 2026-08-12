@@ -7,7 +7,7 @@ import { afterEach, test } from 'node:test'
 import type { ParsedArgs } from '../src/cli.js'
 import { hostsCommand, parseAccessMode } from '../src/commands/hosts.js'
 import { getActiveDesktopRelayUrl, getDesktopHostAliases, setDesktopConfigPath } from '../src/desktopConfig.js'
-import { getHostAccessMode } from '../src/lib/hostAccessPolicy.js'
+import { getHostAccessMode, getHostCapabilityPolicies } from '../src/lib/hostAccessPolicy.js'
 import { getSession, saveSession, setStorePath } from '../src/remoteSessions.js'
 
 const temporaryRoots: string[] = []
@@ -39,9 +39,19 @@ function args(positional: string[], flags: Record<string, string | true> = {}): 
 test('access mode parser accepts the user-facing full-access spelling', () => {
   assert.equal(parseAccessMode('ask'), 'ask')
   assert.equal(parseAccessMode('trusted'), 'trusted')
+  assert.equal(parseAccessMode('structured'), 'structured')
   assert.equal(parseAccessMode('full-access'), 'full_access')
   assert.equal(parseAccessMode('full_access'), 'full_access')
   assert.equal(parseAccessMode('always'), null)
+})
+
+test('USB capability policy requires confirmation for allow and rejects unavailable brokers', async () => {
+  const { url } = await setup()
+  assert.equal(await hostsCommand(args(['capability', 'usb', 'allow'], { remote: url })), 2)
+  assert.equal(await hostsCommand(args(['capability', 'usb', 'allow'], { remote: url, yes: true, 'no-color': true })), 0)
+  assert.equal((await getHostCapabilityPolicies(url)).usb, 'allow')
+  assert.equal(await hostsCommand(args(['capability', 'camera', 'allow'], { remote: url, yes: true })), 2)
+  assert.equal((await getHostCapabilityPolicies(url)).camera, 'disabled')
 })
 
 test('select and access commands update shared host state', async () => {

@@ -21,6 +21,14 @@ import {
 } from './handlers/jobs.js'
 import { powershellHandler } from './handlers/powershell.js'
 import {
+  adbDevicesHandler,
+  adbInstallHandler,
+  adbLogcatHandler,
+  adbPullHandler,
+  adbPushHandler,
+  adbShellHandler
+} from './handlers/adb.js'
+import {
   findPidByPortHandler,
   killProcessHandler,
   listProcessesHandler,
@@ -91,8 +99,29 @@ const BASE_DESKTOP_HANDLERS: Record<string, ToolHandler> = {
   desktop_clipboard_read: clipboardReadHandler,
   desktop_clipboard_write: clipboardWriteHandler,
   desktop_screenshot: screenshotHandler,
-  desktop_open_in_editor: openInEditorHandler
+  desktop_open_in_editor: openInEditorHandler,
+  desktop_adb_devices: adbDevicesHandler,
+  desktop_adb_shell: adbShellHandler,
+  desktop_adb_push: adbPushHandler,
+  desktop_adb_pull: adbPullHandler,
+  desktop_adb_install: adbInstallHandler,
+  desktop_adb_logcat: adbLogcatHandler
 }
+
+export const RAW_EXECUTION_TOOLS = Object.freeze([
+  'desktop_terminal',
+  'desktop_powershell',
+  'desktop_spawn_detached',
+  'desktop_job_start'
+])
+export const USB_TOOLS = Object.freeze([
+  'desktop_adb_devices',
+  'desktop_adb_shell',
+  'desktop_adb_push',
+  'desktop_adb_pull',
+  'desktop_adb_install',
+  'desktop_adb_logcat'
+])
 
 const COMPUTER_USE_HANDLERS: Record<string, ToolHandler> = {
   desktop_computer_status: computerStatusHandler,
@@ -111,6 +140,8 @@ export const DESKTOP_HANDLERS: Record<string, ToolHandler> = {
 
 export interface DesktopAdvertiseOptions {
   computerUse?: boolean
+  structuredOnly?: boolean
+  usb?: boolean
 }
 
 function envEnabled(value: string | undefined): boolean {
@@ -139,10 +170,13 @@ export function shouldAdvertiseComputerUse(
 export function desktopHandlers(
   opts: DesktopAdvertiseOptions = {}
 ): Record<string, ToolHandler> {
-  if (opts.computerUse !== true) {
-    return BASE_DESKTOP_HANDLERS
-  }
-  return DESKTOP_HANDLERS
+  const handlers = opts.computerUse === true ? DESKTOP_HANDLERS : BASE_DESKTOP_HANDLERS
+  const raw = new Set(RAW_EXECUTION_TOOLS)
+  const usb = new Set(USB_TOOLS)
+  return Object.fromEntries(Object.entries(handlers).filter(([name]) =>
+    (opts.structuredOnly !== true || !raw.has(name)) &&
+    (opts.usb === true || !usb.has(name))
+  ))
 }
 
 /** Stable list of advertised tool names — what the heartbeat claims to
@@ -151,11 +185,7 @@ export function desktopHandlers(
 export function advertisedDesktopTools(
   opts: DesktopAdvertiseOptions = {}
 ): readonly string[] {
-  if (opts.computerUse !== true) {
-    const experimental = new Set(DESKTOP_COMPUTER_USE_TOOLS)
-    return Object.freeze(Object.keys(DESKTOP_HANDLERS).filter(name => !experimental.has(name)))
-  }
-  return Object.freeze(Object.keys(DESKTOP_HANDLERS))
+  return Object.freeze(Object.keys(desktopHandlers(opts)))
 }
 
 export const DESKTOP_ADVERTISED_TOOLS: readonly string[] = advertisedDesktopTools({

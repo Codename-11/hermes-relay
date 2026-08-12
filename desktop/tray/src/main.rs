@@ -8,6 +8,7 @@ mod app {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use std::{
+        collections::BTreeMap,
         env, fs,
         fs::OpenOptions,
         io::Write,
@@ -22,16 +23,13 @@ mod app {
         image::Image,
         menu::{MenuBuilder, MenuItemBuilder},
         tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-        AppHandle, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Position, RunEvent, Size,
-        State, WindowEvent,
+        AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Position,
+        RunEvent, Size, State, WindowEvent,
     };
     use windows::{
         core::{IUnknown, PCWSTR},
         Win32::{
             Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, POINT},
-            Graphics::Gdi::{
-                GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-            },
             System::{
                 Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
                 Threading::{CreateMutexW, CREATE_NO_WINDOW},
@@ -54,8 +52,10 @@ mod app {
     const RUN_VALUE: &str = "HermesRelayTray";
     const POPUP_GAP: f64 = 10.0;
     const MONITOR_MARGIN: f64 = 8.0;
-    const TRAY_SLOT_LOGICAL_WIDTH: f64 = 32.0;
-    const TRAY_SLOT_LOGICAL_HEIGHT: f64 = 48.0;
+    const MAIN_LOGICAL_WIDTH: f64 = 420.0;
+    const MAIN_LOGICAL_HEIGHT: f64 = 700.0;
+    const MAIN_MIN_LOGICAL_WIDTH: f64 = 340.0;
+    const MAIN_MIN_LOGICAL_HEIGHT: f64 = 440.0;
 
     #[derive(Clone, Copy, Debug)]
     struct TrayAnchor {
@@ -232,6 +232,8 @@ mod app {
         is_active: bool,
         #[serde(default = "ask_mode")]
         access_mode: String,
+        #[serde(default)]
+        capabilities: BTreeMap<String, String>,
     }
 
     fn ask_mode() -> String {
@@ -283,6 +285,14 @@ mod app {
         activity: Vec<Activity>,
         pending_grants: Vec<PendingGrantRequest>,
         startup_enabled: bool,
+        hardware_availability: HardwareAvailability,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct HardwareAvailability {
+        usb: bool,
+        microphone: bool,
+        camera: bool,
     }
 
     fn home_dir() -> Result<PathBuf, String> {
@@ -425,6 +435,7 @@ mod app {
                 } else {
                     "ask".to_string()
                 },
+                capabilities: BTreeMap::new(),
             })
             .collect())
     }
@@ -502,6 +513,22 @@ mod app {
             .is_ok_and(|s| s.success())
     }
 
+    fn hardware_availability() -> HardwareAvailability {
+        let adb = env::var_os("HERMES_RELAY_ADB_PATH")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "adb".into());
+        let usb = Command::new(adb)
+            .arg("version")
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .status()
+            .is_ok_and(|status| status.success());
+        HardwareAvailability {
+            usb,
+            microphone: false,
+            camera: false,
+        }
+    }
+
     #[tauri::command]
     async fn get_snapshot() -> Result<Snapshot, String> {
         let selected = active_url();
@@ -535,6 +562,7 @@ mod app {
             activity: read_activity(),
             pending_grants,
             startup_enabled: startup_enabled(),
+            hardware_availability: hardware_availability(),
         })
     }
 
@@ -672,7 +700,10 @@ mod app {
 
     #[tauri::command]
     fn set_host_access(remote: String, mode: String) -> Result<(), String> {
-        if !matches!(mode.as_str(), "ask" | "trusted" | "full-access") {
+        if !matches!(
+            mode.as_str(),
+            "ask" | "structured" | "trusted" | "full-access"
+        ) {
             return Err("invalid host access mode".to_string());
         }
         let mut args = vec![
@@ -691,6 +722,37 @@ mod app {
         append_management_event(
             "host.access",
             &format!("Access changed to {mode}"),
+            Some(&remote),
+            None,
+        );
+        Ok(())
+    }
+
+    #[tauri::command]
+    fn set_host_capability(remote: String, capability: String, mode: String) -> Result<(), String> {
+        if !matches!(capability.as_str(), "usb" | "microphone" | "camera") {
+            return Err("invalid hardware capability".to_string());
+        }
+        if !matches!(mode.as_str(), "disabled" | "ask" | "allow") {
+            return Err("invalid capability access mode".to_string());
+        }
+        let mut args = vec![
+            "hosts",
+            "capability",
+            capability.as_str(),
+            mode.as_str(),
+            "--remote",
+            remote.as_str(),
+        ];
+        if mode == "allow" {
+            args.push("--yes");
+        }
+        let was_running = daemon_is_running();
+        run_cli_checked(&args)?;
+        restart_daemon_if_running(was_running)?;
+        append_management_event(
+            "host.capability",
+            &format!("{capability} capability changed to {mode}"),
             Some(&remote),
             None,
         );
@@ -884,21 +946,26 @@ mod app {
         )
     }
 
-    fn physical_window_size(reported: PhysicalSize<u32>, anchor: TrayAnchor) -> PhysicalSize<u32> {
-        let width_scale = anchor.width / TRAY_SLOT_LOGICAL_WIDTH;
-        let height_scale = anchor.height / TRAY_SLOT_LOGICAL_HEIGHT;
-        let scale = if width_scale.is_finite()
-            && height_scale.is_finite()
-            && (width_scale - height_scale).abs() <= 0.25
-        {
-            ((width_scale + height_scale) / 2.0).clamp(1.0, 4.0)
+    fn responsive_logical_window_size(
+        work_area: &PhysicalRect<i32, u32>,
+        scale: f64,
+    ) -> LogicalSize<f64> {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
         } else {
             1.0
         };
-        PhysicalSize::new(
-            (reported.width as f64 * scale).round() as u32,
-            (reported.height as f64 * scale).round() as u32,
-        )
+        let available_width = (work_area.size.width as f64 / scale - MONITOR_MARGIN * 2.0).max(1.0);
+        let available_height =
+            (work_area.size.height as f64 / scale - MONITOR_MARGIN * 2.0).max(1.0);
+        let width = MAIN_LOGICAL_WIDTH
+            .min(available_width)
+            .max(MAIN_MIN_LOGICAL_WIDTH.min(available_width));
+        let height = MAIN_LOGICAL_HEIGHT
+            .min(available_height)
+            .max(MAIN_MIN_LOGICAL_HEIGHT.min(available_height));
+
+        LogicalSize::new(width, height)
     }
 
     fn position_window(app: &AppHandle, anchor: TrayAnchor) {
@@ -907,40 +974,33 @@ mod app {
         };
         let center_x = anchor.x + anchor.width / 2.0;
         let center_y = anchor.y + anchor.height / 2.0;
-        let monitor = unsafe {
-            MonitorFromPoint(
-                POINT {
-                    x: center_x.round() as i32,
-                    y: center_y.round() as i32,
-                },
-                MONITOR_DEFAULTTONEAREST,
-            )
-        };
-        let mut monitor_info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if !unsafe { GetMonitorInfoW(monitor, &mut monitor_info) }.as_bool() {
+        let Some(monitor) = window
+            .monitor_from_point(center_x, center_y)
+            .ok()
+            .flatten()
+            .or_else(|| window.current_monitor().ok().flatten())
+            .or_else(|| window.primary_monitor().ok().flatten())
+        else {
             return;
-        }
-        let bounds = monitor_info.rcMonitor;
-        let monitor_position = PhysicalPosition::new(bounds.left, bounds.top);
-        let monitor_size = PhysicalSize::new(
-            (bounds.right - bounds.left) as u32,
-            (bounds.bottom - bounds.top) as u32,
-        );
-        // A hidden first-launch window may have been created on a monitor with a
-        // different scale factor. Move it onto the tray monitor before measuring,
-        // allowing WM_DPICHANGED to resize it before the final centered placement.
+        };
+        let work_area = monitor.work_area();
+        let scale = monitor.scale_factor();
+        let logical_size = responsive_logical_window_size(work_area, scale);
+
+        // Commit the tray monitor before applying its logical size. This avoids
+        // inheriting the hidden creation monitor's DPI on first launch.
         let _ = window.set_position(PhysicalPosition::new(
             center_x.round() as i32,
             center_y.round() as i32,
         ));
-        let Ok(reported_size) = window.outer_size() else {
+        let _ = window.set_size(Size::Logical(logical_size));
+        // WebView frame metrics and monitor transitions can produce outer
+        // dimensions that differ from a logical-size times DPI calculation.
+        // Center from the authoritative post-resize bounds Windows reports.
+        let Ok(physical_size) = window.outer_size() else {
             return;
         };
-        let window_size = physical_window_size(reported_size, anchor);
-        let position = popup_position(anchor, window_size, monitor_position, monitor_size);
+        let position = popup_position(anchor, physical_size, work_area.position, work_area.size);
         let _ = window.set_position(position);
     }
 
@@ -1127,6 +1187,7 @@ mod app {
                 select_host,
                 rename_host,
                 set_host_access,
+                set_host_capability,
                 list_authorized_clients,
                 revoke_authorized_client,
                 resolve_grant,
@@ -1298,18 +1359,24 @@ mod app {
         }
 
         #[test]
-        fn tray_slot_scale_converts_virtualized_webview_size_to_physical_pixels() {
-            let size = physical_window_size(
-                PhysicalSize::new(434, 708),
-                TrayAnchor {
-                    x: 1546.0,
-                    y: 1020.0,
-                    width: 40.0,
-                    height: 60.0,
-                },
-            );
+        fn window_size_uses_monitor_dpi_not_taskbar_icon_geometry() {
+            let work_area = PhysicalRect {
+                position: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(3440, 1390),
+            };
+            let logical = responsive_logical_window_size(&work_area, 1.25);
+            assert_eq!(logical, LogicalSize::new(420.0, 700.0));
+        }
 
-            assert_eq!(size, PhysicalSize::new(543, 885));
+        #[test]
+        fn window_height_compacts_to_a_small_scaled_work_area() {
+            let work_area = PhysicalRect {
+                position: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(1366, 728),
+            };
+            let logical = responsive_logical_window_size(&work_area, 1.5);
+            assert_eq!(logical.width, 420.0);
+            assert!(logical.height < 480.0);
         }
 
         #[test]

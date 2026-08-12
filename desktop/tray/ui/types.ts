@@ -1,4 +1,5 @@
-export type AccessMode = 'ask' | 'trusted' | 'full-access'
+export type AccessMode = 'ask' | 'structured' | 'trusted' | 'full-access'
+export type CapabilityMode = 'disabled' | 'ask' | 'allow'
 
 export interface Host {
   url: string
@@ -8,6 +9,7 @@ export interface Host {
   paired_at?: number | null
   is_active: boolean
   access_mode: AccessMode
+  capabilities: { usb: CapabilityMode; microphone: CapabilityMode; camera: CapabilityMode }
 }
 
 export interface DaemonStatus {
@@ -23,7 +25,7 @@ export interface Activity {
   ts: number
   kind?: 'tool.completed' | 'management.completed'
   tool: string
-  category?: 'command' | 'files' | 'screen' | 'input' | 'system' | 'other'
+  category?: 'command' | 'files' | 'screen' | 'input' | 'devices' | 'system' | 'other'
   ok: boolean
   aborted?: boolean
   request_id?: string
@@ -42,6 +44,7 @@ export interface Snapshot {
   activity: Activity[]
   pending_grants: PendingGrantRequest[]
   startup_enabled: boolean
+  hardware_availability: { usb: boolean; microphone: boolean; camera: boolean }
 }
 
 export interface PendingGrantRequest {

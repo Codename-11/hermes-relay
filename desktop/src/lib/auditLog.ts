@@ -36,7 +36,7 @@ export interface AuditEntry {
   error?: string
 }
 
-export type AuditCategory = 'command' | 'files' | 'screen' | 'input' | 'system' | 'other'
+export type AuditCategory = 'command' | 'files' | 'screen' | 'input' | 'devices' | 'system' | 'other'
 
 /** Rotate the log once it crosses ~1 MB, keeping a single `.1` backup. */
 const MAX_BYTES = 1_000_000
@@ -86,7 +86,7 @@ export async function readRecentAudit(limit = 50): Promise<AuditEntry[]> {
 export function previewArgs(args: Record<string, unknown>): string | undefined {
   try {
     const parts: string[] = []
-    for (const key of ['path', 'command', 'cmd', 'pattern', 'cwd', 'pid', 'port', 'name']) {
+    for (const key of ['serial', 'source', 'destination', 'apk', 'path', 'command', 'cmd', 'pattern', 'cwd', 'pid', 'port', 'name']) {
       const v = (args as Record<string, unknown>)[key]
       if (v !== undefined && v !== null && typeof v !== 'object') {
         parts.push(`${key}=${String(v)}`)
@@ -133,6 +133,7 @@ export function resultExitCode(result: unknown): number | undefined {
 /** A small stable taxonomy shared by CLI audit consumers and the tray UI. */
 export function categorizeTool(tool: string): AuditCategory {
   const value = tool.toLowerCase()
+  if (value.includes('adb') || value.includes('usb')) return 'devices'
   if (value.includes('computer_screenshot') || value.includes('screen')) return 'screen'
   if (value.includes('computer_') || value.includes('mouse') || value.includes('keyboard')) return 'input'
   if (value.includes('file') || value.includes('directory') || value.includes('patch')) return 'files'
