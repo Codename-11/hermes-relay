@@ -54,10 +54,12 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "pending_grants",
         "resolve_grant",
         "Structured",
-        "Connected devices",
-        "Serial-bound ADB broker",
+        "Capabilities",
+        "USB access",
+        "Android Debug Bridge",
+        "Serial-bound Android device control",
         "hardware_availability",
-        "USB / ADB access",
+        "ADB access",
         "Devices",
     ] {
         assert!(
@@ -156,17 +158,23 @@ fn release_build_embeds_the_ui_instead_of_using_the_vite_server() {
 fn management_window_keeps_the_reviewed_compact_geometry() {
     let config = include_str!("../tauri.conf.json");
     let ui = include_str!("../ui/App.tsx");
+    let styles = include_str!("../ui/styles.css");
     let capability = include_str!("../capabilities/default.json");
 
-    assert!(config.contains("\"width\": 420"));
-    assert!(config.contains("\"height\": 700"));
+    assert!(config.contains("\"width\": 380"));
+    assert!(config.contains("\"height\": 620"));
     assert!(config.contains("\"minWidth\": 340"));
-    assert!(config.contains("\"minHeight\": 440"));
+    assert!(config.contains("\"minHeight\": 460"));
     assert!(config.contains("\"resizable\": false"));
     assert_eq!(config.matches("\"alwaysOnTop\": true").count(), 2);
     assert!(!ui.contains("toggleMaximize"));
     assert!(!ui.contains("data-tauri-drag-region"));
     assert!(!capability.contains("allow-start-dragging"));
+    assert!(ui.contains("policy-ledger"));
+    assert!(ui.contains("<AccessPage"));
+    assert!(ui.contains("<CapabilitiesPage"));
+    assert!(ui.contains("snapshot.activity.slice(-2).reverse()"));
+    assert!(styles.contains("position: fixed; inset: 0"));
     assert!(ui.contains("useState(true)"));
     assert!(ui.contains("hide().finally(() => setWindowVisible(true))"));
     assert!(ui.contains("document.visibilityState === 'visible'"));

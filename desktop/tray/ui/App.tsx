@@ -5,12 +5,13 @@ import {
   Activity as ActivityIcon, AlertTriangle, Check, ChevronDown, ChevronRight,
   CircleHelp, Clock3, Download, Eye, FileText, Home, Laptop, Link2,
   LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
-  Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X, Usb, LockKeyhole
+  Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X, Usb,
+  LockKeyhole, SlidersHorizontal, Mic, Video
 } from 'lucide-react'
 import logo from '../icons/icon-256.png'
 import type { AccessMode, Activity, AuthorizedClient, CapabilityMode, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
 
-type Page = 'overview' | 'hosts' | 'host-detail' | 'settings' | 'activity'
+type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'host-detail' | 'settings' | 'activity'
 type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: 'usb'; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient } | { type: 'clear-activity' } | null
 
 const isGrantWindow = '__TAURI_INTERNALS__' in window && getCurrentWindow().label === 'grant'
@@ -147,6 +148,14 @@ const accessCopy: Record<AccessMode, string> = {
   'full-access': 'This host may use commands, screen, mouse, and keyboard without asking.'
 }
 
+const accessLabel: Record<AccessMode, string> = {
+  ask: 'Ask', structured: 'Structured', trusted: 'Trusted', 'full-access': 'Full Access'
+}
+
+const capabilityLabel: Record<CapabilityMode, string> = {
+  disabled: 'Off', ask: 'Ask', allow: 'Allow'
+}
+
 export default function App() {
   return isGrantWindow ? <GrantWindow /> : <ManagementApp />
 }
@@ -156,6 +165,7 @@ function ManagementApp() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null)
   const [detailUrl, setDetailUrl] = useState<string | null>(null)
+  const [activityBack, setActivityBack] = useState<Page>('settings')
   const [selectorOpen, setSelectorOpen] = useState(false)
   const [clients, setClients] = useState<AuthorizedClient[]>([])
   const [busy, setBusy] = useState<string | null>(null)
@@ -315,45 +325,44 @@ function ManagementApp() {
             </div>}
         </section>
 
-        {host && <section className="section access-section">
-          <div className="label-row"><label>Access for this host</label><span title="Access applies only to the selected Hermes host."><CircleHelp /></span></div>
-          <div className="access-control" role="radiogroup" aria-label="Host access">
-            <button role="radio" aria-checked={host.access_mode === 'ask'} className={host.access_mode === 'ask' ? 'active' : ''} onClick={() => chooseAccess('ask')}><CircleHelp /><span>Ask</span></button>
-            <button role="radio" aria-checked={host.access_mode === 'structured'} className={host.access_mode === 'structured' ? 'active' : ''} onClick={() => chooseAccess('structured')}><LockKeyhole /><span>Structured</span></button>
-            <button role="radio" aria-checked={host.access_mode === 'trusted'} className={host.access_mode === 'trusted' ? 'active' : ''} onClick={() => chooseAccess('trusted')}><ShieldCheck /><span>Trusted</span></button>
-            <button role="radio" aria-checked={host.access_mode === 'full-access'} className={host.access_mode === 'full-access' ? 'active' : ''} onClick={() => chooseAccess('full-access')}><Monitor /><span>Full Access</span></button>
-          </div>
-          <p className="access-copy">{accessCopy[host.access_mode]}</p>
-          <div className="capability-panel">
-            <div className="capability-title"><Usb /><span><strong>Connected devices</strong><small>Serial-bound ADB broker</small></span></div>
-            <div className="capability-modes" role="radiogroup" aria-label="USB device access">
-              {(['disabled', 'ask', 'allow'] as CapabilityMode[]).map(mode => <button key={mode} disabled={!snapshot.hardware_availability.usb} role="radio" aria-checked={host.capabilities.usb === mode} className={host.capabilities.usb === mode ? 'active' : ''} onClick={() => chooseCapability('usb', mode)}>{mode === 'disabled' ? 'Off' : mode === 'ask' ? 'Ask' : 'Allow'}</button>)}
-            </div>
-            {!snapshot.hardware_availability.usb && <small className="capability-backend-note">ADB is not installed or not available on PATH.</small>}
-            <div className="capability-unavailable"><span>Microphone</span><small>Unavailable</small><span>Camera</span><small>Unavailable</small></div>
-          </div>
+        {host && <section className="policy-ledger" aria-label="Host access and capabilities">
+          <button onClick={() => setPage('access')}>
+            <span className="policy-icon"><LockKeyhole /></span>
+            <span className="policy-name"><strong>Access</strong><small>What this host may do</small></span>
+            <span className="policy-value">{accessLabel[host.access_mode]}</span>
+            <ChevronRight />
+          </button>
+          <button onClick={() => setPage('capabilities')}>
+            <span className="policy-icon"><SlidersHorizontal /></span>
+            <span className="policy-name"><strong>Capabilities</strong><small>Connected hardware</small></span>
+            <span className="capability-summary"><em><Usb />USB {snapshot.hardware_availability.usb ? capabilityLabel[host.capabilities.usb] : 'Unavailable'}</em><i>2 unavailable</i></span>
+            <ChevronRight />
+          </button>
         </section>}
 
         <button className="tunnel-button" disabled={busy !== null} onClick={() => action(connected ? 'disconnect_daemon' : 'connect_daemon')}><Power />{connected ? 'Disconnect Tunnel' : 'Connect Tunnel'}</button>
 
         <section className="activity-section">
-          <div className="section-heading"><h2>Recent activity</h2><button onClick={() => setPage('settings')}>View all <ChevronRight /></button></div>
-          <ActivityList entries={snapshot.activity.slice(-3).reverse()} host={host} />
+          <div className="section-heading"><h2>Recent activity</h2><button onClick={() => { setActivityBack('overview'); setPage('activity') }}>View all <ChevronRight /></button></div>
+          <ActivityList entries={snapshot.activity.slice(-2).reverse()} host={host} />
         </section>
 
         {snapshot.daemon.privilege === 'administrator' && <aside className="admin-warning"><AlertTriangle /><span>Hermes-Relay CLI is running as Administrator.</span><button onClick={() => setPage('settings')}>Learn more</button></aside>}
       </>}
 
+      {page === 'access' && <AccessPage host={host} busy={busy !== null} onBack={() => setPage('overview')} onChoose={chooseAccess} />}
+      {page === 'capabilities' && <CapabilitiesPage host={host} availability={snapshot.hardware_availability} busy={busy !== null} onBack={() => setPage('overview')} onChoose={chooseCapability} />}
+
       {page === 'hosts' && <HostsPage hosts={snapshot.hosts} selected={host} onOpen={url => { setDetailUrl(url); setPage('host-detail') }} onPair={() => action('pair_host')} />}
       {page === 'host-detail' && <HostDetailPage host={snapshot.hosts.find(item => item.url === detailUrl) ?? null} busy={busy !== null} onBack={() => setPage('hosts')} onConnect={connectHost} onRename={(remote, name) => action('rename_host', { remote, name })} />}
-      {page === 'settings' && <SettingsPage host={host} daemon={snapshot.daemon} startup={snapshot.startup_enabled} clients={clients} activity={snapshot.activity} onRestart={() => action('restart_daemon')} onStartup={value => action('set_startup', { enabled: value })} onRevoke={client => setPending({ type: 'revoke', client })} onViewActivity={() => setPage('activity')} />}
-      {page === 'activity' && <ActivityPage entries={snapshot.activity} host={host} onBack={() => setPage('settings')} onClear={() => setPending({ type: 'clear-activity' })} />}
+      {page === 'settings' && <SettingsPage host={host} daemon={snapshot.daemon} startup={snapshot.startup_enabled} clients={clients} activity={snapshot.activity} onRestart={() => action('restart_daemon')} onStartup={value => action('set_startup', { enabled: value })} onRevoke={client => setPending({ type: 'revoke', client })} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} />}
+      {page === 'activity' && <ActivityPage entries={snapshot.activity} host={host} onBack={() => setPage(activityBack)} onClear={() => setPending({ type: 'clear-activity' })} />}
     </main>
 
     {error && <div className="error-toast" role="alert"><AlertTriangle /><span>{error}</span><button onClick={() => setError(null)}><X /></button></div>}
 
     <nav className="bottom-nav">
-      <button className={page === 'overview' ? 'active' : ''} onClick={() => setPage('overview')}><Home /><span>Overview</span></button>
+      <button className={page === 'overview' || page === 'access' || page === 'capabilities' ? 'active' : ''} onClick={() => setPage('overview')}><Home /><span>Overview</span></button>
       <button className={page === 'hosts' || page === 'host-detail' ? 'active' : ''} onClick={() => setPage('hosts')}><Monitor /><span>Hosts</span></button>
       <button className={page === 'settings' || page === 'activity' ? 'active' : ''} onClick={() => setPage('settings')}><Settings /><span>Settings</span></button>
     </nav>
@@ -361,7 +370,7 @@ function ManagementApp() {
     {pending && <div className="modal-backdrop" role="presentation"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <div className="modal-icon">{pending.type === 'revoke' ? <UserRoundX /> : pending.type === 'clear-activity' ? <Trash2 /> : <AlertTriangle />}</div>
       <h2 id="confirm-title">{pending.type === 'access' ? `Give ${host?.name} full access?` : pending.type === 'capability' ? `Always allow USB access for ${host?.name}?` : pending.type === 'revoke' ? `Deauthorize ${pending.client.device_name ?? pending.client.token_prefix}?` : 'Clear local activity?'}</h2>
-      <p>{pending.type === 'access' ? 'This host will be able to run commands and control this PC without asking. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This host may run serial-bound ADB operations without asking each time. It does not grant raw desktop command access.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
+      <p>{pending.type === 'access' ? 'This host will be able to run commands and control this PC without asking. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This host may use enabled brokered USB services without asking each time. It does not grant unrestricted raw device access.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
       <div className="modal-actions"><button className="secondary" onClick={() => setPending(null)}>Cancel</button><button className="danger" onClick={confirmPending}>{pending.type === 'access' ? 'Enable Full Access' : pending.type === 'capability' ? 'Allow USB' : pending.type === 'revoke' ? 'Deauthorize' : 'Clear activity'}</button></div>
     </div></div>}
   </div>
@@ -438,7 +447,7 @@ function GrantWindow() {
     <section className="grant-card" role="dialog" aria-modal="true" aria-labelledby="grant-title">
       <div className="grant-head">
         <span className="grant-icon"><ShieldCheck /></span>
-        <span><small>{usbRequest ? 'Connected device request' : 'Remote access request'}</small><strong id="grant-title">{usbRequest ? 'USB / ADB access' : `${grant.mode} access`}</strong></span>
+        <span><small>{usbRequest ? 'Connected Android device request' : 'Remote access request'}</small><strong id="grant-title">{usbRequest ? 'ADB access' : `${grant.mode} access`}</strong></span>
         <button className="grant-expand" aria-expanded={expanded} aria-label={expanded ? 'Hide request details' : 'Show request details'} onClick={toggleExpanded}><ChevronDown /></button>
       </div>
       <p className="grant-summary"><strong>{hostName}</strong> {usbRequest ? 'wants to run one brokered operation on a connected Android device.' : `wants to control this PC for up to ${minutes} min.`}</p>
@@ -506,6 +515,47 @@ function ActivityPage({ entries, host, onBack, onClear }: { entries: Activity[];
     <div className="page-title activity-page-title"><button className="back-button" onClick={onBack}><ChevronRight /> Settings</button><div><p>Local audit</p><h1>Activity</h1></div></div>
     <p className="page-intro">Remote actions and management changes recorded on this PC.</p>
     <ActivityPanel entries={entries} host={host} onClear={onClear} />
+  </section>
+}
+
+function AccessPage({ host, busy, onBack, onChoose }: { host: Host | null; busy: boolean; onBack: () => void; onChoose: (mode: AccessMode) => void }) {
+  if (!host) return <div className="page-panel large-empty"><LockKeyhole /><h2>No host selected</h2><button onClick={onBack}>Back to Overview</button></div>
+  const options: Array<{ mode: AccessMode; Icon: typeof CircleHelp }> = [
+    { mode: 'ask', Icon: CircleHelp },
+    { mode: 'structured', Icon: LockKeyhole },
+    { mode: 'trusted', Icon: ShieldCheck },
+    { mode: 'full-access', Icon: Monitor }
+  ]
+  return <section className="page-panel policy-detail-page">
+    <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ChevronRight />Overview</button><p>{host.name}</p><h1>Host access</h1></div></div>
+    <p className="page-intro">Choose the broadest kind of work this Hermes host may perform on this PC.</p>
+    <div className="access-options" role="radiogroup" aria-label="Host access">
+      {options.map(({ mode, Icon }) => <button key={mode} role="radio" aria-checked={host.access_mode === mode} className={host.access_mode === mode ? 'active' : ''} disabled={busy} onClick={() => onChoose(mode)}>
+        <span className="option-icon"><Icon /></span><span><strong>{accessLabel[mode]}</strong><small>{accessCopy[mode]}</small></span>{host.access_mode === mode ? <span className="selected-check"><Check /></span> : <ChevronRight />}
+      </button>)}
+    </div>
+    <p className="policy-footnote"><ShieldCheck />Hardware capabilities keep their own policy. Full Access does not override USB settings.</p>
+  </section>
+}
+
+function CapabilitiesPage({ host, availability, busy, onBack, onChoose }: { host: Host | null; availability: Snapshot['hardware_availability']; busy: boolean; onBack: () => void; onChoose: (capability: 'usb' | 'microphone' | 'camera', mode: CapabilityMode) => void }) {
+  if (!host) return <div className="page-panel large-empty"><SlidersHorizontal /><h2>No host selected</h2><button onClick={onBack}>Back to Overview</button></div>
+  return <section className="page-panel policy-detail-page">
+    <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ChevronRight />Overview</button><p>{host.name}</p><h1>Capabilities</h1></div></div>
+    <p className="page-intro">Control brokered hardware separately from general desktop access.</p>
+    <div className="capability-detail-card">
+      <div className="capability-detail-head"><span className="option-icon"><Usb /></span><span><strong>USB access</strong><small>Brokered access to connected USB devices</small></span><em className={availability.usb ? 'available' : ''}>{availability.usb ? '1 service' : 'Unavailable'}</em></div>
+      <div className="capability-modes" role="radiogroup" aria-label="USB access">
+        {(['disabled', 'ask', 'allow'] as CapabilityMode[]).map(mode => <button key={mode} disabled={busy || !availability.usb} role="radio" aria-checked={host.capabilities.usb === mode} className={host.capabilities.usb === mode ? 'active' : ''} onClick={() => onChoose('usb', mode)}>{capabilityLabel[mode]}</button>)}
+      </div>
+      <p>{availability.usb ? 'Ask raises a local approval card for each USB operation. Allow skips those per-operation prompts.' : 'No supported USB broker is currently available.'}</p>
+      <div className="supported-broker"><span><i /><strong>Android Debug Bridge</strong></span><small>Serial-bound Android device control</small><em>{availability.usb ? 'Available' : 'Unavailable'}</em></div>
+    </div>
+    <div className="unavailable-capabilities">
+      <div><span className="option-icon"><Mic /></span><span><strong>Microphone</strong><small>A bounded broker is not available yet</small></span><em>Unavailable</em></div>
+      <div><span className="option-icon"><Video /></span><span><strong>Camera</strong><small>A bounded broker is not available yet</small></span><em>Unavailable</em></div>
+    </div>
+    <p className="policy-footnote"><LockKeyhole />Unavailable capabilities cannot be enabled or advertised to the agent.</p>
   </section>
 }
 

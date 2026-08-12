@@ -52,10 +52,10 @@ mod app {
     const RUN_VALUE: &str = "HermesRelayTray";
     const POPUP_GAP: f64 = 10.0;
     const MONITOR_MARGIN: f64 = 8.0;
-    const MAIN_LOGICAL_WIDTH: f64 = 420.0;
-    const MAIN_LOGICAL_HEIGHT: f64 = 700.0;
+    const MAIN_LOGICAL_WIDTH: f64 = 380.0;
+    const MAIN_LOGICAL_HEIGHT: f64 = 620.0;
     const MAIN_MIN_LOGICAL_WIDTH: f64 = 340.0;
-    const MAIN_MIN_LOGICAL_HEIGHT: f64 = 440.0;
+    const MAIN_MIN_LOGICAL_HEIGHT: f64 = 460.0;
 
     #[derive(Clone, Copy, Debug)]
     struct TrayAnchor {
@@ -1365,7 +1365,7 @@ mod app {
                 size: PhysicalSize::new(3440, 1390),
             };
             let logical = responsive_logical_window_size(&work_area, 1.25);
-            assert_eq!(logical, LogicalSize::new(420.0, 700.0));
+            assert_eq!(logical, LogicalSize::new(380.0, 620.0));
         }
 
         #[test]
@@ -1375,7 +1375,7 @@ mod app {
                 size: PhysicalSize::new(1366, 728),
             };
             let logical = responsive_logical_window_size(&work_area, 1.5);
-            assert_eq!(logical.width, 420.0);
+            assert_eq!(logical.width, 380.0);
             assert!(logical.height < 480.0);
         }
 
