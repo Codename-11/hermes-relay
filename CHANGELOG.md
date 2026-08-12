@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- Show a bounded command or action preview in Ask-mode approval cards, with full context in the expandable detail view.
+- Label mixed per-capability policies as Custom on the desktop Overview instead of showing a misleading preset.
+- Distinguish encrypted `wss://` relay connections from unencrypted `ws://` routes and support URL/code pairing directly in the management UI.
+- Let compact approval notifications open the live request in the main UI for full review and resolution.
+
 ### Added
 
 - **Windows management separates each Relay host from this PC.** Host detail is now the per-host hub for identity, connection and pairing/session metadata, access, capabilities, authorized-client deauthorization, re-pairing, and guarded removal. Settings owns local daemon lifecycle, separate UI-at-sign-in and daemon-with-UI preferences, explicit UAC elevation and return to user mode, terminal/CLI launchers, daemon logs, diagnostics, updates, and a Help & About page with version details and documentation links. Existing installs keep automatic daemon startup off until enabled.

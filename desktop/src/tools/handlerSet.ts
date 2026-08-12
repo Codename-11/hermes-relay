@@ -242,11 +242,68 @@ function guardCapabilityHandler(
       reason: typeof args.reason === 'string' && args.reason.trim()
         ? args.reason.trim()
         : `Run ${tool.replaceAll('_', ' ')}`,
-      scope: { capability, tool },
+      scope: buildCapabilityGrantScope(tool, capability, args),
       interactive: ctx.interactive
     })
     if (!approval.approved) throw new Error(approval.reason || `${capability} request rejected locally`)
     return handler(args, ctx)
+  }
+}
+
+const GRANT_PREVIEW_LIMIT = 2_000
+
+function previewText(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const clean = value.replaceAll(/[^\S\r\n]+/g, ' ').replaceAll(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim()
+  if (!clean) return null
+  return clean.length > GRANT_PREVIEW_LIMIT ? `${clean.slice(0, GRANT_PREVIEW_LIMIT)}\n… preview truncated` : clean
+}
+
+/** Build the local approval context shown before an Ask-mode operation runs.
+ * Keep command text exact enough to review while summarizing large file bodies
+ * and environment maps rather than copying them into the bridge request. */
+export function buildCapabilityGrantScope(
+  tool: string,
+  capability: HostCapability,
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  let action = tool.replace(/^desktop_/, '').replaceAll('_', ' ')
+  let preview: string | null = null
+
+  if (tool === 'desktop_powershell') {
+    action = 'PowerShell script'
+    preview = previewText(args.script)
+  } else if (['desktop_terminal', 'desktop_job_start', 'desktop_spawn_detached'].includes(tool)) {
+    action = tool === 'desktop_job_start' ? 'Background command' : 'Terminal command'
+    preview = previewText(args.command)
+  } else if (tool === 'desktop_read_file') {
+    action = 'Read file'
+    preview = previewText(args.path)
+  } else if (tool === 'desktop_write_file') {
+    action = 'Write file'
+    const path = previewText(args.path)
+    const contentLength = typeof args.content === 'string' ? args.content.length : null
+    preview = path ? `${path}${contentLength === null ? '' : ` (${contentLength.toLocaleString()} characters)`}` : null
+  } else if (tool === 'desktop_search_files') {
+    action = 'Search files'
+    const pattern = previewText(args.pattern)
+    const path = previewText(args.path)
+    preview = [pattern ? `Pattern: ${pattern}` : null, path ? `Path: ${path}` : null].filter(Boolean).join('\n') || null
+  } else if (capability === 'usb') {
+    action = tool.replace(/^desktop_/, '').replaceAll('_', ' ')
+    const executable = previewText(args.executable)
+    const command = previewText(args.command)
+    const argumentList = Array.isArray(args.arguments)
+      ? args.arguments.filter(value => typeof value === 'string').join(' ')
+      : null
+    preview = previewText([executable, argumentList, command].filter(Boolean).join(' '))
+  }
+
+  return {
+    capability,
+    tool,
+    action,
+    ...(preview ? { preview } : {})
   }
 }
 

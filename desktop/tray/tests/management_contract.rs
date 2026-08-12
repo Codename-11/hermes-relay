@@ -87,6 +87,12 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "set_daemon_autostart",
         "Start UI at sign-in",
         "Start daemon with UI",
+        "PairHostPage",
+        "Pairing code",
+        "Encrypted relay connection",
+        "Unencrypted relay connection",
+        "open_management_from_grant",
+        "Open in UI",
     ] {
         assert!(
             source.contains(required),
@@ -127,6 +133,9 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert_eq!(grant_window["shadow"], false);
     assert!(ui.contains("snapshot.daemon.url === host.url"));
     assert!(ui.contains("formatGrantScope(grant.scope)"));
+    assert!(ui.contains("grantAction(grant.scope)"));
+    assert!(ui.contains("Requested action"));
+    assert!(ui.contains("hostAccessLabel(host)"));
     assert!(native.contains("restart_daemon_if_running"));
     assert!(native.contains("management.completed"));
     assert!(native.contains("append_management_event"));
@@ -143,6 +152,8 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("async fn install_desktop_update"));
     assert!(native.contains("fn set_host_capability"));
     assert!(native.contains("fn hardware_availability"));
+    assert!(native.contains("HERMES_RELAY_CODE"));
+    assert!(native.contains("--non-interactive"));
     assert!(
         native.contains("SHA256SUMS")
             || include_str!("../../src/updater.ts").contains("SHA256SUMS")

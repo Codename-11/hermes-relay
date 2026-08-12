@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { advertisedDesktopTools, desktopHandlers, RAW_EXECUTION_TOOLS } from '../src/tools/handlerSet.js'
+import { advertisedDesktopTools, buildCapabilityGrantScope, desktopHandlers, RAW_EXECUTION_TOOLS } from '../src/tools/handlerSet.js'
 import { configureCapabilityPolicies } from '../src/tools/capabilityRuntime.js'
 import { PRESET_CAPABILITY_POLICIES } from '../src/lib/hostAccessPolicy.js'
 
@@ -61,4 +61,15 @@ test('capability policies filter the matching tool groups and Full Access expose
   for (const tool of ['desktop_powershell', 'desktop_read_file', 'desktop_computer_action', 'desktop_usb_run', 'desktop_adb_shell']) {
     assert.equal(full.includes(tool), true, tool)
   }
+})
+
+test('Ask-mode grant context previews commands without copying file contents', () => {
+  assert.deepEqual(
+    buildCapabilityGrantScope('desktop_powershell', 'commands', { script: "Write-Output 'safe test'" }),
+    { capability: 'commands', tool: 'desktop_powershell', action: 'PowerShell script', preview: "Write-Output 'safe test'" }
+  )
+  assert.deepEqual(
+    buildCapabilityGrantScope('desktop_write_file', 'files', { path: 'C:\\Temp\\note.txt', content: 'secret contents' }),
+    { capability: 'files', tool: 'desktop_write_file', action: 'Write file', preview: 'C:\\Temp\\note.txt (15 characters)' }
+  )
 })

@@ -415,6 +415,21 @@ mod app {
         Err(if stderr.is_empty() { stdout } else { stderr })
     }
 
+    fn run_cli_checked_with_env(args: &[&str], key: &str, value: &str) -> Result<String, String> {
+        let output = Command::new(resolve_cli()?)
+            .args(args)
+            .env(key, value)
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .output()
+            .map_err(|e| format!("failed to run hermes-relay {}: {e}", args.join(" ")))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if output.status.success() {
+            return Ok(stdout);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() { stdout } else { stderr })
+    }
+
     fn run_json(args: &[&str]) -> Result<Value, String> {
         let output = run_cli_checked(args)?;
         serde_json::from_str(&output)
@@ -908,13 +923,41 @@ mod app {
     }
 
     #[tauri::command]
-    fn pair_host(remote: Option<String>) -> Result<(), String> {
-        if let Some(remote) = remote.as_deref() {
-            spawn_cli_terminal(&["pair", "--remote", remote])?;
-        } else {
-            spawn_cli_terminal(&["pair"])?;
+    async fn pair_host(remote: String, code: String) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            let remote = remote.trim().to_string();
+            let code = code.trim().to_ascii_uppercase();
+            if remote.is_empty()
+                || code.len() != 6
+                || !code.chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                return Err(
+                    "Enter a ws:// or wss:// relay URL and a six-character pairing code"
+                        .to_string(),
+                );
+            }
+            run_cli_checked_with_env(
+                &["pair", "--remote", &remote, "--non-interactive"],
+                "HERMES_RELAY_CODE",
+                &code,
+            )?;
+            append_management_event("host.pair", "Host paired", Some(&remote), None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("pair host task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn open_management_from_grant(
+        app: AppHandle,
+        tray_position: State<'_, TrayPositionState>,
+    ) -> Result<(), String> {
+        let anchor = tray_position.0.lock().ok().and_then(|value| *value);
+        reveal_main_window(&app, anchor);
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.eval("window.dispatchEvent(new CustomEvent('hermes-review-grant'))");
         }
-        append_management_event("host.pair", "Pairing opened", None, None);
         Ok(())
     }
 
@@ -1316,7 +1359,7 @@ mod app {
     }
 
     fn grant_window_size(expanded: bool, scale: f64) -> PhysicalSize<u32> {
-        let logical_height = if expanded { 226.0 } else { 134.0 };
+        let logical_height = if expanded { 343.0 } else { 211.0 };
         PhysicalSize::new(
             (360.0_f64 * scale).round() as u32,
             (logical_height * scale).round() as u32,
@@ -1476,6 +1519,7 @@ mod app {
                 revoke_authorized_client,
                 resolve_grant,
                 pair_host,
+                open_management_from_grant,
                 forget_host,
                 connect_daemon,
                 disconnect_daemon,
@@ -1727,11 +1771,11 @@ mod app {
                 size: PhysicalSize::new(1920, 1040),
             };
 
-            assert_eq!(collapsed, PhysicalSize::new(450, 168));
-            assert_eq!(expanded, PhysicalSize::new(450, 283));
+            assert_eq!(collapsed, PhysicalSize::new(450, 264));
+            assert_eq!(expanded, PhysicalSize::new(450, 429));
             assert_eq!(
                 bottom_right_position(&work_area, collapsed, 1.25),
-                PhysicalPosition::new(1455, 857)
+                PhysicalPosition::new(1455, 761)
             );
         }
     }

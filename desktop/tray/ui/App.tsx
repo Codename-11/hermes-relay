@@ -4,14 +4,14 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   Activity as ActivityIcon, AlertTriangle, ArrowLeft, Bot, Check, ChevronDown, ChevronRight,
   CircleHelp, Clock3, Download, ExternalLink, Eye, FileText, FolderOpen, Home, Info, Laptop, Link2,
-  LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
+  Copy, LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
   Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X, Usb,
   LockKeyhole, SlidersHorizontal, Mic, Video
 } from 'lucide-react'
 import logo from '../icons/icon-256.png'
 import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
 
-type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'host-detail' | 'settings' | 'help' | 'activity' | 'activity-detail'
+type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'pair-host' | 'host-detail' | 'settings' | 'help' | 'activity' | 'activity-detail'
 type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: Capability; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient; remote: string } | { type: 'repair' | 'forget'; host: Host } | { type: 'clear-activity' } | null
 
 const isGrantWindow = '__TAURI_INTERNALS__' in window && getCurrentWindow().label === 'grant'
@@ -128,9 +128,18 @@ function age(ts?: number): string {
 function formatGrantScope(scope: unknown): string {
   if (!scope || typeof scope !== 'object') return ''
   return Object.entries(scope as Record<string, unknown>)
-    .filter(([, value]) => typeof value === 'string' && value.trim())
+    .filter(([key, value]) => !['action', 'preview'].includes(key) && typeof value === 'string' && value.trim())
     .map(([key, value]) => `${key}: ${String(value)}`)
     .join(', ')
+}
+
+function grantAction(scope: unknown): { label: string; preview: string } | null {
+  if (!scope || typeof scope !== 'object') return null
+  const record = scope as Record<string, unknown>
+  const label = typeof record.action === 'string' ? record.action.trim() : ''
+  const preview = typeof record.preview === 'string' ? record.preview.trim() : ''
+  if (!label && !preview) return null
+  return { label: label || 'Requested action', preview: preview || label }
 }
 
 function friendlyUpdateError(error: unknown): string {
@@ -167,6 +176,20 @@ const capabilityLabel: Record<CapabilityMode, string> = {
   disabled: 'Off', ask: 'Ask', allow: 'Allow'
 }
 
+const presetCapabilities: Partial<Record<AccessMode, Host['capabilities']>> = {
+  ask: { commands: 'disabled', files: 'disabled', screen_input: 'disabled', usb: 'disabled', microphone: 'disabled', camera: 'disabled' },
+  'ask-every-time': { commands: 'ask', files: 'ask', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled' },
+  structured: { commands: 'disabled', files: 'allow', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled' },
+  trusted: { commands: 'allow', files: 'allow', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled' },
+  'full-access': { commands: 'allow', files: 'allow', screen_input: 'allow', usb: 'allow', microphone: 'allow', camera: 'allow' }
+}
+
+function hostAccessLabel(host: Host): string {
+  const expected = presetCapabilities[host.access_mode]
+  if (!expected || Object.entries(expected).some(([capability, mode]) => host.capabilities[capability as Capability] !== mode)) return 'Custom'
+  return accessLabel[host.access_mode]
+}
+
 export default function App() {
   return isGrantWindow ? <GrantWindow /> : <ManagementApp />
 }
@@ -176,6 +199,7 @@ function ManagementApp() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null)
   const [detailUrl, setDetailUrl] = useState<string | null>(null)
+  const [pairInitialUrl, setPairInitialUrl] = useState('')
   const [activityBack, setActivityBack] = useState<Page>('settings')
   const [policyBack, setPolicyBack] = useState<Page>('overview')
   const [activityDetailBack, setActivityDetailBack] = useState<Page>('activity')
@@ -186,6 +210,7 @@ function ManagementApp() {
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<PendingAction>(null)
   const [windowVisible, setWindowVisible] = useState(true)
+  const [reviewGrantOpen, setReviewGrantOpen] = useState(false)
   const selectorRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLElement>(null)
   const hideTimer = useRef<number | null>(null)
@@ -243,9 +268,21 @@ function ManagementApp() {
 
   async function action(name: string, args?: Record<string, unknown>) {
     setBusy(name)
-    try { await call(name, args); await refresh(); setError(null) }
-    catch (e) { setError(String(e)) }
+    try { await call(name, args); await refresh(); setError(null); return true }
+    catch (e) { setError(String(e)); return false }
     finally { setBusy(null) }
+  }
+
+  function openPair(url = '') {
+    setPairInitialUrl(url)
+    setSelectorOpen(false)
+    setPage('pair-host')
+  }
+
+  async function pairHost(remote: string, code: string) {
+    const paired = await action('pair_host', { remote, code })
+    if (paired) setPage('hosts')
+    return paired
   }
 
   async function selectHost(url: string) {
@@ -271,7 +308,7 @@ function ManagementApp() {
       await action('revoke_authorized_client', { remote: work.remote, prefix: work.client.token_prefix })
       setClients(await call<AuthorizedClient[]>('list_authorized_clients', { remote: work.remote }))
     } else if (work.type === 'repair') {
-      await action('pair_host', { remote: work.host.url })
+      openPair(work.host.url)
     } else if (work.type === 'forget') {
       await action('forget_host', { remote: work.host.url })
       setDetailUrl(null)
@@ -317,7 +354,17 @@ function ManagementApp() {
     }
   }, [hideWindow])
 
+  useEffect(() => {
+    const review = () => { setReviewGrantOpen(true); void refresh() }
+    window.addEventListener('hermes-review-grant', review)
+    return () => window.removeEventListener('hermes-review-grant', review)
+  }, [refresh])
+
   if (!snapshot) return <div className={`app-shell loading ${windowVisible ? 'window-visible' : ''}`}><LoaderCircle className="spin" /><span>Loading Hermes-Relay CLI UI…</span></div>
+  const reviewGrant = snapshot.pending_grants[0] ?? null
+  const reviewAction = grantAction(reviewGrant?.scope)
+  const reviewScope = formatGrantScope(reviewGrant?.scope)
+  const reviewHost = snapshot.hosts.find(item => item.url === snapshot.daemon.url)?.name ?? 'Connected host'
 
   return <div className={`app-shell ${windowVisible ? 'window-visible' : ''}`}>
     <header className="titlebar">
@@ -332,7 +379,7 @@ function ManagementApp() {
       {page === 'overview' && <>
         <section className={`connection-route ${connected ? 'online' : 'offline'}`}>
           {snapshot.hosts.length === 0 ?
-            <button className="empty-pair" onClick={() => action('pair_host')}><Link2 /><span><strong>Pair host</strong><small>Connect this PC to a Hermes instance</small></span><ChevronRight /></button> :
+            <button className="empty-pair" onClick={() => openPair()}><Link2 /><span><strong>Pair host</strong><small>Connect this PC to a Hermes instance</small></span><ChevronRight /></button> :
             <div className="route-grid" ref={selectorRef}>
               <span className="route-endpoint"><Bot /><small>Agent</small></span>
               <i className="route-link left" />
@@ -344,7 +391,7 @@ function ManagementApp() {
                 </button>
               {selectorOpen && <div className="selector-menu">
                 {snapshot.hosts.map(item => <button key={item.url} className={item.url === host?.url ? 'selected' : ''} onClick={() => selectHost(item.url)}><Monitor /><span><strong>{item.name}</strong><small>{item.url}</small></span>{item.url === host?.url && <Check />}</button>)}
-                <button className="pair-option" onClick={() => { setSelectorOpen(false); action('pair_host') }}><Link2 /><span><strong>Pair host</strong><small>Connect another Hermes instance</small></span></button>
+                <button className="pair-option" onClick={() => openPair()}><Link2 /><span><strong>Pair host</strong><small>Connect another Hermes instance</small></span></button>
               </div>}
               </div>
               <i className="route-link right" />
@@ -353,7 +400,7 @@ function ManagementApp() {
                 <i className="packet packet-outbound" /><i className="packet packet-outbound packet-late" />
                 <i className="packet packet-inbound" /><i className="packet packet-inbound packet-late" />
               </span>}
-              <div className="route-status"><strong>{connected ? 'Connected' : 'Disconnected'}</strong><span>·</span><small>{connected ? 'secure relay tunnel active' : 'relay tunnel offline'}</small></div>
+              <div className={`route-status ${connected && host?.url.startsWith('ws://') ? 'insecure' : ''}`}><strong>{connected ? 'Connected' : 'Disconnected'}</strong><span>·</span><small>{connected ? (host?.url.startsWith('wss://') ? 'Encrypted relay connection' : 'Unencrypted relay connection') : 'Relay connection offline'}</small></div>
             </div>}
         </section>
 
@@ -361,7 +408,7 @@ function ManagementApp() {
           <button onClick={() => setPage('access')}>
             <span className="policy-icon"><LockKeyhole /></span>
             <span className="policy-name"><strong>Desktop access</strong><small>Preset for this host</small></span>
-            <span className="policy-value">{accessLabel[host.access_mode]}</span>
+            <span className="policy-value">{hostAccessLabel(host)}</span>
             <ChevronRight />
           </button>
           <button onClick={() => setPage('capabilities')}>
@@ -385,7 +432,8 @@ function ManagementApp() {
       {page === 'access' && <AccessPage host={host} busy={busy !== null} onBack={() => setPage(policyBack)} onChoose={chooseAccess} />}
       {page === 'capabilities' && <CapabilitiesPage host={host} availability={snapshot.hardware_availability} busy={busy !== null} onBack={() => setPage(policyBack)} onChoose={chooseCapability} />}
 
-      {page === 'hosts' && <HostsPage hosts={snapshot.hosts} selected={host} onOpen={url => { setDetailUrl(url); setSelectedUrl(url); setPage('host-detail') }} onPair={() => action('pair_host')} />}
+      {page === 'hosts' && <HostsPage hosts={snapshot.hosts} selected={host} onOpen={url => { setDetailUrl(url); setSelectedUrl(url); setPage('host-detail') }} onPair={() => openPair()} />}
+      {page === 'pair-host' && <PairHostPage initialUrl={pairInitialUrl} busy={busy === 'pair_host'} onBack={() => setPage('hosts')} onPair={pairHost} />}
       {page === 'host-detail' && <HostDetailPage host={snapshot.hosts.find(item => item.url === detailUrl) ?? null} clients={clients} busy={busy !== null} onBack={() => setPage('hosts')} onConnect={connectHost} onRename={(remote, name) => action('rename_host', { remote, name })} onAccess={() => { setPolicyBack('host-detail'); setPage('access') }} onCapabilities={() => { setPolicyBack('host-detail'); setPage('capabilities') }} onRevoke={(remote, client) => setPending({ type: 'revoke', client, remote })} onRepair={host => setPending({ type: 'repair', host })} onForget={host => setPending({ type: 'forget', host })} />}
       {page === 'settings' && <SettingsPage daemon={snapshot.daemon} startup={snapshot.startup_enabled} daemonAutostart={snapshot.daemon_autostart_enabled ?? false} activity={snapshot.activity} onAction={action} onStartup={value => action('set_startup', { enabled: value })} onDaemonAutostart={value => action('set_daemon_autostart', { enabled: value })} onHelp={() => setPage('help')} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} onOpenActivity={entry => { setSelectedActivity(entry); setActivityDetailBack('settings'); setPage('activity-detail') }} />}
       {page === 'help' && <HelpPage snapshot={snapshot} host={host} onBack={() => { setSelectedUrl(snapshot.active_url ?? null); setPage('settings') }} onAction={action} />}
@@ -395,9 +443,17 @@ function ManagementApp() {
 
     {error && <div className="error-toast" role="alert"><AlertTriangle /><span>{error}</span><button onClick={() => setError(null)}><X /></button></div>}
 
+    {reviewGrantOpen && reviewGrant && <div className="modal-backdrop grant-review-backdrop" role="presentation"><div className="modal grant-review-modal" role="dialog" aria-modal="true" aria-labelledby="review-grant-title">
+      <div className="modal-icon"><ShieldCheck /></div><h2 id="review-grant-title">Review remote request</h2>
+      <p>{reviewHost} wants to perform an action on this PC.</p>
+      {reviewAction && <div className="grant-action-full"><dt>Requested action · {reviewAction.label}</dt><dd><pre>{reviewAction.preview}</pre></dd></div>}
+      <dl className="review-grant-facts"><div><dt>Reason</dt><dd>{reviewGrant.reason || 'No reason provided'}</dd></div>{reviewScope && <div><dt>Scope</dt><dd>{reviewScope}</dd></div>}</dl>
+      <div className="modal-actions"><button className="secondary" onClick={async () => { await action('resolve_grant', { id: reviewGrant.id, approved: false }); setReviewGrantOpen(false) }}>Reject</button><button className="primary" onClick={async () => { await action('resolve_grant', { id: reviewGrant.id, approved: true }); setReviewGrantOpen(false) }}>Approve</button></div>
+    </div></div>}
+
     <nav className="bottom-nav">
       <button className={page === 'overview' || ((page === 'access' || page === 'capabilities') && policyBack === 'overview') ? 'active' : ''} onClick={() => { setSelectedUrl(snapshot.active_url ?? null); setPolicyBack('overview'); setPage('overview') }}><Home /><span>Overview</span></button>
-      <button className={page === 'hosts' || page === 'host-detail' || ((page === 'access' || page === 'capabilities') && policyBack === 'host-detail') ? 'active' : ''} onClick={() => setPage('hosts')}><Monitor /><span>Hosts</span></button>
+      <button className={page === 'hosts' || page === 'pair-host' || page === 'host-detail' || ((page === 'access' || page === 'capabilities') && policyBack === 'host-detail') ? 'active' : ''} onClick={() => setPage('hosts')}><Monitor /><span>Hosts</span></button>
       <button className={page === 'settings' || page === 'help' || page === 'activity' || page === 'activity-detail' ? 'active' : ''} onClick={() => { setSelectedUrl(snapshot.active_url ?? null); setPage('settings') }}><Settings /><span>Settings</span></button>
     </nav>
 
@@ -474,6 +530,7 @@ function GrantWindow() {
   const hostName = snapshot.hosts.find(item => item.url === snapshot.daemon.url)?.name
     ?? (snapshot.daemon.url ? displayHost(snapshot.daemon.url) : 'Connected host')
   const scope = formatGrantScope(grant.scope)
+  const action = grantAction(grant.scope)
   const minutes = Math.max(1, Math.round(grant.duration_seconds / 60))
   const grantCategory = grant.mode.split('.')[0]
   const grantPresentation = grantCategory === 'usb'
@@ -494,9 +551,11 @@ function GrantWindow() {
         <button className="grant-expand" aria-expanded={expanded} aria-label={expanded ? 'Hide request details' : 'Show request details'} onClick={toggleExpanded}><ChevronDown /></button>
       </div>
       <p className="grant-summary"><strong>{hostName}</strong> {grantPresentation.summary}</p>
+      {action && <div className="grant-action-preview"><small>Requested action · {action.label}</small><code>{action.preview}</code></div>}
       <div className="grant-details" aria-hidden={!expanded}>
-        <dl><div><dt>Reason</dt><dd>{grant.reason || 'No reason provided'}</dd></div>{scope && <div><dt>Scope</dt><dd>{scope}</dd></div>}</dl>
+        <dl>{action && <div className="grant-action-full"><dt>Action preview</dt><dd><pre>{action.preview}</pre></dd></div>}<div><dt>Reason</dt><dd>{grant.reason || 'No reason provided'}</dd></div>{scope && <div><dt>Scope</dt><dd>{scope}</dd></div>}</dl>
       </div>
+      <div className="grant-open-ui"><button disabled={busy} onClick={() => call('open_management_from_grant')}><ExternalLink /> Open in UI</button></div>
       <div className="grant-actions"><button disabled={busy} onClick={() => resolve(false)}>Reject</button><button disabled={busy} onClick={() => resolve(true)}>Approve</button></div>
     </section>
   </div>
@@ -617,6 +676,28 @@ function CapabilityRow({ capability, title, copy, icon, modes, host, busy, onCho
   return <section className="capability-row"><div className="capability-row-head"><span className="option-icon">{icon}</span><span><strong>{title}</strong><small>{copy}</small></span>{host.access_mode === 'full-access' && <em>Included</em>}</div><div className="capability-modes" role="radiogroup" aria-label={`${title} access`}>{modes.map(mode => <button key={mode} disabled={busy} role="radio" aria-checked={host.capabilities[capability] === mode} className={host.capabilities[capability] === mode ? 'active' : ''} onClick={() => onChoose(capability, mode)}>{capabilityLabel[mode]}</button>)}</div></section>
 }
 
+function PairHostPage({ initialUrl, busy, onBack, onPair }: { initialUrl: string; busy: boolean; onBack: () => void; onPair: (remote: string, code: string) => Promise<boolean> }) {
+  const [remote, setRemote] = useState(initialUrl)
+  const [code, setCode] = useState('')
+  const normalizedCode = code.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 6)
+  const validUrl = (() => { try { const url = new URL(remote.trim()); return ['ws:', 'wss:'].includes(url.protocol) && !url.username && !url.password } catch { return false } })()
+  const secure = remote.trim().toLowerCase().startsWith('wss://')
+  const canSubmit = validUrl && normalizedCode.length === 6 && !busy
+
+  return <section className="page-panel pair-host-page">
+    <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button>
+    <div className="page-title"><div><p>New connection</p><h1>{initialUrl ? 'Re-pair host' : 'Pair host'}</h1></div></div>
+    <p className="page-intro">Enter the relay address and the six-character code shown by Hermes.</p>
+    <form className="pair-form" onSubmit={async event => { event.preventDefault(); if (canSubmit) await onPair(remote.trim(), normalizedCode) }}>
+      <label><span>Relay URL</span><div className="pair-input-action"><input aria-label="Relay URL" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="wss://relay.example.com" value={remote} onChange={event => setRemote(event.target.value)} /><button type="button" title={remote ? 'Copy relay URL' : 'Paste relay URL'} aria-label={remote ? 'Copy relay URL' : 'Paste relay URL'} onClick={async () => { if (remote) await navigator.clipboard.writeText(remote.trim()); else setRemote(await navigator.clipboard.readText()) }}><Copy /></button></div></label>
+      {validUrl && <div className={`transport-notice ${secure ? 'secure' : 'insecure'}`}>{secure ? <ShieldCheck /> : <AlertTriangle />}<span><strong>{secure ? 'Encrypted connection' : 'Unencrypted connection'}</strong><small>{secure ? 'TLS protects relay traffic in transit.' : 'Use ws:// only on a trusted private network. Configure TLS and pair with wss:// for encryption.'}</small></span></div>}
+      <label><span>Pairing code</span><input className="pair-code" aria-label="Pairing code" autoComplete="one-time-code" inputMode="text" maxLength={6} placeholder="ABC123" value={normalizedCode} onChange={event => setCode(event.target.value)} /></label>
+      <p className="pair-privacy"><LockKeyhole />The code is passed directly to the local CLI and is not stored by the UI.</p>
+      <button className="primary-host-action" type="submit" disabled={!canSubmit}>{busy ? <LoaderCircle className="spin" /> : <Link2 />}{busy ? 'Pairing…' : initialUrl ? 'Re-pair host' : 'Pair host'}</button>
+    </form>
+  </section>
+}
+
 function HostsPage({ hosts, selected, onOpen, onPair }: { hosts: Host[]; selected: Host | null; onOpen: (url: string) => void; onPair: () => void }) {
   return <section className="page-panel"><div className="page-title"><div><p>Connections</p><h1>Hosts</h1></div><button className="icon-button" onClick={onPair} aria-label="Pair host"><Link2 /></button></div>
     <p className="page-intro">Hermes instances and relays this PC trusts. Access settings apply independently to each host.</p>
@@ -625,18 +706,18 @@ function HostsPage({ hosts, selected, onOpen, onPair }: { hosts: Host[]; selecte
   </section>
 }
 
-function HostDetailPage({ host, clients, busy, onBack, onConnect, onRename, onAccess, onCapabilities, onRevoke, onRepair, onForget }: { host: Host | null; clients: AuthorizedClient[]; busy: boolean; onBack: () => void; onConnect: (url: string) => void; onRename: (url: string, name: string) => Promise<void>; onAccess: () => void; onCapabilities: () => void; onRevoke: (remote: string, client: AuthorizedClient) => void; onRepair: (host: Host) => void; onForget: (host: Host) => void }) {
+function HostDetailPage({ host, clients, busy, onBack, onConnect, onRename, onAccess, onCapabilities, onRevoke, onRepair, onForget }: { host: Host | null; clients: AuthorizedClient[]; busy: boolean; onBack: () => void; onConnect: (url: string) => void; onRename: (url: string, name: string) => Promise<unknown>; onAccess: () => void; onCapabilities: () => void; onRevoke: (remote: string, client: AuthorizedClient) => void; onRepair: (host: Host) => void; onForget: (host: Host) => void }) {
   const [name, setName] = useState(host?.name ?? '')
   useEffect(() => setName(host?.name ?? ''), [host?.url, host?.name])
   if (!host) return <section className="page-panel"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button><div className="large-empty"><Server /><h2>Host unavailable</h2><p>This pairing may have been removed.</p></div></section>
   const changed = name.trim() !== host.name && name.trim().length > 0
   return <section className="page-panel host-detail-page">
     <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button>
-    <div className="host-detail-hero"><span className="host-icon"><Server /></span><span><p>{host.is_active ? 'Active host' : 'Paired host'}</p><h1>{host.name}</h1><small>{host.url}</small></span></div>
+    <div className="host-detail-hero"><span className="host-icon"><Server /></span><span><p>{host.is_active ? 'Active host' : 'Paired host'}</p><h1>{host.name}</h1><small>{host.url}</small></span><button className="copy-host-url" aria-label="Copy relay URL" title="Copy relay URL" onClick={() => navigator.clipboard.writeText(host.url)}><Copy /></button></div>
     <div className="settings-group"><h2>Display name</h2><div className="rename-host"><input value={name} maxLength={64} aria-label="Host display name" onChange={event => setName(event.target.value)} /><button disabled={!changed || busy} onClick={() => onRename(host.url, name.trim())}>Save</button></div><p className="group-help host-name-help">Stored locally on this PC. It does not rename the Hermes server.</p></div>
     <div className="settings-group"><h2>Connection</h2><div className="settings-card host-detail"><dl><div><dt>Route</dt><dd>{host.endpoint_role ?? 'Custom'}</dd></div><div><dt>Relay</dt><dd>{host.server_version ?? 'Unknown'}</dd></div><div><dt>Paired</dt><dd>{formatPairedAt(host.paired_at)}</dd></div></dl></div></div>
     <div className="settings-group"><h2>Remote access</h2><div className="settings-card management-links">
-      <button onClick={onAccess}><span className="setting-icon"><LockKeyhole /></span><span><strong>Desktop access</strong><small>Choose how this host requests control.</small></span><em>{accessLabel[host.access_mode]}</em><ChevronRight /></button>
+      <button onClick={onAccess}><span className="setting-icon"><LockKeyhole /></span><span><strong>Desktop access</strong><small>Choose how this host requests control.</small></span><em>{hostAccessLabel(host)}</em><ChevronRight /></button>
       <button onClick={onCapabilities}><span className="setting-icon"><SlidersHorizontal /></span><span><strong>Capabilities</strong><small>Commands, files, screen, input and hardware.</small></span><em>{host.access_mode === 'full-access' ? 'All allow' : 'Review'}</em><ChevronRight /></button>
     </div></div>
     <div className="settings-group"><h2>Authorized clients <span>{clients.length}</span></h2><p className="group-help">Sessions authenticated to this relay.</p><div className="settings-card client-list">{clients.length ? clients.map(client => { const identity = [client.device_model, client.device_platform, client.client_surface].filter(Boolean).join(' · ') || client.transport_hint || 'Client'; return <div className="client-row" key={client.token_prefix}><span className="client-icon"><Laptop /></span><span><strong>{client.device_name ?? 'Unnamed client'} {client.is_current && <em>This PC</em>}</strong><small>{identity} · {age(client.last_seen)}</small></span><button onClick={() => onRevoke(host.url, client)} aria-label={`Deauthorize ${client.device_name ?? client.token_prefix}`}><UserRoundX /></button></div> }) : <div className="empty-state"><Radio /><span>No authorized clients reported</span></div>}</div></div>
@@ -645,7 +726,7 @@ function HostDetailPage({ host, clients, busy, onBack, onConnect, onRename, onAc
   </section>
 }
 
-function SettingsPage({ daemon, startup, daemonAutostart, activity, onAction, onStartup, onDaemonAutostart, onHelp, onViewActivity, onOpenActivity }: { daemon: Snapshot['daemon']; startup: boolean; daemonAutostart: boolean; activity: Activity[]; onAction: (name: string, args?: Record<string, unknown>) => Promise<void>; onStartup: (value: boolean) => void; onDaemonAutostart: (value: boolean) => void; onHelp: () => void; onViewActivity: () => void; onOpenActivity: (entry: Activity) => void }) {
+function SettingsPage({ daemon, startup, daemonAutostart, activity, onAction, onStartup, onDaemonAutostart, onHelp, onViewActivity, onOpenActivity }: { daemon: Snapshot['daemon']; startup: boolean; daemonAutostart: boolean; activity: Activity[]; onAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>; onStartup: (value: boolean) => void; onDaemonAutostart: (value: boolean) => void; onHelp: () => void; onViewActivity: () => void; onOpenActivity: (entry: Activity) => void }) {
   const [update, setUpdate] = useState<UpdateReport | null>(null)
   const [updateBusy, setUpdateBusy] = useState<'check' | 'install' | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -687,7 +768,7 @@ function SettingsPage({ daemon, startup, daemonAutostart, activity, onAction, on
   </section>
 }
 
-function HelpPage({ snapshot, host, onBack, onAction }: { snapshot: Snapshot; host: Host | null; onBack: () => void; onAction: (name: string, args?: Record<string, unknown>) => Promise<void> }) {
+function HelpPage({ snapshot, host, onBack, onAction }: { snapshot: Snapshot; host: Host | null; onBack: () => void; onAction: (name: string, args?: Record<string, unknown>) => Promise<unknown> }) {
   const links = [
     ['Documentation', 'https://hermes-relay.dev/docs/desktop/'],
     ['Troubleshooting', 'https://hermes-relay.dev/docs/desktop/troubleshooting/'],

@@ -104,6 +104,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .route-status strong { color: var(--green); font-size: 13px; font-weight: 600; }
 .connection-route.offline .route-status strong { color: #8d98a3; }
 .route-status span, .route-status small { color: var(--muted); font-size: 11px; }
+.route-status.insecure strong, .route-status.insecure small { color: var(--amber); }
 @media (max-width: 420px) { .route-host-action { display: none; } }
 
 .section { margin-top: 8px; }
@@ -321,6 +322,30 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .host-detail-hero p { margin: 0; color: var(--violet); font-size: 10px; text-transform: uppercase; letter-spacing: .8px; }
 .host-detail-hero h1 { margin: 0; font-size: 22px; font-weight: 600; }
 .host-detail-hero small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.copy-host-url { width: 31px; height: 31px; margin-left: auto; flex: 0 0 31px; border: 1px solid #414d59; border-radius: 7px; background: #131c25; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.copy-host-url:hover { color: var(--ink); border-color: var(--violet); }
+.copy-host-url svg { width: 15px; }
+.pair-host-page .page-title { margin-top: 14px; }
+.pair-form { display: grid; gap: 14px; }
+.pair-form > label { display: grid; gap: 6px; color: #c9cdd2; font-size: 11px; font-weight: 550; }
+.pair-form input { width: 100%; height: 42px; border: 1px solid #46515d; border-radius: 7px; background: #0b131a; color: var(--ink); padding: 0 11px; user-select: text; transition: border-color .14s ease, box-shadow .14s ease; }
+.pair-form input:focus { outline: 0; border-color: var(--violet); box-shadow: 0 0 0 3px #a763ff1c; }
+.pair-input-action { display: flex; gap: 7px; }
+.pair-input-action input { min-width: 0; flex: 1; }
+.pair-input-action button { width: 42px; flex: 0 0 42px; border: 1px solid #46515d; border-radius: 7px; background: #141e27; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.pair-input-action button:hover { color: var(--ink); border-color: var(--violet); }
+.pair-input-action svg { width: 17px; }
+.pair-code { font: 650 17px/1 "Cascadia Mono", Consolas, monospace; letter-spacing: 4px; text-transform: uppercase; }
+.transport-notice { border: 1px solid #40505b; border-radius: 8px; padding: 9px 10px; display: flex; align-items: center; gap: 9px; animation: notice-in .18s ease-out; }
+@keyframes notice-in { from { opacity: 0; transform: translateY(-3px); } }
+.transport-notice svg { width: 19px; flex: 0 0 19px; }
+.transport-notice span { min-width: 0; display: grid; gap: 2px; }
+.transport-notice strong { font-size: 11px; }
+.transport-notice small { color: var(--muted); font-size: 9.5px; line-height: 1.35; }
+.transport-notice.secure { border-color: #326444; background: #163c251f; color: var(--green); }
+.transport-notice.insecure { border-color: #735b2e; background: #5a431c22; color: var(--amber); }
+.pair-privacy { margin: -3px 2px 0; color: var(--faint); font-size: 9.5px; line-height: 1.4; display: flex; align-items: flex-start; gap: 6px; }
+.pair-privacy svg { width: 13px; flex: 0 0 13px; color: var(--violet); }
 .rename-host { display: flex; gap: 7px; }
 .rename-host input { min-width: 0; flex: 1; height: 38px; border: 1px solid #46515d; border-radius: 6px; background: #0c141b; color: var(--ink); padding: 0 10px; user-select: text; }
 .rename-host button { border: 1px solid #7956c8; border-radius: 6px; background: #5934ad; padding: 0 13px; cursor: pointer; }
@@ -501,12 +526,26 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .grant-shell.expanded .grant-expand svg { transform: rotate(180deg); }
 .grant-summary { margin: 10px 0 12px; color: #c1c6cd; font-size: 12.5px; line-height: 1.4; }
 .grant-summary strong { color: var(--ink); font-weight: 600; }
+.grant-action-preview { margin: -2px 0 11px; padding: 8px 10px; border: 1px solid #34414d; border-radius: 8px; background: #0a1219; display: grid; gap: 3px; }
+.grant-action-preview small { color: var(--faint); font-size: 8.5px; text-transform: uppercase; letter-spacing: .65px; }
+.grant-action-preview code { color: #e3e7eb; font: 10.5px/1.35 "Cascadia Mono", Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .grant-details { max-height: 0; opacity: 0; overflow: hidden; transition: max-height .2s ease, opacity .16s ease, margin .2s ease; }
-.grant-shell.expanded .grant-details { max-height: 108px; opacity: 1; margin-bottom: 11px; }
+.grant-shell.expanded .grant-action-preview { display: none; }
+.grant-shell.expanded .grant-details { max-height: 188px; opacity: 1; margin-bottom: 11px; overflow: auto; }
 .grant-details dl { margin: 0; padding: 10px 11px; border-radius: 8px; background: #0a1118a8; }
 .grant-details dl div + div { margin-top: 8px; }
 .grant-details dt { color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: .8px; }
 .grant-details dd { margin: 2px 0 0; color: #c4c9cf; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+.grant-action-full pre { margin: 4px 0 0; padding: 7px 8px; border: 1px solid #2d3944; border-radius: 6px; background: #080e14; color: #e5e9ed; font: 10px/1.4 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.grant-open-ui { margin: -2px 0 8px; }
+.grant-open-ui button { width: 100%; height: 29px; border: 0; border-radius: 6px; background: transparent; color: #b98aff; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 10px; cursor: pointer; }
+.grant-open-ui button:hover { background: #a763ff10; color: #d0adff; }
+.grant-open-ui svg { width: 13px; }
+.grant-review-modal { max-height: calc(100% - 28px); overflow: auto; }
+.review-grant-facts { margin: 10px 0 15px; padding: 10px; border-radius: 7px; background: #0a1118; }
+.review-grant-facts div + div { margin-top: 8px; }
+.review-grant-facts dt { color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: .65px; }
+.review-grant-facts dd { margin: 2px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
 .grant-actions { display: grid; grid-template-columns: .85fr 1.15fr; gap: 8px; }
 .grant-actions button { height: 35px; border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 550; }
 .grant-actions button:first-child { border: 1px solid #46515d; background: #17212a; color: #c5c9cf; }
