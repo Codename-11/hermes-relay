@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  Activity as ActivityIcon, AlertTriangle, Bot, Check, ChevronDown, ChevronRight,
+  Activity as ActivityIcon, AlertTriangle, ArrowLeft, Bot, Check, ChevronDown, ChevronRight,
   CircleHelp, Clock3, Download, Eye, FileText, Home, Laptop, Link2,
   LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
   Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X, Usb,
@@ -142,8 +142,8 @@ function friendlyUpdateError(error: unknown): string {
 }
 
 const accessCopy: Record<AccessMode, string> = {
-  ask: 'The connection stays ready, but desktop capabilities are off.',
-  structured: 'Typed desktop operations are available; sensitive screen and hardware actions ask first. Raw commands stay off.',
+  ask: 'All desktop capabilities are off. The relay connection stays ready.',
+  structured: 'Files are allowed. Screen, input, and USB ask first. Raw commands stay off.',
   trusted: 'Individual capabilities use the settings migrated from the former Trusted preset.',
   'full-access': 'Every available capability is allowed without task grants.',
   custom: 'Individual capabilities use the settings you choose.'
@@ -523,14 +523,14 @@ function ActivityPanel({ entries, host, onClear, onOpen }: { entries: Activity[]
 
 function ActivityPage({ entries, host, onBack, onClear, onOpen }: { entries: Activity[]; host: Host | null; onBack: () => void; onClear: () => void; onOpen: (entry: Activity) => void }) {
   return <section className="page-panel activity-page">
-    <div className="page-title activity-page-title"><button className="back-button" onClick={onBack}><ChevronRight /> Settings</button><div><p>Local audit</p><h1>Activity</h1></div></div>
+    <div className="page-title activity-page-title"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Settings</button><div><p>Local audit</p><h1>Activity</h1></div></div>
     <p className="page-intro">Remote actions and management changes recorded on this PC.</p>
     <ActivityPanel entries={entries} host={host} onClear={onClear} onOpen={onOpen} />
   </section>
 }
 
 function ActivityDetailPage({ entry, host, onBack }: { entry: Activity | null; host: Host | null; onBack: () => void }) {
-  if (!entry) return <section className="page-panel"><button className="back-button" onClick={onBack}><ChevronRight /> Activity</button><div className="large-empty"><ActivityIcon /><h2>Event unavailable</h2></div></section>
+  if (!entry) return <section className="page-panel"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Activity</button><div className="large-empty"><ActivityIcon /><h2>Event unavailable</h2></div></section>
   const attention = needsAttention(entry)
   const warning = isNonZeroExit(entry)
   const status = entry.aborted ? 'Aborted' : !entry.ok ? 'Failed' : warning ? `Exit ${activityExitCode(entry)}` : 'Completed'
@@ -543,7 +543,7 @@ function ActivityDetailPage({ entry, host, onBack }: { entry: Activity | null; h
     ['Error', entry.error, false]
   ] as const
   return <section className="page-panel activity-detail-page">
-    <button className="back-button" onClick={onBack}><ChevronRight /> Activity</button>
+    <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Activity</button>
     <div className="activity-detail-title"><span className={`activity-icon ${attention || warning ? 'amber' : 'violet'}`}><TerminalSquare /></span><span><p>{activityCategory(entry)}</p><h1>{activityName(entry.tool)}</h1><small>{eventHost}</small></span></div>
     <dl className="activity-detail-meta"><div><dt>Status</dt><dd className={attention ? 'attention' : warning ? 'warning' : 'success'}>{status}</dd></div><div><dt>When</dt><dd>{formatDateTime(entry.ts)}</dd></div><div><dt>Duration</dt><dd>{formatDuration(entry.duration_ms)}</dd></div></dl>
     <div className="activity-output-list">{blocks.filter(([, value]) => value).map(([label, value, truncated]) => <section key={label}><header><strong>{label}</strong>{truncated && <em>Truncated</em>}</header><pre>{value}</pre></section>)}</div>
@@ -560,7 +560,7 @@ function AccessPage({ host, busy, onBack, onChoose }: { host: Host | null; busy:
     { mode: 'full-access', Icon: Monitor }
   ]
   return <section className="page-panel policy-detail-page">
-    <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ChevronRight />Overview</button><p>{host.name}</p><h1>Host access</h1></div></div>
+    <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Overview</button><p>{host.name}</p><h1>Host access</h1></div></div>
     <p className="page-intro">Choose the broadest kind of work this Hermes host may perform on this PC.</p>
     {customPolicy && <div className="custom-policy-banner"><SlidersHorizontal /><span><strong>Custom policy</strong><small>Individual capabilities differ from the standard presets.</small></span></div>}
     <div className="access-options" role="radiogroup" aria-label="Host access">
@@ -575,7 +575,7 @@ function AccessPage({ host, busy, onBack, onChoose }: { host: Host | null; busy:
 function CapabilitiesPage({ host, availability, busy, onBack, onChoose }: { host: Host | null; availability: Snapshot['hardware_availability']; busy: boolean; onBack: () => void; onChoose: (capability: Capability, mode: CapabilityMode) => void }) {
   if (!host) return <div className="page-panel large-empty"><SlidersHorizontal /><h2>No host selected</h2><button onClick={onBack}>Back to Overview</button></div>
   return <section className="page-panel policy-detail-page">
-    <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ChevronRight />Overview</button><p>{host.name}</p><h1>Capabilities</h1></div></div>
+    <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Overview</button><p>{host.name}</p><h1>Capabilities</h1></div></div>
     <p className="page-intro">Presets set these together. Changing one capability creates a Custom policy.</p>
     <div className="capability-list">
       <CapabilityRow capability="commands" title="Command execution" copy="PowerShell, terminal and process launch" icon={<TerminalSquare />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy} onChoose={onChoose} />
@@ -607,10 +607,10 @@ function HostsPage({ hosts, selected, onOpen, onPair }: { hosts: Host[]; selecte
 function HostDetailPage({ host, busy, onBack, onConnect, onRename }: { host: Host | null; busy: boolean; onBack: () => void; onConnect: (url: string) => void; onRename: (url: string, name: string) => Promise<void> }) {
   const [name, setName] = useState(host?.name ?? '')
   useEffect(() => setName(host?.name ?? ''), [host?.url, host?.name])
-  if (!host) return <section className="page-panel"><button className="back-button" onClick={onBack}><ChevronRight /> Hosts</button><div className="large-empty"><Server /><h2>Host unavailable</h2><p>This pairing may have been removed.</p></div></section>
+  if (!host) return <section className="page-panel"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button><div className="large-empty"><Server /><h2>Host unavailable</h2><p>This pairing may have been removed.</p></div></section>
   const changed = name.trim() !== host.name && name.trim().length > 0
   return <section className="page-panel host-detail-page">
-    <button className="back-button" onClick={onBack}><ChevronRight /> Hosts</button>
+    <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button>
     <div className="host-detail-hero"><span className="host-icon"><Server /></span><span><p>{host.is_active ? 'Active host' : 'Paired host'}</p><h1>{host.name}</h1><small>{host.url}</small></span></div>
     <div className="settings-group"><h2>Display name</h2><div className="rename-host"><input value={name} maxLength={64} aria-label="Host display name" onChange={event => setName(event.target.value)} /><button disabled={!changed || busy} onClick={() => onRename(host.url, name.trim())}>Save</button></div><p className="group-help host-name-help">Stored locally on this PC. It does not rename the Hermes server.</p></div>
     <div className="settings-group"><h2>Connection details</h2><div className="settings-card host-detail"><dl><div><dt>Route</dt><dd>{host.endpoint_role ?? 'Custom'}</dd></div><div><dt>Version</dt><dd>{host.server_version ?? 'Unknown'}</dd></div><div><dt>Access</dt><dd>{host.access_mode === 'full-access' ? 'Full Access' : host.access_mode[0]!.toUpperCase() + host.access_mode.slice(1)}</dd></div></dl></div></div>

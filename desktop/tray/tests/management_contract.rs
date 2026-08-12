@@ -174,6 +174,8 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
     assert!(ui.contains("policy-ledger"));
     assert!(ui.contains("<AccessPage"));
     assert!(ui.contains("<CapabilitiesPage"));
+    assert!(ui.contains("Back to Overview"));
+    assert!(styles.contains(".back-button:hover"));
     assert!(ui.contains("snapshot.activity.slice(-3).reverse()"));
     assert!(ui.contains("packet packet-outbound"));
     assert!(ui.contains("packet packet-inbound"));

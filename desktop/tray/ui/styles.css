@@ -367,8 +367,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .settings-group-heading button svg { width: 14px; height: 14px; }
 .activity-page-title { display: block; }
 .activity-page-title > div { margin-top: 7px; }
-.back-button { border: 0; background: transparent; color: var(--violet); padding: 0; display: flex; align-items: center; gap: 3px; font-size: 11px; cursor: pointer; }
-.back-button svg { width: 14px; height: 14px; transform: rotate(180deg); }
+.back-button { min-height: 32px; border: 1px solid #3c4753; border-radius: 7px; background: #121b24; color: #d8dde3; padding: 5px 9px 5px 7px; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 550; cursor: pointer; box-shadow: 0 3px 10px #0003; transition: border-color .14s ease, background .14s ease, color .14s ease, transform .14s ease; }
+.back-button:hover { border-color: #8657d5; background: #191e2a; color: #fff; transform: translateX(-1px); }
+.back-button:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.back-button svg { width: 15px; height: 15px; color: var(--violet); }
 .activity-page > .page-intro { margin-top: -5px; }
 .setting-row { min-height: 61px; padding: 11px 13px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .setting-row:last-child { border: 0; }
