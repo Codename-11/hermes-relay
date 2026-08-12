@@ -534,10 +534,14 @@ fun DashboardManagementScreen(
             metadata.fold(
                 onSuccess = { file ->
                     withDashboardClient(clientFactory) {
-                        it.uploadServerBackup(file.name, file.length) {
+                        it.uploadServerBackup(
+                            filename = file.name,
+                            contentLength = file.length,
+                            openStream = {
                             context.contentResolver.openInputStream(uri)
                                 ?: throw IOException("The selected archive could not be opened.")
-                        }
+                            },
+                        )
                     }.fold(
                         onSuccess = { actionMessage = context.getString(R.string.dashboard_import_started) },
                         onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_import_failed) },
@@ -1586,6 +1590,141 @@ fun DashboardManagementScreen(
                     )
                 }
             }
+        }
+    }
+
+    learningEditor?.let { editor ->
+        TextDocumentEditorDialog(
+            title = context.getString(R.string.dashboard_learning_edit_title, editor.title),
+            initialContent = editor.initialContent,
+            warning = context.getString(R.string.dashboard_learning_edit_warning),
+            saving = actionInFlight,
+            onSave = { content ->
+                scope.launch {
+                    actionInFlight = true
+                    withDashboardClient(clientFactory) {
+                        it.updateLearningNode(editor.id, content, editor.profile)
+                    }.fold(
+                        onSuccess = {
+                            learningEditor = null
+                            forceReloadKey = payloadKey
+                            reloadNonce += 1
+                            actionMessage = context.getString(R.string.dashboard_learning_saved)
+                        },
+                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_learning_save_failed) },
+                    )
+                    actionInFlight = false
+                }
+            },
+            onDismiss = { learningEditor = null },
+        )
+    }
+
+    memoryProviderEditor?.let { editor ->
+        MemoryProviderDialog(
+            editor = editor,
+            saving = actionInFlight,
+            onSubmit = { rawValues, setup ->
+                val values = if (setup) JsonObject(emptyMap())
+                else runCatching { Json.parseToJsonElement(rawValues).jsonObject }.getOrNull()
+                if (!setup && values == null) {
+                    actionMessage = context.getString(R.string.dashboard_memory_invalid_json)
+                } else scope.launch {
+                    actionInFlight = true
+                    val result = withDashboardClient(clientFactory) { client ->
+                        if (setup) client.setupMemoryProvider(editor.name)
+                        else client.updateMemoryProviderConfig(editor.name, checkNotNull(values), editor.profile)
+                    }
+                    result.fold(
+                        onSuccess = {
+                            memoryProviderEditor = null
+                            forceReloadKey = payloadKey
+                            reloadNonce += 1
+                            actionMessage = if (setup) context.getString(R.string.dashboard_memory_setup_started)
+                                else context.getString(R.string.dashboard_memory_saved)
+                        },
+                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_memory_save_failed) },
+                    )
+                    actionInFlight = false
+                }
+            },
+            onDismiss = { memoryProviderEditor = null },
+        )
+    }
+
+    if (importArchiveInput) {
+        AlertDialog(
+            onDismissRequest = { importArchiveInput = false },
+            title = { Text(stringResource(R.string.dashboard_import_title)) },
+            text = { Text(stringResource(R.string.dashboard_import_warning)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        importArchiveInput = false
+                        backupImportLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text(stringResource(R.string.dashboard_import_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { importArchiveInput = false }) { Text(stringResource(R.string.dashboard_cancel)) }
+            },
+        )
+    }
+
+    if (showWhatsAppSetup) {
+        WhatsAppSetupDialog(
+            onboarding = whatsappOnboarding,
+            busy = actionInFlight,
+            onStart = { mode, allowed ->
+                scope.launch {
+                    actionInFlight = true
+                    withDashboardClient(clientFactory) {
+                        it.startWhatsAppOnboarding(mode, allowed, effectiveProfileName)
+                    }.fold(
+                        onSuccess = { root -> whatsappOnboarding = root.toWhatsAppOnboarding(mode, allowed) },
+                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_whatsapp_start_failed) },
+                    )
+                    actionInFlight = false
+                }
+            },
+            onApply = { state ->
+                scope.launch {
+                    actionInFlight = true
+                    withDashboardClient(clientFactory) {
+                        it.applyWhatsAppOnboarding(state.pairingId, state.mode, state.allowedUsers, effectiveProfileName)
+                    }.fold(
+                        onSuccess = {
+                            showWhatsAppSetup = false
+                            whatsappOnboarding = null
+                            forceReloadKey = payloadKey
+                            reloadNonce += 1
+                            actionMessage = context.getString(R.string.dashboard_whatsapp_saved)
+                        },
+                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_whatsapp_apply_failed) },
+                    )
+                    actionInFlight = false
+                }
+            },
+            onDismiss = {
+                whatsappOnboarding?.pairingId?.let { pairingId ->
+                    scope.launch { withDashboardClient(clientFactory) { it.cancelWhatsAppOnboarding(pairingId) } }
+                }
+                whatsappOnboarding = null
+                showWhatsAppSetup = false
+            },
+        )
+    }
+
+    LaunchedEffect(whatsappOnboarding?.pairingId, whatsappOnboarding?.status) {
+        val pairingId = whatsappOnboarding?.pairingId ?: return@LaunchedEffect
+        while (true) {
+            val current = whatsappOnboarding ?: break
+            if (current.pairingId != pairingId || current.status in setOf("connected", "error", "expired", "cancelled")) break
+            delay(1_500)
+            withDashboardClient(clientFactory) { it.getWhatsAppOnboarding(pairingId) }
+                .onSuccess { whatsappOnboarding = it.toWhatsAppOnboarding(current.mode, current.allowedUsers) }
+                .onFailure { whatsappOnboarding = current.copy(status = "error", error = it.message) }
         }
     }
 }
@@ -4031,140 +4170,6 @@ private fun summarizeMemoryProviders(root: JsonElement): List<DashboardSummaryIt
         )
     }
 
-    learningEditor?.let { editor ->
-        TextDocumentEditorDialog(
-            title = context.getString(R.string.dashboard_learning_edit_title, editor.title),
-            initialContent = editor.initialContent,
-            warning = context.getString(R.string.dashboard_learning_edit_warning),
-            saving = actionInFlight,
-            onSave = { content ->
-                scope.launch {
-                    actionInFlight = true
-                    withDashboardClient(clientFactory) {
-                        it.updateLearningNode(editor.id, content, editor.profile)
-                    }.fold(
-                        onSuccess = {
-                            learningEditor = null
-                            forceReloadKey = payloadKey
-                            reloadNonce += 1
-                            actionMessage = context.getString(R.string.dashboard_learning_saved)
-                        },
-                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_learning_save_failed) },
-                    )
-                    actionInFlight = false
-                }
-            },
-            onDismiss = { learningEditor = null },
-        )
-    }
-
-    memoryProviderEditor?.let { editor ->
-        MemoryProviderDialog(
-            editor = editor,
-            saving = actionInFlight,
-            onSubmit = { rawValues, setup ->
-                val values = if (setup) JsonObject(emptyMap())
-                else runCatching { Json.parseToJsonElement(rawValues).jsonObject }.getOrNull()
-                if (!setup && values == null) {
-                    actionMessage = context.getString(R.string.dashboard_memory_invalid_json)
-                } else scope.launch {
-                    actionInFlight = true
-                    val result = withDashboardClient(clientFactory) { client ->
-                        if (setup) client.setupMemoryProvider(editor.name)
-                        else client.updateMemoryProviderConfig(editor.name, checkNotNull(values), editor.profile)
-                    }
-                    result.fold(
-                        onSuccess = {
-                            memoryProviderEditor = null
-                            forceReloadKey = payloadKey
-                            reloadNonce += 1
-                            actionMessage = if (setup) context.getString(R.string.dashboard_memory_setup_started)
-                                else context.getString(R.string.dashboard_memory_saved)
-                        },
-                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_memory_save_failed) },
-                    )
-                    actionInFlight = false
-                }
-            },
-            onDismiss = { memoryProviderEditor = null },
-        )
-    }
-
-    if (importArchiveInput) {
-        AlertDialog(
-            onDismissRequest = { importArchiveInput = false },
-            title = { Text(stringResource(R.string.dashboard_import_title)) },
-            text = { Text(stringResource(R.string.dashboard_import_warning)) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        importArchiveInput = false
-                        backupImportLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                ) { Text(stringResource(R.string.dashboard_import_confirm)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { importArchiveInput = false }) { Text(stringResource(R.string.dashboard_cancel)) }
-            },
-        )
-    }
-
-    if (showWhatsAppSetup) {
-        WhatsAppSetupDialog(
-            onboarding = whatsappOnboarding,
-            busy = actionInFlight,
-            onStart = { mode, allowed ->
-                scope.launch {
-                    actionInFlight = true
-                    withDashboardClient(clientFactory) {
-                        it.startWhatsAppOnboarding(mode, allowed, effectiveProfileName)
-                    }.fold(
-                        onSuccess = { root -> whatsappOnboarding = root.toWhatsAppOnboarding(mode, allowed) },
-                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_whatsapp_start_failed) },
-                    )
-                    actionInFlight = false
-                }
-            },
-            onApply = { state ->
-                scope.launch {
-                    actionInFlight = true
-                    withDashboardClient(clientFactory) {
-                        it.applyWhatsAppOnboarding(state.pairingId, state.mode, state.allowedUsers, effectiveProfileName)
-                    }.fold(
-                        onSuccess = {
-                            showWhatsAppSetup = false
-                            whatsappOnboarding = null
-                            forceReloadKey = payloadKey
-                            reloadNonce += 1
-                            actionMessage = context.getString(R.string.dashboard_whatsapp_saved)
-                        },
-                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_whatsapp_apply_failed) },
-                    )
-                    actionInFlight = false
-                }
-            },
-            onDismiss = {
-                whatsappOnboarding?.pairingId?.let { pairingId ->
-                    scope.launch { withDashboardClient(clientFactory) { it.cancelWhatsAppOnboarding(pairingId) } }
-                }
-                whatsappOnboarding = null
-                showWhatsAppSetup = false
-            },
-        )
-    }
-
-    LaunchedEffect(whatsappOnboarding?.pairingId, whatsappOnboarding?.status) {
-        val pairingId = whatsappOnboarding?.pairingId ?: return@LaunchedEffect
-        while (true) {
-            val current = whatsappOnboarding ?: break
-            if (current.pairingId != pairingId || current.status in setOf("connected", "error", "expired", "cancelled")) break
-            delay(1_500)
-            withDashboardClient(clientFactory) { it.getWhatsAppOnboarding(pairingId) }
-                .onSuccess { whatsappOnboarding = it.toWhatsAppOnboarding(current.mode, current.allowedUsers) }
-                .onFailure { whatsappOnboarding = current.copy(status = "error", error = it.message) }
-        }
-    }
 }
 
 /**
@@ -4422,6 +4427,14 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
             from = DashboardActionKind.DisableMcp,
             to = DashboardItemAction("Enable", DashboardActionKind.EnableMcp),
         )
+        DashboardActionKind.EnableChannel -> withEnabledMeta(true).withActionSwap(
+            from = DashboardActionKind.EnableChannel,
+            to = DashboardItemAction("Disable", DashboardActionKind.DisableChannel),
+        )
+        DashboardActionKind.DisableChannel -> withEnabledMeta(false).withActionSwap(
+            from = DashboardActionKind.DisableChannel,
+            to = DashboardItemAction("Enable", DashboardActionKind.EnableChannel),
+        )
         DashboardActionKind.PauseCron -> withActionSwap(
             from = DashboardActionKind.PauseCron,
             to = DashboardItemAction("Resume", DashboardActionKind.ResumeCron),
@@ -4433,7 +4446,8 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
         DashboardActionKind.DeleteCron,
         DashboardActionKind.RemoveMcp,
         DashboardActionKind.DeleteProfile,
-        DashboardActionKind.DeleteCustomEndpoint -> null
+        DashboardActionKind.DeleteCustomEndpoint,
+        DashboardActionKind.DeleteLearningNode -> null
         DashboardActionKind.InstallMcpCatalog -> copy(
             meta = appendMeta(meta, "installed"),
             actions = emptyList(),
@@ -4452,7 +4466,12 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
         DashboardActionKind.RevealEnvKey,
         DashboardActionKind.EditProfileDescription,
         DashboardActionKind.SetProfileModel,
-        DashboardActionKind.EditProfileSoul -> this
+        DashboardActionKind.EditProfileSoul,
+        DashboardActionKind.EditLearningNode,
+        DashboardActionKind.ConfigureMemoryProvider,
+        DashboardActionKind.ActivateMemoryProvider,
+        DashboardActionKind.SetupWhatsApp,
+        DashboardActionKind.TestChannel -> this
         DashboardActionKind.EditCustomEndpoint,
         DashboardActionKind.ValidateCustomEndpoint,
         DashboardActionKind.ActivateCustomEndpoint -> this
