@@ -142,6 +142,8 @@ data class SessionItem(
     val preview: String? = null,
     val model: String? = null,
     val source: String? = null,
+    /** Owning profile on the cross-profile `/api/profiles/sessions` endpoint. */
+    val profile: String? = null,
     @SerialName("started_at")
     @Serializable(with = FlexibleTimestampSerializer::class)
     val startedAt: Double? = null,

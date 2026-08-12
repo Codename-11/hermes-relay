@@ -4010,4 +4010,7 @@
     <string name="support_bundle_copied">Support information copied</string>
     <string name="support_bundle_no_share">Support information copied — no app found to share to</string>
     <string name="support_bundle_share_title">Share Hermes-Relay support information</string>
+    <string name="drawer_all_profiles">All profiles</string>
+    <string name="drawer_no_profile_sessions">No matching profile sessions.</string>
+    <string name="drawer_close">Close</string>
 </resources>

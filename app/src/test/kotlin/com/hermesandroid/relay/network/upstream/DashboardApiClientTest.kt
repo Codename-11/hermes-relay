@@ -865,6 +865,28 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun listAllProfileSessions_preservesOwnerAndCompositeIdentity() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"sessions":[{"id":"same","title":"A","profile":"default"},{"id":"same","title":"B","profile":"work"},{"id":"unsafe"}],"total":3}""",
+                ),
+        )
+
+        val sessions = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listAllProfileSessions()
+            .getOrThrow()
+
+        val url = server.takeRequest().requestUrl!!
+        assertEquals("/api/profiles/sessions", url.encodedPath)
+        assertEquals("all", url.queryParameter("profile"))
+        assertEquals("include", url.queryParameter("archived"))
+        assertEquals(listOf("default", "work"), sessions.map { it.profile })
+        assertEquals(listOf("A", "B"), sessions.map { it.title })
+    }
+
+    @Test
     fun listSessions_pagesAtUpstreamMaximumWhilePreservingTwoHundredRowWindow() = runTest {
         val firstPage = (0 until 100).joinToString(",") { "{\"id\":\"sess-$it\"}" }
         server.enqueue(

@@ -768,6 +768,27 @@ class DashboardApiClient(
         }
 
     /**
+     * Read the bounded, authoritative session window across every profile.
+     * Every usable row must retain its owning profile; rows without one are
+     * skipped rather than risking a cross-profile transcript or mutation.
+     */
+    suspend fun listAllProfileSessions(
+        limit: Int = SESSION_LIST_WINDOW_LIMIT,
+    ): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
+        val boundedLimit = limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)
+        getJson(
+            "/api/profiles/sessions?limit=$boundedLimit&offset=0&order=recent" +
+                "&min_messages=1&archived=include&profile=all",
+        ).mapCatching { root ->
+            val parsed = json.decodeFromJsonElement(SessionListResponse.serializer(), root)
+            (parsed.sessions ?: parsed.items ?: parsed.data ?: emptyList())
+                .filter { it.id.isNotBlank() && !it.profile.isNullOrBlank() }
+                .distinctBy { "${it.profile}:${it.id}" }
+                .take(boundedLimit)
+        }
+    }
+
+    /**
      * A session's message history, scoped to its owning profile via the dashboard
      * `GET /api/sessions/{id}/messages?profile=`. Required twin of [listSessions]:
      * a non-default profile's sessions live in that profile's own `state.db`, so

@@ -344,6 +344,12 @@ class ProfileController(
             .listSessions(profile = profileName, limit = limit, archived = "include")
     }
 
+    suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? {
+        val connectionId = activeConnectionId.value ?: return null
+        val dashboardUrl = activeDashboardUrlProvider() ?: return null
+        return dashboardClientFactory(connectionId, dashboardUrl).listAllProfileSessions(limit)
+    }
+
     /**
      * A session's transcript, scoped to the active profile via the dashboard
      * `/api/sessions/{id}/messages?profile=`. Returns `null` off the dashboard
