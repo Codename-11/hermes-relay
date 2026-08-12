@@ -2,7 +2,7 @@
 
 **Release Date:** August 11, 2026
 
-This patch makes paired sessions easier to identify and their expiry easier to understand across Relay clients and the Dashboard.
+This patch improves gateway recovery diagnostics and prevents clients from reconnecting in lockstep after a shared restart.
 
 Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
@@ -10,10 +10,8 @@ Standard chat, session history, and Vanilla Hermes voice remain upstream-owned a
 
 ### Fixed
 
-- **Recognizable device names.** Relay uses the client hostname as the primary paired-session name when available while preserving compatibility with existing clients.
-- **Persisted device details.** Model and platform metadata survive refresh, reconnect, and Relay restart and appear in the authorized-session API and Dashboard detail view.
-- **Reconnect enrichment without re-pairing.** A valid paired client can fill missing identity metadata during reconnect without changing its authentication state.
-- **Human-readable expiry.** Long paired-session lifetimes use days, weeks, or a calendar date, with the exact local deadline retained for inspection.
+- **Bounded prior-exit diagnostics.** Relay Doctor and `/relay/info` distinguish a clean stop, an unclean exit, and unknown history, with an optional suspected out-of-memory hint. Raw logs are never returned through the API.
+- **Desynchronized recovery.** Ordinary exponential reconnect delays use full jitter so multiple Relay clients do not retry in lockstep after the gateway restarts. Explicit reconnects and server-directed retry timing remain unchanged.
 
 ## Install / update
 
