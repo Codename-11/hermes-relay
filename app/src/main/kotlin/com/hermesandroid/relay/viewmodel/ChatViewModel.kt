@@ -134,6 +134,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import okhttp3.sse.EventSource
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -1229,10 +1230,16 @@ class ChatViewModel : ViewModel() {
                         // Pill update is the confirmation — no system bubble.
                         // Surface only a server warning, ephemerally.
                         warning?.let { _transientNotice.tryEmit(it) }
-                        gateway.modelOptions().onSuccess {
-                            _modelProviders.value = it.providers
-                            _gatewayCurrentModel.value = it.currentModel
-                            _gatewayCurrentProvider.value = it.currentProvider
+                        // Current upstream may defer the switch until the turn
+                        // boundary. Keep the optimistic requested identity; an
+                        // immediate model.options read still reports the old
+                        // model and would visibly snap the picker backward.
+                        if (!isDeferredConfigResult(result)) {
+                            gateway.modelOptions().onSuccess {
+                                _modelProviders.value = it.providers
+                                _gatewayCurrentModel.value = it.currentModel
+                                _gatewayCurrentProvider.value = it.currentProvider
+                            }
                         }
                     },
                     onFailure = { e ->
@@ -8626,6 +8633,19 @@ internal fun parseCommandsCatalog(catalog: JsonObject): List<SlashCommand> {
     }
     val seen = mutableSetOf<String>()
     val out = mutableListOf<SlashCommand>()
+    val skillMetadata = (catalog["skills"] as? JsonObject)
+        ?.entries
+        ?.take(MAX_CATALOG_SKILLS)
+        ?.associate { (rawName, element) ->
+            val normalized = if (rawName.startsWith("/")) rawName.lowercase() else "/${rawName.lowercase()}"
+            val metadata = element as? JsonObject
+            val usage = (metadata?.get("usage") as? JsonPrimitive)?.intOrNull
+                ?.coerceIn(0, MAX_SKILL_USAGE) ?: 0
+            val origin = metadata?.stringValue("origin")
+                ?.trim()?.take(MAX_SKILL_ORIGIN_CHARS)?.takeIf { it.isNotBlank() }
+            normalized to (usage to origin)
+        }
+        .orEmpty()
     (catalog["pairs"] as? JsonArray)?.forEach { pairElement ->
         val pair = pairElement as? JsonArray ?: return@forEach
         val rawName = (pair.getOrNull(0) as? JsonPrimitive)?.contentOrNull?.trim()
@@ -8634,15 +8654,34 @@ internal fun parseCommandsCatalog(catalog: JsonObject): List<SlashCommand> {
         if (isUnsupportedMobileCommand(name, pair)) return@forEach
         if (!seen.add(name.lowercase())) return@forEach
         val description = (pair.getOrNull(1) as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        val skill = skillMetadata[name.lowercase()]
         out += SlashCommand(
             command = name,
             description = description.ifBlank { "Server command" },
             category = categoryByName[name.lowercase()] ?: SlashCommand.CATEGORY_SERVER,
             source = SlashCommand.SOURCE_SERVER,
+            usageRank = skill?.first ?: 0,
+            origin = skill?.second,
         )
     }
-    return out
+    // Preserve every non-skill command's exact catalog position. Rank only
+    // entries occupying skill slots, so built-ins and quick commands do not
+    // jump around when usage changes.
+    val rankedSkills = out.filter { skillMetadata.containsKey(it.command.lowercase()) }
+        .sortedWith(compareByDescending<SlashCommand> { it.usageRank }.thenBy { it.command })
+        .iterator()
+    return out.map { command ->
+        if (skillMetadata.containsKey(command.command.lowercase())) rankedSkills.next() else command
+    }
 }
+
+private const val MAX_CATALOG_SKILLS = 512
+private const val MAX_SKILL_USAGE = 1_000_000_000
+private const val MAX_SKILL_ORIGIN_CHARS = 32
+
+internal fun isDeferredConfigResult(result: JsonObject): Boolean =
+    (result["deferred"] as? JsonPrimitive)?.contentOrNull
+        ?.trim()?.lowercase() in setOf("true", "1", "yes")
 
 /** Dashboard `/api/config` response -> the same personality catalog as API mode. */
 internal fun parseDashboardPersonalityConfig(

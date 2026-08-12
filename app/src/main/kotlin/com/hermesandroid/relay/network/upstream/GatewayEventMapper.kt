@@ -207,7 +207,11 @@ class GatewayEventMapper(
                     }
                     else -> syntheticToolId(name)
                 }
-                val argsPreview = payload.string("args_text")
+                val argsPreview = payload?.get("args")
+                    ?.takeUnless { it is JsonPrimitive && it.contentOrNull.isNullOrBlank() }
+                    ?.toString()
+                    ?.takeIf { it.isNotBlank() && it != "null" }
+                    ?: payload.string("args_text")
                     ?.takeIf { it.isNotBlank() }
                     ?: payload.string("context")?.takeIf { it.isNotBlank() }
                 callbacks.onToolCallStart(toolId, name, argsPreview)

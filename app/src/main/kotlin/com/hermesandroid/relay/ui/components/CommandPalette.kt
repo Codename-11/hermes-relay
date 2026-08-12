@@ -64,6 +64,10 @@ data class SlashCommand(
      * instead of plain text.
      */
     val source: String? = null,
+    /** Bounded server-recorded skill usage; zero for non-skill commands. */
+    val usageRank: Int = 0,
+    /** Sanitized server skill origin such as local or bundled. */
+    val origin: String? = null,
 ) {
     companion object {
         const val SOURCE_SERVER = "server"

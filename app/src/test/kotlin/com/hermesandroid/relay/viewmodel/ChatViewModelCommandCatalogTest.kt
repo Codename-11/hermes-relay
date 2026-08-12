@@ -59,6 +59,48 @@ class ChatViewModelCommandCatalogTest {
     }
 
     @Test
+    fun parseCommandsCatalog_ranksOnlySkillSlotsAndBoundsMetadata() {
+        val catalog = buildJsonObject {
+            put(
+                "pairs",
+                JsonArray(
+                    listOf(
+                        commandPair("status", "Show status"),
+                        commandPair("research", "Research"),
+                        commandPair("help", "Show help"),
+                        commandPair("work", "Worktree"),
+                    ),
+                ),
+            )
+            put("skills", buildJsonObject {
+                put("/research", buildJsonObject {
+                    put("usage", 60)
+                    put("origin", "bundled")
+                })
+                put("/work", buildJsonObject {
+                    put("usage", 172)
+                    put("origin", "local")
+                })
+            })
+        }
+
+        val commands = parseCommandsCatalog(catalog)
+
+        assertEquals(listOf("/status", "/work", "/help", "/research"), commands.map { it.command })
+        assertEquals(172, commands[1].usageRank)
+        assertEquals("local", commands[1].origin)
+        assertEquals(listOf("/status", "/help"), commands.filter { it.usageRank == 0 }.map { it.command })
+    }
+
+    @Test
+    fun deferredConfigResult_acceptsCurrentBooleanShapes() {
+        assertTrue(isDeferredConfigResult(buildJsonObject { put("deferred", true) }))
+        assertTrue(isDeferredConfigResult(buildJsonObject { put("deferred", "1") }))
+        assertFalse(isDeferredConfigResult(buildJsonObject { put("deferred", false) }))
+        assertFalse(isDeferredConfigResult(buildJsonObject { }))
+    }
+
+    @Test
     fun parseDashboardPersonalityConfig_readsWrappedAndDirectConfig() {
         val config = buildJsonObject {
             put("model", "gpt-test")

@@ -484,6 +484,23 @@ class GatewayEventMapperTest {
     }
 
     @Test
+    fun `structured tool arguments win over legacy previews`() {
+        val recorder = Recorder()
+        val mapper = mapperWith(recorder)
+        mapper.onEvent(
+            "tool.start",
+            obj(
+                """{"tool_id":"t3","name":"terminal","args":{"command":"echo live","timeout":30},"args_text":"stale","context":"older"}""",
+            ),
+        )
+
+        assertEquals(
+            listOf("t3" to "{\"command\":\"echo live\",\"timeout\":30}"),
+            recorder.toolStartArgs,
+        )
+    }
+
+    @Test
     fun `tool complete with error routes to failed`() {
         val r = Recorder()
         val mapper = mapperWith(r)
