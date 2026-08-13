@@ -1107,8 +1107,14 @@ class GatewayChatClient(
 
     private fun JsonObject.toGatewayCompressResult(): GatewayCompressResult =
         GatewayCompressResult(
-            status = stringField("status") ?: "completed",
-            output = stringField("output"),
+            status = stringField("status") ?: if (
+                (this["compressed"] as? JsonPrimitive)?.booleanOrNull == false
+            ) {
+                "noop"
+            } else {
+                "completed"
+            },
+            output = stringField("output") ?: stringField("message"),
             removed = (this["removed"] as? JsonPrimitive)?.intOrNull,
             beforeMessages = (this["before_messages"] as? JsonPrimitive)?.intOrNull,
             afterMessages = (this["after_messages"] as? JsonPrimitive)?.intOrNull,

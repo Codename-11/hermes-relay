@@ -663,6 +663,34 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun protectedInstructionApprovalCardOffersOneOperationScopeOnly() {
+        viewModel.sendMessage("Edit the disposable instruction fixture")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "approval.request",
+                buildJsonObject {
+                    put("command", "<write to AGENTS.md>")
+                    put("allow_session", false)
+                    put("allow_permanent", false)
+                    put("choices", buildJsonArray {
+                        add(JsonPrimitive("once"))
+                        add(JsonPrimitive("session"))
+                        add(JsonPrimitive("always"))
+                        add(JsonPrimitive("deny"))
+                    })
+                },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+        val card = handler.messages.value.single { it.id == pending.messageId }.cards.single()
+        assertEquals(listOf("once", "deny"), card.actions.map { it.value })
+    }
+
+    @Test
     fun multiSelectClarifyPreservesCardSemanticsAndExactWireAnswer() {
         viewModel.sendMessage("Ask which environments")
         gatewayHarness.awaitRpc("prompt.submit")

@@ -4635,7 +4635,7 @@ class ChatViewModel : ViewModel() {
                 }
                 val summary = when (result.status.lowercase()) {
                     "aborted" -> "Compression aborted."
-                    "noop", "no_op" -> "Nothing to compress."
+                    "noop", "no_op" -> result.output ?: "Nothing to compress."
                     "legacy" -> result.output ?: "Compression command sent through legacy slash support."
                     else -> result.output ?: compressionSummary(result)
                 }

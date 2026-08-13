@@ -1418,6 +1418,27 @@ class GatewayChatClientTest {
         assertEquals("legacy", result.status)
     }
 
+    @Test
+    fun `compress session preserves authoritative lock contention message`() {
+        val r = Recorder()
+        client.sendTurn(null, "long job", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        harness.compressPayload = buildJsonObject {
+            put("compressed", false)
+            put("lock_held", true)
+            put("message", "Compression skipped because another request holds the lock.")
+        }
+
+        val result = runBlocking { client.compressSession().getOrThrow() }
+
+        assertEquals("noop", result.status)
+        assertEquals(
+            "Compression skipped because another request holds the lock.",
+            result.output,
+        )
+    }
+
     // --- Profile-bound sessions (upstream tui_gateway: session.create/resume
     // take a `profile` arg; a session's agent is built from it) ---
 

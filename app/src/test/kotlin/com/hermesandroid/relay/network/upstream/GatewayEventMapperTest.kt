@@ -795,6 +795,32 @@ class GatewayEventMapperTest {
     }
 
     @Test
+    fun `approval request removes explicitly forbidden persistent scopes`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj(
+                """{"command":"<write to AGENTS.md>","choices":["once","session","always","deny"],"allow_session":false,"allow_permanent":false}""",
+            ),
+        )
+
+        assertEquals(listOf("once", "deny"), r.interactions.single().choices)
+    }
+
+    @Test
+    fun `approval request retains session while permanent scope is forbidden`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj(
+                """{"command":"guarded command","choices":["once","session","always","deny"],"allow_session":true,"allow_permanent":false}""",
+            ),
+        )
+
+        assertEquals(listOf("once", "session", "deny"), r.interactions.single().choices)
+    }
+
+    @Test
     fun `tool output risk maps deterministic non-low metadata only`() {
         val r = Recorder()
         val mapper = mapperWith(r)

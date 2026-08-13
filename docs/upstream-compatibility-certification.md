@@ -2,8 +2,10 @@
 
 This runbook verifies upstream-only gateway behavior that Hermes-Relay inherits
 without adding client-specific protocol branches. It covers concurrent
-model/image routing (HRUI-043), opt-in turn isolation (HRUI-039), and durable
-background-completion ownership (HRUI-032).
+model/image routing (HRUI-043), opt-in turn isolation (HRUI-039), durable
+background-completion ownership (HRUI-032), provider-aware compression
+(HRUI-062), persistent-session automation (HRUI-112), and protected-file
+approvals (HRUI-121).
 
 The static gate is safe to run against a separate upstream checkout. The live
 gate uses real sessions and intentionally includes gateway restarts, so run it
@@ -19,6 +21,10 @@ git merge-base --is-ancestor 73057ed16 HEAD
 git merge-base --is-ancestor ef9e0c98f HEAD
 git merge-base --is-ancestor 7d27a31ce HEAD
 git merge-base --is-ancestor 54d0948d3 HEAD
+git merge-base --is-ancestor 678916b42 HEAD
+git merge-base --is-ancestor 1439a6582 HEAD
+git merge-base --is-ancestor fe66596df HEAD
+git merge-base --is-ancestor 62a9c0f0e HEAD
 ```
 
 An older baseline is not a Relay failure. Advance the test gateway first rather
@@ -78,6 +84,18 @@ uv run pytest -q \
   tests/tools/test_process_registry.py::test_drain_notifications_ownerless_completion_preserves_legacy_delivery \
   tests/tools/test_process_registry.py::test_drain_notifications_ownerless_async_delegation_still_requires_proof \
   tests/tools/test_process_registry.py::test_drain_notifications_completion_callback_exception_fails_closed
+
+uv run pytest -q \
+  tests/gateway/test_compress_command.py \
+  tests/agent/test_system_prompt_restore.py
+
+uv run pytest -q \
+  tests/hermes_cli/test_goal_gates.py \
+  tests/hermes_cli/test_heartbeat.py \
+  tests/agent/test_refine_focus.py \
+  tests/tui_gateway/test_goal_command.py
+
+uv run pytest -q tests/tools/test_file_write_safety.py
 ```
 
 Do not start the live matrix if these tests fail. First determine whether the
@@ -134,6 +152,74 @@ This proves restart-safe **completion delivery**, not durable child-process
 execution. Stateless `/v1/runs` and `/v1/chat/completions` have no asynchronous
 callback channel and must not be documented as equivalent.
 
+### 4. Provider-aware compression continuity
+
+Use a disposable profile with an enabled memory provider and synthetic marker
+text; never copy a real profile database, memory store, or provider content.
+
+1. Seed a distinctive synthetic memory-provider block into the persisted system
+   prompt for session A.
+2. Invoke Android `/compress` and capture the `session.compress` response.
+3. Resume the rotated session and submit one ordinary turn.
+4. Confirm the exact synthetic block remains in the effective prompt and the
+   Android transcript is replaced by the authoritative response without a
+   duplicate turn.
+5. In a separate fixture, force persisted-prompt restoration to fail. Confirm
+   the next real turn rebuilds provider context instead of accepting a
+   provider-less fallback as authoritative.
+6. Repeat against one pre-`session.compress` gateway and confirm Android uses
+   the legacy slash fallback without claiming authoritative transcript state.
+
+Also exercise a concurrent compression lock. A successful no-op with
+`compressed:false`, `lock_held:true`, and an authoritative message is a pass;
+it must not be presented as a successful context rewrite.
+
+### 5. Persistent-session automation
+
+Run this matrix in disposable root and named profiles. Use harmless shell gates
+that write only below the fixture directory.
+
+1. Add passing and failing `/goal gate` commands. Confirm a failed gate blocks
+   completion, a retry can pass, and two consecutive compression-exhausted goal
+   turns pause with `/compress` plus `/goal resume` guidance.
+2. Configure `/heartbeat`, let it fire only while the owning session is idle,
+   then verify user-message priority, missed-tick coalescing, pause, resume,
+   clear, session switching, and compression migration. Restart the disposable
+   gateway and confirm the watch does not auto-resume or duplicate a turn.
+3. Invoke `/refine [focus]` while idle and confirm one immediate acknowledgement,
+   one asynchronous completion notice, and profile-local synthetic memory/skill
+   changes. While a turn is busy, confirm `/refine` is rejected without starting
+   another worker. Switch sessions and reconnect before completion to verify the
+   notice remains owned by the originating session.
+4. Confirm Android command discovery exposes all three commands and routes them
+   through persistent Gateway slash dispatch. Stateless API calls must return
+   the upstream persistent-session decline instead of entering the model path.
+
+### 6. Protected-file approval scopes
+
+Create a disposable project tree containing fixture `AGENTS.md`, `CLAUDE.md`,
+`SOUL.md`, `.cursorrules`, `.hermes/config.yaml`, ordinary files, and a fake
+home with `.ssh/config`, `.ssh/id_fixture`, and `.ssh/authorized_keys`. Point
+the test process at that fake home. Never target the operator's real protected
+files or SSH directory.
+
+1. From Android, request `write_file` and a multi-file `patch` touching a
+   protected instruction fixture. The card must offer only **Approve once** and
+   **Deny**. Approve once, then repeat and require a fresh prompt.
+2. Target the fake `.ssh/config`. Require once/session/always/deny choices, then
+   verify the selected scope follows normal upstream approval behavior.
+3. Target the fake key, `authorized_keys`, and another fake `.ssh` file. Require
+   hard denial with no approval card.
+4. Mix a protected path and an ordinary path in one patch. Denial must leave
+   every file unchanged; approval applies the patch atomically.
+5. Repeat the approval-required operations through cron or background
+   delegation with no human lane. Require a bounded visible failure, no file
+   mutation, and no suggestion or attempt to retry through another tool.
+
+The Android client treats explicit `allow_session:false` and
+`allow_permanent:false` metadata as authoritative even if a gateway also
+includes broader values in `choices`.
+
 ## Relay client gate
 
 After the live upstream matrix passes, run the Relay client suites that cover
@@ -163,11 +249,12 @@ configuration to the public evidence.
 | Evidence | Proves | Does not prove |
 |---|---|---|
 | Baseline ancestry | Required fixes are in the tested source tree | Deployed processes run that tree |
-| Static fixture groups | Deterministic routing, isolation, queue, compression, and delegation contracts | Provider behavior, restart recovery, or event delivery over a real socket |
+| Static fixture groups | Deterministic routing, isolation, queue, compression, delegation, automation, and file-safety contracts | Provider behavior, restart recovery, approval UI, or event delivery over a real socket |
 | Desktop baseline contract | Vanilla upstream still declares the dashboard gateway and required event names consumed by Relay Desktop | Provider output, auth, or a live desktop session |
 | Live gateway matrix | Session/provider behavior for the recorded runtime and profile | Android lifecycle/reconnect behavior |
 | Android reconnect smoke | Client mapping and recovery on the exercised device | Other providers, profiles, gateway modes, or OS versions |
 
-Do not close HRUI-032, HRUI-039, or HRUI-043 from the static JSON alone. Each
-item remains gated on the corresponding live row above, with the restart and
-provider-cost steps requiring explicit operator authorization.
+Do not close HRUI-032, HRUI-039, HRUI-043, HRUI-062, HRUI-112, or HRUI-121 from
+the static JSON alone. Each item remains gated on the corresponding live row
+above, with the restart and provider-cost steps requiring explicit operator
+authorization.
