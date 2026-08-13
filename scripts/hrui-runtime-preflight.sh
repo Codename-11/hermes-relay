@@ -117,7 +117,7 @@ fi
 
 discover_units() {
   systemctl --user list-unit-files --type=service --no-legend --no-pager 2>/dev/null \
-    | awk '$1 ~ /^hermes-(gateway.*|dashboard|proxy|relay)\.service$/ {print $1}' \
+    | awk '$1 ~ /^hermes-.*\.service$/ {print $1}' \
     | sort -u
 }
 
@@ -128,6 +128,26 @@ else
 fi
 
 declare -a service_pids=()
+add_pid() {
+  local candidate="$1"
+  [[ "$candidate" =~ ^[0-9]+$ ]] || return
+  [ "$candidate" != "0" ] || return
+  [ -d "/proc/$candidate" ] || return
+  if [[ " ${service_pids[*]} " != *" $candidate "* ]]; then
+    service_pids+=("$candidate")
+  fi
+}
+
+collect_unit_pids() {
+  local unit="$1"
+  local control_group
+  control_group="$(systemctl --user show "$unit" -p ControlGroup --value 2>/dev/null || true)"
+  if [ -n "$control_group" ] && [ -d "/sys/fs/cgroup$control_group" ]; then
+    while IFS= read -r proc_file; do
+      while IFS= read -r child_pid; do add_pid "$child_pid"; done < "$proc_file"
+    done < <(find "/sys/fs/cgroup$control_group" -type f -name cgroup.procs 2>/dev/null)
+  fi
+}
 section "services"
 for unit in "${units[@]}"; do
   active="$(systemctl --user show "$unit" -p ActiveState --value 2>/dev/null || true)"
@@ -137,10 +157,11 @@ for unit in "${units[@]}"; do
   printf 'unit=%s enabled=%s active=%s pid=%s started=%s\n' "$unit" "$enabled" "$active" "$pid" "$started"
 
   if [ "$pid" != "0" ] && [ -d "/proc/$pid" ]; then
-    service_pids+=("$pid")
+    add_pid "$pid"
     printf '  exe=%s\n' "$(readlink -f "/proc/$pid/exe")"
     printf '  cwd=%s\n' "$(readlink -f "/proc/$pid/cwd")"
   fi
+  collect_unit_pids "$unit"
 
   if [ "$strict" -eq 1 ] && [ "$enabled" != "disabled" ] && [ "$active" != "active" ]; then
     fail "$unit is not active"
@@ -190,12 +211,33 @@ done < <(
 df -Pk "$hermes_home" | tail -n 1 | awk '{printf "filesystem_available_kib=%s\n", $4}'
 
 section "open database descriptors"
+declare -a unscoped_db_pids=()
+while IFS= read -r proc_dir; do
+  candidate_pid="${proc_dir#/proc/}"
+  while IFS= read -r target; do
+    case "$target" in
+      "$hermes_home"/*.db|"$hermes_home"/*.db-wal|"$hermes_home"/*.db-shm)
+        if [[ " ${service_pids[*]} " != *" $candidate_pid "* ]]; then
+          unscoped_db_pids+=("$candidate_pid")
+        fi
+        break
+        ;;
+    esac
+  done < <(find "$proc_dir/fd" -maxdepth 1 -type l -printf '%l\n' 2>/dev/null)
+done < <(find /proc -maxdepth 1 -type d -regex '/proc/[0-9]+' 2>/dev/null)
+
 for pid in "${service_pids[@]}"; do
   find "/proc/$pid/fd" -maxdepth 1 -type l -printf '%l\n' 2>/dev/null \
     | grep -E '\.db(-wal|-shm)?$' \
     | sort -u \
     | sed "s|^|pid=$pid |" || true
 done
+if [ "${#unscoped_db_pids[@]}" -gt 0 ]; then
+  printf 'unscoped_database_writer_pids=%s\n' "$(printf '%s\n' "${unscoped_db_pids[@]}" | sort -nu | paste -sd, -)"
+  [ "$strict" -eq 1 ] && fail "database writers exist outside the discovered service cgroups"
+else
+  printf 'unscoped_database_writer_pids=none\n'
+fi
 
 section "listeners"
 if command -v ss >/dev/null 2>&1 && [ "${#service_pids[@]}" -gt 0 ]; then

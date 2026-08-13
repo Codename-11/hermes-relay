@@ -79,6 +79,11 @@ def main() -> int:
         raise SystemExit(
             f"refusing source drift: checkout HEAD is {head}, expected {expected}"
         )
+    if _run(repo, "git", "symbolic-ref", "-q", "HEAD").returncode == 0:
+        raise SystemExit("refusing mutable branch checkout: detach HEAD at the revision")
+    status = _git_text(repo, "status", "--porcelain", "--untracked-files=all")
+    if status:
+        raise SystemExit("refusing dirty source: tracked or untracked files would affect pytest")
 
     lanes = args.lane or list(MATRIX)
     for lane in lanes:
