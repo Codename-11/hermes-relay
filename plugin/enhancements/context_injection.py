@@ -12,7 +12,7 @@ import importlib
 import logging
 import sys
 from functools import wraps
-from typing import Any
+from typing import Any, Mapping
 
 from ..config import (
     agent_context_enabled,
@@ -105,6 +105,46 @@ def _fence_block(block: dict[str, str]) -> str:
 
 def _build_injection_text() -> str:
     return "\n\n".join(_fence_block(block) for block in get_injected_context_blocks())
+
+
+def _native_section_content(block_name: str) -> str:
+    """Resolve one section inside the active Hermes profile scope."""
+    for block in get_injected_context_blocks():
+        if block["name"] == block_name:
+            return block["text"]
+    return ""
+
+
+def register_context_sections(ctx: Any) -> bool:
+    """Register profile-owned prompt sections on modern Hermes hosts.
+
+    The upstream registration is recorded in the plugin ownership ledger, so
+    reload/disable/unload removes only this profile's sections. ``False`` means
+    the additive API is absent and the caller may use the legacy wrapper.
+    """
+    register = getattr(ctx, "register_system_prompt_section", None)
+    if not callable(register):
+        return False
+
+    sections = (
+        (MEDIA_SENSITIVITY_BLOCK_NAME, MEDIA_SENSITIVITY_INSTRUCTION),
+        (PHONE_PLATFORM_BLOCK_NAME, PHONE_PLATFORM_INSTRUCTION),
+    )
+    for block_name, instruction in sections:
+        def _content(
+            _session_info: Mapping[str, Any],
+            *,
+            _block_name: str = block_name,
+        ) -> str:
+            return _native_section_content(_block_name)
+
+        register(
+            id=f"hermes-relay.{block_name}",
+            content=_content,
+            position="after_memory",
+            max_chars=len(instruction) + 64,
+        )
+    return True
 
 
 def _resolve_ai_agent_class() -> type[Any] | None:
@@ -202,4 +242,5 @@ __all__ = [
     "available_context_blocks",
     "get_injected_context_blocks",
     "injected_context_payload",
+    "register_context_sections",
 ]

@@ -4044,4 +4044,14 @@
     <string name="drawer_all_profiles">すべてのプロファイル</string>
     <string name="drawer_no_profile_sessions">一致するプロファイルセッションはありません。</string>
     <string name="drawer_close">閉じる</string>
+    <string name="profile_inspector_gateway_settings">Gateway プロファイル設定</string>
+    <string name="profile_inspector_gateway_settings_hint">選択中のプロファイルに Hermes 経由で直接保存します。</string>
+    <string name="profile_inspector_edit_config">プロファイル設定を編集</string>
+    <string name="profile_inspector_description">説明</string>
+    <string name="profile_inspector_provider">プロバイダー</string>
+    <string name="profile_inspector_model">モデル</string>
+    <string name="profile_inspector_save_changes">変更を保存</string>
+    <string name="profile_inspector_toolsets">ツールセット</string>
+    <string name="profile_inspector_toolsets_hint">このプロファイルで使用できる Hermes のツールグループを選択します。</string>
+    <string name="profile_inspector_tool_count">%1$d 個のツール</string>
 </resources>

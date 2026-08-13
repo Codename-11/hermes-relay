@@ -75,6 +75,23 @@ data class DashboardGatewayTopology(
     @SerialName("served_profiles") val servedProfiles: List<String> = emptyList(),
 )
 
+/**
+ * Return only profiles the launch gateway positively reports as served.
+ *
+ * `/api/status.profiles` is the installed-profile inventory. Selective
+ * multiplex serving can exclude an installed profile, so that list must never
+ * authorize construction of a `/p/<profile>` API fallback route.
+ */
+internal fun DashboardStatus.multiplexServedProfiles(): List<String> {
+    if (!gatewayMode.equals("multiplex", ignoreCase = true)) return emptyList()
+    return gateways.firstOrNull { it.profile.equals("default", ignoreCase = true) }
+        ?.servedProfiles
+        .orEmpty()
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .distinct()
+}
+
 @Serializable
 data class DashboardComponentHealthRollup(
     val supported: Boolean = false,

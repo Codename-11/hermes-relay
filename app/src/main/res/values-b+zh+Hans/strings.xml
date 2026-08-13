@@ -3973,4 +3973,14 @@
     <string name="drawer_all_profiles">所有配置文件</string>
     <string name="drawer_no_profile_sessions">没有匹配的配置文件会话。</string>
     <string name="drawer_close">关闭</string>
+    <string name="profile_inspector_gateway_settings">Gateway 配置文件设置</string>
+    <string name="profile_inspector_gateway_settings_hint">通过 Hermes 直接保存到当前所选配置文件。</string>
+    <string name="profile_inspector_edit_config">编辑配置文件设置</string>
+    <string name="profile_inspector_description">说明</string>
+    <string name="profile_inspector_provider">提供商</string>
+    <string name="profile_inspector_model">模型</string>
+    <string name="profile_inspector_save_changes">保存更改</string>
+    <string name="profile_inspector_toolsets">工具集</string>
+    <string name="profile_inspector_toolsets_hint">选择此配置文件可以使用的 Hermes 工具组。</string>
+    <string name="profile_inspector_tool_count">%1$d 个工具</string>
 </resources>
