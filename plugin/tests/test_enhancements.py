@@ -7,6 +7,8 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
+from unittest.mock import patch
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -22,6 +24,7 @@ from plugin.enhancements.context_injection import (
     apply_context_injection,
     get_injected_context_blocks,
     injected_context_payload,
+    register_context_sections,
 )
 
 _ENV_KEYS = (
@@ -93,6 +96,26 @@ class PluginConfigTests(_IsolatedEnvMixin, unittest.TestCase):
         self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "0")
         self._write_dotenv(**{plugin_config.RELAY_AGENT_CONTEXT_ENABLED: "1"})
         self.assertTrue(plugin_config.agent_context_enabled())
+
+    def test_context_local_upstream_home_wins_over_process_home(self) -> None:
+        process_home = Path(self._tmpdir.name) / "root"
+        profile_home = Path(self._tmpdir.name) / "profiles" / "work"
+        process_home.mkdir(parents=True)
+        profile_home.mkdir(parents=True)
+        (process_home / ".env").write_text(
+            f"{plugin_config.RELAY_AGENT_CONTEXT_ENABLED}=1\n",
+            encoding="utf-8",
+        )
+        (profile_home / ".env").write_text(
+            f"{plugin_config.RELAY_AGENT_CONTEXT_ENABLED}=0\n",
+            encoding="utf-8",
+        )
+        os.environ["HERMES_HOME"] = str(process_home)
+        constants = ModuleType("hermes_constants")
+        constants.get_hermes_home = lambda: profile_home  # type: ignore[attr-defined]
+
+        with patch.dict("sys.modules", {"hermes_constants": constants}):
+            self.assertFalse(plugin_config.agent_context_enabled())
 
 
 class EnhancementRegistryTests(_IsolatedEnvMixin, unittest.TestCase):
@@ -202,6 +225,62 @@ class ContextInjectionTests(_IsolatedEnvMixin, unittest.TestCase):
                 }
             ],
         )
+
+    def test_native_sections_are_profile_owned_and_profile_scoped(self) -> None:
+        root_home = Path(self._tmpdir.name) / "root"
+        work_home = Path(self._tmpdir.name) / "profiles" / "work"
+        root_home.mkdir(parents=True)
+        work_home.mkdir(parents=True)
+        (root_home / ".env").write_text(
+            "RELAY_AGENT_CONTEXT_ENABLED=1\n"
+            "RELAY_CONTEXT_MEDIA_SENSITIVITY=1\n"
+            "PHONE_ENABLED=0\n",
+            encoding="utf-8",
+        )
+        (work_home / ".env").write_text(
+            "RELAY_AGENT_CONTEXT_ENABLED=1\n"
+            "RELAY_CONTEXT_MEDIA_SENSITIVITY=0\n"
+            "PHONE_ENABLED=1\n",
+            encoding="utf-8",
+        )
+        active_home = root_home
+        constants = ModuleType("hermes_constants")
+        constants.get_hermes_home = lambda: active_home  # type: ignore[attr-defined]
+
+        class FakeContext:
+            def __init__(self) -> None:
+                self.sections: dict[str, object] = {}
+
+            def register_system_prompt_section(self, **kwargs: object) -> None:
+                self.sections[str(kwargs["id"])] = kwargs["content"]
+
+        root_ctx = FakeContext()
+        work_ctx = FakeContext()
+        with patch.dict("sys.modules", {"hermes_constants": constants}):
+            self.assertTrue(register_context_sections(root_ctx))
+            self.assertTrue(register_context_sections(work_ctx))
+
+            media = root_ctx.sections["hermes-relay.media-sensitivity"]
+            phone = root_ctx.sections["hermes-relay.phone-platform"]
+            self.assertTrue(callable(media))
+            self.assertTrue(callable(phone))
+            self.assertEqual(media({}), MEDIA_SENSITIVITY_INSTRUCTION)  # type: ignore[operator]
+            self.assertEqual(phone({}), "")  # type: ignore[operator]
+
+            active_home = work_home
+            work_media = work_ctx.sections["hermes-relay.media-sensitivity"]
+            work_phone = work_ctx.sections["hermes-relay.phone-platform"]
+            self.assertEqual(work_media({}), "")  # type: ignore[operator]
+            self.assertEqual(work_phone({}), PHONE_PLATFORM_INSTRUCTION)  # type: ignore[operator]
+
+            # Unloading the disposable manager cannot erase root ownership.
+            work_ctx.sections.clear()
+            active_home = root_home
+            self.assertEqual(media({}), MEDIA_SENSITIVITY_INSTRUCTION)  # type: ignore[operator]
+            self.assertEqual(len(root_ctx.sections), 2)
+
+    def test_native_registration_missing_keeps_legacy_fallback_available(self) -> None:
+        self.assertFalse(register_context_sections(object()))
 
 
 class ContextInjectedRouteTests(_IsolatedEnvMixin, unittest.IsolatedAsyncioTestCase):

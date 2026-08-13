@@ -74,6 +74,14 @@ Hermes-Relay plugin
   `-- diagnostics         -> hermes relay doctor
 ```
 
+In multiplex gateways, every profile's plugin manager owns its own Relay tool,
+command, hook, platform, and system-prompt registrations. Relay configuration
+resolves through Hermes' context-local home override, not only the process
+`HERMES_HOME`. Current Hermes hosts receive Relay prompt context through owned
+`register_system_prompt_section` entries so reload, disable, re-enable, and
+unload remain profile-isolated; the legacy prompt wrapper is used only when
+that additive registration API is unavailable.
+
 A saved **Connection** represents one Hermes installation, not one transport.
 Its stable identity is independent of endpoint URLs. Dashboard/Gateway is the
 standard upstream surface; API server and Relay endpoints are optional
