@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Android can edit current Hermes profiles through the standard Gateway.** The Profile Inspector capability-gates `profiles.describe` and `profiles.configure`, keeps Relay-only memory editing and older-Hermes fallback intact, and reports partial section saves without discarding failed drafts.
 - **Windows management separates each Relay host from this PC.** Host detail is now the per-host hub for identity, connection and pairing/session metadata, access, capabilities, authorized-client deauthorization, re-pairing, and guarded removal. Settings owns local daemon lifecycle, separate UI-at-sign-in and daemon-with-UI preferences, explicit UAC elevation and return to user mode, terminal/CLI launchers, daemon logs, diagnostics, updates, and a Help & About page with version details and documentation links. Existing installs keep automatic daemon startup off until enabled.
 - **Desktop access uses four clear presets.** Restricted keeps every desktop capability off, Ask Every Time requests local approval for each available operation, Standard allows files while asking for screen/input/USB and withholding raw commands, and Full Access allows every available capability without task grants. New pairings default to Ask Every Time; existing hosts keep their stored policy. Individual changes snap to an exact preset when possible and otherwise become Custom.
 - **The connected-host control is visibly interactive.** The compact Agent-to-PC route now gives the selected host a labeled server icon, host identity, Change affordance, stronger card treatment, and responsive width instead of presenting the host name as a cramped status pill.
@@ -25,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Phone delivery remains compatible with strict Hermes targets.** The plugin registers version-tolerant parser and validator hooks for its single configured Phone destination while retaining older-host registration and exactly-once standalone delivery.
+- **Profile-owned Relay registrations stay isolated.** Current Hermes uses its profile-scoped prompt-section ownership and context-local profile home; legacy hosts retain the guarded compatibility wrapper.
+- **Android preserves authoritative Gateway outcomes.** Protected-file cards cannot offer forbidden persistent scopes, compression no-ops show the server result, bounded resume failures do not create context-free replacement sessions, and edit/regenerate retains durable row identities across consecutive rewinds.
+- **Android routes and uploads against live upstream truth.** Multiplex API fallback trusts `served_profiles` instead of installed profiles, and generic documents carry the Gateway-issued `@file:` reference into ordinary and queued prompts.
 - **Ask-mode approval cards show the requested action.** A bounded command or action preview appears in the compact card, with full context in the expandable detail view and an option to review the live request in the main UI.
 - **Mixed desktop capability policies are labeled Custom.** Overview no longer presents a misleading preset when individual capability controls differ.
 - **Desktop pairing and connection security are explicit.** The management UI supports URL/code pairing directly and distinguishes encrypted `wss://` relay connections from unencrypted `ws://` routes.

@@ -24,7 +24,16 @@ _FALSE_VALUES = {"0", "false", "no", "off", ""}
 
 
 def _env_path() -> Path:
-    home = Path(os.getenv("HERMES_HOME") or (Path.home() / ".hermes"))
+    # Multiplex gateways scope profiles with a ContextVar rather than mutating
+    # process-wide HERMES_HOME. Prefer Hermes' authoritative resolver when it
+    # exists so a secondary profile cannot inherit the launch profile's Relay
+    # flags. Standalone Relay and older Hermes releases keep the env fallback.
+    try:
+        from hermes_constants import get_hermes_home
+
+        home = Path(get_hermes_home())
+    except (ImportError, AttributeError, TypeError):
+        home = Path(os.getenv("HERMES_HOME") or (Path.home() / ".hermes"))
     return home / ".env"
 
 

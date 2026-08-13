@@ -24,6 +24,36 @@ import java.io.IOException
 
 class DashboardApiClientTest {
 
+    @Test
+    fun `multiplex API routing uses served profiles instead of installed inventory`() {
+        val status = DashboardStatus(
+            authRequired = true,
+            profiles = listOf("default", "research", "excluded"),
+            gatewayMode = "multiplex",
+            gateways = listOf(
+                DashboardGatewayTopology(
+                    profile = "default",
+                    servedProfiles = listOf("default", "research", "research", " "),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("default", "research"), status.multiplexServedProfiles())
+        assertFalse("excluded" in status.multiplexServedProfiles())
+    }
+
+    @Test
+    fun `multiplex API routing fails closed without launch gateway served profiles`() {
+        val status = DashboardStatus(
+            authRequired = true,
+            profiles = listOf("default", "research"),
+            gatewayMode = "multiplex",
+            gateways = emptyList(),
+        )
+
+        assertTrue(status.multiplexServedProfiles().isEmpty())
+    }
+
     private lateinit var server: MockWebServer
 
     @Before

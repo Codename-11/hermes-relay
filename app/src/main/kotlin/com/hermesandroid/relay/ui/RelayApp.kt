@@ -618,21 +618,11 @@ fun RelayApp() {
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
 
-    // Profile Inspector client. Shares the same lazy relay URL + bearer
-    // token providers as the voice client so any rotation/re-pair is
-    // automatically picked up on the next fetch. Process-stable via
-    // remember {} so the OkHttpClient isn't rebuilt on recomposition.
-    val profileInspectorClient = remember {
-        RelayProfileInspectorClient(
-            okHttpClient = okhttp3.OkHttpClient.Builder()
-                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build(),
-            relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
-            sessionTokenProvider = {
-                (connectionViewModel.authState.value as? AuthState.Paired)?.token
-            },
-        )
+    val profileInspectorHttpClient = remember {
+        okhttp3.OkHttpClient.Builder()
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
     }
     // === PHASE3-status: sync granular phone-status settings to chat ===
     val appContextEnabled by connectionViewModel.appContextEnabled.collectAsState()
@@ -2619,7 +2609,8 @@ fun RelayApp() {
                     val sectionArg = backStackEntry.arguments
                         ?.getString(Screen.ProfileInspector.ARG_SECTION)
                         ?: Screen.ProfileInspector.SECTION_CONFIG
-                    if (coldStartAuthState !is AuthState.Paired) {
+                    val inspectorGatewayClient = connectionViewModel.activeGatewayChatClient()
+                    if (coldStartAuthState !is AuthState.Paired && inspectorGatewayClient == null) {
                         PowerFeatureGateScreen(
                             title = stringResource(R.string.screen_profile_inspector_label),
                             summary = stringResource(R.string.power_gate_profile_inspector_summary),
@@ -2647,8 +2638,18 @@ fun RelayApp() {
                                 // SavedStateHandle contains our
                                 // `profileName` arg automatically.
                                 val ssh = extras.createSavedStateHandle()
+                                // Freeze both transports to the connection that
+                                // owned this nav entry. A later connection/profile
+                                // switch cannot redirect an open editor's writes.
+                                val relayUrl = connectionViewModel.effectiveRelayUrl.value
+                                val relayToken = (connectionViewModel.authState.value as? AuthState.Paired)?.token
                                 return ProfileInspectorViewModel(
-                                    client = profileInspectorClient,
+                                    legacyClient = RelayProfileInspectorClient(
+                                        okHttpClient = profileInspectorHttpClient,
+                                        relayUrlProvider = { relayUrl },
+                                        sessionTokenProvider = { relayToken },
+                                    ),
+                                    gatewayClient = inspectorGatewayClient,
                                     savedStateHandle = ssh,
                                 ) as T
                             }

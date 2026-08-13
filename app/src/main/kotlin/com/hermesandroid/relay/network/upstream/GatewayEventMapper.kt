@@ -594,6 +594,12 @@ private fun JsonObject?.approvalChoices(): List<String>? =
     (this?.get("choices") as? JsonArray)
         ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
         ?.filter { it in setOf("once", "session", "always", "deny") }
+        // Scope-denial flags are authoritative. Current upstream protected-
+        // instruction requests set both flags false, but gateway event builders
+        // can still include the broader session choice in `choices`.
+        // Never offer a scope the request explicitly forbids.
+        ?.filterNot { it == "session" && this.boolean("allow_session") == false }
+        ?.filterNot { it == "always" && this.boolean("allow_permanent") == false }
         ?.distinct()
         ?.takeIf { it.isNotEmpty() }
 

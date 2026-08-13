@@ -14,6 +14,9 @@ data class DashboardConnectionStatus(
     val gatewayTicketAvailable: Boolean? = null,
     val message: String? = null,
     val gatewayMode: String? = null,
+    /** Profiles positively advertised by the live multiplex gateway. */
+    val servedProfiles: List<String> = emptyList(),
+    /** Installed profiles reported by the dashboard; never routing authority. */
     val profiles: List<String> = emptyList(),
 )
 

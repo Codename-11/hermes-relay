@@ -3766,4 +3766,14 @@
     <string name="drawer_all_profiles">Все профили</string>
     <string name="drawer_no_profile_sessions">Нет подходящих сеансов профиля.</string>
     <string name="drawer_close">Закрыть</string>
+    <string name="profile_inspector_gateway_settings">Настройки профиля Gateway</string>
+    <string name="profile_inspector_gateway_settings_hint">Сохраняются напрямую через Hermes для выбранного профиля.</string>
+    <string name="profile_inspector_edit_config">Изменить настройки профиля</string>
+    <string name="profile_inspector_description">Описание</string>
+    <string name="profile_inspector_provider">Провайдер</string>
+    <string name="profile_inspector_model">Модель</string>
+    <string name="profile_inspector_save_changes">Сохранить изменения</string>
+    <string name="profile_inspector_toolsets">Наборы инструментов</string>
+    <string name="profile_inspector_toolsets_hint">Выберите группы инструментов Hermes, доступные этому профилю.</string>
+    <string name="profile_inspector_tool_count">Инструментов: %1$d</string>
 </resources>

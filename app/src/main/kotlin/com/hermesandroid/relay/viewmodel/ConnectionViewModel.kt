@@ -83,6 +83,7 @@ import com.hermesandroid.relay.network.upstream.mirrorDashboardSessionCookies
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.multiplexServedProfiles
 import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
 import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.shared.EndpointResolver
@@ -4635,14 +4636,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             ?.dashboardLastStatus
         val liveTopology = topologyConnectionId == activeConnectionId
         val mode = if (liveTopology) topologyGatewayMode else persisted?.gatewayMode
-        val profiles = if (liveTopology) topologyProfiles else persisted?.profiles.orEmpty()
+        val profiles = if (liveTopology) topologyProfiles else persisted?.servedProfiles.orEmpty()
         return mode.equals("multiplex", ignoreCase = true) && profile.name in profiles
     }
 
     /** Keep chat routing synchronized with the latest public dashboard topology. */
     private suspend fun updateDashboardTopology(connectionId: String, status: DashboardStatus?) {
         val nextMode = status?.gatewayMode
-        val nextProfiles = status?.profiles.orEmpty()
+        val nextProfiles = status?.multiplexServedProfiles().orEmpty()
         val changed = topologyConnectionId != connectionId ||
             topologyGatewayMode != nextMode ||
             topologyProfiles != nextProfiles
@@ -4687,6 +4688,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             previous.authRequired == status?.authRequired &&
             previous.authenticated == session?.authenticated &&
             previous.gatewayMode == status?.gatewayMode &&
+            previous.servedProfiles == status?.multiplexServedProfiles().orEmpty() &&
             previous.profiles == status?.profiles.orEmpty()
         if (!materiallySame) {
             recordDashboardStatus(status = status, session = session, reachable = reachable)
@@ -5253,6 +5255,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     gatewayTicketAvailable = gatewayTicketAvailable,
                     message = message,
                     gatewayMode = status?.gatewayMode,
+                    servedProfiles = status?.multiplexServedProfiles().orEmpty(),
                     profiles = status?.profiles.orEmpty(),
                 ),
             )
@@ -5287,6 +5290,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     gatewayTicketAvailable = false,
                     message = "Dashboard session cleared",
                     gatewayMode = active?.dashboardLastStatus?.gatewayMode,
+                    servedProfiles = active?.dashboardLastStatus?.servedProfiles.orEmpty(),
                     profiles = active?.dashboardLastStatus?.profiles.orEmpty(),
                 ),
             )
@@ -5693,7 +5697,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             profileApiUrl = selectedProfile?.apiServerUrl,
             selectedProfileName = selectedProfile?.name,
             gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode,
-            servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty(),
+            servedProfiles = if (liveTopology) topologyProfiles else topology?.servedProfiles.orEmpty(),
         )
     }
 
@@ -5856,7 +5860,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             ?.dashboardLastStatus
         val liveTopology = topologyConnectionId == activeConnectionId
         val gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode
-        val servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty()
+        val servedProfiles = if (liveTopology) topologyProfiles else topology?.servedProfiles.orEmpty()
         val usesMultiplexProfileKey = ProfileApiUrlResolver.usesMultiplexProfileKey(
             profileApiUrl = selectedProfile?.apiServerUrl,
             selectedProfileName = selectedProfile?.name,

@@ -3885,4 +3885,14 @@
     <string name="drawer_all_profiles">Todos os perfis</string>
     <string name="drawer_no_profile_sessions">Nenhuma sessão de perfil correspondente.</string>
     <string name="drawer_close">Fechar</string>
+    <string name="profile_inspector_gateway_settings">Configurações do perfil do Gateway</string>
+    <string name="profile_inspector_gateway_settings_hint">Salvo diretamente pelo Hermes para este perfil selecionado.</string>
+    <string name="profile_inspector_edit_config">Editar configurações do perfil</string>
+    <string name="profile_inspector_description">Descrição</string>
+    <string name="profile_inspector_provider">Provedor</string>
+    <string name="profile_inspector_model">Modelo</string>
+    <string name="profile_inspector_save_changes">Salvar alterações</string>
+    <string name="profile_inspector_toolsets">Conjuntos de ferramentas</string>
+    <string name="profile_inspector_toolsets_hint">Escolha quais grupos de ferramentas do Hermes este perfil pode usar.</string>
+    <string name="profile_inspector_tool_count">%1$d ferramentas</string>
 </resources>

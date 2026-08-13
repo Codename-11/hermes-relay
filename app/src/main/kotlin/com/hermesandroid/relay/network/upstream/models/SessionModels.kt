@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import java.time.Instant
 
 /**
@@ -73,6 +74,26 @@ object FlexibleIdNonNullSerializer : KSerializer<String> {
 
     override fun serialize(encoder: Encoder, value: String) {
         encoder.encodeString(value)
+    }
+}
+
+/** Unknown-safe durable SQLite row id used by current Gateway history. */
+@OptIn(ExperimentalSerializationApi::class)
+object FlexibleLongSerializer : KSerializer<Long?> {
+    override val descriptor = PrimitiveSerialDescriptor("FlexibleLong", PrimitiveKind.LONG)
+
+    override fun deserialize(decoder: Decoder): Long? {
+        return try {
+            val jsonDecoder = decoder as? JsonDecoder
+                ?: return decoder.decodeLong()
+            (jsonDecoder.decodeJsonElement() as? JsonPrimitive)?.longOrNull
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Long?) {
+        if (value != null) encoder.encodeLong(value) else encoder.encodeNull()
     }
 }
 
@@ -293,6 +314,9 @@ data class MessageItem(
     @SerialName("session_id")
     @Serializable(with = FlexibleIdSerializer::class)
     val sessionId: String? = null,
+    @SerialName("row_id")
+    @Serializable(with = FlexibleLongSerializer::class)
+    val rowId: Long? = null,
     val role: String,
     val content: JsonElement? = null,
     @SerialName("tool_calls") val toolCalls: JsonElement? = null,
