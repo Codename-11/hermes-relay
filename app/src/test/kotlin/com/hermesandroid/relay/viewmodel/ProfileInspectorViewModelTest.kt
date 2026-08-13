@@ -41,7 +41,7 @@ class ProfileInspectorViewModelTest {
         val initial = description(description = "Old", model = "old")
         val refreshed = description(description = "Updated", model = "old")
         val gateway = FakeGateway(
-            descriptions = ArrayDeque(listOf(initial, refreshed)),
+            descriptions = mutableListOf(initial, refreshed),
             configureResult = GatewayProfileConfigureResult(
                 requested = setOf(GatewayProfileSection.Description, GatewayProfileSection.Model),
                 applied = setOf(GatewayProfileSection.Description),
@@ -104,13 +104,13 @@ class ProfileInspectorViewModelTest {
     )
 
     private class FakeGateway(
-        private val descriptions: ArrayDeque<GatewayProfileDescription>,
+        private val descriptions: MutableList<GatewayProfileDescription>,
         private val configureResult: GatewayProfileConfigureResult,
     ) : GatewayProfileEditorClient {
         val requestedNames = mutableListOf<String>()
         override suspend fun describeProfile(profileName: String): Result<GatewayProfileDescription> {
             requestedNames += profileName
-            return Result.success(descriptions.removeFirst())
+            return Result.success(descriptions.removeAt(0))
         }
         override suspend fun configureProfile(
             profileName: String,

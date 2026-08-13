@@ -2364,9 +2364,9 @@ class GatewayChatClientTest {
         harness.promptSubmitPayload = buildJsonObject {
             put("ok", true)
             put("survivor_user_row_ids", buildJsonArray {
-                add(101L)
+                add(JsonPrimitive(101L))
                 add(JsonNull)
-                add("malformed")
+                add(JsonPrimitive("malformed"))
             })
         }
         val r = Recorder()

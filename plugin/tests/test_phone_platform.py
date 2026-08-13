@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
+import types
 import unittest
 from typing import Any, Optional
 from unittest.mock import patch
@@ -510,7 +512,17 @@ class HomeChannelDefaultTests(_EnvIsolated):
         os.environ["PHONE_ENABLED"] = "1"
         ctx = _LegacyFakeCtx()
         legacy_entry = type("LegacyPlatformEntry", (), {"__dataclass_fields__": {}})
-        with patch("gateway.platform_registry.PlatformEntry", legacy_entry):
+        gateway_module = types.ModuleType("gateway")
+        registry_module = types.ModuleType("gateway.platform_registry")
+        registry_module.PlatformEntry = legacy_entry
+        gateway_module.platform_registry = registry_module
+        with patch.dict(
+            sys.modules,
+            {
+                "gateway": gateway_module,
+                "gateway.platform_registry": registry_module,
+            },
+        ):
             pp.register_phone_platform(ctx)
         self.assertEqual(ctx.calls, 1)
         assert ctx.platform_kwargs is not None
