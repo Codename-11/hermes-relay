@@ -18,8 +18,8 @@ service's authentication or authorization.
 ## Trust boundaries
 
 - The operator-reviewed pairing QR is the first-pair trust ceremony. It must
-  contain the proxy HTTPS authority and SPKI SHA-256 pin before Android or the
-  desktop CLI makes a proxy request.
+  contain the proxy HTTPS authority, public leaf certificate (`cert_der`), and
+  SPKI SHA-256 pin before Android or the desktop CLI makes a proxy request.
 - `auth.ok`, health responses, redirects, or a previously untrusted network
   connection must never introduce or replace stored proxy trust. They may only
   confirm an exact authority-and-pin match already imported from pairing.
@@ -75,9 +75,10 @@ service's authentication or authorization.
 
 - A proxy candidate is usable only with an HTTPS URL, a valid 32-byte SPKI
   SHA-256 pin, no user info/query/fragment, and a normalized safe base path.
-- The client accepts either a system-trusted chain or the paired self-signed
-  leaf for trust-manager validation, but the advertised SPKI pin is required
-  in both cases. Normal hostname verification remains enabled.
+- The client accepts either a system-trusted chain or the exact paired
+  self-signed leaf from `cert_der` for trust-manager validation, but the
+  advertised SPKI pin is required in both cases. Normal hostname verification
+  remains enabled; clients never disable certificate validation to learn a pin.
 - The pin and each service credential are scoped to the exact host and port.
   Redirects or retries outside that authority fail before credentials are sent.
 - A declared Secure Link route fails closed if its pinned client cannot be
@@ -95,9 +96,9 @@ service's authentication or authorization.
 
 ## Release acceptance tests
 
-- QR payloads from every pairing surface contain the proxy authority and pin,
-  preserve other LAN/Tailscale/public candidates, and sign the final ordered
-  candidate list.
+- QR payloads from every pairing surface contain the proxy authority, public
+  leaf certificate, and pin, preserve other LAN/Tailscale/public candidates,
+  and sign the final ordered candidate list.
 - Missing, malformed, changed, and wrong-authority pins fail before WebSocket
   authentication; explicit re-pair is the only reset path.
 - The certificate SAN matches the advertised DNS name, IPv4 address, or IPv6

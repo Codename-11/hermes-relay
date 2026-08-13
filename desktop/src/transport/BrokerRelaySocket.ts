@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { Duplex } from 'node:stream'
 import * as tls from 'node:tls'
 
-import { comparePins, extractSpkiSha256, peerCertificateDer } from '../certPin.js'
+import { certificateDerToPem, comparePins, extractSpkiSha256, peerCertificateDer } from '../certPin.js'
 
 export interface BrokerRouteConfig {
   url: string
@@ -11,6 +11,7 @@ export interface BrokerRouteConfig {
   token: string
   innerUrl: string
   innerPinSha256: string
+  innerCertificateDerBase64: string
 }
 
 type EventName = 'open' | 'message' | 'close' | 'error'
@@ -127,11 +128,17 @@ export async function openBrokerRelaySocket(config: BrokerRouteConfig): Promise<
   const stream = new BrokerByteStream(outer, { type: 'register', protocol_version: 1, role: 'client', host_id: config.hostId, connection_id: connectionId, credential_kind: config.credentialKind, token: config.token })
   await stream.matched
   const inner = new URL(config.innerUrl)
-  // lgtm[js/disabling-certificate-validation] The broker carries opaque bytes,
-  // so normal PKI cannot authenticate a private Secure Link certificate here.
-  // No inner application data is sent until the QR pin and hostname checks
-  // immediately below both succeed on this exact TLS connection.
-  const secure = tls.connect({ socket: stream, servername: inner.hostname, rejectUnauthorized: false })
+  const certificate = Buffer.from(config.innerCertificateDerBase64, 'base64')
+  if (!comparePins(config.innerPinSha256, extractSpkiSha256(certificate))) {
+    stream.destroy(new Error('Hermes Reach inner Secure Link certificate pin mismatch'))
+    throw new Error('Hermes Reach inner Secure Link certificate pin mismatch')
+  }
+  const secure = tls.connect({
+    socket: stream,
+    servername: inner.hostname,
+    rejectUnauthorized: true,
+    ca: certificateDerToPem(certificate),
+  })
   await new Promise<void>((resolve, reject) => { secure.once('secureConnect', resolve); secure.once('error', reject) })
   const raw = peerCertificateDer(secure)
   if (!raw || !comparePins(config.innerPinSha256, extractSpkiSha256(raw))) { secure.destroy(); throw new Error('Hermes Reach inner Secure Link certificate pin mismatch') }

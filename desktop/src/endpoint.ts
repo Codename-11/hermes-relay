@@ -63,6 +63,7 @@ export interface EndpointCandidate {
     url: string
     transportHint?: string
     pinSha256: string
+    certificateDerBase64?: string
     surfaces?: string[]
   }
   security?: string

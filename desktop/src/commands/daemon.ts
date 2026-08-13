@@ -757,7 +757,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       url = route.relay.url
       useSessionHeader = route.role.toLowerCase() === 'plugin_proxy' && !route.broker
       if (route.broker && route.proxy) {
-        brokerRoute = { url: route.broker.url, hostId: route.broker.hostId, credentialKind: route.broker.credentialKind, token: route.broker.token, innerUrl: route.relay.url, innerPinSha256: route.proxy.pinSha256 }
+        if (!route.proxy.certificateDerBase64) throw new Error('Hermes Reach route is missing its paired certificate')
+        brokerRoute = { url: route.broker.url, hostId: route.broker.hostId, credentialKind: route.broker.credentialKind, token: route.broker.token, innerUrl: route.relay.url, innerPinSha256: route.proxy.pinSha256, innerCertificateDerBase64: route.proxy.certificateDerBase64 }
       }
       activeRoute = route.broker ? 'outbound_broker' : route.role
       log.info({ event: 'route_selected', configured_url: configuredUrl, url, role: route.role })

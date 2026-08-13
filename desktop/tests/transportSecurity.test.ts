@@ -48,18 +48,20 @@ test('secure-first ranking retains plain LAN as a fallback', () => {
 
 test('preserves and validates the unified pinned proxy advertisement', () => {
   const pin = `sha256/${'A'.repeat(43)}=`
+  const certificateDer = Buffer.from('test certificate').toString('base64')
   const payload = decodePairingPayload(JSON.stringify({
     hermes: 3, host: '192.168.1.8', port: 8642, key: '',
     endpoints: [{
       role: 'plugin_proxy', priority: 0, recommended: true, security: 'pinned_tls',
       proxy: {
         url: 'https://relay.example.test:9443', transport_hint: 'https',
-        pin_sha256: pin, surfaces: ['relay', 'api', 'dashboard']
+        pin_sha256: pin, cert_der: certificateDer, surfaces: ['relay', 'api', 'dashboard']
       }
     }]
   }))
   const proxy = payload.endpoints?.[0]
   assert.equal(proxy?.proxy?.pinSha256, pin)
+  assert.equal(proxy?.proxy?.certificateDerBase64, certificateDer)
   assert.equal(proxy?.security, 'pinned_tls')
   assert.equal(proxy?.relay.url, 'wss://relay.example.test:9443/relay/ws')
   assert.deepEqual(proxy?.proxy?.surfaces, ['relay', 'api', 'dashboard'])
@@ -90,12 +92,13 @@ test('Hermes Reach is presented as experimental reachability without implying pa
 
 test('parses the exact server-emitted Hermes Reach bootstrap without consuming it during discovery', () => {
   const pin = `sha256/${'A'.repeat(43)}=`
+  const certificateDer = Buffer.from('test certificate').toString('base64')
   const payload = decodePairingPayload(JSON.stringify({
     hermes: 3, host: '192.0.2.10', port: 8642, key: '',
     endpoints: [{
       role: 'outbound_broker', priority: 0, recommended: false, experimental: true, security: 'e2ee_pinned_tls',
       broker: { url: 'wss://reach.example.test/v1/connect', host_id: 'h'.repeat(22), credential_kind: 'bootstrap', token: 'x'.repeat(43), expires_at: 2_000_000_000 },
-      proxy: { url: 'https://paired.example.test:9443', transport_hint: 'https', pin_sha256: pin, surfaces: ['relay'] }
+      proxy: { url: 'https://paired.example.test:9443', transport_hint: 'https', pin_sha256: pin, cert_der: certificateDer, surfaces: ['relay'] }
     }]
   }))
   const candidate = payload.endpoints?.[0]
@@ -110,6 +113,7 @@ test('parses the exact server-emitted Hermes Reach bootstrap without consuming i
     url: 'wss://reach.example.test/v1/connect', hostId: 'h'.repeat(22),
     credentialKind: 'bootstrap', token: 'x'.repeat(43),
     innerUrl: 'wss://paired.example.test:9443/relay/ws', innerPinSha256: pin,
+    innerCertificateDerBase64: certificateDer,
   })
 })
 

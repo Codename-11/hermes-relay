@@ -55,6 +55,7 @@ The canonical v3 candidate is:
     "url": "https://paired-host.example:9443",
     "transport_hint": "https",
     "pin_sha256": "sha256/base64-spki-digest",
+    "cert_der": "base64-der-leaf-certificate",
     "surfaces": ["relay", "api", "dashboard"],
     "services": {}
   }

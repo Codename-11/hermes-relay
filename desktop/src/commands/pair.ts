@@ -88,7 +88,7 @@ export function rankPairingCandidates(candidates: ReturnType<typeof payloadToRel
 }
 
 export function brokerRouteForCandidate(candidate: ReturnType<typeof payloadToRelayCandidates>[number]): BrokerRouteConfig | undefined {
-  if (!candidate.broker || !candidate.proxy) return undefined
+  if (!candidate.broker || !candidate.proxy?.certificateDerBase64) return undefined
   return {
     url: candidate.broker.url,
     hostId: candidate.broker.hostId,
@@ -96,6 +96,7 @@ export function brokerRouteForCandidate(candidate: ReturnType<typeof payloadToRe
     token: candidate.broker.token,
     innerUrl: candidate.relay.url,
     innerPinSha256: candidate.proxy.pinSha256,
+    innerCertificateDerBase64: candidate.proxy.certificateDerBase64,
   }
 }
 

@@ -15,7 +15,7 @@ export interface StoredRouteCandidate {
   priority: number
   api: { host: string; port: number; tls: boolean }
   relay: { url: string; transportHint?: string }
-  proxy?: { url: string; transportHint?: string; pinSha256: string; surfaces?: string[] }
+  proxy?: { url: string; transportHint?: string; pinSha256: string; certificateDerBase64?: string; surfaces?: string[] }
   security?: string
   recommended?: boolean
   experimental?: boolean

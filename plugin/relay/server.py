@@ -70,6 +70,7 @@ from .secure_proxy import (
     create_secure_proxy_app,
     ensure_tls_identity,
     spki_pin_sha256,
+    certificate_der_base64,
     secure_link_services,
     tls_context as secure_proxy_tls_context,
 )
@@ -150,6 +151,7 @@ class RelayServer:
                     advertised_host,
                     config.secure_proxy_port,
                     spki_pin_sha256(cert_path),
+                    certificate_der_base64(cert_path),
                 )
             except (
                 OSError,

@@ -156,6 +156,12 @@ def spki_pin_sha256(cert_path: Path) -> str:
     return "sha256/" + base64.b64encode(hashlib.sha256(der).digest()).decode("ascii")
 
 
+def certificate_der_base64(cert_path: Path) -> str:
+    """Return the public leaf certificate as compact DER base64 for pairing."""
+    der = ssl.PEM_cert_to_DER_cert(cert_path.read_text(encoding="ascii"))
+    return base64.b64encode(der).decode("ascii")
+
+
 _HOP_HEADERS = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailer", "transfer-encoding", "upgrade", "host", "forwarded",
@@ -512,7 +518,9 @@ def tls_context(cert_path: Path, key_path: Path) -> ssl.SSLContext:
     return context
 
 
-def advertised_candidate(host: str, port: int, pin: str) -> dict[str, object]:
+def advertised_candidate(
+    host: str, port: int, pin: str, certificate_der: str | None = None
+) -> dict[str, object]:
     url_host = f"[{host}]" if ":" in host else host
     return {
         "role": "plugin_proxy", "priority": 0, "recommended": True,
@@ -522,6 +530,7 @@ def advertised_candidate(host: str, port: int, pin: str) -> dict[str, object]:
         "capabilities": list(SECURE_LINK_CAPABILITIES),
         "proxy": {"url": f"https://{url_host}:{port}",
                   "transport_hint": "https", "pin_sha256": pin,
+                  **({"cert_der": certificate_der} if certificate_der else {}),
                   "surfaces": list(SECURE_LINK_CAPABILITIES),
                   "services": secure_link_services()},
     }

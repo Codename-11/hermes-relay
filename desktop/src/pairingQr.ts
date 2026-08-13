@@ -22,8 +22,7 @@ import {
 } from './endpoint.js'
 import { describeTransportSecurity } from './transportSecurity.js'
 import https from 'node:https'
-import tls from 'node:tls'
-import { certificateDerToPem, comparePins, extractSpkiSha256, peerCertificateDer } from './certPin.js'
+import { certificateDerToPem, comparePins, extractSpkiSha256 } from './certPin.js'
 
 /**
  * Per-candidate HEAD `/health` probe timeout. Matches Kotlin
@@ -169,7 +168,7 @@ function parseCandidate(v: unknown): EndpointCandidate | null {
     // the fixed /v1/connect path supplies that version boundary. Accept an
     // explicit 1 for compatibility, but reject any other advertised version.
     const supportedVersion = broker.protocol_version === undefined || broker.protocol_version === 1
-    if (supportedVersion && typeof broker.url === 'string' && typeof broker.host_id === 'string' && /^[A-Za-z0-9_-]{22}$/.test(broker.host_id) && (broker.credential_kind === 'bootstrap' || broker.credential_kind === 'route') && typeof broker.token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(broker.token) && typeof proxy.url === 'string' && typeof proxy.pin_sha256 === 'string') {
+    if (supportedVersion && typeof broker.url === 'string' && typeof broker.host_id === 'string' && /^[A-Za-z0-9_-]{22}$/.test(broker.host_id) && (broker.credential_kind === 'bootstrap' || broker.credential_kind === 'route') && typeof broker.token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(broker.token) && typeof proxy.url === 'string' && typeof proxy.pin_sha256 === 'string' && typeof proxy.cert_der === 'string') {
       try {
         const base = new URL(proxy.url)
         const brokerUrl = new URL(broker.url)
@@ -178,7 +177,7 @@ function parseCandidate(v: unknown): EndpointCandidate | null {
           role: o.role, priority,
           api: { host: base.hostname, port: Number(base.port || 443), tls: true },
           relay: { url: `wss://${base.host}/relay/ws`, transportHint: 'wss' },
-          proxy: { url: proxy.url, pinSha256: proxy.pin_sha256, surfaces: ['relay'] },
+          proxy: { url: proxy.url, pinSha256: proxy.pin_sha256, certificateDerBase64: proxy.cert_der, surfaces: ['relay'] },
           broker: { url: broker.url, hostId: broker.host_id, credentialKind: broker.credential_kind, token: broker.token, ...((typeof broker.expires_at === 'string' || typeof broker.expires_at === 'number' || broker.expires_at === null) ? { expiresAt: broker.expires_at } : {}) },
           ...(typeof o.security === 'string' ? { security: o.security } : {}),
           ...(typeof o.recommended === 'boolean' ? { recommended: o.recommended } : {}),
@@ -189,7 +188,7 @@ function parseCandidate(v: unknown): EndpointCandidate | null {
   }
   if (typeof o.proxy === 'object' && o.proxy !== null) {
     const proxy = o.proxy as Record<string, unknown>
-    if (typeof proxy.url === 'string' && typeof proxy.pin_sha256 === 'string') {
+    if (typeof proxy.url === 'string' && typeof proxy.pin_sha256 === 'string' && typeof proxy.cert_der === 'string') {
       try {
         const base = new URL(proxy.url)
         if (base.protocol !== 'https:' || !base.hostname) return null
@@ -205,6 +204,7 @@ function parseCandidate(v: unknown): EndpointCandidate | null {
           proxy: {
             url: proxy.url,
             pinSha256: proxy.pin_sha256,
+            certificateDerBase64: proxy.cert_der,
             ...(typeof proxy.transport_hint === 'string'
               ? { transportHint: proxy.transport_hint }
               : {}),
@@ -426,42 +426,23 @@ export function isValidPinnedProxyCandidate(candidate: EndpointCandidate): boole
   return candidate.role.toLowerCase() === 'plugin_proxy' &&
     candidate.security === 'pinned_tls' && candidate.recommended === true &&
     candidate.proxy?.url.startsWith('https://') === true &&
-    /^sha256\/[A-Za-z0-9+/]{43}=$/.test(candidate.proxy.pinSha256)
+    /^sha256\/[A-Za-z0-9+/]{43}=$/.test(candidate.proxy.pinSha256) &&
+    typeof candidate.proxy.certificateDerBase64 === 'string' &&
+    candidate.proxy.certificateDerBase64.length <= 8_192 &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(candidate.proxy.certificateDerBase64)
 }
 
-async function verifyPinnedProxyCertificate(
-  candidate: EndpointCandidate,
-  signal: AbortSignal,
-): Promise<Buffer | null> {
-  const parsed = new URL(candidate.proxy!.url)
-  return await new Promise<Buffer | null>((resolve, reject) => {
-    const socket = tls.connect({
-      host: parsed.hostname,
-      port: Number(parsed.port || 443),
-      servername: parsed.hostname,
-      // lgtm[js/disabling-certificate-validation] This pre-auth handshake reads
-      // only the leaf certificate. The QR-carried SPKI pin is compared below
-      // before the certificate is trusted or any credential/request is sent.
-      rejectUnauthorized: false,
-    })
-    const abort = () => socket.destroy(new Error('probe aborted'))
-    signal.addEventListener('abort', abort, { once: true })
-    socket.once('secureConnect', () => {
-      signal.removeEventListener('abort', abort)
-      try {
-        const raw = peerCertificateDer(socket)
-        socket.end()
-        resolve(raw !== null && comparePins(
-          candidate.proxy!.pinSha256,
-          extractSpkiSha256(raw),
-        ) ? raw : null)
-      } catch (error) {
-        socket.destroy()
-        reject(error)
-      }
-    })
-    socket.once('error', reject)
-  })
+function pinnedCertificate(candidate: EndpointCandidate): Buffer | null {
+  try {
+    const encoded = candidate.proxy?.certificateDerBase64
+    if (!encoded || encoded.length > 8_192 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return null
+    const certificate = Buffer.from(encoded, 'base64')
+    return certificate.length > 0 && comparePins(candidate.proxy!.pinSha256, extractSpkiSha256(certificate))
+      ? certificate
+      : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -502,15 +483,15 @@ export async function probeCandidate(
   try {
     if (isValidPinnedProxyCandidate(c)) {
       const url = `${c.proxy!.url.replace(/\/+$/, '')}/relay/health`
-      const pinnedCertificate = await verifyPinnedProxyCertificate(c, signal)
-      if (!pinnedCertificate) {
+      const certificate = pinnedCertificate(c)
+      if (!certificate) {
         return { candidate: c, reachable: false, elapsedMs: Date.now() - started,
           error: 'paired certificate pin did not match' }
       }
       const reachable = await new Promise<boolean>((resolve, reject) => {
         const request = https.get(url, {
           rejectUnauthorized: true,
-          ca: certificateDerToPem(pinnedCertificate),
+          ca: certificateDerToPem(certificate),
           signal,
           headers: sessionToken ? { 'X-Hermes-Relay-Session': sessionToken } : undefined
         }, response => {

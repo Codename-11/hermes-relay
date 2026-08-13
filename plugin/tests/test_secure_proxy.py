@@ -167,12 +167,17 @@ class SecureProxyIdentityTests(unittest.TestCase):
 
 class SecureProxyAdvertisementTests(unittest.TestCase):
     def test_pairing_payload_carries_operator_reviewed_pin(self) -> None:
-        candidate = advertised_candidate("192.0.2.10", 9443, "sha256/test")
+        candidate = advertised_candidate(
+            "192.0.2.10", 9443, "sha256/test", "dGVzdC1jZXJ0"
+        )
         payload = json.loads(build_pairing_qr_payload(
             host="192.0.2.10", port=8642, key="key", tls=False,
             endpoints=[candidate], sign=False,
         ))
         self.assertEqual(payload["endpoints"][0], candidate)
+        self.assertEqual(
+            payload["endpoints"][0]["proxy"]["cert_der"], "dGVzdC1jZXJ0"
+        )
 
     def test_candidate_declares_independently_authenticated_surfaces(self) -> None:
         candidate = advertised_candidate("192.0.2.10", 9443, "sha256/test")
