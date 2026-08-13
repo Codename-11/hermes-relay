@@ -3041,3 +3041,63 @@ Hermes authorization remains local and the vanilla upstream path remains
 independent. Implementing the client requires a TLS-over-broker byte-stream
 adapter; advertising the candidate is forbidden until that adapter and the
 cross-platform acceptance gates are complete.
+
+---
+
+## ADR 56 — Structured desktop control may use CUA Driver behind Hermes policy
+
+**Status:** Accepted for phased implementation (2026-08-13).
+
+**Context.** The first Windows input backend uses PowerShell, `SetCursorPos`,
+`mouse_event`, and `SendKeys`. It can move the operator's physical pointer and
+depends on foreground focus. CUA Driver provides target-process/window UI
+Automation, accessibility snapshots, background input, and session-scoped
+animated agent cursors without moving the physical pointer. Its full local tool
+surface also includes foreground activation, arbitrary application control,
+recording, configuration, and update operations that exceed Hermes-Relay's
+screen/input capability.
+
+**Decision.** Adopt CUA Driver only as an optional, version-pinned structured
+computer-control backend behind the existing `desktop_computer_*` contract.
+Hermes remains the outer authority for Relay authentication, target-device
+routing, per-host capability policy, local grants, emergency stop, and audit.
+The daemon translates an allowlisted Hermes schema to CUA operations; it never
+forwards arbitrary CUA tool names or JSON.
+
+Background dispatch is the default. A `background_unavailable` result returns
+to the caller instead of silently foregrounding another application. Foreground
+dispatch, application launch/termination, JavaScript execution, recording,
+replay, configuration, and driver updates require separate, explicit local
+authority. Full Access may bypass ordinary task prompts, but never authenticated
+targeting, sensitive-surface blocks, UAC/session boundaries, audit, emergency
+stop, or driver health checks.
+
+Every semantic element action requires a fresh pre-action window snapshot, an
+opaque element token bound to its snapshot generation, authenticated principal,
+grant, PID, and window, followed by a post-action snapshot that records whether
+the expected state changed. Grant scope and sensitive-surface policy apply to
+both accessibility text and pixels.
+
+Multiple animated pointers are virtual agent overlays, not additional Windows
+hardware cursors. Relay must first attach a server-owned authenticated control
+session identity—at minimum the Relay session, requester device, chat/run,
+target device, and request—to each command. The desktop derives cursor identity
+locally and owns one bounded CUA session per active control session. Model
+arguments cannot choose or share cursor IDs. Grant expiry, cancellation,
+disconnect, re-pair, policy downgrade, emergency stop, desktop lock/session
+change, or daemon shutdown ends the corresponding driver session immediately.
+
+CUA runs in the interactive user's logon session, never Windows Session 0.
+Initial packaging remains optional and resolves the canonical installed package
+rather than an untrusted PATH entry. Readiness uses the driver's live manifest,
+schema, permission mode, and health report and fails closed on an absent,
+degraded, or incompatible backend. Telemetry and driver updates remain explicit
+operator choices.
+
+**Consequences.** Hermes can gain background, element-aware control and clean
+per-agent animated cursors without replacing its Relay protocol or permission
+model. The existing PowerShell/User32 backend remains a compatibility fallback
+until authenticated control-session identity, scoped grants, sensitive-surface
+enforcement, and lifecycle tests ship. Raw command execution remains an honest
+escape hatch: strong computer-control isolation is meaningful only when command
+execution is disabled or the host is already fully trusted.

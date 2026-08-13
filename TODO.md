@@ -1230,6 +1230,17 @@ When the answer becomes clearer, this section becomes either an ADR in `docs/dec
 
 ## Smaller deferred items
 
+- **CUA Driver structured desktop-control backend (ADR 56).** Replace the
+  physical-pointer PowerShell/User32 path only after the Relay supplies an
+  authenticated, server-owned control-session identity. Implement a pinned
+  optional adapter with manifest/health negotiation, background-only dispatch,
+  snapshot-bound opaque element tokens, enforced app/display/folder scopes,
+  sensitive-surface denial/redaction, hardened grant-bridge ACL and nonce
+  validation, per-control-session grants/cursors, bounded outputs, and immediate
+  revoke on expiry/disconnect/policy or Windows-session changes. Add live tests
+  proving the physical cursor and foreground app stay unchanged, stale or
+  cross-window tokens fail, two sessions receive isolated animated cursors, and
+  foreground escalation never happens implicitly. Do not expose raw CUA tools.
 - **MediaProjection consent flow** — wired in MainActivity (2026-04-12), needs end-to-end test on a real device
 - **WorkManager upgrade for auto-disable timer** — currently a coroutine `Job + delay()` in `AutoDisableWorker.kt`; documented at top of file. Upgrade when androidx.work joins the classpath
 - **Wave 3 voice-bridge multi-turn confirmation** — currently a 5s TTS countdown with cancel; conversational confirmation is the follow-up

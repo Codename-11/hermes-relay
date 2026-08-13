@@ -706,14 +706,21 @@ mod app {
             .parent()
             .map(|directory| directory.join("hermes-relay.exe"))
             .ok_or_else(|| "cannot resolve the installed CLI path".to_string())?;
+        let install_dir = tray_exe
+            .parent()
+            .ok_or_else(|| "cannot resolve the desktop install directory".to_string())?;
         let helper_script = "$ErrorActionPreference='Stop'; "
             .to_string()
             + "$targetPid=[int]$env:HERMES_UPDATE_PID; "
             + "Wait-Process -Id $targetPid -ErrorAction SilentlyContinue; "
-            + "$result=Start-Process -FilePath $env:HERMES_UPDATE_INSTALLER -ArgumentList '/S' -Wait -PassThru; "
-            + "if ($result.ExitCode -eq 0) { "
+            + "$exitCode=1; try { "
+            + "$installerArgs=@('/S',('/D=' + $env:HERMES_UPDATE_INSTALL_DIR)); "
+            + "$result=Start-Process -FilePath $env:HERMES_UPDATE_INSTALLER -ArgumentList $installerArgs -Wait -PassThru; "
+            + "$exitCode=$result.ExitCode; if ($exitCode -eq 0) { "
             + "if ($env:HERMES_UPDATE_RESTART_DAEMON -eq '1') { & $env:HERMES_UPDATE_CLI daemon start | Out-Null }; "
-            + "Start-Process -FilePath $env:HERMES_UPDATE_TRAY }";
+            + "Start-Process -FilePath $env:HERMES_UPDATE_TRAY } "
+            + "} finally { Remove-Item -LiteralPath $env:HERMES_UPDATE_INSTALLER -Force -ErrorAction SilentlyContinue }; "
+            + "exit $exitCode";
         Command::new("powershell.exe")
             .args([
                 "-NoProfile",
@@ -725,6 +732,7 @@ mod app {
             ])
             .env("HERMES_UPDATE_PID", std::process::id().to_string())
             .env("HERMES_UPDATE_INSTALLER", installer)
+            .env("HERMES_UPDATE_INSTALL_DIR", install_dir)
             .env("HERMES_UPDATE_TRAY", tray_exe)
             .env("HERMES_UPDATE_CLI", cli_exe)
             .env(

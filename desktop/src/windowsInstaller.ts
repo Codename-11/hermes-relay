@@ -13,6 +13,7 @@ export interface WindowsInstallerLaunchOptions {
   cliPath?: string
   trayPath?: string
   delayMs?: number
+  callerPid?: number
 }
 
 /**
@@ -30,9 +31,12 @@ export function windowsInstallerLaunchPlan(
     installDir = '',
     cliPath = '',
     trayPath = '',
-    delayMs = 1200
+    delayMs = 1200,
+    callerPid = process.pid
   } = options
   const script = [
+    '$callerPid = [int]$env:HERMES_RELAY_SETUP_CALLER_PID',
+    'if ($callerPid -gt 0) { Wait-Process -Id $callerPid -ErrorAction SilentlyContinue }',
     `Start-Sleep -Milliseconds ${Math.max(0, Math.floor(delayMs))}`,
     '$installer = $env:HERMES_RELAY_SETUP_PATH',
     "$installerArgs = if ($env:HERMES_RELAY_SETUP_SILENT -eq '1') { @('/S') } else { @() }",
@@ -64,6 +68,7 @@ export function windowsInstallerLaunchPlan(
       env: {
         ...process.env,
         HERMES_RELAY_SETUP_PATH: installerPath,
+        HERMES_RELAY_SETUP_CALLER_PID: String(callerPid),
         HERMES_RELAY_SETUP_SILENT: silent ? '1' : '0',
         HERMES_RELAY_SETUP_RESTART_DAEMON: restartDaemon ? '1' : '0',
         HERMES_RELAY_SETUP_INSTALL_DIR: installDir,
