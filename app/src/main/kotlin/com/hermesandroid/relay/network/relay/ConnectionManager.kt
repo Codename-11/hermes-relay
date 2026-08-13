@@ -148,6 +148,8 @@ class ConnectionManager(
     private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
     /** Exact-authority pinned client for a plugin-proxy WSS URL. */
     private val proxyClientProvider: ((String) -> OkHttpClient?)? = null,
+    /** Test seam for observing lifecycle teardown without opening a socket. */
+    private val okHttpClientFactory: (() -> OkHttpClient)? = null,
 ) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
@@ -158,6 +160,7 @@ class ConnectionManager(
     }
 
     private fun buildClient(url: String? = null): OkHttpClient {
+        okHttpClientFactory?.let { return it() }
         val builder = OkHttpClient.Builder()
             // OkHttp's 10s default connectTimeout is LAN-tuned; a Tailscale
             // DERP-relayed cold-start handshake can exceed it, and a failed

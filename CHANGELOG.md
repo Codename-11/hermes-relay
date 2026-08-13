@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android network clients shut down safely during route changes.** Replacing an authenticated Dashboard client now moves OkHttp connection-pool eviction off the main thread, preventing a live TLS socket close from crashing the app with `NetworkOnMainThreadException`. (#334)
 - **Android preserves authoritative Gateway outcomes.** Protected-file cards cannot offer forbidden persistent scopes, compression no-ops show the server result, bounded resume failures do not create context-free replacement sessions, and edit/regenerate retains durable row identities across consecutive rewinds.
 - **Android routes and uploads against live upstream truth.** Multiplex API fallback trusts `served_profiles` instead of installed profiles, and generic documents carry the Gateway-issued `@file:` reference into ordinary and queued prompts.
 - **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.

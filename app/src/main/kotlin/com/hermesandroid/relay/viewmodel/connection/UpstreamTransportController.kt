@@ -16,6 +16,7 @@ import com.hermesandroid.relay.network.upstream.isNativeDashboardTransportEligib
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.network.upstream.resolveStreamingEndpointPreference
 import com.hermesandroid.relay.network.upstream.trustedDashboardBearerAuthOrNull
+import com.hermesandroid.relay.network.shutdownOffMainThread
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -80,6 +81,10 @@ class UpstreamTransportController(
     /** Applies pairing-bound TLS to a standard authenticated client when needed. */
     private val pinnedClientProvider: (String, okhttp3.OkHttpClient) -> okhttp3.OkHttpClient? =
         { _, _ -> null },
+    private val dashboardHttpClientFactory:
+        (DashboardCookieStore, DashboardBearerAuth?) -> okhttp3.OkHttpClient = { cookieStore, bearerAuth ->
+            DashboardApiClient.defaultClient(cookieStore, bearerAuth)
+        },
 ) {
 
     // --- Per-connection dashboard cookie stores ----------------------------
@@ -151,9 +156,9 @@ class UpstreamTransportController(
      * scoping, the gateway client, standard-API setup probe) route through.
      */
     fun dashboardClientFor(connectionId: String, dashboardUrl: String): DashboardApiClient {
-        val base = DashboardApiClient.defaultClient(
-            cookieStore = dashboardCookieStoreFor(connectionId),
-            bearerAuth = bearerAuthForTrustedDashboard(connectionId, dashboardUrl),
+        val base = dashboardHttpClientFactory(
+            dashboardCookieStoreFor(connectionId),
+            bearerAuthForTrustedDashboard(connectionId, dashboardUrl),
         )
         return DashboardApiClient(
             baseUrl = dashboardUrl,
@@ -167,9 +172,9 @@ class UpstreamTransportController(
      * no active connection (the standard-voice probe path).
      */
     fun dashboardClientForActive(dashboardUrl: String): DashboardApiClient {
-        val base = DashboardApiClient.defaultClient(
-            cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
-            bearerAuth = activeConnectionIdProvider()?.let {
+        val base = dashboardHttpClientFactory(
+            activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
+            activeConnectionIdProvider()?.let {
                 bearerAuthForTrustedDashboard(it, dashboardUrl)
             },
         )
@@ -219,9 +224,9 @@ class UpstreamTransportController(
             disposeDashboardHttpClient(client)
             dashboardHttpClientCache = null
         }
-        val base = DashboardApiClient.defaultClient(
-            cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
-            bearerAuth = activeConnectionIdProvider()?.let { activeId ->
+        val base = dashboardHttpClientFactory(
+            activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
+            activeConnectionIdProvider()?.let { activeId ->
                 bearerAuthForTrustedDashboard(activeId, dashboardUrl)
             },
         )
@@ -250,10 +255,12 @@ class UpstreamTransportController(
     }
 
     private fun disposeDashboardHttpClient(client: okhttp3.OkHttpClient) {
-        client.dispatcher.cancelAll()
-        client.connectionPool.evictAll()
-        runCatching { client.cache?.close() }
-        client.dispatcher.executorService.shutdown()
+        shutdownOffMainThread("DashboardHttpClient-shutdown") {
+            client.dispatcher.cancelAll()
+            client.connectionPool.evictAll()
+            runCatching { client.cache?.close() }
+            client.dispatcher.executorService.shutdown()
+        }
     }
 
     // --- Gateway availability ----------------------------------------------
