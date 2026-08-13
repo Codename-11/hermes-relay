@@ -4054,4 +4054,19 @@
     <string name="profile_inspector_toolsets">ツールセット</string>
     <string name="profile_inspector_toolsets_hint">このプロファイルで使用できる Hermes のツールグループを選択します。</string>
     <string name="profile_inspector_tool_count">%1$d 個のツール</string>
+    <string name="secure_link_title">Hermes Secure Link</string>
+    <string name="hermes_reach_title">Hermes Reach · 試験機能</string>
+    <string name="hermes_reach_summary">直接アクセスと Tailscale を利用できないネットワーク向けの試験的なブローカールートです。通常の設定にはまだ推奨されません。Secure Link TLS は引き続きエンドツーエンドで保護されます。</string>
+    <string name="secure_link_pinned_tls">ピン留め TLS · このペアリングから ID を確認済み</string>
+    <string name="secure_link_pinned_tls_short">Secure Link · ピン留め TLS</string>
+    <string name="secure_link_protects">保護されるサービス: %1$s</string>
+    <string name="secure_link_service_relay">Relay</string>
+    <string name="secure_link_service_api">API</string>
+    <string name="secure_link_service_dashboard">ダッシュボード</string>
+    <string name="secure_link_no_services">保護対象のサービスが通知されていません。Secure Link は使用されません。</string>
+    <string name="secure_link_partial_warning">一部のみ保護: ここにないサービスは、それぞれ設定されたルートとセキュリティを使用します。</string>
+    <string name="secure_link_partial_short">Secure Link · 一部</string>
+    <string name="secure_link_fallback_ready">Secure Link を利用できない場合、Hermes は以下の承認済み代替ルートを試行できます。</string>
+    <string name="secure_link_no_fallback">代替ルートは含まれていません。Secure Link を利用できない場合、保護対象サービスはオフラインのままです。</string>
+    <string name="secure_link_auth_note">トランスポート保護によって認証が省略されることはありません。Relay のペアリング、API 資格情報、ダッシュボードへのログインはサービスごとに引き続き適用されます。</string>
 </resources>

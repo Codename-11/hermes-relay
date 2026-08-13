@@ -3776,4 +3776,19 @@
     <string name="profile_inspector_toolsets">Наборы инструментов</string>
     <string name="profile_inspector_toolsets_hint">Выберите группы инструментов Hermes, доступные этому профилю.</string>
     <string name="profile_inspector_tool_count">Инструментов: %1$d</string>
+    <string name="secure_link_title">Hermes Secure Link</string>
+    <string name="hermes_reach_title">Hermes Reach · Экспериментально</string>
+    <string name="hermes_reach_summary">Экспериментальный маршрут через брокер для сетей, где недоступны прямое подключение и Tailscale. Он пока не рекомендуется для обычной настройки; TLS Secure Link остаётся защищённым из конца в конец.</string>
+    <string name="secure_link_pinned_tls">Закреплённый TLS · подлинность подтверждена этим сопряжением</string>
+    <string name="secure_link_pinned_tls_short">Secure Link · закреплённый TLS</string>
+    <string name="secure_link_protects">Защищённые сервисы: %1$s</string>
+    <string name="secure_link_service_relay">Relay</string>
+    <string name="secure_link_service_api">API</string>
+    <string name="secure_link_service_dashboard">Панель</string>
+    <string name="secure_link_no_services">Защищённые сервисы не объявлены. Secure Link использоваться не будет.</string>
+    <string name="secure_link_partial_warning">Частичная защита: не указанные здесь сервисы используют собственные настроенные маршруты и параметры безопасности.</string>
+    <string name="secure_link_partial_short">Secure Link · частично</string>
+    <string name="secure_link_fallback_ready">Если Secure Link недоступен, Hermes может попробовать одобренные резервные маршруты ниже.</string>
+    <string name="secure_link_no_fallback">Резервный маршрут не указан. Защищённые сервисы останутся офлайн, если Secure Link недоступен.</string>
+    <string name="secure_link_auth_note">Защита транспорта не отменяет аутентификацию. Сопряжение Relay, учётные данные API и вход в Панель по-прежнему проверяются отдельно для каждого сервиса.</string>
 </resources>

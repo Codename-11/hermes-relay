@@ -3895,4 +3895,19 @@
     <string name="profile_inspector_toolsets">Conjuntos de ferramentas</string>
     <string name="profile_inspector_toolsets_hint">Escolha quais grupos de ferramentas do Hermes este perfil pode usar.</string>
     <string name="profile_inspector_tool_count">%1$d ferramentas</string>
+    <string name="secure_link_title">Hermes Secure Link</string>
+    <string name="hermes_reach_title">Hermes Reach · Experimental</string>
+    <string name="hermes_reach_summary">Rota de broker experimental para redes onde o acesso direto e o Tailscale não estão disponíveis. Ela ainda não é recomendada para a configuração normal; o TLS do Secure Link continua protegido de ponta a ponta.</string>
+    <string name="secure_link_pinned_tls">TLS fixado · identidade verificada por este pareamento</string>
+    <string name="secure_link_pinned_tls_short">Secure Link · TLS fixado</string>
+    <string name="secure_link_protects">Serviços protegidos: %1$s</string>
+    <string name="secure_link_service_relay">Relay</string>
+    <string name="secure_link_service_api">API</string>
+    <string name="secure_link_service_dashboard">Painel</string>
+    <string name="secure_link_no_services">Nenhum serviço protegido foi anunciado. O Secure Link não será usado.</string>
+    <string name="secure_link_partial_warning">Proteção parcial: os serviços não listados aqui usam sua própria rota e segurança configuradas.</string>
+    <string name="secure_link_partial_short">Secure Link · parcial</string>
+    <string name="secure_link_fallback_ready">Se o Secure Link não estiver disponível, o Hermes poderá tentar as rotas alternativas aprovadas abaixo.</string>
+    <string name="secure_link_no_fallback">Nenhuma rota alternativa está incluída. Os serviços protegidos permanecerão offline se o Secure Link não estiver disponível.</string>
+    <string name="secure_link_auth_note">A proteção do transporte não ignora a autenticação. O pareamento do Relay, as credenciais da API e o login no Painel continuam sendo exigidos por serviço.</string>
 </resources>

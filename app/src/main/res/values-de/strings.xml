@@ -4055,4 +4055,19 @@
     <string name="profile_inspector_toolsets">Toolsets</string>
     <string name="profile_inspector_toolsets_hint">Wähle aus, welche Hermes-Werkzeuggruppen dieses Profil verwenden darf.</string>
     <string name="profile_inspector_tool_count">%1$d Werkzeuge</string>
+    <string name="secure_link_title">Hermes Secure Link</string>
+    <string name="hermes_reach_title">Hermes Reach · Experimentell</string>
+    <string name="hermes_reach_summary">Experimentelle Broker-Route für Netzwerke, in denen direkter Zugriff und Tailscale nicht verfügbar sind. Für die normale Einrichtung wird sie noch nicht empfohlen; Secure-Link-TLS bleibt Ende-zu-Ende geschützt.</string>
+    <string name="secure_link_pinned_tls">Angeheftetes TLS · Identität aus dieser Kopplung bestätigt</string>
+    <string name="secure_link_pinned_tls_short">Secure Link · angeheftetes TLS</string>
+    <string name="secure_link_protects">Geschützte Dienste: %1$s</string>
+    <string name="secure_link_service_relay">Relay</string>
+    <string name="secure_link_service_api">API</string>
+    <string name="secure_link_service_dashboard">Dashboard</string>
+    <string name="secure_link_no_services">Es wurden keine geschützten Dienste angekündigt. Secure Link wird nicht verwendet.</string>
+    <string name="secure_link_partial_warning">Teilweiser Schutz: Nicht aufgeführte Dienste verwenden ihre eigene konfigurierte Route und Sicherheit.</string>
+    <string name="secure_link_partial_short">Secure Link · teilweise</string>
+    <string name="secure_link_fallback_ready">Wenn Secure Link nicht verfügbar ist, kann Hermes die genehmigten Ausweichrouten unten versuchen.</string>
+    <string name="secure_link_no_fallback">Keine Ausweichroute enthalten. Geschützte Dienste bleiben offline, wenn Secure Link nicht verfügbar ist.</string>
+    <string name="secure_link_auth_note">Transportschutz umgeht keine Authentifizierung. Relay-Kopplung, API-Zugangsdaten und Dashboard-Anmeldung werden weiterhin pro Dienst erzwungen.</string>
 </resources>

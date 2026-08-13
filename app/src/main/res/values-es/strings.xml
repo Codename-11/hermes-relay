@@ -3740,4 +3740,19 @@
     <string name="profile_inspector_toolsets">Conjuntos de herramientas</string>
     <string name="profile_inspector_toolsets_hint">Elige qué grupos de herramientas de Hermes puede usar este perfil.</string>
     <string name="profile_inspector_tool_count">%1$d herramientas</string>
+    <string name="secure_link_title">Hermes Secure Link</string>
+    <string name="hermes_reach_title">Hermes Reach · Experimental</string>
+    <string name="hermes_reach_summary">Ruta de intermediario experimental para redes donde no están disponibles el acceso directo ni Tailscale. Aún no se recomienda para la configuración normal; el TLS de Secure Link sigue protegido de extremo a extremo.</string>
+    <string name="secure_link_pinned_tls">TLS fijado · identidad verificada desde este emparejamiento</string>
+    <string name="secure_link_pinned_tls_short">Secure Link · TLS fijado</string>
+    <string name="secure_link_protects">Servicios protegidos: %1$s</string>
+    <string name="secure_link_service_relay">Relay</string>
+    <string name="secure_link_service_api">API</string>
+    <string name="secure_link_service_dashboard">Panel</string>
+    <string name="secure_link_no_services">No se anunciaron servicios protegidos. Secure Link no se utilizará.</string>
+    <string name="secure_link_partial_warning">Protección parcial: los servicios no incluidos aquí usan su propia ruta y seguridad configuradas.</string>
+    <string name="secure_link_partial_short">Secure Link · parcial</string>
+    <string name="secure_link_fallback_ready">Si Secure Link no está disponible, Hermes puede probar las rutas alternativas aprobadas que aparecen abajo.</string>
+    <string name="secure_link_no_fallback">No se incluye ninguna ruta alternativa. Los servicios protegidos permanecerán sin conexión si Secure Link no está disponible.</string>
+    <string name="secure_link_auth_note">La protección del transporte no omite la autenticación. El emparejamiento de Relay, las credenciales de API y el inicio de sesión del Panel se siguen aplicando por servicio.</string>
 </resources>
