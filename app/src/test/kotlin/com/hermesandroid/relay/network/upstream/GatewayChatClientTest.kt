@@ -124,6 +124,12 @@ class GatewayClientHarness(
         put("dataUri", "data:image/png;base64,iVBORw0KGgo=")
     }
 
+    @Volatile
+    var fileAttachPayload: JsonObject = buildJsonObject {
+        put("attached", true)
+        put("ref_text", "@file:notes.txt")
+    }
+
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
     val methodNotFound: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -272,10 +278,7 @@ class GatewayClientHarness(
                     put("attached", true)
                     put("pages", 1)
                 }
-                "file.attach" -> buildJsonObject {
-                    put("attached", true)
-                    put("ref_text", "@file:notes.txt")
-                }
+                "file.attach" -> fileAttachPayload
                 "clarify.respond", "sudo.respond", "secret.respond" ->
                     buildJsonObject { put("status", askResponseStatus) }
                 "approval.respond" -> buildJsonObject { put("resolved", approvalResolved) }
@@ -1734,7 +1737,7 @@ class GatewayChatClientTest {
             ),
             onPreflightFailure = { r.preflightFailures += it },
         )
-        harness.awaitRpc("prompt.submit")
+        val submit = harness.awaitRpc("prompt.submit")
 
         val attach = harness.awaitRpc("file.attach")
         assertEquals("live-1", (attach["session_id"] as? JsonPrimitive)?.contentOrNull)
@@ -1743,9 +1746,65 @@ class GatewayChatClientTest {
             (attach["data_url"] as? JsonPrimitive)?.contentOrNull,
         )
         assertEquals("notes.txt", (attach["name"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(
+            "@file:notes.txt\n\nread this",
+            (submit["text"] as? JsonPrimitive)?.contentOrNull,
+        )
         assertTrue(harness.rpcLog.none { it.first == "image.attach_bytes" })
         assertTrue(harness.rpcLog.none { it.first == "pdf.attach" })
         assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `queued document follow-up keeps its returned file reference on the queued prompt`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "compare the totals",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment(
+                    name = "quarterly report.ods",
+                    base64 = "UEsDBA==",
+                    ext = "ods",
+                    contentType = "application/vnd.oasis.opendocument.spreadsheet",
+                ),
+            ),
+            queuedFollowUp = true,
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        val submit = harness.awaitRpc("prompt.submit")
+        assertEquals(true, (submit["queued"] as? JsonPrimitive)?.booleanOrNull)
+        assertEquals(
+            "@file:notes.txt\n\ncompare the totals",
+            (submit["text"] as? JsonPrimitive)?.contentOrNull,
+        )
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `document upload without a readable reference fails before prompt submit`() {
+        harness.fileAttachPayload = buildJsonObject { put("attached", true) }
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "read this",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment("notes.txt", "aGk=", "txt", "text/plain"),
+            ),
+            onPreflightFailure = {
+                r.preflightFailures += it
+                r.completeLatch.countDown()
+            },
+        )
+
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(r.preflightFailures.single().contains("no readable file reference"))
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
     }
 
     // --- Ask responders ---

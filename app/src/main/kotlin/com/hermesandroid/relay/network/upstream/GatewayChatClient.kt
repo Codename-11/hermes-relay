@@ -558,20 +558,36 @@ class GatewayChatClient(
                     turn.tracer.mark("session")
                 }
                 if (turn.cancelled) return@launch
-                attachments.forEach { attachment ->
-                    uploadAttachment(attachment).getOrElse { e ->
+                val attachmentRefs = attachments.mapNotNull { attachment ->
+                    val upload = uploadAttachment(attachment).getOrElse { e ->
                         throw GatewayPreflightException("attachment upload failed: ${e.message}")
+                    }
+                    if (attachment.requiresPromptReference()) {
+                        upload.stringField("ref_text")
+                            ?: throw GatewayPreflightException(
+                                "attachment upload failed: Hermes returned no readable file reference",
+                            )
+                    } else {
+                        null
                     }
                 }
                 if (turn.cancelled) return@launch
                 if (!awaitCancelledTurnDrain(turn, storedSessionId)) return@launch
                 activeTurn = turn
                 turn.armWatchdog()
+                // Generic `file.attach` uploads are staged artifacts, not
+                // session-owned image/PDF attachments. The gateway returns
+                // the exact workspace/sandbox-safe `@file:` reference that
+                // must accompany this prompt. Keep the user's prose last,
+                // matching upstream Desktop's context-reference contract.
+                val submittedText = (attachmentRefs + text)
+                    .filter(String::isNotBlank)
+                    .joinToString("\n\n")
                 val submitted = rpc(
                     "prompt.submit",
                     buildJsonObject {
                         put("session_id", liveSessionId ?: error("no live session"))
-                        put("text", text)
+                        put("text", submittedText)
                         truncateBeforeUserOrdinal?.let { ordinal ->
                             put("truncate_before_user_ordinal", ordinal)
                             put("confirm_truncate", true)
@@ -2713,6 +2729,11 @@ class GatewayChatClient(
                 timeoutMs = ATTACH_RPC_TIMEOUT_MS,
             )
         }
+    }
+
+    private fun GatewayAttachment.requiresPromptReference(): Boolean {
+        val mime = contentType.substringBefore(';').trim().lowercase()
+        return !mime.startsWith("image/") && mime != "application/pdf"
     }
 
     /**
