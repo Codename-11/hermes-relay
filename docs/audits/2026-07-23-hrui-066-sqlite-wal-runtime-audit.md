@@ -76,6 +76,9 @@ Before closing HRUI-066, prove all of the following:
   upgraded.
 - Tie this maintenance to the HRUI-056 atomic update/restart workflow so source,
   interpreter, and long-running process state advance together.
+- Use `docs/audits/2026-08-13-hrui-runtime-safety-preflight.md` for the combined
+  HRUI-056/066/159/160/162 evidence sequence and
+  `scripts/hrui-runtime-preflight.sh` for read-only preflight/postflight capture.
 
 ## HRUI-078 offline session recovery escalation
 
