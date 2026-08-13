@@ -1,6 +1,6 @@
 # Remote Access
 
-Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailscale, a VPN, and a public reverse proxy. The recommended path is Tailscale because it works behind CGNAT, encrypts traffic end-to-end (WireGuard), keeps access inside your tailnet ACLs, and can *optionally* front TLS for you. (Note: the WireGuard encryption is what makes a tailnet link secure — TLS via `tailscale serve --https` is a separate, optional layer on top. See [Is my connection secure?](../architecture/connection-security.md).)
+Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailscale, a VPN, and a public reverse proxy. The primary recommended path today is Tailscale Serve WSS/HTTPS because it works behind CGNAT, encrypts traffic end-to-end, keeps access inside your tailnet ACLs, and provides managed TLS. See [Is my connection secure?](../architecture/connection-security.md).
 
 ## What Uses Which Connection
 
@@ -80,6 +80,23 @@ hermes pair --mode auto --prefer tailscale
 ```
 
 You can also override from the phone: **Settings -> Connections -> active connection -> Routes -> Prefer this route**.
+
+Generated route lists prefer available secure candidates and retain LAN as a
+fallback. A plain LAN fallback still requires its explicit acknowledgement; a
+TLS or pin failure never silently converts a secure route into a plain one.
+
+## Optional Native Relay Proxy
+
+The Relay plugin can optionally advertise a pinned-TLS route on port `9443`.
+It is Relay-only: `/relay/health` is the health probe and `/relay/ws` is the
+authenticated WebSocket. The pairing QR supplies the exact authority and SPKI
+pin before the app connects. Certificate or hostname rotation therefore
+requires explicit re-pairing.
+
+This proxy does not carry Chat, Manage, standard voice, or API fallback. Keep
+the Dashboard/Gateway and API server on their own direct or Tailscale HTTPS
+routes with their own authentication. Tailscale Serve remains the normal
+recommended setup; the native proxy is an opt-in alternative for Relay traffic.
 
 ## Which URL Do I Enter?
 

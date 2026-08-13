@@ -54,10 +54,11 @@ private network" — it is a green/secure state, not a warning.
 
 ## TLS + certificate pinning (TOFU)
 
-When Hermes-Relay connects over a TLS route (`wss://`/`https://`) for the **first** time,
-it records a fingerprint of the server's certificate — its SHA‑256 SPKI. This is
-**trust-on-first-use (TOFU) pinning**: every later connection to that same host must
-present the *same* certificate, or the app refuses to connect.
+Ordinary TLS routes (`wss://`/`https://`) use **trust-on-first-use (TOFU)
+pinning**: on the first connection Hermes-Relay records the certificate's
+SHA-256 SPKI, and every later connection to that host must present the same
+certificate. The native Relay proxy is stricter: its SPKI pin comes from the
+operator-reviewed pairing QR and is required before the first proxy request.
 
 What this buys you:
 
@@ -74,7 +75,8 @@ Two honest caveats:
   device identity.
 - **TOFU can't protect the very first connect.** By definition it trusts whatever
   certificate is present on the initial handshake, so do your first connection over a path
-  you trust (LAN, Tailscale, or VPN). It protects every connection after that.
+  you trust (LAN, Tailscale, or VPN). It protects every connection after that. This caveat
+  does not apply to the QR-pinned native Relay proxy.
 
 ## Why one connection has several security states
 
@@ -158,12 +160,18 @@ certificate; your phone pins it on first connect. This is the path to use when y
 exposing Hermes beyond a private network — never expose plain `ws://`/`http://` ports
 directly.
 
-### 3. The plugin secure proxy *(not yet available)*
+### 3. The optional native Relay proxy
 
-A future relay-built secure proxy will mint and front its own TLS for the relay surfaces,
-so you get a pinned `wss://` route without standing up Tailscale Serve or an external
-proxy. It is **not implemented yet** — when it ships, the app will slot it in
-automatically as a 🔒 TLS (pinned) route. Until then, use Tailscale or a reverse proxy.
+The Relay plugin can expose an opt-in pinned-TLS listener on port `9443`. It accepts only
+`/relay/health` and `/relay/ws`; it is not a general proxy for the Dashboard, API server,
+or Relay management HTTP routes. Its SPKI pin comes from the operator-reviewed pairing QR,
+so the client has trust material before its first request. Changing the certificate or
+advertised authority requires explicit re-pairing.
+
+Tailscale Serve remains the primary recommendation today. Use the native proxy when you
+need pinned Relay WSS without Tailscale or an external reverse proxy. Chat, Manage,
+standard voice, and API fallback remain independently authenticated direct/Tailscale
+HTTPS surfaces.
 
 ## See also
 

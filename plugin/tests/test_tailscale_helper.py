@@ -148,6 +148,15 @@ class EnableDisableTests(unittest.TestCase):
             ["tailscale", "serve", "--bg", "--http=9000", "http://127.0.0.1:9000"],
         )
 
+    def test_enable_rejects_invalid_ports_without_invoking_cli(self) -> None:
+        for port in (0, 65536, -1, True, "8767"):
+            with self.subTest(port=port), \
+                 patch("plugin.relay.tailscale.subprocess.run") as mock_run:
+                result = tailscale.enable(port=port)  # type: ignore[arg-type]
+            self.assertFalse(result["ok"])
+            self.assertIsNone(result["command"])
+            mock_run.assert_not_called()
+
     def test_enable_returns_ok_false_when_binary_missing(self) -> None:
         """Must not raise — structured ``ok=False`` response instead."""
         with patch("plugin.relay.tailscale.shutil.which", return_value=None):
@@ -186,6 +195,13 @@ class EnableDisableTests(unittest.TestCase):
         calls = [call.args[0] for call in mock_run.call_args_list]
         self.assertEqual(calls, result["commands"])
 
+    def test_enable_stack_rejects_invalid_port_before_partial_apply(self) -> None:
+        with patch("plugin.relay.tailscale.subprocess.run") as mock_run:
+            result = tailscale.enable_stack(relay_port=8767, api_port=70000)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["commands"], [])
+        mock_run.assert_not_called()
+
     def test_disable_builds_expected_command(self) -> None:
         with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/tailscale"), \
              patch("plugin.relay.tailscale.subprocess.run",
@@ -206,6 +222,13 @@ class EnableDisableTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("not found", result["message"])
 
+    def test_disable_rejects_invalid_port_without_invoking_cli(self) -> None:
+        with patch("plugin.relay.tailscale.subprocess.run") as mock_run:
+            result = tailscale.disable(port=0)
+        self.assertFalse(result["ok"])
+        self.assertIsNone(result["command"])
+        mock_run.assert_not_called()
+
     def test_disable_stack_revokes_relay_and_api(self) -> None:
         with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/tailscale"), \
              patch("plugin.relay.tailscale.subprocess.run",
@@ -223,6 +246,13 @@ class EnableDisableTests(unittest.TestCase):
         calls = [call.args[0] for call in mock_run.call_args_list]
         self.assertEqual(calls, result["commands"])
 
+    def test_disable_stack_rejects_invalid_port_before_partial_apply(self) -> None:
+        with patch("plugin.relay.tailscale.subprocess.run") as mock_run:
+            result = tailscale.disable_stack(relay_port=-1, api_port=8642)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["commands"], [])
+        mock_run.assert_not_called()
+
 
 class CanonicalUpstreamPresentTests(unittest.TestCase):
     """The exit-criteria probe for removing this module post-PR-#9295."""
@@ -238,7 +268,6 @@ class CanonicalUpstreamPresentTests(unittest.TestCase):
              patch("plugin.relay.tailscale.subprocess.run",
                    return_value=_mk_completed(0, stdout=help_output)):
             self.assertTrue(tailscale.canonical_upstream_present())
-
     def test_false_when_flag_absent(self) -> None:
         help_output = "Usage: hermes gateway run [OPTIONS]\n  --config PATH\n"
         with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/hermes"), \
@@ -262,6 +291,13 @@ class CanonicalUpstreamPresentTests(unittest.TestCase):
              patch("plugin.relay.tailscale.subprocess.run",
                    return_value=_mk_completed(0, stdout="", stderr="--tailscale  Serve via tailnet")):
             self.assertTrue(tailscale.canonical_upstream_present())
+
+
+class FunnelUrlTests(unittest.TestCase):
+    def test_invalid_port_returns_none_without_invoking_cli(self) -> None:
+        with patch("plugin.relay.tailscale.subprocess.run") as mock_run:
+            self.assertIsNone(tailscale.funnel_url(port=65536))
+        mock_run.assert_not_called()
 
 
 class NeverRaisesContractTests(unittest.TestCase):

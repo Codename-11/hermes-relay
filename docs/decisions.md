@@ -1084,32 +1084,36 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
 ```json
 {
   "hermes": 3,
-  "host": "192.168.1.100",
+  "host": "hermes.tail-scale.ts.net",
   "port": 8642,
   "key": "optional-api-key",
-  "tls": false,
-  "relay": { "url": "ws://192.168.1.100:8767", "code": "ABC123",
+  "tls": true,
+  "relay": { "url": "wss://hermes.tail-scale.ts.net:8767", "code": "ABC123",
              "ttl_seconds": 2592000, "grants": {...},
-             "transport_hint": "ws" },
+             "transport_hint": "wss" },
   "endpoints": [
-    { "role": "lan",       "priority": 0,
-      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
-      "relay": { "url": "ws://192.168.1.100:8767",
-                 "transport_hint": "ws" } },
-    { "role": "tailscale", "priority": 1,
+    { "role": "tailscale", "priority": 0,
       "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
       "relay": { "url": "wss://hermes.tail-scale.ts.net:8767",
                  "transport_hint": "wss" } },
-    { "role": "public",    "priority": 2,
+    { "role": "public",    "priority": 1,
       "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
       "relay": { "url": "wss://hermes.example.com/relay",
-                 "transport_hint": "wss" } }
+                 "transport_hint": "wss" } },
+    { "role": "lan",       "priority": 2,
+      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+      "relay": { "url": "ws://192.168.1.100:8767",
+                 "transport_hint": "ws" } }
   ],
   "sig": "base64-hmac-sha256"
 }
 ```
 
 **Semantics (locked):**
+- **Generated defaults are secure-first (amended 2026-08-12).** An available
+  pinned native proxy, Tailscale Serve, and configured public TLS candidates
+  precede plain LAN. LAN remains a signed, independently acknowledged fallback.
+  An explicit operator preference can still change the strict order.
 - **`role` is an open string.** Known values `lan` / `tailscale` / `public`
   get styled chips + icons on the phone. Anything else (`wireguard`,
   `zerotier`, `netbird-eu`, whatever the operator wants) renders with a
@@ -2955,3 +2959,40 @@ visible and reversible, while the management UI and automatic startup retain
 normal user privilege. The product stays a thin CLI/TUI plus compact Windows
 management surface; chat, plugins, voice, and terminal rendering remain outside
 the tray.
+
+---
+
+## ADR 54 — Native secure proxy is pinned and Relay-only
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** Tailscale Serve is the primary supported secure remote path today,
+but some operators need encrypted Relay access without adding an external
+reverse proxy or tailnet. Expanding a plugin-owned listener across API,
+Dashboard, and Relay would collapse independent trust domains and expose
+loopback-authorized management routes.
+
+**Decision.** Keep Tailscale Serve WSS/HTTPS as the primary documented path.
+Add an opt-in plugin proxy on port `9443` for Relay traffic only. Pairing carries
+its exact HTTPS authority and SPKI SHA-256 pin in the signed, operator-reviewed
+QR. The network listener exposes only `GET`/`HEAD` `/relay/health` and WebSocket
+`GET /relay/ws`; the latter forwards to the loopback Relay WebSocket, where
+normal pairing/session authentication, expiry, grants, and rate limits remain
+authoritative.
+
+Clients require the QR-provided authority and pin before the first proxy
+request, retain hostname verification, and fail closed on malformed, missing,
+or changed trust. A rotation requires explicit re-pairing. Secure candidates
+are ordered before LAN by default, while LAN remains an independently configured
+fallback with its existing plaintext acknowledgement.
+
+Dashboard/Gateway and API-server traffic deliberately bypass this proxy. They
+remain independently authenticated upstream surfaces reached directly or over
+their own Tailscale HTTPS routes. Full invariants and acceptance checks live in
+[`security-native-proxy.md`](security-native-proxy.md).
+
+**Consequences.** The native proxy adds a narrow pinned-TLS option without
+becoming a general host proxy or a second authentication system. Failure to
+initialize it does not make the ordinary Relay unavailable or advertise a
+candidate. Certificate rotation is explicit, and the vanilla upstream path
+remains independent of the optional Relay plugin.

@@ -8,6 +8,17 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { initializePairedHostAccessPolicy } from './lib/hostAccessPolicy.js'
+import type { EndpointCandidate } from './endpoint.js'
+
+export interface StoredRouteCandidate {
+  role: string
+  priority: number
+  api: { host: string; port: number; tls: boolean }
+  relay: { url: string; transportHint?: string }
+  proxy?: { url: string; transportHint?: string; pinSha256: string }
+  security?: string
+  recommended?: boolean
+}
 
 export interface RemoteSessionRecord {
   token: string
@@ -26,6 +37,11 @@ export interface RemoteSessionRecord {
    * "custom", or null if unknown. Drives the contextual connect banner and
    * the "Plain (on LAN)" style labels copied from the Android app. */
   endpointRole?: string | null
+  /** Every route issued in the same v3 pairing invite. The token is shared by
+   * the relay instance, while certificate pins remain isolated per URL. */
+  routeCandidates?: StoredRouteCandidate[]
+  preferSecureRoutes?: boolean
+  routeCertPins?: Record<string, string>
   /** Per-URL consent for exposing desktop tool handlers (file read/write,
    * shell exec, search) to the remote agent. Granted explicitly on first
    * chat/shell connect when tools would be wired. Missing → prompt; true
@@ -48,6 +64,9 @@ interface StoredRecord {
   grants?: Record<string, number | null> | null
   ttl_expires_at?: number | null
   endpoint_role?: string | null
+  route_candidates?: StoredRouteCandidate[]
+  prefer_secure_routes?: boolean
+  route_cert_pins?: Record<string, string>
   tools_consented?: boolean
   computer_use_consented?: boolean
 }
@@ -72,14 +91,21 @@ const storePath = () => pathOverride ?? defaultPath()
 
 const emptyFile = (): StoredFile => ({ version: STORE_VERSION, sessions: {} })
 
-const toRecord = (raw: StoredRecord): RemoteSessionRecord => ({
+const toRecord = (raw: StoredRecord, routeUrl?: string): RemoteSessionRecord => ({
   token: raw.token,
   serverVersion: raw.server_version ?? null,
   pairedAt: raw.paired_at,
-  certPinSha256: raw.cert_pin_sha256 ?? null,
+  certPinSha256: routeUrl
+    ? raw.route_cert_pins?.[routeUrl] ?? raw.route_candidates?.find(candidate => candidate.relay.url === routeUrl)?.proxy?.pinSha256 ?? null
+    : raw.cert_pin_sha256 ?? null,
   grants: raw.grants ?? null,
   ttlExpiresAt: raw.ttl_expires_at ?? null,
-  endpointRole: raw.endpoint_role ?? null,
+  endpointRole: routeUrl
+    ? raw.route_candidates?.find(candidate => candidate.relay.url === routeUrl)?.role ?? raw.endpoint_role ?? null
+    : raw.endpoint_role ?? null,
+  routeCandidates: raw.route_candidates,
+  preferSecureRoutes: raw.prefer_secure_routes ?? false,
+  routeCertPins: raw.route_cert_pins,
   toolsConsented: raw.tools_consented ?? false,
   computerUseConsented: raw.computer_use_consented ?? false
 })
@@ -92,6 +118,9 @@ const fromRecord = (r: RemoteSessionRecord): StoredRecord => ({
   grants: r.grants ?? null,
   ttl_expires_at: r.ttlExpiresAt ?? null,
   endpoint_role: r.endpointRole ?? null,
+  route_candidates: r.routeCandidates,
+  prefer_secure_routes: r.preferSecureRoutes ?? false,
+  route_cert_pins: r.routeCertPins,
   tools_consented: r.toolsConsented ?? false,
   computer_use_consented: r.computerUseConsented ?? false
 })
@@ -131,13 +160,15 @@ const writeFile = async (file: StoredFile): Promise<void> => {
 export const getSession = async (url: string): Promise<RemoteSessionRecord | null> => {
   try {
     const file = await readFile()
-    const raw = file.sessions[url]
+    const raw = file.sessions[url] ?? Object.values(file.sessions).find(record =>
+      record?.route_candidates?.some(candidate => candidate.relay.url === url)
+    )
 
     if (!raw || typeof raw.token !== 'string' || !raw.token) {
       return null
     }
 
-    return toRecord(raw)
+    return toRecord(raw, file.sessions[url] ? undefined : url)
   } catch {
     return null
   }
@@ -149,6 +180,8 @@ export interface SaveSessionOptions {
   grants?: Record<string, number | null> | null
   ttlExpiresAt?: number | null
   endpointRole?: string | null
+  routeCandidates?: EndpointCandidate[]
+  preferSecureRoutes?: boolean
   toolsConsented?: boolean
   computerUseConsented?: boolean
   /** Set only on a successful fresh pairing. Existing sessions and policy are
@@ -171,15 +204,28 @@ export const saveSession = async (
 
   try {
     const file = await readFile()
-    const prev = file.sessions[url]
-    file.sessions[url] = fromRecord({
+    const ownerEntry = Object.entries(file.sessions).find(([ownerUrl, record]) =>
+      ownerUrl === url || record?.route_candidates?.some(candidate => candidate.relay.url === url)
+    )
+    const ownerUrl = ownerEntry?.[0] ?? url
+    const prev = ownerEntry?.[1]
+    const isAlternateRoute = ownerUrl !== url
+    const routePins = { ...(prev?.route_cert_pins ?? {}) }
+    if (isAlternateRoute && options.certPin !== undefined) {
+      if (options.certPin) routePins[url] = options.certPin
+      else delete routePins[url]
+    }
+    file.sessions[ownerUrl] = fromRecord({
       token,
       serverVersion,
       pairedAt: options.pairedAt ?? Math.floor(Date.now() / 1000),
-      certPinSha256: options.certPin ?? prev?.cert_pin_sha256 ?? null,
+      certPinSha256: isAlternateRoute ? prev?.cert_pin_sha256 ?? null : options.certPin ?? prev?.cert_pin_sha256 ?? null,
       grants: options.grants ?? prev?.grants ?? null,
       ttlExpiresAt: options.ttlExpiresAt ?? prev?.ttl_expires_at ?? null,
       endpointRole: options.endpointRole ?? prev?.endpoint_role ?? null,
+      routeCandidates: options.routeCandidates ?? prev?.route_candidates,
+      preferSecureRoutes: options.preferSecureRoutes ?? prev?.prefer_secure_routes ?? false,
+      routeCertPins: Object.keys(routePins).length ? routePins : prev?.route_cert_pins,
       toolsConsented:
         options.toolsConsented !== undefined
           ? options.toolsConsented
@@ -202,11 +248,14 @@ export const deleteSession = async (url: string): Promise<void> => {
   try {
     const file = await readFile()
 
-    if (!(url in file.sessions)) {
+    const ownerUrl = url in file.sessions ? url : Object.entries(file.sessions).find(([, record]) =>
+      record?.route_candidates?.some(candidate => candidate.relay.url === url)
+    )?.[0]
+    if (!ownerUrl) {
       return
     }
 
-    delete file.sessions[url]
+    delete file.sessions[ownerUrl]
     await writeFile(file)
   } catch {
     /* fail-closed */

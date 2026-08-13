@@ -17,6 +17,7 @@ export interface DaemonStatus {
   state: string
   running: boolean
   url?: string | null
+  configured_url?: string | null
   privilege?: string | null
   username?: string | null
   updated_at?: number | null

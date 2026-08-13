@@ -12,6 +12,7 @@ import com.hermesandroid.relay.auth.CertPinStore
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -76,6 +77,9 @@ internal fun buildRelayRequestOrNull(url: String): Request? =
     } catch (e: IllegalArgumentException) {
         null
     }
+
+private fun EndpointCandidate.relayWebSocketUrl(): String? =
+    pluginProxyRoutesOrNull()?.relayWebSocketUrl ?: relay?.url
 
 class ConnectionManager(
     private val multiplexer: ChannelMultiplexer,
@@ -142,6 +146,8 @@ class ConnectionManager(
     private val deviceIdProvider: (suspend () -> String?)? = null,
     /** Random source for ordinary reconnect full-jitter; exact backoffs never use it. */
     private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
+    /** Exact-authority pinned client for a plugin-proxy WSS URL. */
+    private val proxyClientProvider: ((String) -> OkHttpClient?)? = null,
 ) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
@@ -151,7 +157,7 @@ class ConnectionManager(
         encodeDefaults = true
     }
 
-    private fun buildClient(): OkHttpClient {
+    private fun buildClient(url: String? = null): OkHttpClient {
         val builder = OkHttpClient.Builder()
             // OkHttp's 10s default connectTimeout is LAN-tuned; a Tailscale
             // DERP-relayed cold-start handshake can exceed it, and a failed
@@ -165,7 +171,9 @@ class ConnectionManager(
         // that wipes a pin would still be subject to the pre-wipe rules.
         certPinStore?.let { store ->
             try {
-                builder.certificatePinner(store.buildPinnerSnapshot())
+                builder.certificatePinner(
+                    url?.let(store::buildPinnerSnapshotFor) ?: store.buildPinnerSnapshot(),
+                )
             } catch (e: Exception) {
                 Log.w(TAG, "CertificatePinner build failed: ${e.message}")
                 builder.certificatePinner(CertificatePinner.DEFAULT)
@@ -226,8 +234,8 @@ class ConnectionManager(
     val activeEndpoint: StateFlow<EndpointCandidate?> = _activeEndpoint.asStateFlow()
 
     /** Relay-only winner, deliberately separate from the standard route. */
-    @Volatile
-    private var activeRelayEndpoint: EndpointCandidate? = null
+    private val _activeRelayEndpoint = MutableStateFlow<EndpointCandidate?>(null)
+    val activeRelayEndpoint: StateFlow<EndpointCandidate?> = _activeRelayEndpoint.asStateFlow()
 
     /**
      * Manual role override. When non-null, the resolver's output is replaced
@@ -350,9 +358,9 @@ class ConnectionManager(
         scope.launch {
             val resolved = resolveBestEndpointSafe(EndpointSurface.Standard)
             val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
-            val resolvedRelayUrl = relayResolved?.relay?.url?.takeIf { it.isNotBlank() }
+            val resolvedRelayUrl = relayResolved?.relayWebSocketUrl()?.takeIf { it.isNotBlank() }
             val targetUrl = resolvedRelayUrl ?: url.takeIf { it.isNotBlank() }
-            activeRelayEndpoint = relayResolved
+            _activeRelayEndpoint.value = relayResolved
             if (resolved != null) {
                 _activeEndpoint.value = resolved
                 Log.i(TAG, "connect: standard resolver picked role=${resolved.role} " +
@@ -379,7 +387,7 @@ class ConnectionManager(
                 Log.i(
                     TAG,
                     "connect: relay resolver picked role=${relayRoute.role} " +
-                        "url=${relayRoute.relay?.url}",
+                        "url=${relayRoute.relayWebSocketUrl()}",
                 )
             }
             if (targetUrl != null) {
@@ -621,8 +629,8 @@ class ConnectionManager(
             return _activeEndpoint.value
         }
         _activeEndpoint.value = resolved
-        if (relayResolved != null) activeRelayEndpoint = relayResolved
-        val targetUrl = relayResolved?.relay?.url ?: current ?: return resolved
+        if (relayResolved != null) _activeRelayEndpoint.value = relayResolved
+        val targetUrl = relayResolved?.relayWebSocketUrl() ?: current ?: return resolved
         val normalizedTarget = normalizeRelayUrl(targetUrl)
         // Reconnect when the winner changed, and also when the socket is
         // stale/disconnected on the same winner. The latter makes the
@@ -684,7 +692,7 @@ class ConnectionManager(
     fun getManualRoleOverride(): String? = _manualRoleOverride.value
 
     private fun markActiveRelayEndpointUnreachable(reason: String) {
-        val active = activeRelayEndpoint ?: return
+        val active = _activeRelayEndpoint.value ?: return
         endpointResolver?.markUnreachable(active, EndpointSurface.Relay)
         Log.i(TAG, "marked endpoint role=${active.role} unreachable ($reason)")
     }
@@ -756,8 +764,8 @@ class ConnectionManager(
             // the swap path never re-checked it.)
             if (!shouldReconnect) return@launch
             val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
-            if (relayResolved != null) activeRelayEndpoint = relayResolved
-            val relayUrl = relayResolved?.relay?.url?.takeIf { it.isNotBlank() }
+            if (relayResolved != null) _activeRelayEndpoint.value = relayResolved
+            val relayUrl = relayResolved?.relayWebSocketUrl()?.takeIf { it.isNotBlank() }
                 ?: return@launch
             if (isRelayRateLimitBackoffActive(
                     rateLimitBackoffUntilMs,
@@ -902,7 +910,7 @@ class ConnectionManager(
         // the ViewModel on the next connection load.
         _manualRoleOverride.value = null
         _activeEndpoint.value = null
-        activeRelayEndpoint = null
+        _activeRelayEndpoint.value = null
         reconnectState.reset()
     }
 
@@ -982,7 +990,18 @@ class ConnectionManager(
         // Every new socket starts unauthenticated — the send-gate stays closed
         // (auth frame excepted) until this socket's own auth.ok arrives.
         authenticated = false
-        client = buildClient()
+        val isPluginProxyUrl = _activeRelayEndpoint.value?.pluginProxyRoutesOrNull()
+            ?.relayWebSocketUrl
+            ?.equals(url, ignoreCase = true) == true
+        client = if (isPluginProxyUrl) {
+            proxyClientProvider?.invoke(url) ?: run {
+                Log.e(TAG, "Pinned plugin proxy client unavailable — refusing generic TLS fallback")
+                _connectionState.value = ConnectionState.Disconnected
+                return
+            }
+        } else {
+            buildClient(url)
+        }
 
         val request = buildRelayRequestOrNull(url)
         if (request == null) {
@@ -1240,7 +1259,7 @@ class ConnectionManager(
             // during the retry window).
             if (shouldReconnect && reconnectGate()) {
                 val resolved = resolveBestEndpointSafe(EndpointSurface.Relay)
-                val targetUrl = resolved?.relay?.url
+                val targetUrl = resolved?.relayWebSocketUrl()
                 if (resolved != null) {
                     // Mirror scheduleNetworkReResolve: clear the sustained-loss
                     // latch on a successful resolve so a later transient miss
@@ -1248,7 +1267,7 @@ class ConnectionManager(
                     // in onLost's grace job but can be cleared on EITHER success
                     // edge — network-callback or relay-timer.)
                     sustainedLossDeclared = false
-                    activeRelayEndpoint = resolved
+                    _activeRelayEndpoint.value = resolved
                 }
                 if (targetUrl != null && normalizeRelayUrl(targetUrl) != url) {
                     Log.i(TAG, "scheduleReconnect: switching $url → ${normalizeRelayUrl(targetUrl)}")

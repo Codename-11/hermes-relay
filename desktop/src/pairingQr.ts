@@ -20,6 +20,10 @@ import {
   isApiEndpointShape,
   isRelayEndpointShape,
 } from './endpoint.js'
+import { describeTransportSecurity } from './transportSecurity.js'
+import https from 'node:https'
+import type { TLSSocket } from 'node:tls'
+import { comparePins, extractSpkiSha256 } from './certPin.js'
 
 /**
  * Per-candidate HEAD `/health` probe timeout. Matches Kotlin
@@ -168,7 +172,20 @@ function parseCandidate(v: unknown): EndpointCandidate | null {
     url: o.relay.url,
     ...(o.relay.transport_hint !== undefined ? { transportHint: o.relay.transport_hint } : {}),
   }
-  return { role: o.role, priority, api, relay }
+  const candidate: EndpointCandidate = { role: o.role, priority, api, relay }
+  if (typeof o.security === 'string') candidate.security = o.security
+  if (typeof o.recommended === 'boolean') candidate.recommended = o.recommended
+  if (typeof o.proxy === 'object' && o.proxy !== null) {
+    const proxy = o.proxy as Record<string, unknown>
+    if (typeof proxy.url === 'string' && typeof proxy.pin_sha256 === 'string') {
+      candidate.proxy = {
+        url: proxy.url,
+        pinSha256: proxy.pin_sha256,
+        ...(typeof proxy.transport_hint === 'string' ? { transportHint: proxy.transport_hint } : {})
+      }
+    }
+  }
+  return candidate
 }
 
 /**
@@ -350,6 +367,15 @@ export interface ProbeProgress {
 
 export interface ProbeOptions {
   onProbe?: (ev: ProbeProgress) => void
+  /** Existing Relay session required by the native proxy health route. */
+  sessionToken?: string
+}
+
+export function isValidPinnedProxyCandidate(candidate: EndpointCandidate): boolean {
+  return candidate.role.toLowerCase() === 'plugin_proxy' &&
+    candidate.security === 'pinned_tls' && candidate.recommended === true &&
+    candidate.proxy?.url.startsWith('https://') === true &&
+    /^sha256\/[A-Za-z0-9+/]{43}=$/.test(candidate.proxy.pinSha256)
 }
 
 /**
@@ -363,10 +389,32 @@ export interface ProbeOptions {
 export async function probeCandidate(
   c: EndpointCandidate,
   signal: AbortSignal,
+  sessionToken?: string,
 ): Promise<ProbeResult> {
   const started = Date.now()
-  const url = `${apiUrl(c.api)}/health`
+  // Native secure proxy v1 is Relay-only. Probe only its scoped health route;
+  // API/dashboard remain on their independently authenticated candidates.
+  const url = isValidPinnedProxyCandidate(c)
+    ? `${c.proxy!.url.replace(/\/+$/, '')}/relay/health`
+    : `${apiUrl(c.api)}/health`
   try {
+    if (isValidPinnedProxyCandidate(c)) {
+      const url = `${c.proxy!.url.replace(/\/+$/, '')}/relay/health`
+      const reachable = await new Promise<boolean>((resolve, reject) => {
+        const request = https.get(url, {
+          rejectUnauthorized: false,
+          signal,
+          headers: sessionToken ? { 'X-Hermes-Relay-Session': sessionToken } : undefined
+        }, response => {
+          const raw = (response.socket as TLSSocket).getPeerCertificate(false).raw
+          const pinMatches = Buffer.isBuffer(raw) && comparePins(c.proxy!.pinSha256, extractSpkiSha256(raw))
+          response.resume()
+          resolve(pinMatches && (response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300)
+        })
+        request.once('error', reject)
+      })
+      return { candidate: c, reachable, elapsedMs: Date.now() - started }
+    }
     const resp = await fetch(url, {
       method: 'GET',
       signal,
@@ -447,7 +495,7 @@ export async function probeCandidatesByPriority(
       const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS)
       // AbortSignal.any is available on Node ≥20 for combining signals.
       const signal = AbortSignal.any([groupController.signal, timeout])
-      const result = await probeCandidate(c, signal)
+      const result = await probeCandidate(c, signal, opts.sessionToken)
       probeCache.set(cacheKey(c), {
         expiresAt: Date.now() + PROBE_CACHE_TTL_MS,
         reachable: result.reachable,
@@ -487,6 +535,21 @@ export async function probeCandidatesByPriority(
     `no reachable endpoint across ${candidates.length} candidate(s) — ` +
       'check relay is running and host is routable from this machine',
   )
+}
+
+/** Keep every fallback, but move encrypted routes ahead of plain ws:// by
+ * default. Original priority and array order remain the tie breakers within
+ * each security tier; callers can skip this helper for invite-order routing. */
+export function secureFirstCandidates(candidates: EndpointCandidate[]): EndpointCandidate[] {
+  return candidates
+    .map((candidate, index) => ({ candidate, index }))
+    .sort((left, right) => {
+      const leftSecure = isValidPinnedProxyCandidate(left.candidate) || describeTransportSecurity(left.candidate.relay.url, left.candidate.role).encrypted
+      const rightSecure = isValidPinnedProxyCandidate(right.candidate) || describeTransportSecurity(right.candidate.relay.url, right.candidate.role).encrypted
+      return Number(rightSecure) - Number(leftSecure) ||
+        left.candidate.priority - right.candidate.priority || left.index - right.index
+    })
+    .map(({ candidate }, priority) => ({ ...candidate, priority }))
 }
 
 /**

@@ -45,6 +45,14 @@ class RelayConfig:
     profiles: list[dict[str, Any]] = field(default_factory=list)
     terminal_shell: str | None = None
 
+    # Plugin-owned pinned-TLS route. Opt-in until the migration/re-pair path is
+    # released and tested; direct Relay startup must never fail on port 9443.
+    secure_proxy_enabled: bool = False
+    secure_proxy_host: str = "0.0.0.0"
+    secure_proxy_port: int = 9443
+    secure_proxy_cert: str | None = None
+    secure_proxy_key: str | None = None
+
     # Profile discovery — scan ``~/.hermes/profiles/*/`` for upstream-style
     # isolated profile directories. When False, ``_load_profiles`` returns an
     # empty list without touching the filesystem. Mirrors the existing
@@ -156,6 +164,13 @@ class RelayConfig:
             ),
             log_level=os.getenv("RELAY_LOG_LEVEL", cls.log_level),
             terminal_shell=os.getenv("RELAY_TERMINAL_SHELL") or None,
+            secure_proxy_enabled=os.getenv(
+                "RELAY_SECURE_PROXY_ENABLED", "0"
+            ).strip().lower() not in ("0", "false", "no", "off"),
+            secure_proxy_host=os.getenv("RELAY_SECURE_PROXY_HOST", "0.0.0.0"),
+            secure_proxy_port=int(os.getenv("RELAY_SECURE_PROXY_PORT", "9443")),
+            secure_proxy_cert=os.getenv("RELAY_SECURE_PROXY_CERT") or None,
+            secure_proxy_key=os.getenv("RELAY_SECURE_PROXY_KEY") or None,
             realtime_voice_config_path=(
                 os.getenv("RELAY_REALTIME_VOICE_CONFIG")
                 or str(default_realtime_voice_config_path())

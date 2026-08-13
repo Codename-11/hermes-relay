@@ -471,6 +471,30 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
 # other routes in this file — the dashboard is loopback-only and we
 # never accept callers from elsewhere.
 
+_TAILSCALE_MANAGED_PORTS = frozenset((8767, 8642))
+
+
+def _managed_tailscale_port(body: dict[str, Any]) -> int:
+    """Return a dashboard-managed port, rejecting arbitrary proxy targets."""
+    port_raw = body.get("port", 8767)
+    if isinstance(port_raw, bool):
+        raise HTTPException(
+            status_code=400, detail=f"port must be an integer (got {port_raw!r})"
+        )
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"port must be an integer (got {port_raw!r})"
+        ) from exc
+    if port not in _TAILSCALE_MANAGED_PORTS:
+        supported = ", ".join(str(value) for value in sorted(_TAILSCALE_MANAGED_PORTS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"dashboard may manage only the Relay/API ports: {supported}",
+        )
+    return port
+
 
 def _tailscale_status_dict() -> dict[str, Any]:
     """Flatten ``tailscale.status()`` into a JSON-safe dict.
@@ -539,13 +563,7 @@ async def tailscale_enable(
             detail=f"tailscale helper unavailable: {exc}",
         ) from exc
 
-    port_raw = body.get("port", RELAY_PORT)
-    try:
-        port = int(port_raw)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=400, detail=f"port must be an integer (got {port_raw!r})"
-        ) from exc
+    port = _managed_tailscale_port(body)
     return tailscale.enable(port=port)
 
 
@@ -562,13 +580,7 @@ async def tailscale_disable(
             detail=f"tailscale helper unavailable: {exc}",
         ) from exc
 
-    port_raw = body.get("port", RELAY_PORT)
-    try:
-        port = int(port_raw)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=400, detail=f"port must be an integer (got {port_raw!r})"
-        ) from exc
+    port = _managed_tailscale_port(body)
     return tailscale.disable(port=port)
 
 

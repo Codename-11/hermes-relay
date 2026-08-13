@@ -63,9 +63,6 @@ fun EndpointCandidate?.isEncryptedOverlayRoute(isTailscaleDetected: Boolean): Bo
     val hint = security.orEmpty().lowercase()
     return r == "tailscale" ||
         (isTailscaleDetected && hint.contains("tailscale")) ||
-        r == "plugin_proxy" ||
-        r == "plugin-proxy" ||
-        hasSecureProxy() ||
         hint.contains("wireguard") ||
         hint.contains("https") ||
         hint.contains("tls")
@@ -78,7 +75,6 @@ fun EndpointCandidate?.overlayMechanism(isTailscaleDetected: Boolean): String {
     val hint = security.orEmpty().lowercase()
     return when {
         r == "tailscale" || (isTailscaleDetected && hint.contains("tailscale")) -> "Tailscale"
-        r == "plugin_proxy" || r == "plugin-proxy" || hasSecureProxy() -> "Proxy"
         hint.contains("wireguard") -> "WireGuard"
         hint.contains("https") || hint.contains("tls") -> "TLS"
         else -> "Encrypted"

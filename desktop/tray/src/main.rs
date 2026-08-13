@@ -220,6 +220,7 @@ mod app {
         #[serde(default, alias = "alive")]
         running: bool,
         url: Option<String>,
+        configured_url: Option<String>,
         privilege: Option<String>,
         username: Option<String>,
         updated_at: Option<u64>,

@@ -33,6 +33,7 @@ fn native_context_menu_stays_small_and_management_focused() {
 #[test]
 fn management_window_owns_the_expected_narrow_surfaces() {
     let source = include_str!("../ui/App.tsx");
+    let security = include_str!("../../src/transportSecurity.ts");
 
     for required in [
         "Overview",
@@ -89,13 +90,14 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "Start daemon with UI",
         "PairHostPage",
         "Pairing code",
-        "Encrypted relay connection",
+        "Encrypted with TLS",
+        "Encrypted by ${name}",
         "Unencrypted relay connection",
         "open_management_from_grant",
         "Open in UI",
     ] {
         assert!(
-            source.contains(required),
+            source.contains(required) || security.contains(required),
             "missing management surface: {required}"
         );
     }
@@ -131,7 +133,7 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
         serde_json::json!([0, 0, 0, 0])
     );
     assert_eq!(grant_window["shadow"], false);
-    assert!(ui.contains("snapshot.daemon.url === host.url"));
+    assert!(ui.contains("(snapshot.daemon.configured_url ?? snapshot.daemon.url) === host.url"));
     assert!(ui.contains("formatGrantScope(grant.scope)"));
     assert!(ui.contains("grantAction(grant.scope)"));
     assert!(ui.contains("Requested action"));

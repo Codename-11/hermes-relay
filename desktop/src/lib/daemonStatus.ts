@@ -30,6 +30,8 @@ export interface DaemonStatus {
    * before status/stop treats an unrelated process as Hermes Relay. */
   process_name?: string
   url: string
+  /** Logical host selected by the user when `url` is a resolved fallback route. */
+  configured_url?: string
   state: DaemonState
   /** Epoch seconds. */
   started_at: number

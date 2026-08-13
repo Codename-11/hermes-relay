@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import logo from '../icons/icon-256.png'
 import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
+import { describeTransportSecurity } from '../../src/transportSecurity'
 
 type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'pair-host' | 'host-detail' | 'settings' | 'help' | 'activity' | 'activity-detail'
 type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: Capability; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient; remote: string } | { type: 'repair' | 'forget'; host: Host } | { type: 'clear-activity' } | null
@@ -254,7 +255,7 @@ function ManagementApp() {
   }, [])
 
   const host = useMemo(() => snapshot?.hosts.find(item => item.url === selectedUrl) ?? null, [snapshot, selectedUrl])
-  const connected = Boolean(snapshot?.daemon.running && snapshot.daemon.state === 'connected' && host && snapshot.daemon.url === host.url)
+  const connected = Boolean(snapshot?.daemon.running && snapshot.daemon.state === 'connected' && host && (snapshot.daemon.configured_url ?? snapshot.daemon.url) === host.url)
 
   useEffect(() => {
     if (page !== 'host-detail' || !detailUrl) return
@@ -364,7 +365,7 @@ function ManagementApp() {
   const reviewGrant = snapshot.pending_grants[0] ?? null
   const reviewAction = grantAction(reviewGrant?.scope)
   const reviewScope = formatGrantScope(reviewGrant?.scope)
-  const reviewHost = snapshot.hosts.find(item => item.url === snapshot.daemon.url)?.name ?? 'Connected host'
+  const reviewHost = snapshot.hosts.find(item => item.url === (snapshot.daemon.configured_url ?? snapshot.daemon.url))?.name ?? 'Connected host'
 
   return <div className={`app-shell ${windowVisible ? 'window-visible' : ''}`}>
     <header className="titlebar">
@@ -400,7 +401,7 @@ function ManagementApp() {
                 <i className="packet packet-outbound" /><i className="packet packet-outbound packet-late" />
                 <i className="packet packet-inbound" /><i className="packet packet-inbound packet-late" />
               </span>}
-              <div className={`route-status ${connected && host?.url.startsWith('ws://') ? 'insecure' : ''}`}><strong>{connected ? 'Connected' : 'Disconnected'}</strong><span>·</span><small>{connected ? (host?.url.startsWith('wss://') ? 'Encrypted relay connection' : 'Unencrypted relay connection') : 'Relay connection offline'}</small></div>
+              {(() => { const security = describeTransportSecurity(snapshot.daemon.url ?? host?.url ?? '', host?.endpoint_role); return <div className={`route-status ${connected && !security.encrypted ? 'insecure' : ''}`}><strong>{connected ? 'Connected' : 'Disconnected'}</strong><span>·</span><small>{connected ? security.label : 'Relay connection offline'}</small></div> })()}
             </div>}
         </section>
 
@@ -527,7 +528,7 @@ function GrantWindow() {
   }
 
   if (!grant || !snapshot) return <div className="grant-shell" />
-  const hostName = snapshot.hosts.find(item => item.url === snapshot.daemon.url)?.name
+  const hostName = snapshot.hosts.find(item => item.url === (snapshot.daemon.configured_url ?? snapshot.daemon.url))?.name
     ?? (snapshot.daemon.url ? displayHost(snapshot.daemon.url) : 'Connected host')
   const scope = formatGrantScope(grant.scope)
   const action = grantAction(grant.scope)
@@ -681,7 +682,7 @@ function PairHostPage({ initialUrl, busy, onBack, onPair }: { initialUrl: string
   const [code, setCode] = useState('')
   const normalizedCode = code.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 6)
   const validUrl = (() => { try { const url = new URL(remote.trim()); return ['ws:', 'wss:'].includes(url.protocol) && !url.username && !url.password } catch { return false } })()
-  const secure = remote.trim().toLowerCase().startsWith('wss://')
+  const security = describeTransportSecurity(remote)
   const canSubmit = validUrl && normalizedCode.length === 6 && !busy
 
   return <section className="page-panel pair-host-page">
@@ -690,7 +691,7 @@ function PairHostPage({ initialUrl, busy, onBack, onPair }: { initialUrl: string
     <p className="page-intro">Enter the relay address and the six-character code shown by Hermes.</p>
     <form className="pair-form" onSubmit={async event => { event.preventDefault(); if (canSubmit) await onPair(remote.trim(), normalizedCode) }}>
       <label><span>Relay URL</span><div className="pair-input-action"><input aria-label="Relay URL" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="wss://relay.example.com" value={remote} onChange={event => setRemote(event.target.value)} /><button type="button" title={remote ? 'Copy relay URL' : 'Paste relay URL'} aria-label={remote ? 'Copy relay URL' : 'Paste relay URL'} onClick={async () => { if (remote) await navigator.clipboard.writeText(remote.trim()); else setRemote(await navigator.clipboard.readText()) }}><Copy /></button></div></label>
-      {validUrl && <div className={`transport-notice ${secure ? 'secure' : 'insecure'}`}>{secure ? <ShieldCheck /> : <AlertTriangle />}<span><strong>{secure ? 'Encrypted connection' : 'Unencrypted connection'}</strong><small>{secure ? 'TLS protects relay traffic in transit.' : 'Use ws:// only on a trusted private network. Configure TLS and pair with wss:// for encryption.'}</small></span></div>}
+      {validUrl && <div className={`transport-notice ${security.encrypted ? 'secure' : 'insecure'}`}>{security.encrypted ? <ShieldCheck /> : <AlertTriangle />}<span><strong>{security.label}</strong><small>{security.detail}</small></span></div>}
       <label><span>Pairing code</span><input className="pair-code" aria-label="Pairing code" autoComplete="one-time-code" inputMode="text" maxLength={6} placeholder="ABC123" value={normalizedCode} onChange={event => setCode(event.target.value)} /></label>
       <p className="pair-privacy"><LockKeyhole />The code is passed directly to the local CLI and is not stored by the UI.</p>
       <button className="primary-host-action" type="submit" disabled={!canSubmit}>{busy ? <LoaderCircle className="spin" /> : <Link2 />}{busy ? 'Pairing…' : initialUrl ? 'Re-pair host' : 'Pair host'}</button>

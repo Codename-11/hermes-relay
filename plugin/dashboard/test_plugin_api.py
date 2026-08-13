@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import unittest
 from typing import Callable, Optional
+from unittest.mock import patch
 
 import httpx
 from fastapi import FastAPI
@@ -313,6 +314,43 @@ class RemoteAccessStatusTests(PluginApiTestCase):
         self.assertEqual(body["tailscale"]["hostname"], "hermes.tail1234.ts.net")
         self.assertIsNone(body["public"]["url"])
         self.assertFalse(body["upstream_canonical"])
+
+
+class RemoteAccessTailscaleActionTests(PluginApiTestCase):
+    def test_enable_allows_only_supported_relay_and_api_ports(self) -> None:
+        from plugin.relay import tailscale as ts_mod
+
+        with patch.object(ts_mod, "enable", side_effect=lambda port: {"ok": True, "port": port}):
+            for port in (8767, 8642):
+                with self.subTest(port=port):
+                    resp = self.client.post(
+                        "/remote-access/tailscale/enable", json={"port": port}
+                    )
+                    self.assertEqual(resp.status_code, 200)
+                    self.assertEqual(resp.json()["port"], port)
+
+    def test_enable_rejects_arbitrary_localhost_port_without_calling_helper(self) -> None:
+        from plugin.relay import tailscale as ts_mod
+
+        with patch.object(ts_mod, "enable") as mock_enable:
+            resp = self.client.post(
+                "/remote-access/tailscale/enable", json={"port": 22}
+            )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("8767", resp.json()["detail"])
+        mock_enable.assert_not_called()
+
+    def test_disable_rejects_arbitrary_or_boolean_port(self) -> None:
+        from plugin.relay import tailscale as ts_mod
+
+        with patch.object(ts_mod, "disable") as mock_disable:
+            for port in (8000, True):
+                with self.subTest(port=port):
+                    resp = self.client.post(
+                        "/remote-access/tailscale/disable", json={"port": port}
+                    )
+                    self.assertEqual(resp.status_code, 400)
+        mock_disable.assert_not_called()
 
 
 class PhoneConfigTests(PluginApiTestCase):

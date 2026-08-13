@@ -29,8 +29,10 @@ import mimetypes
 import os
 import secrets
 import signal
+import socket
 import ssl
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -59,6 +61,13 @@ from .channels.proactive import ProactiveChannel, ProactiveError
 from .channels.terminal import TerminalHandler
 from .channels.tui import TuiHandler
 from .config import RelayConfig
+from .secure_proxy import (
+    advertised_candidate,
+    create_secure_proxy_app,
+    ensure_tls_identity,
+    spki_pin_sha256,
+    tls_context as secure_proxy_tls_context,
+)
 from .image_activity import read_image_activity
 from .media import (
     MediaRegistrationError,
@@ -91,6 +100,49 @@ class RelayServer:
     def __init__(self, config: RelayConfig) -> None:
         self.config = config
         self.start_time: float = time.monotonic()
+        # Private in-process credential lets the TLS facade preserve the real
+        # peer for auth rate limiting. It is never exposed on either listener.
+        self.secure_proxy_internal_secret = secrets.token_urlsafe(32)
+        self.secure_proxy_candidate: dict[str, Any] | None = None
+        self.secure_proxy_runner: web.AppRunner | None = None
+        if config.secure_proxy_enabled:
+            hermes_dir = Path(config.hermes_config_path).expanduser().parent
+            cert_path = (
+                Path(config.secure_proxy_cert).expanduser()
+                if config.secure_proxy_cert
+                else hermes_dir / "relay-secure-proxy" / "cert.pem"
+            )
+            key_path = (
+                Path(config.secure_proxy_key).expanduser()
+                if config.secure_proxy_key
+                else hermes_dir / "relay-secure-proxy" / "key.pem"
+            )
+            try:
+                advertised_host = config.secure_proxy_host
+                if advertised_host in ("0.0.0.0", "::"):
+                    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    try:
+                        probe.connect(("8.8.8.8", 80))
+                        advertised_host = str(probe.getsockname()[0])
+                    except OSError:
+                        advertised_host = "127.0.0.1"
+                    finally:
+                        probe.close()
+                ensure_tls_identity(cert_path, key_path, advertised_host)
+                config.secure_proxy_cert = str(cert_path)
+                config.secure_proxy_key = str(key_path)
+                self.secure_proxy_candidate = advertised_candidate(
+                    advertised_host,
+                    config.secure_proxy_port,
+                    spki_pin_sha256(cert_path),
+                )
+            except (
+                OSError,
+                ValueError,
+                subprocess.SubprocessError,
+                ssl.SSLError,
+            ) as exc:
+                logger.error("Secure proxy disabled: identity setup failed: %s", exc)
 
         # Auth — SessionManager persistence is opt-in via
         # ``config.session_persistence_path``. ``RelayConfig.from_env``
@@ -181,6 +233,9 @@ class RelayServer:
 
         self._clients.clear()
         self._client_tasks.clear()
+        if self.secure_proxy_runner is not None:
+            await self.secure_proxy_runner.cleanup()
+            self.secure_proxy_runner = None
         logger.info("Relay server shut down — all connections closed")
 
 
@@ -190,14 +245,15 @@ class RelayServer:
 async def handle_health(request: web.Request) -> web.Response:
     """Health check endpoint."""
     server: RelayServer = request.app["server"]
-    return web.json_response(
-        {
+    payload: dict[str, Any] = {
             "status": "ok",
             "version": __version__,
             "clients": server.client_count,
             "sessions": server.sessions.active_count(),
         }
-    )
+    if server.secure_proxy_candidate is not None:
+        payload["secure_proxy"] = server.secure_proxy_candidate
+    return web.json_response(payload)
 
 
 async def handle_pairing_register(request: web.Request) -> web.Response:
@@ -513,6 +569,14 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
                 "Normalized pairing endpoint candidates before QR signing",
             )
         endpoints_list = normalized_endpoints
+    if server.secure_proxy_candidate is not None:
+        # Trust is bootstrapped by the operator-displayed QR, before any
+        # network connection. Runtime auth never replaces this reviewed pin.
+        existing = endpoints_list or []
+        for candidate in existing:
+            if isinstance(candidate, dict):
+                candidate["priority"] = int(candidate.get("priority", 0)) + 1
+        endpoints_list = [server.secure_proxy_candidate, *existing]
 
     relay_block = build_relay_pairing_block(
         relay_url=relay_url,
@@ -3795,6 +3859,11 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
     """
     server: RelayServer = request.app["server"]
     remote_ip = request.remote or "unknown"
+    if remote_ip in ("127.0.0.1", "::1") and secrets.compare_digest(
+        request.headers.get("X-Hermes-Proxy-Secret", ""),
+        server.secure_proxy_internal_secret,
+    ):
+        remote_ip = request.headers.get("X-Hermes-Proxy-Peer", "").strip() or remote_ip
 
     # Rate-limit check
     if server.rate_limiter.is_blocked(remote_ip):
@@ -4346,6 +4415,7 @@ def create_app(config: RelayConfig) -> web.Application:
 
     server = RelayServer(config)
     app["server"] = server
+    app.on_startup.append(_on_secure_proxy_startup)
 
     # Routes — /ws is canonical but we also accept "/" as an alias so clients
     # that pass a bare ws://host:port URL (no path) still connect cleanly.
@@ -4663,6 +4733,39 @@ async def _on_app_shutdown(app: web.Application) -> None:
     server: RelayServer = app["server"]
     await server.close()
     logger.info("Application shutdown complete")
+
+
+async def _on_secure_proxy_startup(app: web.Application) -> None:
+    server: RelayServer = app["server"]
+    config = server.config
+    if server.secure_proxy_candidate is None:
+        return
+    if not config.secure_proxy_cert or not config.secure_proxy_key:
+        raise RuntimeError("secure proxy identity is unavailable")
+    proxy_app = create_secure_proxy_app(server)
+    runner = web.AppRunner(proxy_app, access_log=None)
+    await runner.setup()
+    site = web.TCPSite(
+        runner,
+        host=config.secure_proxy_host,
+        port=config.secure_proxy_port,
+        ssl_context=secure_proxy_tls_context(
+            Path(config.secure_proxy_cert), Path(config.secure_proxy_key)
+        ),
+    )
+    try:
+        await site.start()
+    except (OSError, ssl.SSLError) as exc:
+        await runner.cleanup()
+        server.secure_proxy_candidate = None
+        logger.error("Secure proxy disabled: listener failed: %s", exc)
+        return
+    server.secure_proxy_runner = runner
+    logger.info(
+        "Secure proxy listening on https://%s:%d",
+        config.secure_proxy_host,
+        config.secure_proxy_port,
+    )
 
 
 # ── SSL context ──────────────────────────────────────────────────────────────

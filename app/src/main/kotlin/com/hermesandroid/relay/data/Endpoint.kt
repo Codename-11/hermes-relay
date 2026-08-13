@@ -177,7 +177,13 @@ fun EndpointCandidate.routeAuthority(): String? {
 }
 
 fun EndpointCandidate.hasSecureProxy(): Boolean =
-    proxy?.url?.startsWith("https://", ignoreCase = true) == true ||
-        proxy?.url?.startsWith("wss://", ignoreCase = true) == true ||
-        role.equals("plugin_proxy", ignoreCase = true) ||
-        role.equals("plugin-proxy", ignoreCase = true)
+    proxy?.isValidPinnedProxy() == true
+
+fun ProxyEndpoint.isValidPinnedProxy(): Boolean {
+    val uri = runCatching { URI(url.trim().trimEnd('/')) }.getOrNull() ?: return false
+    if (!uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrBlank()) return false
+    if (!uri.rawUserInfo.isNullOrBlank() || uri.rawQuery != null || uri.rawFragment != null) return false
+    if (uri.rawPath.orEmpty().let { it.isNotEmpty() && it != "/" }) return false
+    val pin = pinSha256?.trim()?.removePrefix("sha256/") ?: return false
+    return runCatching { java.util.Base64.getDecoder().decode(pin).size == 32 }.getOrDefault(false)
+}

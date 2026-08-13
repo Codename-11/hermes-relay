@@ -80,7 +80,7 @@ interface WSLike {
   addEventListener(type: 'error', listener: (ev: WSErrorEvent) => void): void
 }
 
-type WSFactory = (url: string) => WSLike
+type WSFactory = (url: string, headers?: Record<string, string>, allowPinnedCertificate?: boolean) => WSLike
 
 export interface AuthMeta {
   /** Per-channel grant expiry (epoch seconds; `null` = never). Shape matches
@@ -102,7 +102,7 @@ export type AuthOutcome =
  * auth.ok seen; `reconnecting` = socket dropped, backoff timer armed. */
 type ReconnectState = 'idle' | 'connecting' | 'connected' | 'reconnecting'
 
-const defaultWSFactory: WSFactory = url => {
+const defaultWSFactory: WSFactory = (url, headers, allowPinnedCertificate) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Ctor = (globalThis as any).WebSocket
 
@@ -110,6 +110,15 @@ const defaultWSFactory: WSFactory = url => {
     throw new Error('RelayTransport: global WebSocket not available. Need Node >=21.')
   }
 
+  if ((headers && Object.keys(headers).length) || allowPinnedCertificate) {
+    // Bun's compiled runtime supports upgrade headers and scoped TLS options.
+    // Node ignores these extras and authenticates through the normal first
+    // Relay envelope accepted by the proxy compatibility path.
+    return new Ctor(url, [], {
+      ...(headers ? { headers } : {}),
+      ...(allowPinnedCertificate ? { tls: { rejectUnauthorized: false } } : {})
+    }) as WSLike
+  }
   return new Ctor(url) as WSLike
 }
 
@@ -119,6 +128,8 @@ export interface RelayTransportConfig {
   pairingCode?: string
   /** Previously-minted session token for reconnection. */
   sessionToken?: string
+  /** Authenticate a native Relay-only secure proxy WebSocket upgrade. */
+  sessionHeader?: boolean
   /** Human-readable label for the "Paired Devices" list. */
   deviceName?: string
   /** Machine hostname used as a fallback identity by newer relays. */
@@ -183,6 +194,7 @@ export interface RelayTransportConfig {
 export class RelayTransport extends EventEmitter implements Transport {
   private ws: WSLike | null = null
   private wsFactory: WSFactory
+  private pinnedTlsVerified = false
   private cfg: RelayTransportConfig
   private reqId = 0
   private logs = new CircularBuffer<string>(MAX_LOG_LINES)
@@ -327,6 +339,7 @@ export class RelayTransport extends EventEmitter implements Transport {
     // TOFU: probe the TLS peer cert BEFORE the WebSocket handshake so we can
     // refuse to open the WS on a pin mismatch. No-op for ws://.
     if (isSecureUrl(this.cfg.url)) {
+      this.pinnedTlsVerified = false
       try {
         await this.verifyOrCapturePin()
       } catch (e) {
@@ -343,7 +356,12 @@ export class RelayTransport extends EventEmitter implements Transport {
     let ws: WSLike
 
     try {
-      ws = this.wsFactory(this.cfg.url)
+      const token = this.sessionToken ?? this.cfg.sessionToken
+      ws = this.wsFactory(
+        this.cfg.url,
+        this.cfg.sessionHeader && token ? { 'X-Hermes-Relay-Session': token } : undefined,
+        this.pinnedTlsVerified
+      )
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       this.pushLog(`[ws] factory failed: ${msg}`)
@@ -399,11 +417,11 @@ export class RelayTransport extends EventEmitter implements Transport {
         host,
         port,
         servername: host,
-        // Let Node's default CA store run. Self-signed servers still TOFU-
-        // pin on subsequent connects, but the first probe requires a valid
-        // chain. If users need a self-signed flow, they can pre-seed a pin
-        // via the Android app or a future `--trust-self-signed` flag.
-        rejectUnauthorized: true
+        // A server-advertised pin is authoritative trust material. Permit the
+        // handshake to reach pin comparison even when the private proxy uses
+        // a locally issued certificate; without a pin, normal CA validation
+        // remains mandatory before TOFU capture.
+        rejectUnauthorized: !expectedPin
       })
 
       const timer = setTimeout(() => {
@@ -453,6 +471,7 @@ export class RelayTransport extends EventEmitter implements Transport {
         )
       }
       this.pushLog(`[tofu] pin match for ${key}`)
+      this.pinnedTlsVerified = true
 
       return
     }

@@ -24,7 +24,8 @@ import {
 import {
   payloadToRelayCandidates,
   probeCandidatesByPriority,
-  relayPairingCodeFromPayload
+  relayPairingCodeFromPayload,
+  secureFirstCandidates
 } from '../pairingQr.js'
 import { DEFAULT_RELAY_PORT, normalizeRelayUrl, resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { saveSession } from '../remoteSessions.js'
@@ -41,6 +42,7 @@ const PAIR_USAGE: UsageSpec = {
       desc: 'Paste a full QR payload or hermes-relay://pair invite (recommended — probes endpoints)'
     },
     { flag: '--remote <url>', desc: 'Relay URL (with [CODE] or an interactive prompt)' },
+    { flag: '--prefer-direct', desc: 'Respect invite order instead of preferring secure routes' },
     { flag: '--code <code>', desc: '6-char pairing code (or pass it as the positional arg)' },
     {
       flag: '--grant-tools',
@@ -73,6 +75,9 @@ interface PairTarget {
   code: string
   /** Active-endpoint role if this came from a multi-endpoint QR probe. */
   endpointRole: string | null
+  routeCandidates?: ReturnType<typeof payloadToRelayCandidates>
+  preferSecureRoutes?: boolean
+  certPin?: string
 }
 
 async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error: string }> {
@@ -97,10 +102,17 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
       return { error: e instanceof Error ? e.message : String(e) }
     }
     const t = makeTheme({ noColor: !!args.flags['no-color'] })
+    const preferSecure = args.flags['prefer-direct'] !== true
     process.stderr.write(t.bold(`Probing ${candidates.length} endpoint(s)…`) + '\n')
     let winner
     try {
-      winner = await probeCandidatesByPriority(candidates, {
+      // The proxy authenticates its upgrade with an already-minted Relay
+      // session, so initial code exchange must use a direct candidate. The
+      // full set is persisted and secure-first applies on daemon reconnect.
+      const pairableCandidates = candidates.filter(candidate => candidate.role.toLowerCase() !== 'plugin_proxy')
+      if (!pairableCandidates.length) throw new Error('pairing invite has only a session-authenticated proxy; include one direct bootstrap route')
+      const rankedCandidates = preferSecure ? secureFirstCandidates(pairableCandidates) : pairableCandidates
+      winner = await probeCandidatesByPriority(rankedCandidates, {
         onProbe: (ev) => {
           const label = `[${ev.index}/${ev.total}] ${ev.candidate.role} ${ev.candidate.relay.url}`
           if (ev.phase === 'result' && ev.reachable) {
@@ -121,7 +133,10 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
     return {
       url: winner.relay.url,
       code: pairingCode,
-      endpointRole: winner.role
+      endpointRole: winner.role,
+      routeCandidates: candidates,
+      preferSecureRoutes: preferSecure,
+      certPin: winner.proxy?.pinSha256
     }
   }
 
@@ -206,6 +221,9 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
       grants: outcome.meta.grants,
       ttlExpiresAt: outcome.meta.ttlExpiresAt,
       endpointRole: target.endpointRole,
+      routeCandidates: target.routeCandidates,
+      preferSecureRoutes: target.preferSecureRoutes,
+      certPin: target.certPin,
       initializeAccessPolicy: true,
       ...(autoGrant ? { toolsConsented: true } : {})
     })

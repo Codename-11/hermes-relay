@@ -109,6 +109,8 @@ class EndpointResolver(
      * expected path for plain JVM tests.
      */
     private val context: Context? = null,
+    /** Route-aware client for pinned plugin proxy probes. */
+    private val clientForCandidate: ((EndpointCandidate) -> OkHttpClient?)? = null,
 ) {
 
     /**
@@ -197,7 +199,8 @@ class EndpointResolver(
                 EndpointSurface.Standard ->
                     candidate.routeAuthority() ?: candidate.primaryRouteUrl().orEmpty().lowercase()
                 EndpointSurface.Relay ->
-                    routeAuthority(candidate.relay?.url).orEmpty()
+                    candidate.pluginProxyRoutesOrNull()?.authority
+                        ?: routeAuthority(candidate.relay?.url).orEmpty()
             }
             return "${surface.name.lowercase()}|${candidate.role}|$authority"
         }
@@ -375,7 +378,7 @@ class EndpointResolver(
                 recordOutcome(candidate, surface, reachable = false, detail = "Invalid route URL")
                 return false
             }
-        val fastClient = httpClient.newBuilder()
+        val fastClient = (clientForCandidate?.invoke(candidate) ?: httpClient).newBuilder()
             .connectTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .readTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .writeTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -480,6 +483,13 @@ class EndpointResolver(
         candidate: EndpointCandidate,
         surface: EndpointSurface,
     ): ProbeTarget? {
+        if (surface == EndpointSurface.Relay) candidate.pluginProxyRoutesOrNull()?.let { proxy ->
+            return ProbeTarget(
+                baseUrl = proxy.relayHttpUrl,
+                requestUrl = "${proxy.relayHttpUrl}/health",
+                path = "/relay/health",
+            )
+        }
         if (surface == EndpointSurface.Relay) {
             return relayProbeTarget(candidate)
         }

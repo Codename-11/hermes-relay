@@ -18,18 +18,25 @@ so walking out of the house onto LTE seamlessly hops from the LAN
 candidate to the Tailscale (or public) one. See `docs/decisions.md` §24
 for the wire format and priority semantics.
 
-**First-class Tailscale** (ADR 25) ships a thin helper that fronts the
-relay (`127.0.0.1:8767`) and Hermes API server (`127.0.0.1:8642`) with
-`tailscale serve` for managed TLS + tailnet-ACL identity. Both ports are
-needed for the full app: chat/API and API-key voice use the Hermes API
-auth path, while terminal, bridge, TUI, media/session management, and
-relay-token voice fallback use relay pairing.
+**First-class Tailscale** (ADR 25) is the primary supported remote path
+today. Its helper fronts Relay (`127.0.0.1:8767`) and the optional Hermes
+API server (`127.0.0.1:8642`) with `tailscale serve` for managed TLS and
+tailnet-ACL identity. Publish the upstream Dashboard independently for
+Chat, Manage, and standard voice; its cookie/ticket authentication and
+the API server's bearer authentication never become Relay credentials.
+
+An **opt-in native secure proxy** is also available for Relay-only traffic.
+It listens on `:9443`, uses the SPKI pin carried by the pairing QR, and exposes
+only `/relay/health` and `/relay/ws`. It does not proxy the Dashboard or API
+server. See [`docs/security-native-proxy.md`](security-native-proxy.md) for the
+security contract.
 
 ## Decision matrix
 
 | Mode | Recommended for | Setup complexity | Notes |
 |------|----------------|------------------|-------|
 | **Tailscale (built-in)** | 95% of operators | One command | **Default recommendation.** `hermes-relay-tailscale enable`. Managed TLS, tailnet ACLs, works behind CGNAT, no DNS or certs to own. |
+| **Native Relay proxy** | Operators who need pinned Relay TLS without Tailscale | Low | Opt-in Relay-only listener on `:9443`; QR-trusted SPKI; `/relay/health` and `/relay/ws` only. API and Dashboard remain direct. |
 | **Caddy + Let's Encrypt** | Operators with a public domain | Moderate | Real public URL, real CA-signed cert, any browser can reach the dashboard. Requires a domain + port 80/443 reachable from the internet. |
 | **Cloudflare Tunnel** | Residential / CGNAT setups | Moderate | No inbound ports, no domain required (free tryCloudflare subdomains work). Cloudflare is in the path — acceptable for the operator-owned trust model, but note the HTTP-level intercept. |
 | **Self-hosted WireGuard** | Advanced operators | High | No external dependency. You own the crypto + peer config. We don't ship a WireGuard helper — use the upstream WireGuard docs. |
@@ -106,6 +113,22 @@ The QR will carry a `role: public` endpoint with
 `relay.url = wss://hermes.example.com/relay` and
 `api = { host: hermes.example.com, port: 443, tls: true }`.
 
+### Native Relay secure proxy
+
+Enable the native proxy only when a pinned Relay-only route is desired. Its
+default listener is `https://<host>:9443`; health is
+`GET /relay/health` and the authenticated Relay WebSocket is
+`wss://<host>:9443/relay/ws`. The operator-reviewed pairing QR carries the
+authority and SPKI SHA-256 pin before either Android or the desktop CLI makes a
+proxy request.
+
+The proxy is intentionally not a general reverse proxy. API-server and
+Dashboard routes are absent, as are pairing, session-management, bridge HTTP,
+media-inspection, and other loopback-trusted Relay routes. Those upstream
+surfaces keep their own direct or Tailscale HTTPS URLs and authentication.
+Certificate or hostname rotation requires explicit re-pairing; clients do not
+learn replacement trust from a health response or `auth.ok`.
+
 ### Cloudflare Tunnel
 
 Works without a domain and without opening any inbound ports. Install
@@ -157,14 +180,16 @@ interception risk.
 
 ## Combining modes
 
-`hermes-relay-pair --mode auto` is the intended default. It does three
-things in order:
+`hermes-relay-pair --mode auto` emits every available candidate. Clients honor
+the signed ordering secure-first and retain LAN as a separately configured
+fallback:
 
-1. Always emits a `role: lan` endpoint using the detected LAN IP.
-2. Probes `tailscale.status()`; if a `.ts.net` hostname is present,
-   emits a `role: tailscale` endpoint at the next priority slot.
-3. If `--public-url <url>` is passed, emits a `role: public` endpoint
-   at the final slot.
+1. If the opt-in native proxy is enabled, emit its pinned `plugin_proxy`
+   candidate.
+2. If Tailscale Serve is available, emit its WSS/HTTPS candidate as the normal
+   primary remote path.
+3. Preserve public TLS candidates when configured.
+4. Preserve LAN as the fallback; plain LAN still requires explicit consent.
 
 Resulting QR (three endpoints, strict-priority):
 
@@ -172,17 +197,17 @@ Resulting QR (three endpoints, strict-priority):
 {
   "hermes": 3,
   "endpoints": [
-    { "role": "lan",       "priority": 0, "api": {...}, "relay": {"url": "ws://192.168.1.100:8767",  "transport_hint": "ws"}  },
-    { "role": "tailscale", "priority": 1, "api": {...}, "relay": {"url": "wss://host.ts.net:8767",   "transport_hint": "wss"} },
-    { "role": "public",    "priority": 2, "api": {...}, "relay": {"url": "wss://hermes.example.com/relay", "transport_hint": "wss"} }
+    { "role": "tailscale", "priority": 0, "api": {...}, "relay": {"url": "wss://host.ts.net:8767",   "transport_hint": "wss"} },
+    { "role": "public",    "priority": 1, "api": {...}, "relay": {"url": "wss://hermes.example.com/relay", "transport_hint": "wss"} },
+    { "role": "lan",       "priority": 2, "api": {...}, "relay": {"url": "ws://192.168.1.100:8767",  "transport_hint": "ws"}  }
   ]
 }
 ```
 
-**Strict priority** — priority 0 wins whenever it's reachable, even if
-priority 1 is "better" by some other metric (lower latency, no billing
-egress). If the operator put LAN at priority 0 they have a reason.
-Reachability only breaks ties between candidates that share a priority.
+**Strict priority** — priority 0 wins whenever it is reachable. Reachability
+only breaks ties between candidates that share a priority. Operator overrides
+can still promote a role deliberately, but generated defaults prefer secure
+routes and use LAN as fallback.
 
 The phone re-probes on every `ConnectivityManager.onAvailable` /
 `onLost`, with a 60s cache per candidate so rapid network flaps don't
@@ -206,9 +231,9 @@ QR still embeds all detected candidates; only the probe order changes.
 hermes pair --mode auto --public-url https://hermes.example.com/relay --prefer tailscale
 ```
 
-Result: `[(0, tailscale), (1, lan), (2, public)]` — phone tries the
-tailnet first, falls back to LAN if Tailscale is unreachable, then to
-the public URL.
+Result: `[(0, tailscale), (1, public), (2, lan)]` — phone tries the
+tailnet first, keeps the public TLS route as its next secure option, and
+uses acknowledged LAN only as the final fallback.
 
 **Matching is case-insensitive** but the emitted `role` string is
 preserved verbatim (HMAC canonicalization requires the wire form to
@@ -347,5 +372,7 @@ failure above. Leave the override blank and let `mode=auto` pick.
   criteria, alternatives rejected.
 - `docs/security.md` — remote-connectivity section + overall trust
   model.
+- `docs/security-native-proxy.md` — native proxy trust boundary, route
+  allowlist, pinning, and rotation contract.
 - `docs/relay-server.md` — `hermes-relay-tailscale` CLI reference +
   environment variables (`TS_AUTO`, `TS_DECLINE`).

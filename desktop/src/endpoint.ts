@@ -57,6 +57,15 @@ export interface EndpointCandidate {
   priority: number
   api: ApiEndpoint
   relay: RelayEndpoint
+  /** Native plugin secure-proxy advertisement. Preserved even when the
+   * desktop currently consumes only its relay WSS path. */
+  proxy?: {
+    url: string
+    transportHint?: string
+    pinSha256: string
+  }
+  security?: string
+  recommended?: boolean
 }
 
 /**

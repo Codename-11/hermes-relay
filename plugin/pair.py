@@ -611,8 +611,9 @@ def build_endpoint_candidates(
 
     ``mode`` is one of ``auto`` / ``lan`` / ``tailscale`` / ``public``
     (see ADR 24). Priority is strictly increasing by role, starting at
-    0 for LAN and going up — matching DNS SRV semantics (lower number
-    = higher priority). An empty list is returned when no candidates
+    0 for secure routes and going up — matching DNS SRV semantics (lower
+    number = higher priority). Tailscale and public TLS precede plain LAN,
+    which remains the final fallback. An empty list is returned when no candidates
     could be detected (e.g. ``--mode tailscale`` on a host without
     Tailscale installed); callers should treat that as "stay on the
     single-endpoint v2 payload".
@@ -648,19 +649,6 @@ def build_endpoint_candidates(
     want_lan = mode in ("auto", "lan")
     want_tailscale = mode in ("auto", "tailscale")
     want_public = mode in ("auto", "public")
-
-    if want_lan:
-        _emit(
-            _lan_endpoint(
-                api_host,
-                api_port,
-                api_tls,
-                relay_host,
-                relay_port,
-                relay_tls,
-                priority=next_priority,
-            )
-        )
 
     if want_tailscale:
         status = _tailscale_status()
@@ -712,6 +700,22 @@ def build_endpoint_candidates(
                 "--mode public requires --public-url <url> "
                 "(no Tailscale Funnel detected for this port)"
             )
+
+    # Plain LAN is deliberately last in auto mode. It remains available as
+    # an explicit fallback, while Android and desktop receive the same signed
+    # secure-first ordering instead of applying divergent client heuristics.
+    if want_lan:
+        _emit(
+            _lan_endpoint(
+                api_host,
+                api_port,
+                api_tls,
+                relay_host,
+                relay_port,
+                relay_tls,
+                priority=next_priority,
+            )
+        )
 
     # Priority override — promote the named role to priority 0 and
     # renumber the rest in their existing relative order. Role string
@@ -1266,6 +1270,7 @@ def pair_command(args) -> None:
             sys.exit(2)
 
     relay_block: Optional[dict] = None
+    relay_health: Optional[dict] = None
     skip_relay = getattr(args, "no_relay", False)
     if not skip_relay:
         relay_cfg = read_relay_config()
@@ -1273,8 +1278,8 @@ def pair_command(args) -> None:
         relay_tls = bool(relay_cfg.get("tls"))
         transport_hint = "wss" if relay_tls else "ws"
 
-        health = probe_relay(relay_port)
-        if health is None:
+        relay_health = probe_relay(relay_port)
+        if relay_health is None:
             print(
                 "  [info] Relay not running at localhost:"
                 f"{relay_port} — QR will configure chat only."
@@ -1337,6 +1342,17 @@ def pair_command(args) -> None:
         except ValueError as exc:
             print(f"  [error] --mode/--public-url: {exc}", file=sys.stderr)
             sys.exit(2)
+
+        # The plugin proxy is a distinct recommended route, not a replacement
+        # for LAN/Tailscale/public candidates. Trust material comes from the
+        # loopback Relay health response. Android imports this operator-reviewed
+        # pin from the QR; runtime auth never introduces or replaces trust.
+        secure_proxy = relay_health.get("secure_proxy") if relay_health else None
+        if isinstance(secure_proxy, dict):
+            for candidate in endpoints:
+                if isinstance(candidate, dict):
+                    candidate["priority"] = int(candidate.get("priority", 0)) + 1
+            endpoints.insert(0, secure_proxy)
 
     payload = build_pairing_qr_payload(
         host=host,

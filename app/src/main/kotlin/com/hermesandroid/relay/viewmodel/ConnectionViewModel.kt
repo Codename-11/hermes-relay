@@ -85,6 +85,8 @@ import com.hermesandroid.relay.network.upstream.DashboardStatus
 import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
 import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.shared.EndpointResolver
+import com.hermesandroid.relay.network.shared.buildPluginProxyClient
+import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
@@ -608,6 +610,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val endpointResolver = EndpointResolver(
         httpClient = endpointProbeClient,
+        clientForCandidate = { candidate ->
+            candidate.pluginProxyRoutesOrNull()?.let { proxy ->
+                buildPluginProxyClient(
+                    baseBuilder = endpointProbeClient.newBuilder(),
+                    routes = proxy,
+                    sessionTokenProvider = {
+                        (authManager.authState.value as? AuthState.Paired)?.token
+                    },
+                )
+            }
+        },
         context = application,
     )
 
@@ -618,6 +631,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         context = application,
         endpointResolver = endpointResolver,
         endpointCandidatesProvider = { activeRouteCandidatesSnapshot() },
+        proxyClientProvider = { url -> pluginProxyClientForUrl(url) },
         // Pull the active device id through AuthManager — it's the same id
         // PairingPreferences keys the endpoint list on. Nullable wrapper
         // because AuthManager.getOrCreateDeviceId() is suspending.
@@ -784,7 +798,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     val relayRowState: StateFlow<RelayRowState> = combine(
         _relayUiState,
-        connectionManager.activeEndpoint,
+        connectionManager.activeRelayEndpoint,
     ) { phase, endpoint ->
         RelayRowState(phase = phase, activeEndpointRole = endpoint?.role)
     }.stateIn(
@@ -866,7 +880,35 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         )
 
     private fun effectiveRelayUrlSnapshot(): String =
-        connectionManager.activeEndpoint.value?.relay?.url ?: autoRelayUrlSnapshot()
+        connectionManager.activeEndpoint.value?.relay?.url
+            ?: autoRelayUrlSnapshot()
+
+    private fun effectiveRelayWebSocketUrlSnapshot(): String =
+        connectionManager.activeRelayEndpoint.value?.pluginProxyRoutesOrNull()?.relayWebSocketUrl
+            ?: connectionManager.activeRelayEndpoint.value?.relay?.url
+            ?: autoRelayUrlSnapshot()
+
+    private fun pluginProxyClientForUrl(url: String): OkHttpClient? {
+        val requestAuthority = runCatching {
+            val parsed = java.net.URI(url)
+            val port = if (parsed.port > 0) parsed.port else 443
+            "${parsed.host?.lowercase()}:$port"
+        }.getOrNull() ?: return null
+        val routes = activeConnection.value?.routeCandidates.orEmpty()
+            .mapNotNull { it.pluginProxyRoutesOrNull() }
+            .firstOrNull { it.authority == requestAuthority }
+            ?: return null
+        return buildPluginProxyClient(
+            baseBuilder = OkHttpClient.Builder()
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(0, TimeUnit.MILLISECONDS)
+                .pingInterval(30, TimeUnit.SECONDS),
+            routes = routes,
+            sessionTokenProvider = {
+                (authManager.authState.value as? AuthState.Paired)?.token
+            },
+        )
+    }
 
     private fun autoRelayUrlSnapshot(): String {
         val savedRelay = _relayUrl.value
@@ -5870,7 +5912,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun connectRelay() {
-        connectRelayInternal(effectiveRelayUrlSnapshot())
+        connectRelayInternal(effectiveRelayWebSocketUrlSnapshot())
     }
 
     /**
