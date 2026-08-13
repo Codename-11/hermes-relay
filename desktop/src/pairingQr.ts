@@ -23,7 +23,7 @@ import {
 import { describeTransportSecurity } from './transportSecurity.js'
 import https from 'node:https'
 import tls from 'node:tls'
-import { comparePins, extractSpkiSha256, peerCertificateDer } from './certPin.js'
+import { certificateDerToPem, comparePins, extractSpkiSha256, peerCertificateDer } from './certPin.js'
 
 /**
  * Per-candidate HEAD `/health` probe timeout. Matches Kotlin
@@ -432,13 +432,16 @@ export function isValidPinnedProxyCandidate(candidate: EndpointCandidate): boole
 async function verifyPinnedProxyCertificate(
   candidate: EndpointCandidate,
   signal: AbortSignal,
-): Promise<boolean> {
+): Promise<Buffer | null> {
   const parsed = new URL(candidate.proxy!.url)
-  return await new Promise<boolean>((resolve, reject) => {
+  return await new Promise<Buffer | null>((resolve, reject) => {
     const socket = tls.connect({
       host: parsed.hostname,
       port: Number(parsed.port || 443),
       servername: parsed.hostname,
+      // lgtm[js/disabling-certificate-validation] This pre-auth handshake reads
+      // only the leaf certificate. The QR-carried SPKI pin is compared below
+      // before the certificate is trusted or any credential/request is sent.
       rejectUnauthorized: false,
     })
     const abort = () => socket.destroy(new Error('probe aborted'))
@@ -451,7 +454,7 @@ async function verifyPinnedProxyCertificate(
         resolve(raw !== null && comparePins(
           candidate.proxy!.pinSha256,
           extractSpkiSha256(raw),
-        ))
+        ) ? raw : null)
       } catch (error) {
         socket.destroy()
         reject(error)
@@ -499,14 +502,15 @@ export async function probeCandidate(
   try {
     if (isValidPinnedProxyCandidate(c)) {
       const url = `${c.proxy!.url.replace(/\/+$/, '')}/relay/health`
-      const certificateMatches = await verifyPinnedProxyCertificate(c, signal)
-      if (!certificateMatches) {
+      const pinnedCertificate = await verifyPinnedProxyCertificate(c, signal)
+      if (!pinnedCertificate) {
         return { candidate: c, reachable: false, elapsedMs: Date.now() - started,
           error: 'paired certificate pin did not match' }
       }
       const reachable = await new Promise<boolean>((resolve, reject) => {
         const request = https.get(url, {
-          rejectUnauthorized: false,
+          rejectUnauthorized: true,
+          ca: certificateDerToPem(pinnedCertificate),
           signal,
           headers: sessionToken ? { 'X-Hermes-Relay-Session': sessionToken } : undefined
         }, response => {

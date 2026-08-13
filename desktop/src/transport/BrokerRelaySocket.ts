@@ -127,6 +127,10 @@ export async function openBrokerRelaySocket(config: BrokerRouteConfig): Promise<
   const stream = new BrokerByteStream(outer, { type: 'register', protocol_version: 1, role: 'client', host_id: config.hostId, connection_id: connectionId, credential_kind: config.credentialKind, token: config.token })
   await stream.matched
   const inner = new URL(config.innerUrl)
+  // lgtm[js/disabling-certificate-validation] The broker carries opaque bytes,
+  // so normal PKI cannot authenticate a private Secure Link certificate here.
+  // No inner application data is sent until the QR pin and hostname checks
+  // immediately below both succeed on this exact TLS connection.
   const secure = tls.connect({ socket: stream, servername: inner.hostname, rejectUnauthorized: false })
   await new Promise<void>((resolve, reject) => { secure.once('secureConnect', resolve); secure.once('error', reject) })
   const raw = peerCertificateDer(secure)
