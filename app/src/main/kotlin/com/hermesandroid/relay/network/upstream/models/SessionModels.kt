@@ -4,6 +4,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
@@ -134,6 +135,32 @@ object FlexibleTimestampSerializer : KSerializer<Double?> {
     }
 }
 
+/**
+ * Boolean serializer for session flags backed by SQLite integer columns.
+ *
+ * Older Dashboard responses can expose those columns as `0` / `1` instead of
+ * JSON booleans. Accept the equivalent primitive forms without making arbitrary
+ * numbers or strings truthy, and always serialize back to a real JSON boolean.
+ */
+object FlexibleBooleanSerializer : KSerializer<Boolean> {
+    override val descriptor = PrimitiveSerialDescriptor("FlexibleBoolean", PrimitiveKind.BOOLEAN)
+
+    override fun deserialize(decoder: Decoder): Boolean {
+        val jsonDecoder = decoder as? JsonDecoder ?: return decoder.decodeBoolean()
+        val element = jsonDecoder.decodeJsonElement()
+        val value = (element as? JsonPrimitive)?.content?.trim()?.lowercase()
+        return when (value) {
+            "true", "1" -> true
+            "false", "0" -> false
+            else -> throw SerializationException("Expected a boolean-compatible value, got $element")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Boolean) {
+        encoder.encodeBoolean(value)
+    }
+}
+
 // --- Session CRUD responses ---
 
 @Serializable
@@ -187,9 +214,13 @@ data class SessionItem(
     @SerialName("tool_call_count") val toolCallCount: Int? = null,
     @SerialName("input_tokens") val inputTokens: Int? = null,
     @SerialName("output_tokens") val outputTokens: Int? = null,
-    @SerialName("has_model_config") val hasModelConfig: Boolean = false,
+    @SerialName("has_model_config")
+    @Serializable(with = FlexibleBooleanSerializer::class)
+    val hasModelConfig: Boolean = false,
     /** Durable flags returned by current Dashboard and API-server session resources. */
+    @Serializable(with = FlexibleBooleanSerializer::class)
     val pinned: Boolean = false,
+    @Serializable(with = FlexibleBooleanSerializer::class)
     val archived: Boolean = false,
     /** Optional workspace metadata added by newer Dashboard session lists. */
     val cwd: String? = null,

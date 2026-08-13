@@ -1,14 +1,17 @@
 package com.hermesandroid.relay.network.upstream.models
 
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 
@@ -92,6 +95,42 @@ class SessionModelsTest {
 
         assertTrue(item.pinned)
         assertTrue(item.archived)
+    }
+
+    @Test
+    fun sessionItem_deserializesNumericSessionFlags() {
+        val item = json.decodeFromString<SessionItem>(
+            """{"id":"s1","has_model_config":1,"pinned":0,"archived":1}""",
+        )
+
+        assertTrue(item.hasModelConfig)
+        assertFalse(item.pinned)
+        assertTrue(item.archived)
+    }
+
+    @Test
+    fun sessionItem_deserializesStringBooleanSessionFlags() {
+        val item = json.decodeFromString<SessionItem>(
+            """{"id":"s1","has_model_config":"false","pinned":"1","archived":"0"}""",
+        )
+
+        assertFalse(item.hasModelConfig)
+        assertTrue(item.pinned)
+        assertFalse(item.archived)
+    }
+
+    @Test
+    fun sessionItem_rejectsNonBooleanSessionFlagValues() {
+        assertThrows(SerializationException::class.java) {
+            json.decodeFromString<SessionItem>(
+                """{"id":"s1","pinned":2}""",
+            )
+        }
+        assertThrows(SerializationException::class.java) {
+            json.decodeFromString<SessionItem>(
+                """{"id":"s1","archived":"yes"}""",
+            )
+        }
     }
 
     @Test
