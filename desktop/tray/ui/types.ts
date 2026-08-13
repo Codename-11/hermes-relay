@@ -1,4 +1,6 @@
-export type AccessMode = 'ask' | 'trusted' | 'full-access'
+export type AccessMode = 'ask' | 'ask-every-time' | 'structured' | 'trusted' | 'full-access' | 'custom'
+export type CapabilityMode = 'disabled' | 'ask' | 'allow'
+export type Capability = 'commands' | 'files' | 'screen_input' | 'usb' | 'microphone' | 'camera'
 
 export interface Host {
   url: string
@@ -8,12 +10,16 @@ export interface Host {
   paired_at?: number | null
   is_active: boolean
   access_mode: AccessMode
+  capabilities: Record<Capability, CapabilityMode>
+  broker_configured?: boolean
 }
 
 export interface DaemonStatus {
   state: string
   running: boolean
   url?: string | null
+  configured_url?: string | null
+  active_route?: string | null
   privilege?: string | null
   username?: string | null
   updated_at?: number | null
@@ -23,7 +29,7 @@ export interface Activity {
   ts: number
   kind?: 'tool.completed' | 'management.completed'
   tool: string
-  category?: 'command' | 'files' | 'screen' | 'input' | 'system' | 'other'
+  category?: 'command' | 'files' | 'screen' | 'input' | 'devices' | 'system' | 'other'
   ok: boolean
   aborted?: boolean
   request_id?: string
@@ -32,6 +38,14 @@ export interface Activity {
   exit_code?: number
   summary?: string
   args_preview?: string
+  request_detail?: string
+  stdout?: string
+  stderr?: string
+  result_detail?: string
+  request_truncated?: boolean
+  stdout_truncated?: boolean
+  stderr_truncated?: boolean
+  result_truncated?: boolean
   error?: string
 }
 
@@ -42,6 +56,11 @@ export interface Snapshot {
   activity: Activity[]
   pending_grants: PendingGrantRequest[]
   startup_enabled: boolean
+  daemon_autostart_enabled?: boolean
+  ui_version?: string | null
+  cli_version?: string | null
+  cli_path?: string | null
+  hardware_availability: { usb: boolean; adb: boolean; microphone: boolean; camera: boolean }
 }
 
 export interface PendingGrantRequest {

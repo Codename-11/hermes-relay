@@ -58,8 +58,8 @@ Android app
   |-- Vanilla Hermes chat   -> dashboard /api/ws, then API-server SSE fallback
   |-- Vanilla Hermes Manage -> dashboard /api/*
   |-- Vanilla Hermes voice  -> dashboard /api/audio/*
-  |-- Relay terminal      -> relay WSS :8767
-  |-- Relay bridge/tools  -> relay WSS/HTTP :8767
+  |-- Relay terminal      -> Tailscale Serve WSS, or opt-in Hermes Secure Link :9443/relay/ws
+  |-- Relay bridge/tools  -> the same authenticated Relay transport
   `-- Relay voice extras  -> relay /voice/*
 
 Hermes upstream
@@ -73,6 +73,14 @@ Hermes-Relay plugin
   |-- dashboard tab       -> plugin/dashboard/
   `-- diagnostics         -> hermes relay doctor
 ```
+
+In multiplex gateways, every profile's plugin manager owns its own Relay tool,
+command, hook, platform, and system-prompt registrations. Relay configuration
+resolves through Hermes' context-local home override, not only the process
+`HERMES_HOME`. Current Hermes hosts receive Relay prompt context through owned
+`register_system_prompt_section` entries so reload, disable, re-enable, and
+unload remain profile-isolated; the legacy prompt wrapper is used only when
+that additive registration API is unavailable.
 
 A saved **Connection** represents one Hermes installation, not one transport.
 Its stable identity is independent of endpoint URLs. Dashboard/Gateway is the
@@ -148,6 +156,13 @@ the local operator enables the runtime dev toggle with
 | `done` | Server → App | `{ session_id, run_id, state: "final" }` |
 
 Session management uses the REST API (`GET/POST /api/sessions`, `PATCH/DELETE /api/sessions/{id}`).
+Newer Dashboard session rows may also supply `cwd`, `git_branch`, and
+`git_repo_root`. Android reduces paths to a repository name for display and
+uses the read-only `POST /api/profiles/sessions/pull-requests` transcript scan
+to attach the PR a coding session created, then the repo-scoped read-only
+`POST /api/git/review/pr-list` route for its current lifecycle state. All of
+this metadata is optional; older Dashboard and API-server hosts retain the
+ordinary session row.
 
 #### Channel: `terminal`
 PTY streaming — raw terminal I/O.
@@ -191,6 +206,30 @@ by Manage, Gateway tickets, and standard voice.
 
 Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (plus the API server credentials and optional dashboard URL) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
+The primary secure remote path today is Tailscale Serve, which exposes Relay as
+WSS and the independently authenticated upstream API/Dashboard surfaces as
+HTTPS. The optional Relay plugin **Hermes Secure Link** is a unified alternative: when
+explicitly enabled it listens on `:9443`, advertises the operator-reviewed
+paired endpoint's SPKI material,
+and exposes fixed `/relay`, `/api`, and `/dashboard` namespaces. Each service
+retains its native credential, and Dashboard forwarding fails closed unless
+its upstream OAuth/password gate is active. Clients select secure candidates
+first and may fall back to a separately configured LAN route; the existing
+plain-route acknowledgement still applies. See
+[`docs/security-native-proxy.md`](security-native-proxy.md).
+
+Hermes Reach is the experimental `outbound_broker` candidate for hosts that cannot
+accept inbound traffic. Host and client both connect outward to broker
+`/v1/connect`; the broker only matches and forwards opaque records. QR-pinned
+Secure Link TLS remains end-to-end inside that outer WSS connection, so broker
+WSS is not itself the end-to-end security boundary. The broker may observe
+routing identity, source, timing, and byte metadata and may disrupt delivery,
+but cannot read authenticated inner paths, headers, credentials, or plaintext.
+Direct/Tailscale/Secure Link routes remain independent fallbacks, with no silent
+plaintext downgrade. Reach is disabled by default, marked experimental, and
+selected only after supported routes are unavailable.
+See [`docs/security-broker-transport.md`](security-broker-transport.md).
+
 As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candidates** (`lan` / `tailscale` / `public` / operator-defined roles). A single pairing covers every network the phone might be on — the phone picks the highest-priority reachable candidate at connect time and re-probes on network change. The single-URL top-level fields still appear in v3 QRs for backward compatibility; old phones ignore `endpoints` via `ignoreUnknownKeys = true`, new phones prefer `endpoints` and fall back to the top-level URL when the array is absent. See [`docs/remote-access.md`](remote-access.md) for the operator-facing setup per mode.
 
 ```
@@ -202,9 +241,9 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
    ~/.hermes/config.yaml or ~/.hermes/.env, and auto-detects candidate
    endpoints: LAN IP via routing lookup; Tailscale hostname via
    tailscale.status() when the CLI is present; public URL from
-   --public-url when provided. Strict-priority ordering (lan → tailscale
-   → public) with 0 = highest. --mode lan/tailscale/public emits only
-   that candidate.
+   --public-url when provided. Generated defaults order secure candidates
+   (Hermes Secure Link when enabled, then Tailscale/public TLS) before plain LAN,
+   with 0 = highest. --mode lan/tailscale/public emits only that candidate.
 3. If a relay is reachable at localhost:RELAY_PORT (default 8767):
    a. Mint a fresh 6-char code from A-Z / 0-9
    b. Compute the transport hint (wss / ws) from the relay's TLS config
@@ -237,9 +276,9 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
    expires_at + grants + transport_hint in auth.ok.
 10. Phone stores the session token in the Android Keystore (StrongBox-
     preferred) with fallback to EncryptedSharedPreferences on older /
-    unsupported devices. On the first wss handshake, records the cert
-    SHA-256 fingerprint in CertPinStore (TOFU). Subsequent connects
-    verify against the stored pin via OkHttp's CertificatePinner.
+    unsupported devices. Ordinary WSS routes use the existing first-connect
+    TOFU pin. Hermes Secure Link WSS instead requires the QR-carried SPKI pin before
+    its first health or WebSocket request.
 11. Future connections use the session token directly. Rate limiter,
     session expiry, and per-channel grants all enforced at the relay.
 12. Session expires on ttl_seconds (or never); individual grants may
@@ -249,7 +288,11 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
 
 **Old API-only QRs** (no `relay` block, no `hermes` field, or `hermes: 1`) still parse — the phone just skips the relay setup step and can be paired against a relay later via Settings. **v1 QRs with a relay block** (no TTL / grants / sig fields) still parse via `ignoreUnknownKeys`; the phone treats missing TTL as "prompt the user with defaults". **v3 QRs with an `endpoints` array** (ADR 24) also parse on v0.6.x and earlier clients — they ignore the array and keep using the top-level fields. New clients prefer `endpoints` and fall back to the top-level fields when absent.
 
-**Re-pair explicitly resets the TOFU pin** for the target host (`applyServerIssuedCodeAndReset(code, relayUrl)` wipes `CertPinStore[host:port]`) — a QR rescan is taken as consent to possibly-new certificate material. This is the documented recovery path when a relay restarts with a new self-signed cert.
+**Re-pair explicitly resets transport trust** for the target host. Ordinary TLS
+routes retain their existing TOFU behavior. A Hermes Secure Link route is stricter:
+its SPKI pin must arrive in the operator-reviewed QR before the first request,
+and a certificate or authority rotation requires another explicit re-pair. A
+TLS or pin failure never silently downgrades that route to HTTP/WS.
 
 **Phase 3 (bridge)** will introduce a symmetric phone-generates-code, host-approves flow. The `POST /pairing/approve` route is stubbed in this cycle — same wire shape as `/pairing/register`, same loopback gate — with a `# TODO(Phase 3)` pointing at the pending-codes store + operator approval UI that still needs to be built.
 
@@ -260,34 +303,34 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
 ```json
 {
   "hermes": 3,
-  "host": "192.168.1.100",
+  "host": "hermes.tail-scale.ts.net",
   "port": 8642,
   "key": "api-bearer-token",
-  "tls": false,
+  "tls": true,
   "relay": {
-    "url": "ws://192.168.1.100:8767",
+    "url": "wss://hermes.tail-scale.ts.net:8767",
     "code": "ABCD12",
     "ttl_seconds": 2592000,
     "grants": { "terminal": 2592000, "bridge": 604800 },
-    "transport_hint": "ws"
+    "transport_hint": "wss"
   },
   "endpoints": [
-    { "role": "lan",       "priority": 0,
-      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
-      "relay": { "url": "ws://192.168.1.100:8767", "transport_hint": "ws" } },
-    { "role": "tailscale", "priority": 1,
+    { "role": "tailscale", "priority": 0,
       "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
       "relay": { "url": "wss://hermes.tail-scale.ts.net:8767", "transport_hint": "wss" } },
-    { "role": "public",    "priority": 2,
+    { "role": "public",    "priority": 1,
       "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
-      "relay": { "url": "wss://hermes.example.com/relay", "transport_hint": "wss" } }
+      "relay": { "url": "wss://hermes.example.com/relay", "transport_hint": "wss" } },
+    { "role": "lan",       "priority": 2,
+      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+      "relay": { "url": "ws://192.168.1.100:8767", "transport_hint": "ws" } }
   ],
   "sig": "base64url-hmac-sha256"
 }
 ```
 
 - `hermes` — payload version. `1` is the legacy shape (no new fields); `2` is set when any v2-only field (`ttl_seconds`, `grants`, `transport_hint`) is present in the `relay` block; `3` is set when `endpoints` is present (ADR 24). All three versions parse on the current Android client.
-- `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` get styled UI; anything else renders as "Custom VPN (<role>)"). Per-endpoint entries intentionally carry **only** `api` + `relay` — the pairing code, TTL, and grants stay at the top level because they're per-pair artifacts, not per-endpoint. Full schema in ADR 24.
+- `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` / `plugin_proxy` / `outbound_broker` get styled UI; `plugin_proxy` is the compatibility wire role for Hermes Secure Link and `outbound_broker` is the wire role for Hermes Reach, while anything else renders as "Custom VPN (<role>)"). Entries can carry independently optional `api`, `dashboard`, `relay`, Secure Link, and Reach routing metadata; pairing code, TTL, and grants stay at the top level because they are per-pair artifacts. Full schema in ADR 24, the Secure Link trust contract in [`security-native-proxy.md`](security-native-proxy.md), and the Reach broker contract in [`security-broker-transport.md`](security-broker-transport.md).
 - Top-level fields (`host`/`port`/`key`/`tls`) configure the direct Hermes API Server. Unchanged since v1.
 - `relay` — **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
 - `relay.url` — full WebSocket URL (`ws://` for dev, `wss://` for production).
@@ -394,8 +437,9 @@ Bottom navigation bar with 4 tabs:
 - **Profile switch lifecycle** — selecting an inactive profile never changes Hermes' sticky server default and never hot-swaps a live session. Android switches connection/profile context, restores that profile's last session only from the compatible Gateway or SSE transport slot, or opens a fresh draft. Gateway turns detach and reconcile in their original durable session; live SSE switching is disabled. Model/provider, personality, reasoning, approval, Fast, and YOLO state are cleared before destination session truth re-seeds them.
 - **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete, pin/unpin, and archive/restore. Pin and archive are durable upstream session fields loaded and patched through the owning connection/profile's Dashboard session API; Android does not keep a second local flag registry. Archived rows are requested explicitly so they remain restorable after recreation. Failed mutations roll back the optimistic row, while refresh and deletion reconcile from server truth. When a persisted title is absent, use upstream's first-user-message `preview`, matching the Hermes Desktop session picker; show "Untitled" only when neither value exists.
 - **Concurrent Gateway chats** — switching sessions, profiles, drafts, or Threads detaches the visible turn without sending `session.interrupt`; each running chat keeps a connection/profile/session-scoped checkpoint and reattaches to its live Gateway session when reopened. Explicit Stop still interrupts. SSE fallback stays single-stream and cancels on navigation.
-- **Queued Gateway follow-ups** — every local queued item is immutably scoped to its originating connection, profile, stored session, transport, and run generation; only that run's completion can make it eligible, and switching sessions shows only that session's queue. Restored text queues retain the same scope, while unavailable/deleted destinations and non-restorable attachment queues fail visibly instead of following the current composer. Drained messages add `queued: true` to `prompt.submit`; ordinary sends omit the field. Authoritative submit rejections (`4028`, `4029`, `4090`, `5070`, and `5071`) preserve the server message and never fall through to API-server SSE.
-- **Complete transcript reads** — Android requests the API-server and profile-scoped Dashboard message routes with an explicit 500-row contract. User-visible history pages oldest-first until complete, preserves legacy unpaginated envelopes, and stops with a clear 50,000-message/32 MB client safety bound. Short dropped-stream recovery polls one explicit latest page while the known transcript fits that window; longer histories retain complete paging so positional edit/recovery anchors cannot shift. Edit-and-regenerate submits always send `confirm_truncate`; ordinal zero alone also sends `confirm_empty_truncate`.
+- **Queued Gateway follow-ups** — every local queued item is immutably scoped to its originating connection, profile, stored session, transport, and run generation; only that run's completion can make it eligible, and switching sessions shows only that session's queue. Restored text queues retain the same scope, while unavailable/deleted destinations and non-restorable attachment queues fail visibly instead of following the current composer. Drained messages add `queued: true` to `prompt.submit`; ordinary sends omit the field. Authoritative submit rejections (`4004`, `4018`, `4028`, `4029`, `4030`, `4090`, `5008`, `5070`, and `5071`) preserve the server message and never fall through to API-server SSE.
+- **Complete transcript reads** — Android requests the API-server and profile-scoped Dashboard message routes with an explicit 500-row contract. User-visible history pages oldest-first until complete, preserves legacy unpaginated envelopes, and stops with a clear 50,000-message/32 MB client safety bound. Short dropped-stream recovery polls one explicit latest page while the known transcript fits that window; longer histories retain complete paging so positional edit/recovery anchors cannot shift. Edit-and-regenerate submits always send `confirm_truncate`; ordinal zero alone also sends `confirm_empty_truncate`. Gateway history `row_id` values are retained as durable rewind targets (never UI keys), sent alongside the visible-user ordinal, and rebound from `survivor_user_row_ids` after each truncating rewrite; older histories without row IDs remain ordinal-compatible.
+- **Bounded Gateway resume** — an authoritative `session.resume` rejection such as `4130` remains visible with the server's export/config guidance. Android does not create a replacement session, retry, or fall through to API-server SSE, so an oversized lineage cannot silently become a context-free turn.
 - **Gateway command privacy** — `command.dispatch` skill/send results render the server's bounded `display` text (or the literal command when absent). Expanded skill bodies remain transport-only and are not copied into bubbles, titles, retries, or recovery checkpoints.
 - **Chat view** — message bubbles with markdown rendering, streaming text, tool call cards (Off/Compact/Detailed display modes)
 - **Three independent visual roles** — the profile image or letter fallback identifies the agent and appears on the first assistant message in a group; the optional Sphere is an ambient background visualization; and an optional pet is an app-level floating companion. A pet never replaces profile identity or the Sphere.
@@ -410,6 +454,7 @@ Bottom navigation bar with 4 tabs:
 - **Agent Passport — profile inspection/configuration** — upstream Hermes profiles are selected from the Profile Shelf or the Passport's shared full switcher. Passport retains identity customization, model/personality/reasoning/safety configuration, inspection, and session analytics; it is not a second profile-picker implementation. See `docs/decisions.md` §21 and ADR 48.
 - **Agent sheet — Personality section** — personalities fetched from `GET /api/config` (`config.agent.personalities`). Shows server default (from `config.display.personality`) + all configured. Active personality name shown on assistant chat bubbles.
 - **Agent sheet — Approval controls** — gateway contract v3 exposes the profile-persisted `approvals.mode` policy (`manual` / `smart` / `off`) separately from YOLO. The launch/default profile gets the three-way control; multiplexed non-launch profiles reconcile `session.info.approval_mode` read-only until upstream config RPCs honor profile scope. The existing YOLO switch remains an explicit per-session override and never silently writes profile configuration. Older gateways keep chat and YOLO available while the profile control explains that an upstream update is required.
+- **Interactive clarify cards** — ordinary upstream choices retain one-tap submission; `multi_select:true` choices toggle independently and require explicit submission as one JSON-array answer. Open text remains available for an Other answer. Android never invents a clarify deadline when upstream omits timeout metadata: the correlated `clarify.expire` event or an expired response retires the card authoritatively.
 - **Streaming dots** — animated pulsing 3-dot indicator replaces static "streaming..." text
 - Displays: streaming delta text; quiet thinking/reasoning disclosures that open while live and collapse when settled; consecutive routine tool activity summarized as one live ticker or settled disclosure; standalone lifecycle surfaces for approvals, failures, generated media, file edits, and delegated work; per-message token counts + cost
 
@@ -445,7 +490,7 @@ The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafety
 - **Appearance customization** — each preset has an expandable editor directly below mode. Accent and Soft/Balanced/Sharp shape drafts update only the live preview until Apply; Reset restores the preset draft, applied values remain local in DataStore, and derived Material on-colors preserve readable contrast. Typography and density remain in their focused Font and Font size controls.
 - **Appearance** — preset-first live preview, theme mode and typography controls, plus independent **Background visualization** (Off/Sphere with built-in or imported declarative JSON skins, or an imported validated pet-format animation) and **Floating pet** (None/installed pet) controls. A background pet-format asset reuses the safe renderer but never gains roaming, placement, or temperament behavior; its persisted selection is separate from the floating companion. Selected-pet controls include playback speed, 60–120% size, stabilization, temperament, opt-in **Walk around the interface**, and **Reset position**. Pets can be installed from a responsive, searchable Petdex thumbnail gallery, imported as a custom Relay `.zip`/single image, or prepared through a guided local-first creator that copies or prefills complete instructions into a fresh chat for user review before submission. Generated files are never auto-installed or shared. The gallery lazily requests upstream-cropped idle frames and animates only the selected installed pet; the global companion is hidden on that dense route so install/source controls remain clear. Petdex browsing prefers its v2 manifest with v1 fallback; full-atlas downloads to Android are user-initiated, exact-host and size constrained, attribution-preserving, validated, and installed atomically for offline use. Runtime decoding holds the previous complete clip during state swaps, caches a bounded set of clips/sheets, and rejects frame sequences or sheets beyond documented decoded-pixel ceilings. Settings cards and thinking controls remain registered obstacles beneath their walkable top rails, and the pet target yields pointer input during active scrolling. Existing combined selections migrate once: the previous main avatar becomes the background selection while any pet also remains available as the floating companion. Profile identity is unaffected.
 - **Pet terrain diagnostics** — debug builds expose a default-off Developer Options toggle with a **Pet path inspector** anchored initially below the app header and its Android status-bar inset, leaving all header navigation and menu actions accessible. It starts as a narrow collapsed live-status bar, can be moved only from its grip, snaps to the nearest horizontal edge, retains normalized placement through navigation and rotation, and re-clamps when its size or viewport changes. **Reset position** returns it below the header. A recoverable **PASS** mode collapses the inspector and makes every region except its unlock button click-through, while the diagnostic Canvas remains visible. Expanding opens the default **Terrain** view; **Plan** reduces the canvas to the selected/active journey, while **Full** restores protected viewport, raw perch/rail labels, footprint, gate, and locomotion details. **Exit inspector** disables the persisted Developer Options overlay request. The inspector distinguishes measured perches, derived walk rails, narrow-bubble touchdown points, expanded collision regions, dashed collision-checked candidates, the selected out-and-back planner route with arrows and numbered stops, and the solid route active only while it is traversed. The planner maintains an event-driven lookahead while behavior pacing is idle, revalidates it when terrain or a supported waypoint changes, and keeps an in-flight transfer atomic instead of redirecting mid-jump. **Freeze** snapshots only the displayed diagnostics so a route can be inspected while the live planner continues unchanged. The selected route updates on each planner pass and is cleared when live terrain changes; its numbered loop describes the exact selected outbound legs and their reverse return. Active autonomous, recovery, and direct drag/drop paths are colored separately; recovery or direct manipulation never makes a path eligible for ambient travel. Candidate connectivity is diagnostic and never implies planner selection. The full-screen Canvas and non-control inspector regions remain pointer-transparent. Locking Developer Options clears it.
-- **Data** — Backup, restore, reset with confirmation dialogs
+- **Data** — Android-local backup, restore, and reset with confirmation dialogs. Manage → Operations also uses the authenticated upstream dashboard to create and download server backups and to upload an explicitly confirmed zip to the guarded import staging route. Manage → Learning edits full node content and confirms deletion (Hermes archives skill nodes; memory-node deletion is permanent). Manage → Memory uses upstream discovery/config/setup and provider activation, scoped to the selected profile. Manage → Channels includes upstream WhatsApp QR onboarding, status polling, apply/cancel, and the resulting gateway restart.
 - **About** — logo on dark background, dynamic version from BuildConfig, Source + Docs link buttons, credits. What's New dialog.
 
 ---

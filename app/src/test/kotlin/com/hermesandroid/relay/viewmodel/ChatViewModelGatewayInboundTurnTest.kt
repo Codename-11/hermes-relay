@@ -10,6 +10,7 @@ import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpointStore
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
+import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
@@ -26,6 +27,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
@@ -658,6 +660,106 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { viewModel.pendingAsk.value == null }
         val cardMessage = handler.messages.value.single { it.id == pending.messageId }
         assertEquals("once", cardMessage.cardDispatches.single().actionValue)
+    }
+
+    @Test
+    fun protectedInstructionApprovalCardOffersOneOperationScopeOnly() {
+        viewModel.sendMessage("Edit the disposable instruction fixture")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "approval.request",
+                buildJsonObject {
+                    put("command", "<write to AGENTS.md>")
+                    put("allow_session", false)
+                    put("allow_permanent", false)
+                    put("choices", buildJsonArray {
+                        add(JsonPrimitive("once"))
+                        add(JsonPrimitive("session"))
+                        add(JsonPrimitive("always"))
+                        add(JsonPrimitive("deny"))
+                    })
+                },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+        val card = handler.messages.value.single { it.id == pending.messageId }.cards.single()
+        assertEquals(listOf("once", "deny"), card.actions.map { it.value })
+    }
+
+    @Test
+    fun multiSelectClarifyPreservesCardSemanticsAndExactWireAnswer() {
+        viewModel.sendMessage("Ask which environments")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.request",
+                buildJsonObject {
+                    put("request_id", "clarify-1")
+                    put("question", "Which environments?")
+                    put("multi_select", true)
+                    put("choices", buildJsonArray {
+                        add(JsonPrimitive("dev"))
+                        add(JsonPrimitive("stage"))
+                        add(JsonPrimitive("prod"))
+                    })
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+        val card = handler.messages.value.single { it.id == pending.messageId }.cards.single()
+        assertTrue(card.input?.multiSelect == true)
+        assertEquals(listOf("dev", "stage", "prod"), card.input?.choices)
+        assertEquals(null, card.input?.expiresAtMillis)
+
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "[\"prod\",\"dev\"]")
+
+        val response = gatewayHarness.awaitRpc("clarify.respond")
+        assertEquals(JsonPrimitive("clarify-1"), response["request_id"])
+        assertEquals(JsonPrimitive("[\"prod\",\"dev\"]"), response["answer"])
+        awaitCondition { viewModel.pendingAsk.value == null }
+    }
+
+    @Test
+    fun authoritativeClarifyExpiryCollapsesCardAndRejectsLateAction() {
+        viewModel.sendMessage("Ask a question")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.request",
+                buildJsonObject {
+                    put("request_id", "clarify-expired")
+                    put("question", "Still there?")
+                    put("choices", buildJsonArray { add(JsonPrimitive("yes")) })
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.expire",
+                buildJsonObject { put("request_id", "clarify-expired") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { viewModel.pendingAsk.value == null }
+        val cardMessage = handler.messages.value.single { it.id == pending.messageId }
+        assertEquals(
+            HermesCardDispatch.EXPIRED_STAMP,
+            cardMessage.cardDispatches.single().actionValue,
+        )
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "yes")
+        Thread.sleep(100)
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "clarify.respond" })
     }
 
     @Test

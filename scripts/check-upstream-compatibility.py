@@ -20,6 +20,10 @@ REQUIRED_BASELINES = (
     "ef9e0c98f",  # complete runtime tuple for compression/routing
     "7d27a31ce",  # flag-gated compute-host turn isolation
     "54d0948d3",  # compression-aware background-completion ownership
+    "678916b42",  # provider-aware system-prompt continuity after compression
+    "1439a6582",  # bounded active-goal compression recovery
+    "fe66596df",  # one-operation protected-instruction write approval
+    "62a9c0f0e",  # scoped approval for SSH client config writes
 )
 
 TEST_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -60,6 +64,28 @@ TEST_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "tests/tools/test_process_registry.py::test_drain_notifications_ownerless_completion_preserves_legacy_delivery",
             "tests/tools/test_process_registry.py::test_drain_notifications_ownerless_async_delegation_still_requires_proof",
             "tests/tools/test_process_registry.py::test_drain_notifications_completion_callback_exception_fails_closed",
+        ),
+    ),
+    (
+        "provider_aware_compression",
+        (
+            "tests/gateway/test_compress_command.py",
+            "tests/agent/test_system_prompt_restore.py",
+        ),
+    ),
+    (
+        "persistent_session_automation",
+        (
+            "tests/hermes_cli/test_goal_gates.py",
+            "tests/hermes_cli/test_heartbeat.py",
+            "tests/agent/test_refine_focus.py",
+            "tests/tui_gateway/test_goal_command.py",
+        ),
+    ),
+    (
+        "protected_file_approvals",
+        (
+            "tests/tools/test_file_write_safety.py",
         ),
     ),
 )
@@ -180,6 +206,9 @@ def main() -> int:
             "concurrent_model_image_routing": "not_run",
             "turn_isolation_off_on": "not_run",
             "background_completion_restart": "not_run",
+            "provider_aware_session_compress": "not_run",
+            "persistent_session_automation": "not_run",
+            "protected_file_approval_matrix": "not_run",
             "android_device_reconnect": "not_run",
         },
     }

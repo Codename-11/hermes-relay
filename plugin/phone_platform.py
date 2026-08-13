@@ -55,6 +55,7 @@ Environment variables (env wins over config.yaml ``extra``):
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import uuid
@@ -542,6 +543,23 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
         """Return basic info about the phone "chat"."""
         return {"name": self._home_channel_name or "Phone", "type": "dm"}
 
+    async def list_channels(self) -> List[Dict[str, str]]:
+        """Enumerate the adapter's single canonical phone destination.
+
+        The upstream channel directory calls this optional adapter hook during
+        its normal startup and periodic rebuilds. Returning the configured home
+        channel here makes the phone discoverable to ``send_message`` listings
+        without creating a Relay-owned target registry or relying on historical
+        sessions to have been written first.
+        """
+        return [
+            {
+                "id": _home_channel(),
+                "name": _home_channel_name(),
+                "type": "dm",
+            }
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Registry hooks (mirror ntfy)
@@ -588,6 +606,55 @@ def _env_enablement() -> Optional[dict]:
     home = _home_channel()
     seed["home_channel"] = {"chat_id": home, "name": _home_channel_name()}
     return seed
+
+
+def parse_target_ref(target_ref: str) -> Optional[tuple[str, Optional[str]]]:
+    """Resolve only the single canonical Phone destination."""
+    if not isinstance(target_ref, str):
+        return None
+    candidate = target_ref.strip()
+    canonical = _home_channel()
+    if candidate == canonical:
+        return canonical, None
+    return None
+
+
+def validate_target_ref(chat_id: str) -> bool | str:
+    """Accept only the configured/default canonical Phone chat ID."""
+    canonical = _home_channel()
+    if not isinstance(chat_id, str) or not chat_id.strip():
+        return "Phone target cannot be empty"
+    if chat_id != canonical:
+        return f"Phone target must be the configured home channel '{canonical}'"
+    return True
+
+
+def _supports_typed_target_hooks(ctx: Any) -> bool:
+    """Return whether this Hermes host accepts the typed-target kwargs.
+
+    Current plugin contexts forward arbitrary keywords into ``PlatformEntry``;
+    older contexts may do the same even though their dataclass does not define
+    these fields. Prefer inspecting that destination contract. The signature
+    fallback supports explicit host/test shims without treating ``**kwargs``
+    alone as proof of support.
+    """
+    try:
+        from gateway.platform_registry import PlatformEntry  # type: ignore
+
+        fields = getattr(PlatformEntry, "__dataclass_fields__", {})
+        return all(
+            name in fields
+            for name in ("parse_target_ref_fn", "validate_target_ref_fn")
+        )
+    except (ImportError, AttributeError):
+        try:
+            parameters = inspect.signature(ctx.register_platform).parameters
+        except (TypeError, ValueError, AttributeError):
+            return False
+        return all(
+            name in parameters
+            for name in ("parse_target_ref_fn", "validate_target_ref_fn")
+        )
 
 
 async def _standalone_send(
@@ -660,39 +727,46 @@ def register_phone_platform(ctx) -> None:
     if _phone_enabled() and not os.environ.get("PHONE_HOME_CHANNEL", "").strip():
         os.environ["PHONE_HOME_CHANNEL"] = DEFAULT_CHAT_ID
 
-    ctx.register_platform(
-        name="phone",
-        label="Phone",
-        adapter_factory=lambda cfg: PhoneAdapter(cfg),
-        check_fn=check_requirements,
-        validate_config=validate_config,
-        is_connected=is_connected,
-        required_env=["PHONE_ENABLED"],
-        install_hint=(
+    registration_kwargs: Dict[str, Any] = {
+        "name": "phone",
+        "label": "Phone",
+        "adapter_factory": lambda cfg: PhoneAdapter(cfg),
+        "check_fn": check_requirements,
+        "validate_config": validate_config,
+        "is_connected": is_connected,
+        "required_env": ["PHONE_ENABLED"],
+        "install_hint": (
             "Set PHONE_ENABLED=1 in ~/.hermes/.env, run the relay, and pair "
             "the Hermes-Relay app with 'Let Hermes message me' enabled."
         ),
-        env_enablement_fn=_env_enablement,
+        "env_enablement_fn": _env_enablement,
         # Cron home-channel delivery — `deliver=phone` routes to
         # PHONE_HOME_CHANNEL when set.
-        cron_deliver_env_var="PHONE_HOME_CHANNEL",
+        "cron_deliver_env_var": "PHONE_HOME_CHANNEL",
         # Out-of-process cron / send_message delivery. Without this hook,
         # deliver=phone cron jobs fail with "No live adapter".
-        standalone_sender_fn=_standalone_send,
+        "standalone_sender_fn": _standalone_send,
         # Auth env vars for _is_user_authorized() integration.
-        allowed_users_env="PHONE_ALLOWED_USERS",
-        allow_all_env="PHONE_ALLOW_ALL_USERS",
-        max_message_length=MAX_MESSAGE_LENGTH,
-        emoji="📱",
+        "allowed_users_env": "PHONE_ALLOWED_USERS",
+        "allow_all_env": "PHONE_ALLOW_ALL_USERS",
+        "max_message_length": MAX_MESSAGE_LENGTH,
+        "emoji": "📱",
         # No publisher-controlled identity to redact — the phone is the
         # paired single user.
-        pii_safe=True,
-        allow_update_command=True,
-        platform_hint=(
+        "pii_safe": True,
+        "allow_update_command": True,
+        "platform_hint": (
             "You are messaging the user's paired phone via Hermes-Relay. This "
             "is a proactive push channel — the user may not be looking at the "
             "screen. Keep messages concise and high-signal; lead with what "
             "matters. Plain text and light markdown render fine."
         ),
-    )
+    }
+    if _supports_typed_target_hooks(ctx):
+        registration_kwargs.update(
+            parse_target_ref_fn=parse_target_ref,
+            validate_target_ref_fn=validate_target_ref,
+        )
+
+    ctx.register_platform(**registration_kwargs)
     logger.info("Registered 'phone' platform (proactive push via relay)")

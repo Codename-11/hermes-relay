@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import java.time.Instant
 
 /**
@@ -73,6 +74,26 @@ object FlexibleIdNonNullSerializer : KSerializer<String> {
 
     override fun serialize(encoder: Encoder, value: String) {
         encoder.encodeString(value)
+    }
+}
+
+/** Unknown-safe durable SQLite row id used by current Gateway history. */
+@OptIn(ExperimentalSerializationApi::class)
+object FlexibleLongSerializer : KSerializer<Long?> {
+    override val descriptor = PrimitiveSerialDescriptor("FlexibleLong", PrimitiveKind.LONG)
+
+    override fun deserialize(decoder: Decoder): Long? {
+        return try {
+            val jsonDecoder = decoder as? JsonDecoder
+                ?: return decoder.decodeLong()
+            (jsonDecoder.decodeJsonElement() as? JsonPrimitive)?.longOrNull
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Long?) {
+        if (value != null) encoder.encodeLong(value) else encoder.encodeNull()
     }
 }
 
@@ -170,10 +191,38 @@ data class SessionItem(
     /** Durable flags returned by current Dashboard and API-server session resources. */
     val pinned: Boolean = false,
     val archived: Boolean = false,
+    /** Optional workspace metadata added by newer Dashboard session lists. */
+    val cwd: String? = null,
+    @SerialName("git_branch") val gitBranch: String? = null,
+    @SerialName("git_repo_root") val gitRepoRoot: String? = null,
+    /** Best-effort association from the Dashboard's read-only transcript scan. */
+    val pullRequest: SessionPullRequest? = null,
 ) {
     val resolvedLastActivity: Double?
         get() = lastActive ?: lastActivity ?: lastActivityAt ?: updatedAt
 }
+
+@Serializable
+data class SessionPullRequest(
+    val number: Int,
+    val url: String,
+    val branch: String? = null,
+    val state: String? = null,
+    val draft: Boolean = false,
+    val title: String? = null,
+)
+
+@Serializable
+data class SessionPullRequestScanResponse(
+    @SerialName("pull_requests") val pullRequests: Map<String, SessionPullRequest> = emptyMap(),
+    val scanned: List<String> = emptyList(),
+)
+
+@Serializable
+data class RepositoryPullRequestListResponse(
+    val ghReady: Boolean = false,
+    val prs: List<SessionPullRequest> = emptyList(),
+)
 
 @Serializable
 data class CreateSessionRequest(
@@ -265,6 +314,9 @@ data class MessageItem(
     @SerialName("session_id")
     @Serializable(with = FlexibleIdSerializer::class)
     val sessionId: String? = null,
+    @SerialName("row_id")
+    @Serializable(with = FlexibleLongSerializer::class)
+    val rowId: Long? = null,
     val role: String,
     val content: JsonElement? = null,
     @SerialName("tool_calls") val toolCalls: JsonElement? = null,

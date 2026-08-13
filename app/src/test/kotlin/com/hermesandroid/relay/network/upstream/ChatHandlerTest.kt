@@ -16,6 +16,7 @@ import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.network.upstream.models.SessionPullRequest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -603,6 +604,35 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun updateSessions_mapsOptionalWorkspaceAndPullRequestState() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "coding",
+                    cwd = "/work/repo",
+                    gitBranch = "feature/mobile",
+                    gitRepoRoot = "/work/repo",
+                    pullRequest = SessionPullRequest(
+                        number = 134,
+                        url = "https://github.com/example/repo/pull/134",
+                        state = "open",
+                        draft = true,
+                    ),
+                ),
+            ),
+        )
+
+        val session = handler.sessions.value.single()
+        assertEquals("/work/repo", session.workingDirectory)
+        assertEquals("feature/mobile", session.gitBranch)
+        assertEquals("/work/repo", session.gitRepoRoot)
+        assertEquals(134, session.pullRequestNumber)
+        assertEquals("https://github.com/example/repo/pull/134", session.pullRequestUrl)
+        assertEquals("open", session.pullRequestState)
+        assertTrue(session.pullRequestDraft)
+    }
+
+    @Test
     fun setSessionFlagsLocal_supportsOptimisticUpdateAndRollback() {
         handler.updateSessions(listOf(SessionItem(id = "s1")))
 
@@ -918,6 +948,50 @@ class ChatHandlerTest {
         val msg = handler.messages.value.single()
         assertEquals(MessageRole.SYSTEM, msg.role)
         assertEquals("Continued after an interrupted turn", msg.content)
+    }
+
+    @Test
+    fun loadMessageHistory_retainsDurableRowIdsWithoutUsingThemAsUiKeys() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "user-1",
+                    rowId = 41L,
+                    role = "user",
+                    content = JsonPrimitive("First"),
+                ),
+                MessageItem(
+                    id = "assistant-1",
+                    rowId = 42L,
+                    role = "assistant",
+                    content = JsonPrimitive("Reply"),
+                ),
+            ),
+        )
+
+        val user = handler.messages.value.first()
+        assertEquals(41L, user.rowId)
+        assertEquals("user-1", user.uiKey)
+        assertEquals(42L, handler.messages.value.last().rowId)
+    }
+
+    @Test
+    fun rebindSurvivorUserRowIds_replacesPrefixAndClearsUnboundTurns() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "user-1", rowId = 41L, role = "user", content = JsonPrimitive("First")),
+                MessageItem(id = "assistant-1", rowId = 42L, role = "assistant", content = JsonPrimitive("Reply")),
+                MessageItem(id = "user-2", rowId = 43L, role = "user", content = JsonPrimitive("Second")),
+            ),
+        )
+
+        handler.rebindSurvivorUserRowIds(listOf(101L))
+
+        val messages = handler.messages.value
+        assertEquals(101L, messages[0].rowId)
+        assertEquals(42L, messages[1].rowId)
+        assertNull(messages[2].rowId)
+        assertEquals(listOf("user-1", "assistant-1", "user-2"), messages.map { it.uiKey })
     }
 
     @Test

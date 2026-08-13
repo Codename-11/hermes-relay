@@ -1,5 +1,12 @@
 # Connection Security Indicator — Surfacing, Wording & Docs Plan
 
+> **Status update (2026-08-13):** The previously planned plugin secure proxy is
+> now implemented and is named **Hermes Secure Link** in operator-facing UI and
+> documentation. `plugin_proxy` remains a compatibility wire role. See
+> [`../security-native-proxy.md`](../security-native-proxy.md) for the current
+> one-origin, three-namespace trust contract and opt-in constraints; historical
+> planning language below is retained as design context.
+
 **Status:** Draft for review (no implementation yet — placement decisions pending)
 **Date:** 2026-06-24
 **Owner surface:** Android app (UI), user docs, engineering docs

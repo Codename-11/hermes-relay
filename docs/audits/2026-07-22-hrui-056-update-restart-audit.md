@@ -58,3 +58,7 @@ For an app/Relay-safe update, verify all of the following before declaring the h
 - Add a repo-local operator checklist or script that prints checkout revisions, service uptimes, and restart freshness in one place.
 - Prefer a revision marker endpoint in upstream Hermes so clients can compare the dashboard/gateway runtime revision to the checkout revision after updates.
 - Keep HRUI-056 open until the update command/path enforces this as an atomic restart-and-verify operation, or until the operator checklist is wired into the live deployment workflow.
+- The combined repo-local checklist and read-only evidence collector now live
+  in `docs/audits/2026-08-13-hrui-runtime-safety-preflight.md` and
+  `scripts/hrui-runtime-preflight.sh`. Live closure still requires the
+  explicitly authorized full-fleet cutover and acceptance proof.

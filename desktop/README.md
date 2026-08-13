@@ -32,41 +32,68 @@ binary and one set of state files; the tray does not bundle a private sidecar.
 
 Clicking the tray icon toggles the management popup. Paired Hermes instances are
 shown as **Hosts**; clients authenticated to the selected host appear separately
-under Settings and can be deauthorized there. **Pair another host...** is the
+in that host's detail page and can be deauthorized there. **Pair another host...** is the
 last host-selector option, or the selector's only action when no hosts exist.
 
 The tray cross-checks the daemon heartbeat and PID, labels the account as
 **User** or **Administrator**, and disables lifecycle actions that do not apply
-to the current state. **Start/Restart daemon as Administrator...** uses the
-standard Windows UAC prompt; the tray itself stays unelevated. Settings can
-check the Desktop release channel and self-update the CLI and management UI
-together. The installer download is verified against the release
+to the current state. **Restart as Administrator...** uses the standard Windows
+UAC prompt; the tray itself stays unelevated. **Return to user mode** stops the
+elevated daemon once and starts it again with normal user privileges. Because
+every approved command and input action inherits the daemon's privilege,
+Administrator mode is an explicit action rather than a persistent toggle.
+
+Settings is reserved for this PC. **Start UI at sign-in** controls only the tray
+startup entry; the separate **Start daemon with UI** preference decides whether
+opening the tray also connects remote access. Automatic daemon startup is off
+for existing installs until explicitly enabled. Settings also exposes **Open
+terminal**, **Open Hermes CLI**, **View daemon log**, and **Run diagnostics**,
+and manages Desktop release updates. **Help &
+About** reports the UI, CLI, and connected Relay versions and links to the docs,
+troubleshooting, release notes, logs, and diagnostics. The installer download is
+verified against the release
 `SHA256SUMS.txt`, preserves the startup preference, restores a previously
 running daemon, and relaunches the tray after the silent replacement.
 
-Access is selected per host. **Ask** keeps the connection available but attaches
-no desktop tools. **Trusted** enables command and file tools while screen/input
-still uses task grants. **Full Access** also allows screen, keyboard, and mouse
-without task grants for that host; authentication, audit, deauthorization,
-emergency stop, and UAC boundaries still apply.
+Access is selected per host. **Restricted** keeps the connection available but
+attaches no desktop tools. **Ask Every Time** advertises available command, file,
+screen/input, and USB operations but requires local approval for each one. It is
+the default for newly paired hosts; existing hosts retain their stored policy.
+**Standard** enables typed operations while withholding
+raw terminal, PowerShell, detached-process, and command-job launch. **Full Access**
+allows every available capability without task grants for that host;
+authentication, audit, deauthorization, emergency stop, and UAC boundaries
+still apply. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera
+form one per-host capability ledger. Changing an individual gate selects an exact
+preset when the resulting combination matches one and otherwise creates a
+**Custom** policy. Existing `ask`, `structured`, and `trusted` CLI values remain
+accepted as compatibility aliases; legacy `ask` still means Restricted, while
+the new preset is `ask-every-time`. Raw USB gates direct native/vendor USB utility
+execution plus secondary services such as ADB. Microphone and camera remain
+unavailable until their controlled paths exist.
 
 The tray's **Activity** section is a live, local view of recent remote actions
 and management events such as daemon, host-access, grant, client, and update
 changes.
-It groups events into commands, files, screen, and input; highlights failures,
+It groups events into commands, files, screen, input, and connected devices; highlights failures,
 aborts, and non-zero process exits; and keeps request context collapsed until
 explicitly expanded. Events record handler duration and request ID where
 available. The compact Overview still shows only the three newest events.
 Settings also keeps activity compact: it previews the three newest events and
-opens a dedicated Activity detail page for wrapped filters and expandable
-records. Handler failures and aborts are **Issues**; non-zero process exits are
+opens a dedicated Activity page. Selecting an event opens bounded request,
+stdout, stderr, result, exit, timing, and truncation evidence; sensitive request
+inputs are excluded. Handler failures and aborts are **Issues**; non-zero process exits are
 shown separately because probing commands may legitimately use them. **Clear**
 removes both current and rotated local audit history after confirmation.
 
 Clicking a card under **Hosts** opens that host's detail page; it does not change
-the active connection. The detail page can set a local display name and has an
-explicit connect action. Local names are stored in `desktop-control.json` and
-do not rename the remote Hermes instance.
+the active connection. The detail page is the per-host hub for its local display
+name, connection state, Relay address and version, pairing/session details,
+access, capabilities, and authorized clients. It also provides explicit connect,
+re-pair, deauthorize-client, and guarded **Forget host** actions. Local names are
+stored in `desktop-control.json` and do not rename the remote Hermes instance.
+Forgetting removes the local session, alias, and access policy; deauthorization
+is the separate action that removes a server-side client session.
 
 ## Install
 
@@ -241,6 +268,13 @@ relay one-shot code.
 
 Now subsequent `hermes-relay ...` calls reuse the stored session token. Tokens live at `~/.hermes/remote-sessions.json` (mode 0600) — same file the Ink TUI uses, so pairing once from either surface works for both.
 
+Each desktop installation also keeps a private stable identifier in
+`~/.hermes/desktop-device-id`. This lets several PCs retain independent paired
+sessions on one Relay. Re-pairing one PC replaces only that installation's old
+credential. Every desktop RPC accepts a stable device ID or unambiguous computer
+name. With several connected daemons the target is required, preventing an
+agent command from silently following the most recent connection.
+
 ### Terminal plugins
 
 The `hermes-relay plugins` command exposes optional terminal surfaces. The first
@@ -260,13 +294,18 @@ Herm uses `bun add -g herm-tui` when Bun is available and falls back to
 ### Host access and daemon bring-up
 
 Starting the daemon no longer grants tools and no longer requires a tool grant.
-With a paired host in **Ask**, it connects in locked mode with zero desktop tools.
+With a paired host in **Restricted**, it connects in locked mode with zero desktop tools.
 Select a host policy from the tray or use the CLI:
 
 ```sh
 hermes-relay hosts list --json
 hermes-relay hosts select ws://192.168.1.100:8767
-hermes-relay hosts access trusted --remote ws://192.168.1.100:8767
+hermes-relay hosts access ask-every-time --remote ws://192.168.1.100:8767
+hermes-relay hosts access standard --remote ws://192.168.1.100:8767
+hermes-relay hosts capability commands allow --remote ws://192.168.1.100:8767 --yes
+hermes-relay hosts capability files ask --remote ws://192.168.1.100:8767
+hermes-relay hosts capability screen-input ask --remote ws://192.168.1.100:8767
+hermes-relay hosts capability usb ask --remote ws://192.168.1.100:8767
 hermes-relay daemon start
 ```
 
@@ -336,7 +375,13 @@ The relay discovers background server-side tmux sessions named `hermes-*`, so `s
 
 ### Multi-endpoint pairing (ADR 24)
 
-If your Hermes server is reachable via multiple routes (LAN + Tailscale + a public URL), the pairing invite encoded by the host QR carries all of them. Pass the printed `hermes-relay://pair?...` URL, raw JSON payload, or base64 payload to `--pair-qr` and the CLI probes in priority order, picks the first reachable endpoint, and records which route it used — subsequent connects show `Connected via LAN (plain)` / `Connected via Tailscale (secure)` etc.
+If your Hermes server is reachable via multiple routes (optional Hermes Secure Link, Tailscale, a public TLS URL, and LAN), the pairing invite encoded by the host QR carries all of them. Generated defaults prefer Secure Link when enabled, then other secure routes, with plain LAN retained as a fallback. Pass the printed `hermes-relay://pair?...` URL, raw JSON payload, or base64 payload to `--pair-qr`; the CLI probes in strict priority order, picks the first reachable endpoint, and records which route it used. Secure Link protects transport to the QR-paired endpoint but does not create reachability, and its Relay, API, and Dashboard credentials remain separate.
+
+**Hermes Reach** is an experimental outbound-broker fallback. The broker
+provides rendezvous while the CLI validates QR-pinned Secure Link TLS inside
+it, but Reach is never selected ahead of Tailscale, public TLS, or Direct Secure
+Link by default. It is disabled unless the host explicitly opts into the
+experimental feature. Reach failure never enables plaintext.
 
 ```sh
 # Paste the full pairing invite URL printed by hermes-pair:
@@ -385,7 +430,7 @@ overrides. The per-host policy is stored separately in
 `~/.hermes/desktop-host-access.json`; Full Access enables this surface for its
 host without an expiring task grant.
 
-In Ask or Trusted mode, observe grants allow screenshots;
+When Screen & Input is set to Ask, observe grants allow screenshots;
 assist/control grants require explicit local approval before host input can run.
 The daemon writes pending requests to `~/.hermes/grant-bridge`; review them with
 `hermes-relay grants` or the tray's focused approval dialog. Grants
@@ -504,7 +549,7 @@ hermes-relay audit --json
 ```
 
 ```
-Desktop-tool activity (4 most recent)
+Desktop-tool activity (3 most recent)
 
   WHEN     TOOL                STATUS   DETAIL
   12s ago  desktop_read_file   ● ok     path=C:\src\app.ts
@@ -531,6 +576,8 @@ hermes-relay relay security    # runtime auth toggles (run on the relay host)
 hermes-relay daemon start      # run in the background (no console window)
 hermes-relay daemon status     # state + uptime of the running daemon
 hermes-relay daemon restart    # restart with the caller's current privileges
+hermes-relay daemon restart --administrator  # Windows: request UAC and run elevated
+hermes-relay daemon restart --user           # Windows: return to normal user mode
 hermes-relay daemon stop       # stop it
 hermes-relay daemon            # run in the FOREGROUND (current console)
 ```
@@ -553,15 +600,18 @@ hermes-relay daemon
 `status` reads the heartbeat file a running daemon maintains and cross-checks that the pid is alive — it exits non-zero (and says "not running") when the daemon is gone, so scripts can branch on it.
 
 On Windows, keep the tray and normal daemon unelevated for routine operation.
-Use **Start/Restart daemon as Administrator...** only when a desktop action
-requires administrator access. Windows displays UAC consent, and the elevated
-daemon records its privilege level in the same status file so later stop and
-restart actions preserve the required elevation.
+Use **Restart as Administrator...** only when a desktop action requires
+administrator access. Windows displays UAC consent, and the elevated daemon
+records its privilege level in the same status file so the UI can label it
+clearly. Use **Return to user mode** to stop it once and start a normal daemon.
+The equivalent CLI actions are `daemon restart --administrator` and `daemon
+restart --user`; both are Windows-only and mutually exclusive.
 
-> **Auto-start on boot/login:** the Windows menu can start the tray at user
-> sign-in; it intentionally does not auto-elevate or silently start an
-> Administrator daemon. Starting the daemon itself as a service still needs an
-> OS service, systemd user unit, or launchd agent.
+> **Auto-start on boot/login:** **Start UI at sign-in** registers the tray at
+> user sign-in. **Start daemon with UI** is a separate opt-in and remains off
+> for existing installs until enabled. Neither option auto-elevates or starts
+> an Administrator daemon. Starting the daemon itself as a machine service
+> still needs an OS service, systemd user unit, or launchd agent.
 
 ## Flags and environment
 

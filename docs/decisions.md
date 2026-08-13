@@ -266,7 +266,7 @@ not require an API endpoint or API bearer when dashboard chat is ready.
 
 ### 12. Android as a Hermes Platform/Channel — "Threads" (Shipped 2026-06-28; unified-session model 2026-06-29)
 
-> **Status (2026-06-29):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); cron `deliver=phone` is the one remaining broken path. See TODO.md "Phone platform — usability roadmap".
+> **Status (2026-08-12):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); standalone cron delivery uses the registered sender, and the adapter publishes its canonical home destination through upstream's channel directory. Live cron certification remains tracked in TODO.md.
 >
 > **Decision (2026-06-29) — unified-session "Threads", not a separate surface:** the proactive agent↔phone conversation is **not** a separate app lane/tab/segment. It is a **source-tagged session inside the one Chat surface** — a **Thread** (`source=phone`). The three things distinguishing a Thread from a normal gateway chat are *session properties*, not a separate UI: (a) the agent can initiate a turn, (b) it rides the relay `proactive` transport and is relay-gated, (c) it's a standing/named DM. **Scrollback = the gateway session store** (same read path Chat uses); **live receive = the relay `proactive` push** (→ notification); **send = `proactive.reply`**. The local `ProactiveInboxStore` is demoted to a live-push cache + outbox (no parallel history). The Thread capability is surfaced in the **connection best-path/capability UI** (a relay-tier capability, like terminal/bridge/voice) and as a clean **Threads** entry (thread-spool icon, NOT a phone glyph) pinned atop the session drawer when active — never a connection-wizard step. Degrades cleanly: no relay plugin → no `source=phone` sessions → Chat is unchanged (standard-path-safe). This **supersedes the earlier "separate Agent lane / 4th nav segment" sketch** and folds in the "show chat source/platform attribution in Chat" goal in one stroke.
 >
@@ -1084,32 +1084,36 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
 ```json
 {
   "hermes": 3,
-  "host": "192.168.1.100",
+  "host": "hermes.tail-scale.ts.net",
   "port": 8642,
   "key": "optional-api-key",
-  "tls": false,
-  "relay": { "url": "ws://192.168.1.100:8767", "code": "ABC123",
+  "tls": true,
+  "relay": { "url": "wss://hermes.tail-scale.ts.net:8767", "code": "ABC123",
              "ttl_seconds": 2592000, "grants": {...},
-             "transport_hint": "ws" },
+             "transport_hint": "wss" },
   "endpoints": [
-    { "role": "lan",       "priority": 0,
-      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
-      "relay": { "url": "ws://192.168.1.100:8767",
-                 "transport_hint": "ws" } },
-    { "role": "tailscale", "priority": 1,
+    { "role": "tailscale", "priority": 0,
       "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
       "relay": { "url": "wss://hermes.tail-scale.ts.net:8767",
                  "transport_hint": "wss" } },
-    { "role": "public",    "priority": 2,
+    { "role": "public",    "priority": 1,
       "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
       "relay": { "url": "wss://hermes.example.com/relay",
-                 "transport_hint": "wss" } }
+                 "transport_hint": "wss" } },
+    { "role": "lan",       "priority": 2,
+      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+      "relay": { "url": "ws://192.168.1.100:8767",
+                 "transport_hint": "ws" } }
   ],
   "sig": "base64-hmac-sha256"
 }
 ```
 
 **Semantics (locked):**
+- **Generated defaults are secure-first (amended 2026-08-12).** An available
+  pinned Hermes Secure Link, Tailscale Serve, and configured public TLS candidates
+  precede plain LAN. LAN remains a signed, independently acknowledged fallback.
+  An explicit operator preference can still change the strict order.
 - **`role` is an open string.** Known values `lan` / `tailscale` / `public`
   get styled chips + icons on the phone. Anything else (`wireguard`,
   `zerotier`, `netbird-eu`, whatever the operator wants) renders with a
@@ -1965,7 +1969,8 @@ after the turn settles and therefore cannot restore the in-between UI.
 
 1. Persist active session-backed turns as a bounded set in the shared Android
    DataStore, keyed by connection/profile context plus durable session id, with a
-   24-hour expiry. Store each visible assistant state and server-issued ask, but
+   24-hour expiry. Store each visible assistant state and server-issued ask,
+   including clarify multi-select semantics, but
    never an entered password/secret or approval response.
 2. On reopen, restore that UI immediately, then recover in this order: exact
    `session.activate` using the saved live id; `session.resume` using the durable
@@ -2815,7 +2820,41 @@ history. Older Hermes releases remain compatible.
 
 ---
 
-## ADR 51 — Desktop RPC is explicitly device-targeted and capability-honest
+## ADR 51 — Android coding-session context is optional upstream metadata
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** Current upstream Hermes records a session's working directory, Git
+branch, and repository root in its session database and returns those fields on
+Dashboard session-list routes. It also exposes a read-only profile-wide endpoint
+that recovers the pull request a session created from a narrowly validated tool
+result. Android previously discarded all of that context, making coding chats
+indistinguishable in the session drawer.
+
+**Decision.** Android maps optional `cwd`, `git_branch`, and `git_repo_root`
+fields from existing Dashboard list responses. For rows with workspace context,
+it asks `POST /api/profiles/sessions/pull-requests` and accepts only a positive
+PR number with a non-blank URL. Unresolved active sessions retry on a bounded
+cadence and receive one final scan after ending; resolved associations and
+terminal misses remain cached. Cache ownership is profile plus session id, and
+ambiguous duplicate ids in an all-profile response are never assigned a
+transcript result. Android then uses the repository-
+scoped `POST /api/git/review/pr-list` view to refresh the matching branch or
+known PR number's lifecycle state. The drawer displays only the repository
+basename, exact branch, PR number, and lifecycle state; it does not expose host
+paths. Both reads are best-effort. A missing route, unavailable GitHub CLI,
+malformed response, or API-server-only connection leaves ordinary session
+behavior intact and is not promoted to a session-list failure.
+
+**Consequences.** Coding sessions become recognizable without introducing a
+Relay dependency or a GitHub credential path. Repository and branch state can
+still appear when PR recovery is unsupported, while legacy hosts show no new
+badges and active sessions can surface a PR created after their first drawer
+refresh without allowing cross-profile cache collisions.
+
+---
+
+## ADR 52 — Desktop RPC is explicitly device-targeted and capability-honest
 
 **Status:** Accepted (2026-08-12).
 
@@ -2857,9 +2896,148 @@ the USB policy. Disabled or unavailable backends are omitted from advertised
 tools. Microphone and camera remain visibly unavailable until bounded
 brokers, active-use indication, and cancellation exist.
 
+The management UI names the legacy no-tools Ask state **Restricted**. A separate
+**Ask Every Time** preset advertises each available command, file, screen/input,
+and USB operation behind a per-operation local approval; unavailable brokers
+remain disabled. New pairings receive Ask Every Time explicitly, while missing
+or existing legacy policy records retain their previous fail-closed meaning.
+
 **Consequences.** Agents cannot accidentally execute against whichever PC most
 recently sent a heartbeat, and a response from another PC cannot satisfy a
 targeted request. Common operations remain typed and auditable while raw shell
 power is labeled honestly. Structured mode makes the USB policy enforceable,
 and device operations appear as their own local Activity category. Microphone
 and camera controls are not shipped as cosmetic switches.
+
+---
+
+## ADR 53 — Desktop management separates host scope from local-PC scope
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** The compact Windows tray had accumulated per-host connection and
+authorization information alongside local daemon, update, and application
+controls. That made Settings difficult to scan and left common operator tasks—
+opening the CLI, viewing the daemon log, running diagnostics, or returning an
+elevated daemon to normal user privileges—dependent on external instructions.
+The tray must remain a small management utility rather than regrow into an
+embedded terminal or general desktop client.
+
+**Decision.** The three top-level destinations remain Overview, Hosts, and
+Settings, with scope determining ownership:
+
+- A Host detail page is the hub for one paired Relay instance. It owns the local
+  display name, connection state, Relay address/version, pairing and session
+  details, access preset, capabilities, authorized clients, explicit connect,
+  re-pair, client deauthorization, and guarded Forget host actions. Opening the
+  page never silently selects or connects the host.
+- Settings owns this Windows PC and the installed application. It contains
+  daemon lifecycle and sign-in behavior, CLI launchers, logs and diagnostics,
+  bundle updates, and Help & About. **Start UI at sign-in** controls only the
+  per-user tray startup entry. **Start daemon with UI** is a separate opt-in,
+  defaults off for existing installs, and never implies elevation. Per-host
+  access and client lists do not appear there.
+- **Open terminal** starts a normal terminal with `hermes-relay` available.
+  **Open Hermes CLI** starts the paired remote Hermes TUI in a real terminal;
+  neither action embeds a terminal emulator in the tray.
+- **View daemon log** opens the local daemon log. **Run diagnostics** delegates
+  to the CLI diagnostic contract rather than creating a second health model.
+- Help & About reports UI, CLI, and connected Relay versions and links to the
+  documentation, troubleshooting guide, and release notes through the default
+  browser. Log and diagnostic shortcuts remain available there as well.
+
+The tray always remains unelevated. **Restart as Administrator...** is an
+explicit UAC-mediated action that elevates only the daemon. **Return to user
+mode** performs one elevated-daemon stop followed by a normal daemon start.
+Elevation is not stored as a toggle or sign-in preference because every approved
+command and input action inherits the daemon's privilege.
+
+**Consequences.** Relay-specific actions are discoverable from the corresponding
+host without making global Settings wider. Routine CLI and support workflows no
+longer require users to find paths or commands manually. Administrator state is
+visible and reversible, while the management UI and automatic startup retain
+normal user privilege. The product stays a thin CLI/TUI plus compact Windows
+management surface; chat, plugins, voice, and terminal rendering remain outside
+the tray.
+
+---
+
+## ADR 54 — Hermes Secure Link is pinned and service-isolated
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** Tailscale Serve is the primary supported secure remote path today,
+but some operators need encrypted Relay access without adding an external
+reverse proxy or tailnet. Expanding a plugin-owned listener across API,
+Dashboard, and Relay would collapse independent trust domains and expose
+loopback-authorized management routes.
+
+**Decision.** Keep Tailscale Serve WSS/HTTPS as the primary documented path.
+Add an opt-in Relay plugin ingress, named **Hermes Secure Link**, on port `9443`
+with fixed `/relay`, `/api`, and `/dashboard` namespaces. Pairing carries its exact HTTPS authority and SPKI
+SHA-256 pin in the signed, operator-reviewed QR. Relay sessions, API bearer
+authentication, and Dashboard cookie/native bearer authentication remain
+independent. Dashboard forwarding fails closed unless its upstream
+OAuth/password gate is active, so loopback-token HTML is never re-exported.
+
+Clients require the QR-provided authority and pin before the first proxy
+request, retain hostname verification, and fail closed on malformed, missing,
+or changed trust. A rotation requires explicit re-pairing. Secure candidates
+are ordered before LAN by default, while LAN remains an independently configured
+fallback with its existing plaintext acknowledgement.
+
+The three namespaces share one pinned TLS authority but not credentials: Relay
+keeps pairing/session authentication, API keeps its bearer, and Dashboard keeps
+its cookie/native bearer. Direct and Tailscale HTTPS routes remain independent
+fallback candidates. Secure Link verifies continuity with the paired endpoint
+and protects transport, but it does not establish the physical host's identity
+or make the listener reachable across NAT or a firewall. Full invariants and acceptance checks live in
+[`security-native-proxy.md`](security-native-proxy.md).
+
+**Consequences.** Hermes Secure Link adds a narrow pinned-TLS option without
+becoming a general host proxy or a second authentication system. Failure to
+initialize it does not make the ordinary Relay unavailable or advertise a
+candidate. Certificate rotation is explicit, and the vanilla upstream path
+remains independent of the optional Relay plugin.
+
+---
+
+## ADR 55 — Outbound broker transport carries opaque Secure Link streams
+
+**Status:** Experimental (2026-08-13).
+
+**Context.** Hermes Secure Link encrypts an already reachable connection but
+does not traverse NAT or firewalls. A native zero-configuration remote route
+needs both host and client to connect outbound without giving a rendezvous
+service access to Hermes credentials or payloads. It must also preserve
+multi-device targeting and the direct, Tailscale, and LAN routes.
+
+**Decision.** Add an optional outbound rendezvous candidate named **Hermes
+Reach**. The client and host
+connector use system-trusted WSS to reach the broker, which authenticates their
+route credentials and matches an explicit opaque host identifier. The resulting
+stream carries a second, inner TLS 1.3 connection to the host's existing Hermes
+Secure Link listener. The client validates the exact authority and SPKI pin from
+the operator-reviewed pairing QR. The broker and connector route bytes but do
+not terminate inner TLS, parse Hermes protocols, or receive Relay/API/Dashboard
+credentials.
+
+Host and client broker credentials are separate. Initial client bootstrap is
+short-lived and one-time; durable route access is scoped and independently
+revocable. A host connection supports isolated simultaneous streams with
+explicit framing, quotas, replay handling, and device targeting. Broker or pin
+failure never downgrades to plaintext. Secure Link certificate rotation remains
+an explicit re-pair. The detailed wire, threat, rotation, and acceptance
+contract is [`security-broker-transport.md`](security-broker-transport.md).
+
+**Consequences.** Hermes Reach remains an explicitly enabled experimental
+fallback and must be ordered after Tailscale, public TLS, Direct Secure Link,
+and other supported routes. It is not promoted in normal setup or marketing.
+Hermes Reach can provide reachability while its broker can
+observe connection
+metadata, but a malicious or compromised broker can only deny, delay, replay,
+or misroute ciphertext; inner TLS detects modification and wrong-host routing.
+Hermes authorization remains local and the vanilla upstream path remains
+independent. Implementing the client requires a TLS-over-broker byte-stream
+adapter; advertising the candidate is forbidden until that adapter and the
+cross-platform acceptance gates are complete.

@@ -6,10 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android can edit current Hermes profiles through the standard Gateway.** The Profile Inspector capability-gates `profiles.describe` and `profiles.configure`, keeps Relay-only memory editing and older-Hermes fallback intact, and reports partial section saves without discarding failed drafts.
+- **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
+- Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.
+
 ### Fixed
 
+- **Android preserves authoritative Gateway outcomes.** Protected-file cards cannot offer forbidden persistent scopes, compression no-ops show the server result, bounded resume failures do not create context-free replacement sessions, and edit/regenerate retains durable row identities across consecutive rewinds.
+- **Android routes and uploads against live upstream truth.** Multiplex API fallback trusts `served_profiles` instead of installed profiles, and generic documents carry the Gateway-issued `@file:` reference into ordinary and queued prompts.
+- **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
+
+## [1.7.0] - 2026-08-13
+
+### Added
+
+- **Hermes Secure Link provides self-hosted pinned TLS ingress.** Relay, API, and Dashboard namespaces share one operator-owned TLS endpoint while retaining their native authentication boundaries, QR-carried certificate continuity, explicit rotation, and fail-closed route validation.
+- **Hermes Reach is available for explicit experimentation.** The optional self-hosted rendezvous broker carries opaque Secure Link TLS records over outbound-only connections with bounded multiplexing, hashed credentials, replay protection, persistence, revocation, and no access to Hermes payloads.
+- **Remote-access management exposes supported reachability clearly.** Dashboard status and pairing metadata distinguish Tailscale reachability, Secure Link transport protection, direct routes, and experimental Reach without presenting the broker as a replacement for authentication.
+
+### Changed
+
+- **Tailscale is the recommended remote route.** Pairing, Dashboard, documentation, and public site guidance present Tailscale as the easiest supported remote-access path; Reach remains disabled by default, advanced, and lower priority than supported routes.
+- **Relay voice custom transports follow upstream provider security options.** Relay-owned OpenAI/xAI realtime and TTS clients honor custom headers, custom CA bundles, standard CA environment precedence, and an explicitly warned development-only verification override.
+- **Voice Lab xAI sign-in uses device authorization.** The standalone login shows a verification URL and user code and polls for approval without requiring a loopback callback.
+
+### Fixed
+
+- **Phone delivery remains compatible with strict Hermes targets.** Version-tolerant parser and validator hooks retain older-host registration and exactly-once standalone delivery.
+- **Profile-owned Relay registrations stay isolated.** Current Hermes uses profile-scoped ownership and context-local profile homes while legacy hosts retain a guarded compatibility path.
+- **Phone is discoverable before its first historical session.** The Relay phone adapter publishes its configured home destination through Hermes' standard channel directory.
+
+## [0.4.0-alpha.8] - 2026-08-13
+
+### Added
+
+- **Windows management separates each Relay host from this PC.** Host detail owns identity, pairing, access, capabilities, authorized clients, re-pairing, and guarded removal; Settings owns local daemon lifecycle, startup, privilege, terminal, logs, diagnostics, updates, and Help & About.
+- **Desktop access uses clear host-scoped presets and capabilities.** Restricted, Ask Every Time, Standard, Full Access, and Custom remain explicit across commands, files, screen/input, USB, microphone, and camera controls.
+- **Activity drilldown preserves bounded execution evidence.** Overview shows the latest three events and detail views expose request, output, result, exit, duration, and truncation metadata without copying sensitive inputs.
+- **Connection presentation shows the live Agent-to-PC path.** Host selection, bidirectional packet motion, transition feedback, route details, and connection testing stay compact, responsive, and reduced-motion aware.
+
+### Changed
+
+- **Connect and disconnect remain responsive during daemon work.** Lifecycle calls and snapshot collection run outside the UI thread, transition status polls quickly without overlapping probes, and progress remains visible until authoritative daemon state arrives.
+- **Tailscale is recommended for remote access.** Secure Link and direct TLS routes remain supported, while Hermes Reach is visibly experimental and lower priority.
+
+### Fixed
+
+- **Connection tests classify legacy private routes correctly.** A saved generic role is inferred from its actual endpoint, so LAN and Tailscale routes no longer appear as Custom VPN; results include reachability, latency, security, endpoint, and route count.
+- **Ask-mode approval cards show the requested action.** A bounded preview appears in the compact card with full context and an Open in UI action.
+- **Mixed capability policies are labeled Custom.** Overview no longer claims a preset when individual capability controls differ.
+- **Tray placement follows the notification-area monitor and DPI.** Responsive popup geometry stays anchored above the tray icon across compact and high-DPI desktops.
+- **PowerShell success output is complete and self-describing.** Scalar, pipeline, JSON, native stdout/stderr, exit status, and truncation metadata survive the desktop RPC response.
 
 ## [1.6.4] - 2026-08-12
 
@@ -593,7 +644,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Spoken-turn badges (chat).** Voice-mode replies now carry a "Voice" chip and realtime replies a "Realtime Agent" chip — both with a speaker glyph — so spoken turns are distinguishable from typed ones in the scrollback.
 - **App themes.** A new theme picker in Settings → Appearance ships eight looks: the signature Hermes Relay brand (with full light/dark) plus ports of the Nous Hermes baselines — Hermes Teal, Nous Blue (light), Midnight, Ember, Mono, Cyberpunk, and Rosé. The whole app — brand chrome, accents, and chat background — follows the chosen theme. Light/Dark/Auto applies to themes that ship both modes; fixed-mode themes show their own complete look.
 - **Hot-swappable agent sphere.** The orb is now a pluggable "skin": an Adaptive skin that recolors to match your theme, built-in Classic / Aurora / Solar / Mono looks, and support for **user-authored skins** loaded from a small JSON spec. Each skin declares which live signals it reacts to (voice, tool bursts, activity), shown as capability badges in the picker. See `docs/sphere-spec.md`.
-- **Connections separate features from routes (Android).** Connection settings now distinguish what a connection can *do* (a **Features** section) from how this phone *reaches* Hermes (a **Route** section), so you can enable Relay features over whichever transport you prefer. A plugin-provided **Secure proxy** route is surfaced alongside LAN, Tailscale, public, and custom routes. The standard direct-to-upstream path is unchanged and still needs no plugin. See `docs/plans/2026-06-18-native-secure-routes.md`.
+- **Connections separate features from routes (Android).** Connection settings now distinguish what a connection can *do* (a **Features** section) from how this phone *reaches* Hermes (a **Route** section), so you can enable Relay features over whichever transport you prefer. The optional plugin-provided **Hermes Secure Link** route is surfaced alongside LAN, Tailscale, public, and custom routes. The standard direct-to-upstream path is unchanged and still needs no plugin. See `docs/plans/2026-06-18-native-secure-routes.md`.
 - **Enhanced voice control (Gemini & xAI).** When the relay uses a Gemini or xAI voice provider, Voice Settings can now steer it: pick a Gemini voice and model and turn on expressive tone tags (with optional natural-language voice direction), or set an xAI voice with expressive speech tags. Expressive tags also apply to xAI on the streaming voice-output renderer. Standard (no-plugin) voice stays configured server-side.
 - **Voice render-path visibility.** Voice Settings shows which path is rendering speech (streaming vs. basic), and Diagnostics records it each session, making voice issues easier to troubleshoot.
 - **Agent pets — a living, swappable avatar.** The orb can be replaced with an animated "pet" that reacts to what the agent is doing: idle / thinking / writing / speaking / listening states, a distinct **working** pose during tool calls, one-shot **greet** / **celebrate** reactions, and a loop that quickens as output streams. Add or remove pets right in Settings → Appearance (no `adb` needed), with a live state preview, a playback-speed slider, and optional frame auto-stabilization; capability badges (Voice · Tools · Activity) show honestly what each pet actually reacts to. Pets are pure data — an AI authoring kit and a JSON schema let you generate one from sprite art. See `docs/pet-spec.md` and the custom-avatars guide.

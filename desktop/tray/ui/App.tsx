@@ -1,28 +1,38 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  Activity as ActivityIcon, AlertTriangle, Check, ChevronDown, ChevronRight,
-  CircleHelp, Clock3, Download, Eye, FileText, Home, Laptop, Link2,
-  LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
-  Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X
+  Activity as ActivityIcon, AlertTriangle, ArrowLeft, Bot, Check, ChevronDown, ChevronRight,
+  CircleHelp, Clock3, Download, ExternalLink, Eye, FileText, FolderOpen, Home, Info, Laptop, Link2,
+  Copy, LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
+  Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X, Usb,
+  LockKeyhole, SlidersHorizontal, Mic, Video
 } from 'lucide-react'
 import logo from '../icons/icon-256.png'
-import type { AccessMode, Activity, AuthorizedClient, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
+import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
+import { describeTransportSecurity } from '../../src/transportSecurity'
+import { displayLabel as displayRouteLabel, inferEndpointRole } from '../../src/endpoint'
 
-type Page = 'overview' | 'hosts' | 'host-detail' | 'settings' | 'activity'
-type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'revoke'; client: AuthorizedClient } | { type: 'clear-activity' } | null
+type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'pair-host' | 'host-detail' | 'settings' | 'help' | 'activity' | 'activity-detail'
+type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: Capability; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient; remote: string } | { type: 'repair' | 'forget'; host: Host } | { type: 'clear-activity' } | null
+type RouteTestResult = { label: string; url: string; reachable: boolean; elapsed_ms: number; encrypted: boolean; security: string; error?: string | null }
+type RouteTestReport = { best?: RouteTestResult | null; routes?: RouteTestResult[] }
 
 const isGrantWindow = '__TAURI_INTERNALS__' in window && getCurrentWindow().label === 'grant'
 
 const demo: Snapshot = {
-  hosts: [{ url: 'wss://home-hermes.local:8767', name: 'Home Hermes', server_version: '0.9.0', endpoint_role: 'tailscale', paired_at: 1786458000, is_active: true, access_mode: 'trusted' }],
+  hosts: [{ url: 'wss://home-hermes.local:8767', name: 'Docker-Server', server_version: '1.6.3', endpoint_role: 'tailscale', paired_at: 1786458000, is_active: true, access_mode: 'full-access', capabilities: { commands: 'allow', files: 'allow', screen_input: 'allow', usb: 'allow', microphone: 'allow', camera: 'allow' } }],
   active_url: 'wss://home-hermes.local:8767',
   daemon: { state: 'connected', running: true, url: 'wss://home-hermes.local:8767', privilege: 'user', username: 'Local user' },
   startup_enabled: true,
+  daemon_autostart_enabled: true,
+  ui_version: '0.4.0-alpha.7',
+  cli_version: '0.4.0-alpha.4',
+  cli_path: 'C:\\Program Files\\Hermes-Relay CLI\\hermes-relay.exe',
+  hardware_availability: { usb: true, adb: true, microphone: false, camera: false },
   pending_grants: [],
   activity: [
-    { ts: Date.now() - 110_000, tool: 'desktop.shell', ok: true, summary: 'PowerShell command completed' },
+    { ts: Date.now() - 110_000, tool: 'desktop_powershell', ok: true, summary: 'exit 0', request_detail: '{\n  "script": "Get-Process | Select-Object -First 5"\n}', stdout: 'Handles  NPM(K)  PM(K)  WS(K)  CPU(s)  Id  ProcessName\n-------  ------  -----  -----  ------  --  -----------\n    412      31  74248  98312    4.18  812 powershell' },
     { ts: Date.now() - 260_000, tool: 'desktop.connect', ok: true, summary: 'Home Hermes connected' },
     { ts: Date.now() - 480_000, tool: 'daemon.start', ok: true, summary: 'Relay daemon started' }
   ]
@@ -37,6 +47,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     ] as T
     if (command === 'check_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: true, latest_version: '0.4.0-alpha.2', installed: false, needs_restart: false } as T
     if (command === 'install_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: false, installed: true, needs_restart: true } as T
+    if (command === 'test_host_route') return { best: { label: 'LAN', url: 'ws://172.16.24.250:8767', reachable: true, elapsed_ms: 36, encrypted: false, security: 'Unencrypted relay connection' }, routes: [] } as T
     return undefined as T
   }
   return invoke<T>(command, args)
@@ -71,6 +82,7 @@ type ActivityFilter = 'all' | ActivityCategory | 'attention' | 'warning'
 function activityCategory(entry: Activity): ActivityCategory {
   if (entry.category) return entry.category
   const tool = entry.tool.toLowerCase()
+  if (tool.includes('adb') || tool.includes('usb')) return 'devices'
   if (tool.includes('screenshot') || tool.includes('screen')) return 'screen'
   if (tool.includes('computer_') || tool.includes('mouse') || tool.includes('keyboard')) return 'input'
   if (tool.includes('file') || tool.includes('directory') || tool.includes('patch')) return 'files'
@@ -121,9 +133,18 @@ function age(ts?: number): string {
 function formatGrantScope(scope: unknown): string {
   if (!scope || typeof scope !== 'object') return ''
   return Object.entries(scope as Record<string, unknown>)
-    .filter(([, value]) => typeof value === 'string' && value.trim())
+    .filter(([key, value]) => !['action', 'preview'].includes(key) && typeof value === 'string' && value.trim())
     .map(([key, value]) => `${key}: ${String(value)}`)
     .join(', ')
+}
+
+function grantAction(scope: unknown): { label: string; preview: string } | null {
+  if (!scope || typeof scope !== 'object') return null
+  const record = scope as Record<string, unknown>
+  const label = typeof record.action === 'string' ? record.action.trim() : ''
+  const preview = typeof record.preview === 'string' ? record.preview.trim() : ''
+  if (!label && !preview) return null
+  return { label: label || 'Requested action', preview: preview || label }
 }
 
 function friendlyUpdateError(error: unknown): string {
@@ -139,9 +160,39 @@ function friendlyUpdateError(error: unknown): string {
 }
 
 const accessCopy: Record<AccessMode, string> = {
-  ask: 'The connection stays ready, but this host cannot use desktop tools until you allow access.',
-  trusted: 'This host may use command and file tools; screen and input still require a task grant.',
-  'full-access': 'This host may use commands, screen, mouse, and keyboard without asking.'
+  ask: 'All desktop capabilities are off. The relay connection stays ready.',
+  'ask-every-time': 'Each available command, file, screen, input, or USB operation asks first.',
+  structured: 'Files are allowed. Screen, input, and USB ask first. Raw commands stay off.',
+  trusted: 'Individual capabilities use the settings migrated from the former Trusted preset.',
+  'full-access': 'Every available capability is allowed without task grants.',
+  custom: 'Individual capabilities use the settings you choose.'
+}
+
+function formatPairedAt(ts?: number | null): string {
+  if (!ts) return 'Unknown'
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(ts * 1000))
+}
+
+const accessLabel: Record<AccessMode, string> = {
+  ask: 'Restricted', 'ask-every-time': 'Ask Every Time', structured: 'Standard', trusted: 'Custom', 'full-access': 'Full Access', custom: 'Custom'
+}
+
+const capabilityLabel: Record<CapabilityMode, string> = {
+  disabled: 'Off', ask: 'Ask', allow: 'Allow'
+}
+
+const presetCapabilities: Partial<Record<AccessMode, Host['capabilities']>> = {
+  ask: { commands: 'disabled', files: 'disabled', screen_input: 'disabled', usb: 'disabled', microphone: 'disabled', camera: 'disabled' },
+  'ask-every-time': { commands: 'ask', files: 'ask', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled' },
+  structured: { commands: 'disabled', files: 'allow', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled' },
+  trusted: { commands: 'allow', files: 'allow', screen_input: 'ask', usb: 'ask', microphone: 'disabled', camera: 'disabled' },
+  'full-access': { commands: 'allow', files: 'allow', screen_input: 'allow', usb: 'allow', microphone: 'allow', camera: 'allow' }
+}
+
+function hostAccessLabel(host: Host): string {
+  const expected = presetCapabilities[host.access_mode]
+  if (!expected || Object.entries(expected).some(([capability, mode]) => host.capabilities[capability as Capability] !== mode)) return 'Custom'
+  return accessLabel[host.access_mode]
 }
 
 export default function App() {
@@ -153,31 +204,58 @@ function ManagementApp() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null)
   const [detailUrl, setDetailUrl] = useState<string | null>(null)
+  const [pairInitialUrl, setPairInitialUrl] = useState('')
+  const [activityBack, setActivityBack] = useState<Page>('settings')
+  const [policyBack, setPolicyBack] = useState<Page>('overview')
+  const [activityDetailBack, setActivityDetailBack] = useState<Page>('activity')
+  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null)
   const [selectorOpen, setSelectorOpen] = useState(false)
+  const [routeDetailsOpen, setRouteDetailsOpen] = useState(false)
+  const [routeTest, setRouteTest] = useState<RouteTestReport | null>(null)
   const [clients, setClients] = useState<AuthorizedClient[]>([])
   const [busy, setBusy] = useState<string | null>(null)
+  const [connectionTransition, setConnectionTransition] = useState<'connecting' | 'disconnecting' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<PendingAction>(null)
   const [windowVisible, setWindowVisible] = useState(true)
+  const [reviewGrantOpen, setReviewGrantOpen] = useState(false)
   const selectorRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLElement>(null)
   const hideTimer = useRef<number | null>(null)
+  const refreshInFlight = useRef(false)
 
   const refresh = useCallback(async () => {
+    if (refreshInFlight.current) return
+    refreshInFlight.current = true
     try {
       const next = await call<Snapshot>('get_snapshot')
-      next.hosts = next.hosts.map(h => ({ ...h, name: h.name || displayHost(h.url) }))
+      next.hosts = next.hosts.map(h => {
+        const capabilities = h.capabilities as Partial<Host['capabilities']>
+        return {
+          ...h,
+          name: h.name || displayHost(h.url),
+          capabilities: {
+            commands: capabilities.commands ?? (h.access_mode === 'full-access' ? 'allow' : h.access_mode === 'trusted' ? 'allow' : 'disabled'),
+            files: capabilities.files ?? (h.access_mode === 'ask' ? 'disabled' : h.access_mode === 'ask-every-time' ? 'ask' : 'allow'),
+            screen_input: capabilities.screen_input ?? (h.access_mode === 'full-access' ? 'allow' : h.access_mode === 'ask' ? 'disabled' : 'ask'),
+            usb: capabilities.usb ?? (h.access_mode === 'ask-every-time' ? 'ask' : 'disabled'),
+            microphone: capabilities.microphone ?? 'disabled',
+            camera: capabilities.camera ?? 'disabled'
+          }
+        }
+      })
       setSnapshot(next)
       setSelectedUrl(current => current && next.hosts.some(h => h.url === current) ? current : next.active_url ?? next.hosts[0]?.url ?? null)
       setError(null)
     } catch (e) { setError(String(e)) }
+    finally { refreshInFlight.current = false }
   }, [])
 
   useEffect(() => {
     refresh()
-    const timer = window.setInterval(refresh, 5000)
+    const timer = window.setInterval(refresh, connectionTransition ? 350 : 5000)
     return () => window.clearInterval(timer)
-  }, [refresh])
+  }, [refresh, connectionTransition])
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -188,12 +266,13 @@ function ManagementApp() {
   }, [])
 
   const host = useMemo(() => snapshot?.hosts.find(item => item.url === selectedUrl) ?? null, [snapshot, selectedUrl])
-  const connected = Boolean(snapshot?.daemon.running && snapshot.daemon.state === 'connected' && host && snapshot.daemon.url === host.url)
+  const connected = Boolean(snapshot?.daemon.running && snapshot.daemon.state === 'connected' && host && (snapshot.daemon.configured_url ?? snapshot.daemon.url) === host.url)
 
   useEffect(() => {
-    if (page !== 'settings' || !host) return
-    call<AuthorizedClient[]>('list_authorized_clients', { remote: host.url }).then(setClients).catch(e => setError(String(e)))
-  }, [page, host])
+    if (page !== 'host-detail' || !detailUrl) return
+    setClients([])
+    call<AuthorizedClient[]>('list_authorized_clients', { remote: detailUrl }).then(setClients).catch(e => setError(String(e)))
+  }, [page, detailUrl])
 
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0 })
@@ -201,9 +280,50 @@ function ManagementApp() {
 
   async function action(name: string, args?: Record<string, unknown>) {
     setBusy(name)
-    try { await call(name, args); await refresh(); setError(null) }
-    catch (e) { setError(String(e)) }
+    try { await call(name, args); await refresh(); setError(null); return true }
+    catch (e) { setError(String(e)); return false }
     finally { setBusy(null) }
+  }
+
+  async function changeConnection() {
+    if (busy) return
+    const command = connected ? 'disconnect_daemon' : 'connect_daemon'
+    const transition = connected ? 'disconnecting' : 'connecting'
+    setBusy(command)
+    setConnectionTransition(transition)
+    setError(null)
+    try {
+      await call(command)
+      await refresh()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setConnectionTransition(null)
+      setBusy(null)
+    }
+  }
+
+  async function testRoute(remote: string) {
+    setBusy('test_host_route')
+    setRouteTest(null)
+    try {
+      const report = await call<RouteTestReport>('test_host_route', { remote })
+      setRouteTest(report)
+      setError(null)
+    } catch (e) { setRouteTest(null); setError(String(e)) }
+    finally { setBusy(null) }
+  }
+
+  function openPair(url = '') {
+    setPairInitialUrl(url)
+    setSelectorOpen(false)
+    setPage('pair-host')
+  }
+
+  async function pairHost(remote: string, code: string) {
+    const paired = await action('pair_host', { remote, code })
+    if (paired) setPage('hosts')
+    return paired
   }
 
   async function selectHost(url: string) {
@@ -223,9 +343,17 @@ function ManagementApp() {
     if (!work) return
     if (work.type === 'access' && host) {
       await action('set_host_access', { remote: host.url, mode: work.mode })
-    } else if (work.type === 'revoke' && host) {
-      await action('revoke_authorized_client', { remote: host.url, prefix: work.client.token_prefix })
-      setClients(await call<AuthorizedClient[]>('list_authorized_clients', { remote: host.url }))
+    } else if (work.type === 'capability' && host) {
+      await action('set_host_capability', { remote: host.url, capability: work.capability, mode: work.mode })
+    } else if (work.type === 'revoke') {
+      await action('revoke_authorized_client', { remote: work.remote, prefix: work.client.token_prefix })
+      setClients(await call<AuthorizedClient[]>('list_authorized_clients', { remote: work.remote }))
+    } else if (work.type === 'repair') {
+      openPair(work.host.url)
+    } else if (work.type === 'forget') {
+      await action('forget_host', { remote: work.host.url })
+      setDetailUrl(null)
+      setPage('hosts')
     } else if (work.type === 'clear-activity') {
       await action('clear_activity')
     }
@@ -235,6 +363,12 @@ function ManagementApp() {
     if (!host || host.access_mode === mode) return
     if (mode === 'full-access') setPending({ type: 'access', mode })
     else action('set_host_access', { remote: host.url, mode })
+  }
+
+  const chooseCapability = (capability: Capability, mode: CapabilityMode) => {
+    if (!host || host.capabilities[capability] === mode || capability === 'microphone' || capability === 'camera') return
+    if (mode === 'allow') setPending({ type: 'capability', capability, mode })
+    else action('set_host_capability', { remote: host.url, capability, mode })
   }
 
   const hideWindow = useCallback(() => {
@@ -261,77 +395,127 @@ function ManagementApp() {
     }
   }, [hideWindow])
 
+  useEffect(() => {
+    const review = () => { setReviewGrantOpen(true); void refresh() }
+    window.addEventListener('hermes-review-grant', review)
+    return () => window.removeEventListener('hermes-review-grant', review)
+  }, [refresh])
+
   if (!snapshot) return <div className={`app-shell loading ${windowVisible ? 'window-visible' : ''}`}><LoaderCircle className="spin" /><span>Loading Hermes-Relay CLI UI…</span></div>
+  const reviewGrant = snapshot.pending_grants[0] ?? null
+  const reviewAction = grantAction(reviewGrant?.scope)
+  const reviewScope = formatGrantScope(reviewGrant?.scope)
+  const reviewHost = snapshot.hosts.find(item => item.url === (snapshot.daemon.configured_url ?? snapshot.daemon.url))?.name ?? 'Connected host'
 
   return <div className={`app-shell ${windowVisible ? 'window-visible' : ''}`}>
     <header className="titlebar">
       <div className="brand"><img src={logo} alt="" /><span>Hermes-Relay CLI UI</span></div>
       <div className="window-controls">
+        <button aria-label="Help and About" title="Help and About" onClick={() => setPage('help')}><CircleHelp /></button>
         <button aria-label="Hide window" onClick={hideWindow}><X /></button>
       </div>
     </header>
 
     <main className="content" ref={contentRef}>
       {page === 'overview' && <>
-        <section className="connection-hero">
-          <div className={`status-ring ${connected ? 'online' : 'offline'}`}>{connected ? <Check /> : <Unplug />}</div>
-          <div><h1>{connected ? 'Connected' : 'Disconnected'}</h1><p>{connected ? 'Remote control tunnel active' : 'The remote control tunnel is offline'}</p></div>
-        </section>
-
-        <section className="section host-section">
-          <label>Connected host</label>
+        <section className={`connection-route ${connected ? 'online' : 'offline'} ${connectionTransition ?? ''} ${snapshot.daemon.active_route === 'plugin_proxy' ? 'secure-link' : ''}`} aria-busy={connectionTransition !== null}>
           {snapshot.hosts.length === 0 ?
-            <button className="empty-pair" onClick={() => action('pair_host')}><Link2 /><span><strong>Pair host</strong><small>Connect this PC to a Hermes instance</small></span><ChevronRight /></button> :
-            <div className="host-selector" ref={selectorRef}>
-              <button className="selector-button" aria-expanded={selectorOpen} onClick={() => setSelectorOpen(value => !value)}>
-                <span className="host-icon"><Monitor /></span><span className="host-main"><strong>{host?.name}</strong><small>{host?.endpoint_role ? `${host.endpoint_role.replace(/^./, x => x.toUpperCase())} relay` : 'Hermes relay'} <i>• {connected ? 'Online' : 'Offline'}</i></small></span><ChevronDown className={selectorOpen ? 'rotated' : ''} />
-              </button>
+            <button className="empty-pair" onClick={() => openPair()}><Link2 /><span><strong>Pair host</strong><small>Connect this PC to a Hermes instance</small></span><ChevronRight /></button> :
+            <div className="route-grid" ref={selectorRef}>
+              <span className="route-endpoint"><Bot /><small>Agent</small></span>
+              <i className="route-link left" />
+              <div className="route-host">
+                <button className="route-host-button" aria-expanded={selectorOpen} aria-label={`Connected host: ${host?.name}. Change host`} onClick={() => setSelectorOpen(value => !value)}>
+                  <span className="route-host-icon"><Server /></span>
+                  <span className="route-host-copy"><small>Connected host</small><strong>{host?.name}</strong></span>
+                  <span className="route-host-action">Change</span><ChevronDown />
+                </button>
               {selectorOpen && <div className="selector-menu">
                 {snapshot.hosts.map(item => <button key={item.url} className={item.url === host?.url ? 'selected' : ''} onClick={() => selectHost(item.url)}><Monitor /><span><strong>{item.name}</strong><small>{item.url}</small></span>{item.url === host?.url && <Check />}</button>)}
-                <button className="pair-option" onClick={() => { setSelectorOpen(false); action('pair_host') }}><Link2 /><span><strong>Pair host</strong><small>Connect another Hermes instance</small></span></button>
+                <button className="pair-option" onClick={() => openPair()}><Link2 /><span><strong>Pair host</strong><small>Connect another Hermes instance</small></span></button>
               </div>}
+              </div>
+              <i className="route-link right" />
+              <span className="route-endpoint"><Monitor /><small>This PC</small></span>
+              {(connected || connectionTransition === 'connecting') && <span className="route-traffic" aria-hidden="true">
+                <i className="packet packet-outbound" /><i className="packet packet-outbound packet-late" />
+                <i className="packet packet-inbound" /><i className="packet packet-inbound packet-late" />
+              </span>}
+              {(() => {
+                const activeRole = snapshot.daemon.active_route ?? host?.endpoint_role ?? inferEndpointRole(snapshot.daemon.url ?? host?.url ?? '')
+                const security = describeTransportSecurity(snapshot.daemon.url ?? host?.url ?? '', activeRole)
+                return <div className={`route-status ${connected && !security.encrypted ? 'insecure' : ''}`} aria-live="polite" aria-atomic="true">
+                  <strong>{connectionTransition === 'connecting' ? 'Connecting' : connectionTransition === 'disconnecting' ? 'Disconnecting' : connected ? 'Connected' : 'Disconnected'}</strong>
+                  {connected && <button className={`route-badge ${security.kind}`} aria-expanded={routeDetailsOpen} onClick={() => setRouteDetailsOpen(open => !open)}><ShieldCheck />{displayRouteLabel(activeRole ?? 'custom')}<ChevronDown /></button>}
+                  {connectionTransition && <small>{connectionTransition === 'connecting' ? 'Starting daemon and opening relay tunnel' : 'Closing relay tunnel'}</small>}
+                  {!connected && !connectionTransition && <small>Relay connection offline</small>}
+                  {connected && routeDetailsOpen && <aside className="route-detail-card"><div><ShieldCheck /><span><strong>{displayRouteLabel(activeRole ?? 'custom')}</strong><small>{security.detail}</small></span></div><dl><div><dt>Security</dt><dd>{security.label}</dd></div><div><dt>Endpoint</dt><dd title={snapshot.daemon.url ?? undefined}>{snapshot.daemon.url ?? 'Not reported'}</dd></div></dl><button className="route-test-button" disabled={busy === 'test_host_route'} onClick={() => host && testRoute(host.url)}>{busy === 'test_host_route' ? <LoaderCircle className="spin" /> : routeTest ? <RefreshCw /> : <ActivityIcon />}<span>{busy === 'test_host_route' ? <><strong>Testing connection…</strong><small>Checking every saved route</small></> : <><strong>{routeTest ? 'Test again' : 'Test connection'}</strong><small>Measure reachability and latency</small></>}</span></button>{routeTest && <div className={`route-test-result ${routeTest.best ? 'reachable' : 'unreachable'}`} aria-live="polite">{routeTest.best ? <><div className="route-test-summary"><span><Check /></span><strong>{routeTest.best.label} reachable</strong><em>{routeTest.best.elapsed_ms} ms</em></div><dl><div><dt>Protection</dt><dd className={routeTest.best.encrypted ? 'secure' : 'warning'}>{routeTest.best.security}</dd></div><div><dt>Tested endpoint</dt><dd title={routeTest.best.url}>{routeTest.best.url}</dd></div></dl><small>{Math.max(1, routeTest.routes?.length ?? 0)} saved route{(routeTest.routes?.length ?? 0) === 1 ? '' : 's'} checked</small></> : <div className="route-test-summary"><span><X /></span><strong>No route reachable</strong><em>Check host</em></div>}</div>}</aside>}
+                </div>
+              })()}
             </div>}
         </section>
 
-        {host && <section className="section access-section">
-          <div className="label-row"><label>Access for this host</label><span title="Access applies only to the selected Hermes host."><CircleHelp /></span></div>
-          <div className="access-control" role="radiogroup" aria-label="Host access">
-            <button role="radio" aria-checked={host.access_mode === 'ask'} className={host.access_mode === 'ask' ? 'active' : ''} onClick={() => chooseAccess('ask')}><CircleHelp /><span>Ask</span></button>
-            <button role="radio" aria-checked={host.access_mode === 'trusted'} className={host.access_mode === 'trusted' ? 'active' : ''} onClick={() => chooseAccess('trusted')}><ShieldCheck /><span>Trusted</span></button>
-            <button role="radio" aria-checked={host.access_mode === 'full-access'} className={host.access_mode === 'full-access' ? 'active' : ''} onClick={() => chooseAccess('full-access')}><Monitor /><span>Full Access</span></button>
-          </div>
-          <p className="access-copy">{accessCopy[host.access_mode]}</p>
+        {host && <section className="policy-ledger" aria-label="Host access and capabilities">
+          <button onClick={() => setPage('access')}>
+            <span className="policy-icon"><LockKeyhole /></span>
+            <span className="policy-name"><strong>Desktop access</strong><small>Preset for this host</small></span>
+            <span className="policy-value">{hostAccessLabel(host)}</span>
+            <ChevronRight />
+          </button>
+          <button onClick={() => setPage('capabilities')}>
+            <span className="policy-icon"><SlidersHorizontal /></span>
+            <span className="policy-name"><strong>Capabilities</strong><small>{host.access_mode === 'full-access' ? 'Included by Full Access' : 'Commands, files, screen and hardware'}</small></span>
+            <span className="capability-summary"><em>{host.access_mode === 'full-access' ? 'All Allow' : `USB ${capabilityLabel[host.capabilities.usb]}`}</em></span>
+            <ChevronRight />
+          </button>
         </section>}
 
-        <button className="tunnel-button" disabled={busy !== null} onClick={() => action(connected ? 'disconnect_daemon' : 'connect_daemon')}><Power />{connected ? 'Disconnect Tunnel' : 'Connect Tunnel'}</button>
+        <button className={`tunnel-button ${connectionTransition ? 'pending' : ''}`} disabled={busy !== null} aria-busy={connectionTransition !== null} onClick={() => void changeConnection()}>
+          {connectionTransition ? <LoaderCircle className="spin" /> : <Power />}
+          <span><strong>{connectionTransition === 'connecting' ? 'Connecting…' : connectionTransition === 'disconnecting' ? 'Disconnecting…' : connected ? 'Disconnect Tunnel' : 'Connect Tunnel'}</strong>{connectionTransition && <small>{connectionTransition === 'connecting' ? 'Waiting for the relay' : 'Stopping the local daemon'}</small>}</span>
+        </button>
 
         <section className="activity-section">
-          <div className="section-heading"><h2>Recent activity</h2><button onClick={() => setPage('settings')}>View all <ChevronRight /></button></div>
-          <ActivityList entries={snapshot.activity.slice(-3).reverse()} host={host} />
+          <div className="section-heading"><h2>Recent activity</h2><button onClick={() => { setActivityBack('overview'); setPage('activity') }}>View all <ChevronRight /></button></div>
+          <ActivityList entries={snapshot.activity.slice(-3).reverse()} host={host} onOpen={entry => { setSelectedActivity(entry); setActivityDetailBack('overview'); setPage('activity-detail') }} />
         </section>
 
-        {snapshot.daemon.privilege === 'administrator' && <aside className="admin-warning"><AlertTriangle /><span>Hermes-Relay CLI is running as Administrator.</span><button onClick={() => setPage('settings')}>Learn more</button></aside>}
+        {snapshot.daemon.privilege === 'administrator' && <aside className="admin-warning"><AlertTriangle /><span>Hermes-Relay CLI is running as Administrator.</span><button onClick={() => { setSelectedUrl(snapshot.active_url ?? null); setPage('settings') }}>Learn more</button></aside>}
       </>}
 
-      {page === 'hosts' && <HostsPage hosts={snapshot.hosts} selected={host} onOpen={url => { setDetailUrl(url); setPage('host-detail') }} onPair={() => action('pair_host')} />}
-      {page === 'host-detail' && <HostDetailPage host={snapshot.hosts.find(item => item.url === detailUrl) ?? null} busy={busy !== null} onBack={() => setPage('hosts')} onConnect={connectHost} onRename={(remote, name) => action('rename_host', { remote, name })} />}
-      {page === 'settings' && <SettingsPage host={host} daemon={snapshot.daemon} startup={snapshot.startup_enabled} clients={clients} activity={snapshot.activity} onRestart={() => action('restart_daemon')} onStartup={value => action('set_startup', { enabled: value })} onRevoke={client => setPending({ type: 'revoke', client })} onViewActivity={() => setPage('activity')} />}
-      {page === 'activity' && <ActivityPage entries={snapshot.activity} host={host} onBack={() => setPage('settings')} onClear={() => setPending({ type: 'clear-activity' })} />}
+      {page === 'access' && <AccessPage host={host} busy={busy !== null} onBack={() => setPage(policyBack)} onChoose={chooseAccess} />}
+      {page === 'capabilities' && <CapabilitiesPage host={host} availability={snapshot.hardware_availability} busy={busy !== null} onBack={() => setPage(policyBack)} onChoose={chooseCapability} />}
+
+      {page === 'hosts' && <HostsPage hosts={snapshot.hosts} selected={host} onOpen={url => { setDetailUrl(url); setSelectedUrl(url); setPage('host-detail') }} onPair={() => openPair()} />}
+      {page === 'pair-host' && <PairHostPage initialUrl={pairInitialUrl} busy={busy === 'pair_host'} onBack={() => setPage('hosts')} onPair={pairHost} />}
+      {page === 'host-detail' && <HostDetailPage host={snapshot.hosts.find(item => item.url === detailUrl) ?? null} clients={clients} busy={busy !== null} onBack={() => setPage('hosts')} onConnect={connectHost} onRename={(remote, name) => action('rename_host', { remote, name })} onAccess={() => { setPolicyBack('host-detail'); setPage('access') }} onCapabilities={() => { setPolicyBack('host-detail'); setPage('capabilities') }} onRevoke={(remote, client) => setPending({ type: 'revoke', client, remote })} onRepair={host => setPending({ type: 'repair', host })} onForget={host => setPending({ type: 'forget', host })} />}
+      {page === 'settings' && <SettingsPage daemon={snapshot.daemon} startup={snapshot.startup_enabled} daemonAutostart={snapshot.daemon_autostart_enabled ?? false} activity={snapshot.activity} onAction={action} onStartup={value => action('set_startup', { enabled: value })} onDaemonAutostart={value => action('set_daemon_autostart', { enabled: value })} onHelp={() => setPage('help')} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} onOpenActivity={entry => { setSelectedActivity(entry); setActivityDetailBack('settings'); setPage('activity-detail') }} />}
+      {page === 'help' && <HelpPage snapshot={snapshot} host={host} onBack={() => { setSelectedUrl(snapshot.active_url ?? null); setPage('settings') }} onAction={action} />}
+      {page === 'activity' && <ActivityPage entries={snapshot.activity} host={host} onBack={() => setPage(activityBack)} onClear={() => setPending({ type: 'clear-activity' })} onOpen={entry => { setSelectedActivity(entry); setActivityDetailBack('activity'); setPage('activity-detail') }} />}
+      {page === 'activity-detail' && <ActivityDetailPage entry={selectedActivity} host={host} onBack={() => setPage(activityDetailBack)} />}
     </main>
 
     {error && <div className="error-toast" role="alert"><AlertTriangle /><span>{error}</span><button onClick={() => setError(null)}><X /></button></div>}
 
+    {reviewGrantOpen && reviewGrant && <div className="modal-backdrop grant-review-backdrop" role="presentation"><div className="modal grant-review-modal" role="dialog" aria-modal="true" aria-labelledby="review-grant-title">
+      <div className="modal-icon"><ShieldCheck /></div><h2 id="review-grant-title">Review remote request</h2>
+      <p>{reviewHost} wants to perform an action on this PC.</p>
+      {reviewAction && <div className="grant-action-full"><dt>Requested action · {reviewAction.label}</dt><dd><pre>{reviewAction.preview}</pre></dd></div>}
+      <dl className="review-grant-facts"><div><dt>Reason</dt><dd>{reviewGrant.reason || 'No reason provided'}</dd></div>{reviewScope && <div><dt>Scope</dt><dd>{reviewScope}</dd></div>}</dl>
+      <div className="modal-actions"><button className="secondary" onClick={async () => { await action('resolve_grant', { id: reviewGrant.id, approved: false }); setReviewGrantOpen(false) }}>Reject</button><button className="primary" onClick={async () => { await action('resolve_grant', { id: reviewGrant.id, approved: true }); setReviewGrantOpen(false) }}>Approve</button></div>
+    </div></div>}
+
     <nav className="bottom-nav">
-      <button className={page === 'overview' ? 'active' : ''} onClick={() => setPage('overview')}><Home /><span>Overview</span></button>
-      <button className={page === 'hosts' || page === 'host-detail' ? 'active' : ''} onClick={() => setPage('hosts')}><Monitor /><span>Hosts</span></button>
-      <button className={page === 'settings' || page === 'activity' ? 'active' : ''} onClick={() => setPage('settings')}><Settings /><span>Settings</span></button>
+      <button className={page === 'overview' || ((page === 'access' || page === 'capabilities') && policyBack === 'overview') ? 'active' : ''} onClick={() => { setSelectedUrl(snapshot.active_url ?? null); setPolicyBack('overview'); setPage('overview') }}><Home /><span>Overview</span></button>
+      <button className={page === 'hosts' || page === 'pair-host' || page === 'host-detail' || ((page === 'access' || page === 'capabilities') && policyBack === 'host-detail') ? 'active' : ''} onClick={() => setPage('hosts')}><Monitor /><span>Hosts</span></button>
+      <button className={page === 'settings' || page === 'help' || page === 'activity' || page === 'activity-detail' ? 'active' : ''} onClick={() => { setSelectedUrl(snapshot.active_url ?? null); setPage('settings') }}><Settings /><span>Settings</span></button>
     </nav>
 
     {pending && <div className="modal-backdrop" role="presentation"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-      <div className="modal-icon">{pending.type === 'revoke' ? <UserRoundX /> : pending.type === 'clear-activity' ? <Trash2 /> : <AlertTriangle />}</div>
-      <h2 id="confirm-title">{pending.type === 'access' ? `Give ${host?.name} full access?` : pending.type === 'revoke' ? `Deauthorize ${pending.client.device_name ?? pending.client.token_prefix}?` : 'Clear local activity?'}</h2>
-      <p>{pending.type === 'access' ? 'This host will be able to run commands and control this PC without asking. Only use Full Access with a Hermes host you control.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
-      <div className="modal-actions"><button className="secondary" onClick={() => setPending(null)}>Cancel</button><button className="danger" onClick={confirmPending}>{pending.type === 'access' ? 'Enable Full Access' : pending.type === 'revoke' ? 'Deauthorize' : 'Clear activity'}</button></div>
+      <div className="modal-icon">{pending.type === 'revoke' ? <UserRoundX /> : pending.type === 'forget' || pending.type === 'clear-activity' ? <Trash2 /> : <AlertTriangle />}</div>
+      <h2 id="confirm-title">{pending.type === 'access' ? `Give ${host?.name} full access?` : pending.type === 'capability' ? `Always allow ${pending.capability.replace('_', ' & ')} for ${host?.name}?` : pending.type === 'revoke' ? `Deauthorize ${pending.client.device_name ?? pending.client.token_prefix}?` : pending.type === 'repair' ? `Re-pair ${pending.host.name}?` : pending.type === 'forget' ? `Forget ${pending.host.name}?` : 'Clear local activity?'}</h2>
+      <p>{pending.type === 'access' ? 'Every available capability will be allowed without task grants. Only use Full Access with a Hermes host you control.' : pending.type === 'capability' ? 'This allows the capability without per-operation approval. The matching preset is selected automatically; otherwise the policy becomes Custom.' : pending.type === 'revoke' ? (pending.client.is_current ? 'This is the current PC session. You will need to pair again.' : 'This client will immediately lose access to this Hermes host.') : pending.type === 'repair' ? 'A fresh pairing flow will replace this host session. Use this to recover an expired or invalid pairing.' : pending.type === 'forget' ? `This removes the local pairing, access policy, and display name. ${pending.host.is_active ? 'The active daemon will disconnect.' : 'The remote relay is not changed.'}` : 'This permanently removes the current and rotated desktop audit history from this PC. New activity will continue to be recorded.'}</p>
+      <div className="modal-actions"><button className="secondary" onClick={() => setPending(null)}>Cancel</button><button className="danger" onClick={confirmPending}>{pending.type === 'access' ? 'Enable Full Access' : pending.type === 'capability' ? 'Allow capability' : pending.type === 'revoke' ? 'Deauthorize' : pending.type === 'repair' ? 'Start re-pairing' : pending.type === 'forget' ? 'Forget host' : 'Clear activity'}</button></div>
     </div></div>}
   </div>
 }
@@ -397,60 +581,61 @@ function GrantWindow() {
   }
 
   if (!grant || !snapshot) return <div className="grant-shell" />
-  const hostName = snapshot.hosts.find(item => item.url === snapshot.daemon.url)?.name
+  const hostName = snapshot.hosts.find(item => item.url === (snapshot.daemon.configured_url ?? snapshot.daemon.url))?.name
     ?? (snapshot.daemon.url ? displayHost(snapshot.daemon.url) : 'Connected host')
   const scope = formatGrantScope(grant.scope)
+  const action = grantAction(grant.scope)
   const minutes = Math.max(1, Math.round(grant.duration_seconds / 60))
+  const grantCategory = grant.mode.split('.')[0]
+  const grantPresentation = grantCategory === 'usb'
+    ? { eyebrow: 'USB access request', title: 'Raw USB access', summary: 'wants to run one operation on a connected USB device.' }
+    : grantCategory === 'commands'
+      ? { eyebrow: 'Command execution request', title: 'Run command', summary: 'wants to run one command on this PC.' }
+      : grantCategory === 'files'
+        ? { eyebrow: 'File access request', title: 'Access files', summary: 'wants to access files on this PC.' }
+        : grantCategory === 'screen_input'
+          ? { eyebrow: 'Screen & input request', title: 'Control access', summary: `wants to view or control this PC for up to ${minutes} min.` }
+          : { eyebrow: 'Remote access request', title: `${grant.mode} access`, summary: `wants to use this PC for up to ${minutes} min.` }
 
   return <div className={`grant-shell ${visible ? 'window-visible' : ''} ${expanded ? 'expanded' : ''}`}>
     <section className="grant-card" role="dialog" aria-modal="true" aria-labelledby="grant-title">
       <div className="grant-head">
         <span className="grant-icon"><ShieldCheck /></span>
-        <span><small>Remote access request</small><strong id="grant-title">{grant.mode} access</strong></span>
+        <span><small>{grantPresentation.eyebrow}</small><strong id="grant-title">{grantPresentation.title}</strong></span>
         <button className="grant-expand" aria-expanded={expanded} aria-label={expanded ? 'Hide request details' : 'Show request details'} onClick={toggleExpanded}><ChevronDown /></button>
       </div>
-      <p className="grant-summary"><strong>{hostName}</strong> wants to control this PC for up to {minutes} min.</p>
+      <p className="grant-summary"><strong>{hostName}</strong> {grantPresentation.summary}</p>
+      {action && <div className="grant-action-preview"><small>Requested action · {action.label}</small><code>{action.preview}</code></div>}
       <div className="grant-details" aria-hidden={!expanded}>
-        <dl><div><dt>Reason</dt><dd>{grant.reason || 'No reason provided'}</dd></div>{scope && <div><dt>Scope</dt><dd>{scope}</dd></div>}</dl>
+        <dl>{action && <div className="grant-action-full"><dt>Action preview</dt><dd><pre>{action.preview}</pre></dd></div>}<div><dt>Reason</dt><dd>{grant.reason || 'No reason provided'}</dd></div>{scope && <div><dt>Scope</dt><dd>{scope}</dd></div>}</dl>
       </div>
+      <div className="grant-open-ui"><button disabled={busy} onClick={() => call('open_management_from_grant')}><ExternalLink /> Open in UI</button></div>
       <div className="grant-actions"><button disabled={busy} onClick={() => resolve(false)}>Reject</button><button disabled={busy} onClick={() => resolve(true)}>Approve</button></div>
     </section>
   </div>
 }
 
-function ActivityList({ entries, host, detailed = false }: { entries: Activity[]; host: Host | null; detailed?: boolean }) {
-  const [expanded, setExpanded] = useState<string | null>(null)
+function ActivityList({ entries, host, onOpen }: { entries: Activity[]; host: Host | null; onOpen?: (entry: Activity) => void }) {
   if (!entries.length) return <div className="empty-state"><Clock3 /><span>No remote activity yet</span></div>
   return <div className="activity-list">{entries.map((entry, i) => {
     const category = activityCategory(entry)
     const attention = needsAttention(entry)
     const warning = isNonZeroExit(entry)
     const key = entry.request_id ?? `${entry.ts}-${i}`
-    const Icon = category === 'command' ? TerminalSquare : category === 'files' ? FileText : category === 'screen' ? Eye : category === 'input' ? MousePointer2 : category === 'system' ? LogOut : ActivityIcon
-    const open = detailed && expanded === key
+    const Icon = category === 'command' ? TerminalSquare : category === 'files' ? FileText : category === 'screen' ? Eye : category === 'input' ? MousePointer2 : category === 'devices' ? Usb : category === 'system' ? LogOut : ActivityIcon
     const detail = entry.error ?? entry.summary ?? (entry.aborted ? 'Request aborted' : 'Completed')
     const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
-    return <article className={`activity-item ${open ? 'expanded' : ''}`} key={key}>
-      <button className="activity-row" aria-expanded={detailed ? open : undefined} onClick={() => detailed && setExpanded(open ? null : key)}>
+    return <article className="activity-item" key={key}>
+      <button className="activity-row" disabled={!onOpen} onClick={() => onOpen?.(entry)}>
         <span className={`activity-icon ${attention || warning ? 'amber' : category === 'system' ? 'green' : 'violet'}`}><Icon /></span>
         <span className="activity-copy"><strong>{activityName(entry.tool)}</strong><small className={attention ? 'attention' : warning ? 'warning' : ''}>{detail} · {eventHost}</small></span>
-        <span className="activity-tail"><time>{formatTime(entry.ts)}</time>{detailed && <ChevronDown />}</span>
+        <span className="activity-tail"><time>{formatTime(entry.ts)}</time>{onOpen && <ChevronRight />}</span>
       </button>
-      {detailed && <div className="activity-details" aria-hidden={!open}>
-        <dl>
-          <div><dt>When</dt><dd>{formatDateTime(entry.ts)}</dd></div>
-          <div><dt>Duration</dt><dd>{formatDuration(entry.duration_ms)}</dd></div>
-          <div><dt>Status</dt><dd className={attention ? 'attention' : warning ? 'warning' : 'success'}>{entry.aborted ? 'Aborted' : !entry.ok ? 'Failed' : warning ? `Exit ${activityExitCode(entry)}` : 'Completed'}</dd></div>
-          <div><dt>Category</dt><dd>{category}</dd></div>
-        </dl>
-        {entry.args_preview && <div className="activity-context"><span>Request</span><code>{entry.args_preview}</code></div>}
-        {entry.request_id && <div className="activity-request-id">ID {entry.request_id}</div>}
-      </div>}
     </article>
   })}</div>
 }
 
-function ActivityPanel({ entries, host, onClear }: { entries: Activity[]; host: Host | null; onClear: () => void }) {
+function ActivityPanel({ entries, host, onClear, onOpen }: { entries: Activity[]; host: Host | null; onClear: () => void; onOpen: (entry: Activity) => void }) {
   const [filter, setFilter] = useState<ActivityFilter>('all')
   const newest = entries.slice().reverse()
   const attention = newest.filter(needsAttention).length
@@ -459,21 +644,112 @@ function ActivityPanel({ entries, host, onClear }: { entries: Activity[]; host: 
   const filters: Array<{ value: ActivityFilter; label: string }> = [
     { value: 'all', label: 'All' }, { value: 'command', label: 'Commands' },
     { value: 'files', label: 'Files' }, { value: 'screen', label: 'Screen' },
-    { value: 'input', label: 'Input' }, { value: 'system', label: 'System' },
+    { value: 'input', label: 'Input' }, { value: 'devices', label: 'Devices' }, { value: 'system', label: 'System' },
     { value: 'warning', label: 'Non-zero' }, { value: 'attention', label: 'Issues' }
   ]
   return <div className="activity-panel">
     <div className="activity-summary"><span><ActivityIcon /><strong>{entries.length}</strong><small>Recent events</small></span><span className={attention ? 'has-attention' : ''}><AlertTriangle /><strong>{attention}</strong><small>Issues</small></span><em><i /> Live</em></div>
     <div className="activity-toolbar"><div className="activity-filters" aria-label="Filter activity">{filters.map(item => <button key={item.value} className={filter === item.value ? 'active' : ''} onClick={() => setFilter(item.value)}>{item.label}{item.value === 'attention' && attention > 0 ? ` ${attention}` : item.value === 'warning' && warnings > 0 ? ` ${warnings}` : ''}</button>)}</div><button className="clear-activity" disabled={!entries.length} onClick={onClear}><Trash2 /> Clear</button></div>
-    <div className="settings-card activity-card"><ActivityList entries={visible} host={host} detailed /></div>
+    <div className="settings-card activity-card"><ActivityList entries={visible} host={host} onOpen={onOpen} /></div>
   </div>
 }
 
-function ActivityPage({ entries, host, onBack, onClear }: { entries: Activity[]; host: Host | null; onBack: () => void; onClear: () => void }) {
+function ActivityPage({ entries, host, onBack, onClear, onOpen }: { entries: Activity[]; host: Host | null; onBack: () => void; onClear: () => void; onOpen: (entry: Activity) => void }) {
   return <section className="page-panel activity-page">
-    <div className="page-title activity-page-title"><button className="back-button" onClick={onBack}><ChevronRight /> Settings</button><div><p>Local audit</p><h1>Activity</h1></div></div>
+    <div className="page-title activity-page-title"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Settings</button><div><p>Local audit</p><h1>Activity</h1></div></div>
     <p className="page-intro">Remote actions and management changes recorded on this PC.</p>
-    <ActivityPanel entries={entries} host={host} onClear={onClear} />
+    <ActivityPanel entries={entries} host={host} onClear={onClear} onOpen={onOpen} />
+  </section>
+}
+
+function ActivityDetailPage({ entry, host, onBack }: { entry: Activity | null; host: Host | null; onBack: () => void }) {
+  if (!entry) return <section className="page-panel"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Activity</button><div className="large-empty"><ActivityIcon /><h2>Event unavailable</h2></div></section>
+  const attention = needsAttention(entry)
+  const warning = isNonZeroExit(entry)
+  const status = entry.aborted ? 'Aborted' : !entry.ok ? 'Failed' : warning ? `Exit ${activityExitCode(entry)}` : 'Completed'
+  const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
+  const blocks = [
+    ['Request', entry.request_detail ?? entry.args_preview, entry.request_truncated],
+    ['Standard output', entry.stdout, entry.stdout_truncated],
+    ['Standard error', entry.stderr, entry.stderr_truncated],
+    ['Result', entry.result_detail, entry.result_truncated],
+    ['Error', entry.error, false]
+  ] as const
+  return <section className="page-panel activity-detail-page">
+    <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Activity</button>
+    <div className="activity-detail-title"><span className={`activity-icon ${attention || warning ? 'amber' : 'violet'}`}><TerminalSquare /></span><span><p>{activityCategory(entry)}</p><h1>{activityName(entry.tool)}</h1><small>{eventHost}</small></span></div>
+    <dl className="activity-detail-meta"><div><dt>Status</dt><dd className={attention ? 'attention' : warning ? 'warning' : 'success'}>{status}</dd></div><div><dt>When</dt><dd>{formatDateTime(entry.ts)}</dd></div><div><dt>Duration</dt><dd>{formatDuration(entry.duration_ms)}</dd></div></dl>
+    <div className="activity-output-list">{blocks.filter(([, value]) => value).map(([label, value, truncated]) => <section key={label}><header><strong>{label}</strong>{truncated && <em>Truncated</em>}</header><pre>{value}</pre></section>)}</div>
+    {entry.request_id && <div className="activity-request-id">Request ID {entry.request_id}</div>}
+  </section>
+}
+
+function AccessPage({ host, busy, onBack, onChoose }: { host: Host | null; busy: boolean; onBack: () => void; onChoose: (mode: AccessMode) => void }) {
+  if (!host) return <div className="page-panel large-empty"><LockKeyhole /><h2>No host selected</h2><button onClick={onBack}>Back to Overview</button></div>
+  const customPolicy = host.access_mode === 'custom' || host.access_mode === 'trusted'
+  const options: Array<{ mode: AccessMode; Icon: typeof CircleHelp }> = [
+    { mode: 'ask', Icon: LockKeyhole },
+    { mode: 'ask-every-time', Icon: CircleHelp },
+    { mode: 'structured', Icon: ShieldCheck },
+    { mode: 'full-access', Icon: Monitor }
+  ]
+  return <section className="page-panel policy-detail-page">
+    <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Overview</button><p>{host.name}</p><h1>Host access</h1></div></div>
+    <p className="page-intro">Choose the broadest kind of work this Hermes host may perform on this PC.</p>
+    {customPolicy && <div className="custom-policy-banner"><SlidersHorizontal /><span><strong>Custom policy</strong><small>Individual capabilities differ from the standard presets.</small></span></div>}
+    <div className="access-options" role="radiogroup" aria-label="Host access">
+      {options.map(({ mode, Icon }) => <button key={mode} role="radio" aria-checked={host.access_mode === mode} className={host.access_mode === mode ? 'active' : ''} disabled={busy} onClick={() => onChoose(mode)}>
+        <span className="option-icon"><Icon /></span><span><strong>{accessLabel[mode]}</strong><small>{accessCopy[mode]}</small></span>{host.access_mode === mode ? <span className="selected-check"><Check /></span> : <ChevronRight />}
+      </button>)}
+    </div>
+    {customPolicy && <p className="policy-footnote"><SlidersHorizontal />Custom reflects individual capability choices. Selecting a preset replaces them.</p>}
+  </section>
+}
+
+function CapabilitiesPage({ host, availability, busy, onBack, onChoose }: { host: Host | null; availability: Snapshot['hardware_availability']; busy: boolean; onBack: () => void; onChoose: (capability: Capability, mode: CapabilityMode) => void }) {
+  if (!host) return <div className="page-panel large-empty"><SlidersHorizontal /><h2>No host selected</h2><button onClick={onBack}>Back to Overview</button></div>
+  return <section className="page-panel policy-detail-page">
+    <div className="page-title policy-page-title"><div><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Overview</button><p>{host.name}</p><h1>Capabilities</h1></div></div>
+    <p className="page-intro">Presets set these together. Capability changes select a matching preset automatically; other combinations become Custom.</p>
+    <div className="capability-list">
+      <CapabilityRow capability="commands" title="Command execution" copy="PowerShell, terminal and process launch" icon={<TerminalSquare />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy} onChoose={onChoose} />
+      <CapabilityRow capability="files" title="Files" copy="Read, write, search and transfer" icon={<FileText />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy} onChoose={onChoose} />
+      <CapabilityRow capability="screen_input" title="Screen & input" copy="Screenshots, clipboard, mouse and keyboard" icon={<MousePointer2 />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy} onChoose={onChoose} />
+      <CapabilityRow capability="usb" title="Raw USB" copy="Native utilities and enabled USB services" icon={<Usb />} modes={['disabled', 'ask', 'allow']} host={host} busy={busy || !availability.usb} onChoose={onChoose} />
+    </div>
+    <div className="supported-broker"><span><i className={availability.adb ? '' : 'offline'} /><strong>Android Debug Bridge</strong></span><small>Secondary USB service</small><em>{availability.adb ? 'Available' : 'Unavailable'}</em></div>
+    <div className="unavailable-capabilities">
+      <div><span className="option-icon"><Mic /></span><span><strong>Microphone</strong><small>A bounded broker is not available yet</small></span><em>Unavailable</em></div>
+      <div><span className="option-icon"><Video /></span><span><strong>Camera</strong><small>A bounded broker is not available yet</small></span><em>Unavailable</em></div>
+    </div>
+    <p className="policy-footnote"><LockKeyhole />Full Access includes every available capability. Unavailable brokers still cannot be advertised.</p>
+  </section>
+}
+
+function CapabilityRow({ capability, title, copy, icon, modes, host, busy, onChoose }: { capability: Capability; title: string; copy: string; icon: ReactNode; modes: CapabilityMode[]; host: Host; busy: boolean; onChoose: (capability: Capability, mode: CapabilityMode) => void }) {
+  return <section className="capability-row"><div className="capability-row-head"><span className="option-icon">{icon}</span><span><strong>{title}</strong><small>{copy}</small></span>{host.access_mode === 'full-access' && <em>Included</em>}</div><div className="capability-modes" role="radiogroup" aria-label={`${title} access`}>{modes.map(mode => <button key={mode} disabled={busy} role="radio" aria-checked={host.capabilities[capability] === mode} className={host.capabilities[capability] === mode ? 'active' : ''} onClick={() => onChoose(capability, mode)}>{capabilityLabel[mode]}</button>)}</div></section>
+}
+
+function PairHostPage({ initialUrl, busy, onBack, onPair }: { initialUrl: string; busy: boolean; onBack: () => void; onPair: (remote: string, code: string) => Promise<boolean> }) {
+  const [remote, setRemote] = useState(initialUrl)
+  const [code, setCode] = useState('')
+  const normalizedCode = code.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 6)
+  const validUrl = (() => { try { const url = new URL(remote.trim()); return ['ws:', 'wss:'].includes(url.protocol) && !url.username && !url.password } catch { return false } })()
+  const security = describeTransportSecurity(remote)
+  const canSubmit = validUrl && normalizedCode.length === 6 && !busy
+
+  return <section className="page-panel pair-host-page">
+    <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button>
+    <div className="page-title"><div><p>New connection</p><h1>{initialUrl ? 'Re-pair host' : 'Pair host'}</h1></div></div>
+    <p className="page-intro">Enter the relay address and the six-character code shown by Hermes.</p>
+    <div className="secure-link-setup"><ShieldCheck /><span><strong>Hermes Secure Link ready</strong><small>When the pairing invite advertises Secure Link, the CLI prefers its pinned, encrypted route automatically and keeps private-network routes as fallback.</small></span></div>
+    <form className="pair-form" onSubmit={async event => { event.preventDefault(); if (canSubmit) await onPair(remote.trim(), normalizedCode) }}>
+      <label><span>Relay URL</span><div className="pair-input-action"><input aria-label="Relay URL" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="wss://relay.example.com" value={remote} onChange={event => setRemote(event.target.value)} /><button type="button" title={remote ? 'Copy relay URL' : 'Paste relay URL'} aria-label={remote ? 'Copy relay URL' : 'Paste relay URL'} onClick={async () => { if (remote) await navigator.clipboard.writeText(remote.trim()); else setRemote(await navigator.clipboard.readText()) }}><Copy /></button></div></label>
+      {validUrl && <div className={`transport-notice ${security.encrypted ? 'secure' : 'insecure'}`}>{security.encrypted ? <ShieldCheck /> : <AlertTriangle />}<span><strong>{security.label}</strong><small>{security.detail}</small></span></div>}
+      <label><span>Pairing code</span><input className="pair-code" aria-label="Pairing code" autoComplete="one-time-code" inputMode="text" maxLength={6} placeholder="ABC123" value={normalizedCode} onChange={event => setCode(event.target.value)} /></label>
+      <p className="pair-privacy"><LockKeyhole />The code is passed directly to the local CLI and is not stored by the UI.</p>
+      <button className="primary-host-action" type="submit" disabled={!canSubmit}>{busy ? <LoaderCircle className="spin" /> : <Link2 />}{busy ? 'Pairing…' : initialUrl ? 'Re-pair host' : 'Pair host'}</button>
+    </form>
   </section>
 }
 
@@ -485,21 +761,29 @@ function HostsPage({ hosts, selected, onOpen, onPair }: { hosts: Host[]; selecte
   </section>
 }
 
-function HostDetailPage({ host, busy, onBack, onConnect, onRename }: { host: Host | null; busy: boolean; onBack: () => void; onConnect: (url: string) => void; onRename: (url: string, name: string) => Promise<void> }) {
+function HostDetailPage({ host, clients, busy, onBack, onConnect, onRename, onAccess, onCapabilities, onRevoke, onRepair, onForget }: { host: Host | null; clients: AuthorizedClient[]; busy: boolean; onBack: () => void; onConnect: (url: string) => void; onRename: (url: string, name: string) => Promise<unknown>; onAccess: () => void; onCapabilities: () => void; onRevoke: (remote: string, client: AuthorizedClient) => void; onRepair: (host: Host) => void; onForget: (host: Host) => void }) {
   const [name, setName] = useState(host?.name ?? '')
   useEffect(() => setName(host?.name ?? ''), [host?.url, host?.name])
-  if (!host) return <section className="page-panel"><button className="back-button" onClick={onBack}><ChevronRight /> Hosts</button><div className="large-empty"><Server /><h2>Host unavailable</h2><p>This pairing may have been removed.</p></div></section>
+  if (!host) return <section className="page-panel"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button><div className="large-empty"><Server /><h2>Host unavailable</h2><p>This pairing may have been removed.</p></div></section>
   const changed = name.trim() !== host.name && name.trim().length > 0
   return <section className="page-panel host-detail-page">
-    <button className="back-button" onClick={onBack}><ChevronRight /> Hosts</button>
-    <div className="host-detail-hero"><span className="host-icon"><Server /></span><span><p>{host.is_active ? 'Active host' : 'Paired host'}</p><h1>{host.name}</h1><small>{host.url}</small></span></div>
+    <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button>
+    <div className="host-detail-hero"><span className="host-icon"><Server /></span><span><p>{host.is_active ? 'Active host' : 'Paired host'}</p><h1>{host.name}</h1><small>{host.url}</small></span><button className="copy-host-url" aria-label="Copy relay URL" title="Copy relay URL" onClick={() => navigator.clipboard.writeText(host.url)}><Copy /></button></div>
     <div className="settings-group"><h2>Display name</h2><div className="rename-host"><input value={name} maxLength={64} aria-label="Host display name" onChange={event => setName(event.target.value)} /><button disabled={!changed || busy} onClick={() => onRename(host.url, name.trim())}>Save</button></div><p className="group-help host-name-help">Stored locally on this PC. It does not rename the Hermes server.</p></div>
-    <div className="settings-group"><h2>Connection details</h2><div className="settings-card host-detail"><dl><div><dt>Route</dt><dd>{host.endpoint_role ?? 'Custom'}</dd></div><div><dt>Version</dt><dd>{host.server_version ?? 'Unknown'}</dd></div><div><dt>Access</dt><dd>{host.access_mode === 'full-access' ? 'Full Access' : host.access_mode[0]!.toUpperCase() + host.access_mode.slice(1)}</dd></div></dl></div></div>
+    <div className="settings-group"><h2>Connection</h2><div className="settings-card host-detail"><dl><div><dt>Active route</dt><dd>{displayRouteLabel(host.endpoint_role ?? inferEndpointRole(host.url))}</dd></div><div><dt>Relay</dt><dd>{host.server_version ?? 'Unknown'}</dd></div><div><dt>Paired</dt><dd>{formatPairedAt(host.paired_at)}</dd></div></dl></div><p className="group-help">Tailscale is recommended for remote access. A public TLS domain or Direct Secure Link can provide a fully self-hosted alternative.</p></div>
+    <div className="settings-group"><h2>Recommended remote access</h2><div className="settings-card broker-summary configured"><span className="setting-icon"><Radio /></span><span><strong>Tailscale</strong><small>Private reachability, managed TLS, and no inbound port forwarding. Install Tailscale on this PC and the Hermes host, then re-pair.</small></span><em>Recommended</em></div><p className="group-help">For a fully self-hosted public route, point a domain at the host and use a trusted TLS reverse proxy or Direct Secure Link.</p></div>
+    {host.broker_configured && <div className="settings-group experimental-group"><h2>Experimental</h2><div className="settings-card broker-summary"><span className="setting-icon"><Radio /></span><span><strong>Hermes Reach</strong><small>Brokered fallback saved for evaluation. It is tried after supported direct, Tailscale, public TLS, and Secure Link routes.</small></span><em>Experimental</em></div><p className="group-help">Reach is not recommended for normal setup and may change before release.</p></div>}
+    <div className="settings-group"><h2>Remote access</h2><div className="settings-card management-links">
+      <button onClick={onAccess}><span className="setting-icon"><LockKeyhole /></span><span><strong>Desktop access</strong><small>Choose how this host requests control.</small></span><em>{hostAccessLabel(host)}</em><ChevronRight /></button>
+      <button onClick={onCapabilities}><span className="setting-icon"><SlidersHorizontal /></span><span><strong>Capabilities</strong><small>Commands, files, screen, input and hardware.</small></span><em>{host.access_mode === 'full-access' ? 'All allow' : 'Review'}</em><ChevronRight /></button>
+    </div></div>
+    <div className="settings-group"><h2>Authorized clients <span>{clients.length}</span></h2><p className="group-help">Sessions authenticated to this relay.</p><div className="settings-card client-list">{clients.length ? clients.map(client => { const identity = [client.device_model, client.device_platform, client.client_surface].filter(Boolean).join(' · ') || client.transport_hint || 'Client'; return <div className="client-row" key={client.token_prefix}><span className="client-icon"><Laptop /></span><span><strong>{client.device_name ?? 'Unnamed client'} {client.is_current && <em>This PC</em>}</strong><small>{identity} · {age(client.last_seen)}</small></span><button onClick={() => onRevoke(host.url, client)} aria-label={`Deauthorize ${client.device_name ?? client.token_prefix}`}><UserRoundX /></button></div> }) : <div className="empty-state"><Radio /><span>No authorized clients reported</span></div>}</div></div>
     <button className="primary-host-action" disabled={host.is_active || busy} onClick={() => onConnect(host.url)}><Power />{host.is_active ? 'Currently connected host' : 'Connect to this host'}</button>
+    <div className="host-danger-actions"><button disabled={busy} onClick={() => onRepair(host)}><RefreshCw /> Re-pair host</button><button disabled={busy} onClick={() => onForget(host)}><Trash2 /> Forget host</button></div>
   </section>
 }
 
-function SettingsPage({ host, daemon, startup, clients, activity, onRestart, onStartup, onRevoke, onViewActivity }: { host: Host | null; daemon: Snapshot['daemon']; startup: boolean; clients: AuthorizedClient[]; activity: Activity[]; onRestart: () => void; onStartup: (value: boolean) => void; onRevoke: (client: AuthorizedClient) => void; onViewActivity: () => void }) {
+function SettingsPage({ daemon, startup, daemonAutostart, activity, onAction, onStartup, onDaemonAutostart, onHelp, onViewActivity, onOpenActivity }: { daemon: Snapshot['daemon']; startup: boolean; daemonAutostart: boolean; activity: Activity[]; onAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>; onStartup: (value: boolean) => void; onDaemonAutostart: (value: boolean) => void; onHelp: () => void; onViewActivity: () => void; onOpenActivity: (entry: Activity) => void }) {
   const [update, setUpdate] = useState<UpdateReport | null>(null)
   const [updateBusy, setUpdateBusy] = useState<'check' | 'install' | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -533,10 +817,23 @@ function SettingsPage({ host, daemon, startup, clients, activity, onRestart, onS
           : 'Check the desktop release channel.'
 
   return <section className="page-panel settings-page"><div className="page-title"><div><p>Local management</p><h1>Settings</h1></div></div>
-    <div className="settings-group"><h2>Relay daemon</h2><div className="settings-card"><div className="setting-row"><span><strong>Daemon status</strong><small>{daemon.running ? `${daemon.state} · ${daemon.privilege ?? 'user'}` : 'Stopped'}</small></span><button className="compact-button" onClick={onRestart}><RefreshCw /> Restart</button></div><label className="setting-row toggle-row"><span><strong>Start at sign-in</strong><small>Keep remote access ready after you sign in.</small></span><input type="checkbox" checked={startup} onChange={e => onStartup(e.target.checked)} /><i /></label></div></div>
+    <div className="settings-group"><h2>Relay daemon</h2><div className="settings-card"><div className="setting-row"><span><strong>Daemon status</strong><small>{daemon.running ? `${daemon.state} · ${daemon.privilege ?? 'user'}` : 'Stopped'}</small></span><button className="compact-button" onClick={() => onAction('restart_daemon')}><RefreshCw /> Restart</button></div><div className="setting-row"><span><strong>{daemon.privilege === 'administrator' ? 'Administrator mode' : 'User mode'}</strong><small>{daemon.privilege === 'administrator' ? 'Remote actions inherit elevated rights.' : 'Recommended for normal operation.'}</small></span><button className={`compact-button privilege-action ${daemon.privilege === 'administrator' ? '' : 'admin-action'}`} onClick={() => onAction(daemon.privilege === 'administrator' ? 'restart_daemon_as_user' : 'restart_daemon_as_administrator')}>{daemon.privilege === 'administrator' ? 'Return to user mode' : 'Restart as Administrator…'}</button></div><label className="setting-row toggle-row"><span><strong>Start UI at sign-in</strong><small>Launch the tray after you sign in.</small></span><input type="checkbox" checked={startup} onChange={e => onStartup(e.target.checked)} /><i /></label><label className="setting-row toggle-row"><span><strong>Start daemon with UI</strong><small>Connect remote access when the tray starts.</small></span><input type="checkbox" checked={daemonAutostart} onChange={e => onDaemonAutostart(e.target.checked)} /><i /></label></div></div>
+    <div className="settings-group"><h2>CLI & diagnostics</h2><div className="settings-card quick-action-grid"><button onClick={() => onAction('open_terminal')}><TerminalSquare /><span>Open terminal</span></button><button onClick={() => onAction('open_cli_terminal')}><Bot /><span>Open Hermes CLI</span></button><button onClick={() => onAction('open_logs')}><FolderOpen /><span>View daemon log</span></button><button onClick={() => onAction('run_diagnostics')}><ActivityIcon /><span>Run diagnostics</span></button></div></div>
     <div className="settings-group"><h2>Updates</h2><div className={`settings-card update-card ${updateError ? 'error' : update?.ahead_of_latest ? 'ahead' : update?.up_to_date ? 'current' : ''}`}><div className="setting-row update-row"><span><strong>Hermes-Relay CLI UI</strong><small>{updateSummary}</small></span>{update && !update.up_to_date && !update.ahead_of_latest && !update.installed ? <button className="compact-button update-button" disabled={updateBusy !== null} onClick={installUpdate}>{updateBusy === 'install' ? <LoaderCircle className="spin" /> : <Download />} Install</button> : <button className="compact-button" disabled={updateBusy !== null} onClick={checkUpdate}>{updateBusy === 'check' ? <LoaderCircle className="spin" /> : <RefreshCw />} Check</button>}</div></div><p className="group-help update-help">Updates the management UI and CLI together, then restarts the tray automatically.</p></div>
-    {host && <div className="settings-group"><h2>Host details</h2><div className="settings-card host-detail"><div className="detail-head"><span className="host-icon"><Server /></span><span><strong>{host.name}</strong><small>{host.url}</small></span></div><dl><div><dt>Route</dt><dd>{host.endpoint_role ?? 'Custom'}</dd></div><div><dt>Version</dt><dd>{host.server_version ?? 'Unknown'}</dd></div><div><dt>Access</dt><dd>{host.access_mode === 'full-access' ? 'Full Access' : host.access_mode[0]!.toUpperCase() + host.access_mode.slice(1)}</dd></div></dl></div></div>}
-    {host && <div className="settings-group"><h2>Authorized clients <span>{clients.length}</span></h2><p className="group-help">Clients authenticated to {host.name}. Deauthorizing a client removes its relay session.</p><div className="settings-card client-list">{clients.length ? clients.map(client => { const identity = [client.device_model, client.device_platform, client.client_surface].filter(Boolean).join(' · ') || client.transport_hint || 'Client'; return <div className="client-row" key={client.token_prefix}><span className="client-icon"><Laptop /></span><span><strong>{client.device_name ?? 'Unnamed client'} {client.is_current && <em>This PC</em>}</strong><small>{identity} · {age(client.last_seen)}</small></span><button onClick={() => onRevoke(client)} aria-label={`Deauthorize ${client.device_name ?? client.token_prefix}`}><UserRoundX /></button></div> }) : <div className="empty-state"><Radio /><span>No authorized clients reported</span></div>}</div></div>}
-    <div className="settings-group"><div className="settings-group-heading"><h2>Activity</h2><button onClick={onViewActivity}>View all <ChevronRight /></button></div><p className="group-help">Recent remote actions recorded on this PC.</p><div className="settings-card padded"><ActivityList entries={activity.slice(-3).reverse()} host={host} /></div></div>
+    <button className="about-link" onClick={onHelp}><span className="setting-icon"><Info /></span><span><strong>Help & About</strong><small>Versions, documentation and troubleshooting.</small></span><ChevronRight /></button>
+    <div className="settings-group"><div className="settings-group-heading"><h2>Activity</h2><button onClick={onViewActivity}>View all <ChevronRight /></button></div><p className="group-help">Recent remote actions recorded on this PC.</p><div className="settings-card padded"><ActivityList entries={activity.slice(-3).reverse()} host={null} onOpen={onOpenActivity} /></div></div>
+  </section>
+}
+
+function HelpPage({ snapshot, host, onBack, onAction }: { snapshot: Snapshot; host: Host | null; onBack: () => void; onAction: (name: string, args?: Record<string, unknown>) => Promise<unknown> }) {
+  const links = [
+    ['Documentation', 'https://hermes-relay.dev/docs/desktop/'],
+    ['Troubleshooting', 'https://hermes-relay.dev/docs/desktop/troubleshooting/'],
+    ['Release notes', 'https://github.com/Codename-11/hermes-relay/releases']
+  ] as const
+  return <section className="page-panel help-page"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Settings</button><div className="about-hero"><img src={logo} alt="" /><span><p>Desktop companion</p><h1>Hermes-Relay CLI UI</h1><small>Compact control for this PC</small></span></div>
+    <div className="settings-group"><h2>About</h2><div className="settings-card about-facts"><dl><div><dt>UI version</dt><dd>{snapshot.ui_version ?? 'Unknown'}</dd></div><div><dt>CLI version</dt><dd>{snapshot.cli_version ?? 'Unknown'}</dd></div><div><dt>CLI path</dt><dd title={snapshot.cli_path ?? undefined}>{snapshot.cli_path ?? 'Not reported'}</dd></div><div><dt>Relay server</dt><dd>{host?.server_version ?? 'Not connected'}</dd></div></dl></div></div>
+    <div className="settings-group"><h2>Get help</h2><div className="settings-card management-links">{links.map(([label, url]) => <button key={url} onClick={() => onAction('open_external_url', { url })}><span><strong>{label}</strong></span><ExternalLink /></button>)}</div></div>
+    <button className="diagnostic-action" onClick={() => onAction('run_diagnostics')}><ActivityIcon /><span><strong>Run diagnostics</strong><small>Check the daemon, installation and active relay.</small></span><ChevronRight /></button>
   </section>
 }

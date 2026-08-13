@@ -80,23 +80,23 @@ All three indicators are optional on the wire — if you're paired with a pre-v0
 
 ### Profile Inspector
 
-From the **Settings** tab, tap the **Inspect Agent** card (directly under Active Agent) to open a full-screen viewer for the currently-selected profile. Four tabs:
+From the **Settings** tab, tap the **Inspect Agent** card (directly under Active Agent) to open the currently selected profile. On current Hermes gateways the inspector reads and saves the profile through the upstream `profiles.describe` / `profiles.configure` contract. Older gateways retain the paired Relay inspector behavior. Four tabs:
 
 - **Config** — the profile's `config.yaml` rendered as a collapsible JSON tree. Nested objects collapse by default; tap to expand. Values render in monospace. The file path is shown at the top as a caption so you can `cd` to it from a shell if you want to edit.
   - **Secrets are masked by default.** Any value whose key name contains `key`, `token`, `secret`, `password`, or `credential` (case-insensitive) renders as `abcd...wxyz` for values ≥12 chars or `********` for shorter ones. Tap the eye icon next to the value to reveal it for that row. Reveal state is session-scoped — leaving the screen wipes it. Numbers and booleans are never masked.
 - **SOUL** — the profile's `SOUL.md` rendered as markdown. The `</>` toggle in the top-right of the pane flips between rendered and raw monospace source. Byte size + file path show above the content.
 - **Memory** — one card per file under the profile's `memories/` directory (non-recursive). Each card shows the filename and byte size; tap to expand and see its content.
-- **Skills** — every skill visible to the profile, grouped by category. Each row has a Switch for enabling/disabling the skill.
+- **Skills** — every skill visible to the profile, grouped by category. Current gateways also expose toolsets and save skill/toolset changes together.
 
 #### Editing (v0.7.1+)
 
-Both **SOUL** and **Memory** panes now support in-app edits. Tap the pencil icon in the pane (or card) header to enter edit mode — content renders in a monospace editor with a line-numbered gutter. Bottom bar has **Save** and **Cancel**; Save PUTs to the relay, reloads the pane with the fresh content, and surfaces a brief "Saved" snackbar. Save failures keep you in edit mode so you can retry.
+**Config**, **SOUL**, and **Memory** support in-app edits. Current gateways own Config, SOUL, Skills, and Toolsets; paired Relay remains the owner of memory files. After a gateway save, the app reports which sections applied or failed and reloads authoritative profile state. Failed drafts stay editable for retry; successful drafts clear only after that reload.
 
 For memory entries, the **+ New entry** button at the bottom of the Memory tab opens a filename prompt (must end in `.md`, no slashes, no leading `.`) and drops you into an empty editor. A filename that collides with an existing entry is rejected; edit the existing entry via its per-card pencil instead.
 
 #### Skill toggles
 
-The **Switch** next to each skill PUTs to `/api/skills/toggle` when tapped. Relays that haven't shipped the real implementation yet return 501; the app shows a "Skill toggle not yet supported on this server" snackbar, reverts the Switch visually, and ghosts out every row's toggle for the rest of the session with an "Enable/disable requires a newer server" caption under the list.
+On current gateways, skill and toolset switches create reviewable drafts and **Save changes** uses the upstream profile configuration RPC. On older gateways, the legacy Relay skill-toggle route remains available; servers that return 501 keep the switches disabled for that inspector session.
 
 Very large files (SOUL or a memory entry) are still truncated server-side; when that happens the tab shows a banner noting only the first slice is visible — the editor refuses to open on truncated content so you don't accidentally overwrite the tail. Use the Refresh icon in the top bar to re-fetch every tab, or Retry inside a tab's error state to refetch just that one.
 

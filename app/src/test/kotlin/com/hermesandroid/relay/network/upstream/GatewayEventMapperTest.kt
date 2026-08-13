@@ -715,8 +715,44 @@ class GatewayEventMapperTest {
         assertEquals("r1", ask.requestId)
         assertEquals("Which file?", ask.text)
         assertEquals(listOf("a.txt", "b.txt"), ask.choices)
+        assertFalse(ask.multiSelect)
         assertNull(ask.envVar)
-        assertEquals(300, ask.timeoutSeconds)
+        assertEquals(0, ask.timeoutSeconds)
+    }
+
+    @Test
+    fun `clarify request carries multi select only with bounded usable choices`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "clarify.request",
+            obj(
+                """{"request_id":"r1","question":"Where?","multi_select":true,"choices":""" +
+                    """[" dev ","prod","dev","","stage","canary","extra"]}""",
+            ),
+        )
+
+        val ask = r.interactions.single()
+        assertTrue(ask.multiSelect)
+        assertEquals(listOf("dev", "prod", "stage", "canary"), ask.choices)
+        assertEquals(0, ask.timeoutSeconds)
+    }
+
+    @Test
+    fun `clarify ignores malformed multi select and consumes additive timeout metadata`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent(
+            "clarify.request",
+            obj("""{"request_id":"r1","multi_select":true,"choices":null,"timeout_seconds":42}"""),
+        )
+        mapper.onEvent(
+            "clarify.request",
+            obj("""{"request_id":"r2","multi_select":false,"choices":["a"]}"""),
+        )
+
+        assertFalse(r.interactions[0].multiSelect)
+        assertEquals(42, r.interactions[0].timeoutSeconds)
+        assertFalse(r.interactions[1].multiSelect)
     }
 
     @Test
@@ -756,6 +792,32 @@ class GatewayEventMapperTest {
         val ask = r.interactions.single()
         assertEquals(listOf("once", "session", "always", "deny"), ask.choices)
         assertTrue(ask.smartDenied)
+    }
+
+    @Test
+    fun `approval request removes explicitly forbidden persistent scopes`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj(
+                """{"command":"<write to AGENTS.md>","choices":["once","session","always","deny"],"allow_session":false,"allow_permanent":false}""",
+            ),
+        )
+
+        assertEquals(listOf("once", "deny"), r.interactions.single().choices)
+    }
+
+    @Test
+    fun `approval request retains session while permanent scope is forbidden`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj(
+                """{"command":"guarded command","choices":["once","session","always","deny"],"allow_session":true,"allow_permanent":false}""",
+            ),
+        )
+
+        assertEquals(listOf("once", "session", "deny"), r.interactions.single().choices)
     }
 
     @Test

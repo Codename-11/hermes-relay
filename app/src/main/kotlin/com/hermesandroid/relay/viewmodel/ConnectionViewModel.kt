@@ -33,6 +33,7 @@ import com.hermesandroid.relay.data.DemoMode
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
@@ -82,9 +83,14 @@ import com.hermesandroid.relay.network.upstream.mirrorDashboardSessionCookies
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.multiplexServedProfiles
 import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
 import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.shared.EndpointResolver
+import com.hermesandroid.relay.network.shared.buildPluginProxyClient
+import com.hermesandroid.relay.network.shared.buildHermesReachClient
+import com.hermesandroid.relay.network.shared.hermesReachRouteOrNull
+import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
@@ -238,6 +244,7 @@ internal fun resolveEffectiveDashboardUrl(
     endpoint: EndpointCandidate?,
 ): String {
     if (connection == null) return ""
+    endpoint?.pluginProxyRoutesOrNull()?.dashboardBaseUrl?.let { return it }
     endpoint?.dashboard?.url
         ?.takeIf { it.isNotBlank() }
         ?.let { return it }
@@ -260,6 +267,7 @@ internal fun resolveEffectiveApiServerUrl(
     endpoint: EndpointCandidate?,
 ): String {
     if (savedUrl.isBlank()) return ""
+    endpoint?.pluginProxyRoutesOrNull()?.apiBaseUrl?.let { return it }
     return endpoint?.api?.url?.takeIf { it.isNotBlank() } ?: savedUrl
 }
 
@@ -608,6 +616,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val endpointResolver = EndpointResolver(
         httpClient = endpointProbeClient,
+        clientForCandidate = { candidate ->
+            candidate.pluginProxyRoutesOrNull()?.let { proxy ->
+                val tokenProvider = { (authManager.authState.value as? AuthState.Paired)?.token }
+                if (candidate.hermesReachRouteOrNull() != null) {
+                    buildHermesReachClient(
+                        baseBuilder = endpointProbeClient.newBuilder(),
+                        outerClient = endpointProbeClient,
+                        candidate = candidate,
+                        sessionTokenProvider = tokenProvider,
+                    )
+                } else {
+                    buildPluginProxyClient(
+                        baseBuilder = endpointProbeClient.newBuilder(),
+                        routes = proxy,
+                        sessionTokenProvider = tokenProvider,
+                    )
+                }
+            }
+        },
         context = application,
     )
 
@@ -618,6 +645,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         context = application,
         endpointResolver = endpointResolver,
         endpointCandidatesProvider = { activeRouteCandidatesSnapshot() },
+        proxyClientProvider = { url -> pluginProxyClientForUrl(url) },
         // Pull the active device id through AuthManager — it's the same id
         // PairingPreferences keys the endpoint list on. Nullable wrapper
         // because AuthManager.getOrCreateDeviceId() is suspending.
@@ -713,6 +741,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         tokenStoreKeyProvider = { cid ->
             connectionStore.connections.value.firstOrNull { it.id == cid }?.tokenStoreKey
         },
+        pinnedClientProvider = { url, base ->
+            pluginProxyClientForUrl(url, base, includeRelaySessionHeader = false)
+        },
     )
 
     // Agent-profiles collaborator — owns the merged profile list, the
@@ -784,7 +815,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     val relayRowState: StateFlow<RelayRowState> = combine(
         _relayUiState,
-        connectionManager.activeEndpoint,
+        connectionManager.activeRelayEndpoint,
     ) { phase, endpoint ->
         RelayRowState(phase = phase, activeEndpointRole = endpoint?.role)
     }.stateIn(
@@ -862,11 +893,55 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private fun effectiveApiServerUrlSnapshot(): String =
         resolveEffectiveApiServerUrl(
             savedUrl = _apiServerUrl.value,
-            endpoint = connectionManager.activeEndpoint.value,
+            endpoint = connectionManager.activeApiEndpoint.value,
         )
 
     private fun effectiveRelayUrlSnapshot(): String =
-        connectionManager.activeEndpoint.value?.relay?.url ?: autoRelayUrlSnapshot()
+        connectionManager.activeEndpoint.value?.relay?.url
+            ?: autoRelayUrlSnapshot()
+
+    private fun effectiveRelayWebSocketUrlSnapshot(): String =
+        connectionManager.activeRelayEndpoint.value?.pluginProxyRoutesOrNull()?.relayWebSocketUrl
+            ?: connectionManager.activeRelayEndpoint.value?.relay?.url
+            ?: autoRelayUrlSnapshot()
+
+    private fun pluginProxyClientForUrl(
+        url: String,
+        baseClient: OkHttpClient? = null,
+        includeRelaySessionHeader: Boolean = true,
+    ): OkHttpClient? {
+        val requestAuthority = runCatching {
+            val parsed = java.net.URI(url)
+            val port = if (parsed.port > 0) parsed.port else 443
+            "${parsed.host?.lowercase()}:$port"
+        }.getOrNull() ?: return null
+        val candidate = activeConnection.value?.routeCandidates.orEmpty()
+            .firstOrNull { it.pluginProxyRoutesOrNull()?.authority == requestAuthority }
+            ?: return null
+        val routes = candidate.pluginProxyRoutesOrNull() ?: return null
+        val configuredBuilder = (baseClient?.newBuilder() ?: OkHttpClient.Builder())
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .pingInterval(30, TimeUnit.SECONDS)
+        val sessionTokenProvider = {
+            (authManager.authState.value as? AuthState.Paired)?.token
+        }
+        if (candidate.hermesReachRouteOrNull() != null) {
+            return buildHermesReachClient(
+                baseBuilder = configuredBuilder,
+                outerClient = endpointProbeClient,
+                candidate = candidate,
+                sessionTokenProvider = sessionTokenProvider,
+                includeRelaySessionHeader = includeRelaySessionHeader,
+            )
+        }
+        return buildPluginProxyClient(
+            baseBuilder = configuredBuilder,
+            routes = routes,
+            sessionTokenProvider = sessionTokenProvider,
+            includeRelaySessionHeader = includeRelaySessionHeader,
+        )
+    }
 
     private fun autoRelayUrlSnapshot(): String {
         val savedRelay = _relayUrl.value
@@ -1127,7 +1202,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     val effectiveApiServerUrl: StateFlow<String> = combine(
         _apiServerUrl,
-        connectionManager.activeEndpoint,
+        connectionManager.activeApiEndpoint,
     ) { savedUrl, endpoint ->
         resolveEffectiveApiServerUrl(savedUrl, endpoint)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
@@ -1857,6 +1932,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     init {
+        authManager.setActiveEndpointProvider { connectionManager.activeRelayEndpoint.value }
         // Materialize the independent central and floating preferences. Legacy
         // users retain the prior visual in both roles until they choose otherwise.
         viewModelScope.launch {
@@ -2461,6 +2537,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun installAuthManager(am: AuthManager) {
+        am.setActiveEndpointProvider { connectionManager.activeRelayEndpoint.value }
         authManager = am
         // Push into the flow so the flatMapLatest chains on authState /
         // pairingCode / currentPairedSession repoint to the new manager.
@@ -4559,14 +4636,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             ?.dashboardLastStatus
         val liveTopology = topologyConnectionId == activeConnectionId
         val mode = if (liveTopology) topologyGatewayMode else persisted?.gatewayMode
-        val profiles = if (liveTopology) topologyProfiles else persisted?.profiles.orEmpty()
+        val profiles = if (liveTopology) topologyProfiles else persisted?.servedProfiles.orEmpty()
         return mode.equals("multiplex", ignoreCase = true) && profile.name in profiles
     }
 
     /** Keep chat routing synchronized with the latest public dashboard topology. */
     private suspend fun updateDashboardTopology(connectionId: String, status: DashboardStatus?) {
         val nextMode = status?.gatewayMode
-        val nextProfiles = status?.profiles.orEmpty()
+        val nextProfiles = status?.multiplexServedProfiles().orEmpty()
         val changed = topologyConnectionId != connectionId ||
             topologyGatewayMode != nextMode ||
             topologyProfiles != nextProfiles
@@ -4611,6 +4688,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             previous.authRequired == status?.authRequired &&
             previous.authenticated == session?.authenticated &&
             previous.gatewayMode == status?.gatewayMode &&
+            previous.servedProfiles == status?.multiplexServedProfiles().orEmpty() &&
             previous.profiles == status?.profiles.orEmpty()
         if (!materiallySame) {
             recordDashboardStatus(status = status, session = session, reachable = reachable)
@@ -5177,6 +5255,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     gatewayTicketAvailable = gatewayTicketAvailable,
                     message = message,
                     gatewayMode = status?.gatewayMode,
+                    servedProfiles = status?.multiplexServedProfiles().orEmpty(),
                     profiles = status?.profiles.orEmpty(),
                 ),
             )
@@ -5211,6 +5290,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     gatewayTicketAvailable = false,
                     message = "Dashboard session cleared",
                     gatewayMode = active?.dashboardLastStatus?.gatewayMode,
+                    servedProfiles = active?.dashboardLastStatus?.servedProfiles.orEmpty(),
                     profiles = active?.dashboardLastStatus?.profiles.orEmpty(),
                 ),
             )
@@ -5617,7 +5697,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             profileApiUrl = selectedProfile?.apiServerUrl,
             selectedProfileName = selectedProfile?.name,
             gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode,
-            servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty(),
+            servedProfiles = if (liveTopology) topologyProfiles else topology?.servedProfiles.orEmpty(),
         )
     }
 
@@ -5742,7 +5822,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // a coherent in-flight pose instead of flashing the previous
             // result through.
             _apiServerHealth.value = HealthStatus.Probing
-            val client = HermesApiClient(baseUrl = url, apiKey = key)
+            val client = HermesApiClient(
+                baseUrl = url,
+                apiKey = key,
+                httpClient = pluginProxyClientForUrl(
+                    url, includeRelaySessionHeader = false
+                ),
+            )
             _apiClient.value = client
             shutdownClientOffMain(oldClient)
             val ok = client.checkHealth()
@@ -5774,7 +5860,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             ?.dashboardLastStatus
         val liveTopology = topologyConnectionId == activeConnectionId
         val gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode
-        val servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty()
+        val servedProfiles = if (liveTopology) topologyProfiles else topology?.servedProfiles.orEmpty()
         val usesMultiplexProfileKey = ProfileApiUrlResolver.usesMultiplexProfileKey(
             profileApiUrl = selectedProfile?.apiServerUrl,
             selectedProfileName = selectedProfile?.name,
@@ -5821,7 +5907,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
 
-        val nextProfileClient = HermesApiClient(baseUrl = profileApiUrl, apiKey = key)
+        val nextProfileClient = HermesApiClient(
+            baseUrl = profileApiUrl,
+            apiKey = key,
+            httpClient = pluginProxyClientForUrl(
+                profileApiUrl, includeRelaySessionHeader = false
+            ),
+        )
         profileChatApiClient = nextProfileClient
         profileChatApiClientUrl = profileApiUrl
         profileChatApiClientKey = key
@@ -5870,7 +5962,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun connectRelay() {
-        connectRelayInternal(effectiveRelayUrlSnapshot())
+        connectRelayInternal(effectiveRelayWebSocketUrlSnapshot())
     }
 
     /**
@@ -6273,6 +6365,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * is unavailable.
      */
     suspend fun lookupEndpointPin(candidate: com.hermesandroid.relay.data.EndpointCandidate): String? {
+        candidate.proxy?.pinSha256?.takeIf { candidate.hasSecureProxy() }?.let { return it }
         val hostPort = candidate.routeAuthority() ?: return null
         val pins = PairingPreferences.getTofuPins(getApplication())
         return pins[hostPort]

@@ -444,15 +444,26 @@ class GatewayEventMapper(
         }
 
         fun interactionRequest(type: String, payload: JsonObject?): GatewayAsk? = when (type) {
-            "clarify.request" -> GatewayAsk(
-                kind = GatewayAsk.Kind.CLARIFY,
-                requestId = payload.string("request_id"),
-                text = payload.string("question") ?: "The agent needs clarification",
-                choices = (payload?.get("choices") as? JsonArray)
-                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                    ?.takeIf { it.isNotEmpty() },
-                timeoutSeconds = CLARIFY_TIMEOUT_SECONDS,
-            )
+            "clarify.request" -> {
+                val choices = (payload?.get("choices") as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    ?.distinct()
+                    ?.take(MAX_CLARIFY_CHOICES)
+                    ?.takeIf { it.isNotEmpty() }
+                GatewayAsk(
+                    kind = GatewayAsk.Kind.CLARIFY,
+                    requestId = payload.string("request_id"),
+                    text = payload.string("question") ?: "The agent needs clarification",
+                    choices = choices,
+                    multiSelect = payload.boolean("multi_select") == true && choices != null,
+                    // Current upstream owns expiry through clarify.expire and
+                    // does not advertise its configurable deadline. Never
+                    // invent a local deadline; consume future additive
+                    // metadata only when it is present and positive.
+                    timeoutSeconds = payload.int("timeout_seconds")?.coerceAtLeast(0) ?: 0,
+                )
+            }
 
             "approval.request" -> GatewayAsk(
                 kind = GatewayAsk.Kind.APPROVAL,
@@ -561,9 +572,9 @@ class GatewayEventMapper(
     }
 }
 
-// Upstream `_block()` timeouts per ask kind (server.py) — the blocked thread
-// resolves to "" when these elapse. Approval has none (session-scoped).
-private const val CLARIFY_TIMEOUT_SECONDS = 300
+// Upstream clarify tool accepts at most four choices. Sudo/secret retain fixed
+// `_block()` timeouts; clarify is configurable and expires authoritatively.
+private const val MAX_CLARIFY_CHOICES = 4
 private const val SUDO_TIMEOUT_SECONDS = 120
 private const val SECRET_TIMEOUT_SECONDS = 300
 
@@ -583,6 +594,12 @@ private fun JsonObject?.approvalChoices(): List<String>? =
     (this?.get("choices") as? JsonArray)
         ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
         ?.filter { it in setOf("once", "session", "always", "deny") }
+        // Scope-denial flags are authoritative. Current upstream protected-
+        // instruction requests set both flags false, but gateway event builders
+        // can still include the broader session choice in `choices`.
+        // Never offer a scope the request explicitly forbids.
+        ?.filterNot { it == "session" && this.boolean("allow_session") == false }
+        ?.filterNot { it == "always" && this.boolean("allow_permanent") == false }
         ?.distinct()
         ?.takeIf { it.isNotEmpty() }
 

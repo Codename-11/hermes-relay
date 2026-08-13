@@ -26,6 +26,18 @@ By default the script installs the Windows CLI **and** management UI through the
 7. Offers an optional **Start tray when I sign in** component. The same preference can be changed later in UI settings.
 8. Starts the UI from the finish page when selected. Click its notification-area icon to open the compact management popup.
 
+Tray startup and daemon startup are intentionally independent. **Start UI at
+sign-in** controls only the per-user tray entry. Enable **Start daemon with UI**
+when opening the tray should also connect remote access; this daemon preference
+defaults off for existing installs and never requests Administrator access.
+
+After installation, UI Settings can open a normal terminal with the installed
+CLI available, launch the paired Hermes TUI in a real terminal, view the daemon
+log, and run the same local diagnostics exposed by `hermes-relay doctor`.
+Administrator daemon mode is never installed as a service or retained as a
+startup default: **Restart as Administrator...** requires UAC, and **Return to
+user mode** stops it once before starting a normal daemon.
+
 For a CLI-only install, set the surface explicitly. This path downloads and verifies `hermes-relay-win-x64.exe` directly and prints the existing/new version comparison:
 
 ```powershell

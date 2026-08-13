@@ -2442,7 +2442,12 @@ class ChatViewModel : ViewModel() {
      * [regenerateFromMessage] and consumed by the next [startStream]
      * gateway dispatch as `truncate_before_user_ordinal`.
      */
-    private var pendingTruncateOrdinal: Int? = null
+    private data class PendingGatewayTruncation(
+        val ordinal: Int,
+        val rowId: Long?,
+    )
+
+    private var pendingGatewayTruncation: PendingGatewayTruncation? = null
 
     /**
      * Provider for the active agent-profile pick — wired from [RelayApp] at
@@ -3225,7 +3230,7 @@ class ChatViewModel : ViewModel() {
                 selectedReasoningEffortConfirmedIdentity = null
                 _reasoningDisplay.value = null
                 _selectedPersonality.value = "default"
-                pendingTruncateOrdinal = null
+                pendingGatewayTruncation = null
                 chatHandler?.let { handler ->
                     handler.clearMessages()
                     handler.clearSessions()
@@ -3318,7 +3323,7 @@ class ChatViewModel : ViewModel() {
         // recompute it now that the overlay is cleared so the header/bubbles read
         // the new profile's base identity, not the old persona.
         handler.activeAgentName = currentAgentDisplayName()
-        pendingTruncateOrdinal = null
+        pendingGatewayTruncation = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
         publishQueuedMessages()
@@ -4235,6 +4240,7 @@ class ChatViewModel : ViewModel() {
                         HermesCardInput.Kinds.CHOICE
                     },
                     choices = ask.choices.orEmpty(),
+                    multiSelect = ask.multiSelect,
                     allowFreeText = true,
                     expiresAtMillis = expiresAt,
                 ),
@@ -4500,7 +4506,7 @@ class ChatViewModel : ViewModel() {
             .indexOfFirst { it.id == userMessageId }
         if (ordinal < 0) return false
         handler.truncateMessagesFrom(userMessageId)
-        pendingTruncateOrdinal = ordinal
+        pendingGatewayTruncation = PendingGatewayTruncation(ordinal, target.rowId)
         sendMessageInternal(apiClient, handler, newText)
         return true
     }
@@ -4634,7 +4640,7 @@ class ChatViewModel : ViewModel() {
                 }
                 val summary = when (result.status.lowercase()) {
                     "aborted" -> "Compression aborted."
-                    "noop", "no_op" -> "Nothing to compress."
+                    "noop", "no_op" -> result.output ?: "Nothing to compress."
                     "legacy" -> result.output ?: "Compression command sent through legacy slash support."
                     else -> result.output ?: compressionSummary(result)
                 }
@@ -5041,6 +5047,7 @@ class ChatViewModel : ViewModel() {
                     requestId = ask.ask.requestId,
                     text = ask.ask.text,
                     choices = ask.ask.choices,
+                    multiSelect = ask.ask.multiSelect,
                     smartDenied = ask.ask.smartDenied,
                     envVar = ask.ask.envVar,
                     timeoutSeconds = ask.ask.timeoutSeconds,
@@ -5225,6 +5232,7 @@ class ChatViewModel : ViewModel() {
                 requestId = saved.requestId,
                 text = saved.text,
                 choices = saved.choices,
+                multiSelect = saved.multiSelect,
                 smartDenied = saved.smartDenied,
                 envVar = saved.envVar,
                 timeoutSeconds = saved.timeoutSeconds,
@@ -7661,8 +7669,8 @@ class ChatViewModel : ViewModel() {
         // Edit-and-regenerate ordinal — armed by regenerateFromMessage for
         // exactly the next turn; consumed even when the turn lands on SSE
         // (the post-turn reload reconciles divergence in that case).
-        val truncateOrdinal = pendingTruncateOrdinal
-        pendingTruncateOrdinal = null
+        val pendingTruncation = pendingGatewayTruncation
+        pendingGatewayTruncation = null
 
         val gateway = gatewayClient
         _steerableTurn.value = false
@@ -7826,8 +7834,10 @@ class ChatViewModel : ViewModel() {
                     ),
                     attachments = attachments.orEmpty()
                         .map { it.toGatewayAttachment() },
-                    truncateBeforeUserOrdinal = truncateOrdinal,
+                    truncateBeforeUserOrdinal = pendingTruncation?.ordinal,
+                    truncateBeforeRowId = pendingTruncation?.rowId,
                     queuedFollowUp = queuedFollowUp,
+                    onSurvivorUserRowIds = handler::rebindSurvivorUserRowIds,
                     onPreflightFailure = {
                         _steerableTurn.value = false
                         if (intentionallyCancelled) {

@@ -36,6 +36,7 @@ import * as path from 'node:path'
 
 import type { ParsedArgs } from '../cli.js'
 import { desktopRelayIdentity } from '../deviceIdentity.js'
+import { inferEndpointRole } from '../endpoint.js'
 import { GatewayClient } from '../gatewayClient.js'
 import type { GatewayEvent, SessionCreateResponse } from '../gatewayTypes.js'
 import {
@@ -49,11 +50,12 @@ import {
   type DaemonStatus
 } from '../lib/daemonStatus.js'
 import { rpcErrorMessage, asRpcResult } from '../lib/rpc.js'
-import { effectiveHostAccessMode, getHostAccessMode } from '../lib/hostAccessPolicy.js'
+import { effectiveHostAccessMode, effectiveHostCapabilityPolicies, getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
+import { probeCandidatesByPriority, secureFirstCandidates } from '../pairingQr.js'
 import {
   advertisedDesktopTools,
   desktopHandlers,
@@ -67,6 +69,8 @@ import {
   type ComputerGrant
 } from '../tools/computerGrants.js'
 import { DesktopToolRouter } from '../tools/router.js'
+import { configureCapabilityPolicies } from '../tools/capabilityRuntime.js'
+import { adbBackendAvailable } from '../tools/handlers/adb.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { grantBridgeDir } from '../lib/grantBridge.js'
@@ -85,16 +89,24 @@ const DETACHED_START_POLL_MS = 100
 const DAEMON_USAGE: UsageSpec = {
   name: 'daemon',
   summary: 'run headless — expose desktop tools to the agent even when no shell is open',
-  usage: ['daemon [run]', 'daemon start', 'daemon stop', 'daemon restart', 'daemon status'],
+  usage: [
+    'daemon [run]',
+    'daemon start [--administrator]',
+    'daemon stop [--administrator]',
+    'daemon restart [--administrator|--user]',
+    'daemon status'
+  ],
   subcommands: [
     { verb: 'run', desc: 'Run in the foreground (current console; default)' },
     { verb: 'start', desc: 'Start in the background — no console window; survives terminal close' },
     { verb: 'stop', desc: 'Stop the background daemon' },
-    { verb: 'restart', desc: 'Restart the background daemon, preserving caller privileges' },
+    { verb: 'restart', desc: 'Restart the background daemon, preserving caller privileges by default' },
     { verb: 'status', desc: 'Print state + uptime of the running daemon (alias: --status)' }
   ],
   flags: [
     { flag: '--detach', desc: 'Alias for `daemon start` — run in the background' },
+    { flag: '--administrator', desc: 'Windows: explicitly request UAC and run the daemon as Administrator' },
+    { flag: '--user', desc: 'Windows: restart the daemon as the current unelevated user' },
     { flag: '--remote <url>', desc: 'Relay to connect to (default: stored/active session)' },
     { flag: '--token <token>', desc: 'Use an explicit session token (CI/provisioning)' },
     { flag: '--allow-tools', desc: 'Skip the stored-consent gate (only with --token; implies trust)' },
@@ -106,7 +118,8 @@ const DAEMON_USAGE: UsageSpec = {
   examples: [
     'hermes-relay daemon start',
     'hermes-relay daemon status',
-    'hermes-relay daemon restart',
+    'hermes-relay daemon restart --administrator',
+    'hermes-relay daemon restart --user',
     'hermes-relay daemon stop'
   ]
 }
@@ -353,6 +366,116 @@ function buildDaemonChildArgs(args: ParsedArgs): string[] {
   return out
 }
 
+type DaemonLifecycleSubcommand = 'start' | 'stop' | 'restart'
+
+interface ElevationLaunchPlan {
+  program: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+  targetProgram: string
+  targetArgs: string[]
+}
+
+/** Quote one argv item for CommandLineToArgvW. Start-Process accepts a single
+ * ArgumentList string, so preserve spaces, quotes, and trailing backslashes. */
+function quoteWindowsArgument(value: string): string {
+  if (value.length > 0 && !/[\s"]/u.test(value)) return value
+  let out = '"'
+  let slashes = 0
+  for (const char of value) {
+    if (char === '\\') {
+      slashes += 1
+      continue
+    }
+    if (char === '"') {
+      out += '\\'.repeat(slashes * 2 + 1) + '"'
+      slashes = 0
+      continue
+    }
+    out += '\\'.repeat(slashes) + char
+    slashes = 0
+  }
+  return out + '\\'.repeat(slashes * 2) + '"'
+}
+
+function executableInvocationPrefix(): { program: string; args: string[] } {
+  const execIsNode = /node(\.exe)?$/i.test(path.basename(process.execPath))
+  return {
+    program: process.execPath,
+    args: execIsNode ? [process.argv[1] ?? ''] : []
+  }
+}
+
+/** Build the UAC launcher separately from execution so the exact privilege
+ * boundary and forwarded argv are regression-testable. */
+function buildElevationLaunchPlan(
+  args: ParsedArgs,
+  subcommand: DaemonLifecycleSubcommand
+): ElevationLaunchPlan {
+  const invocation = executableInvocationPrefix()
+  const targetArgs = [
+    ...invocation.args,
+    'daemon',
+    subcommand,
+    ...buildDaemonChildArgs(args).slice(1),
+    '--elevation-child'
+  ]
+  const commandLine = targetArgs.map(quoteWindowsArgument).join(' ')
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    '$argumentLine = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:HERMES_RELAY_ELEVATE_ARGS))',
+    'try {',
+    "  $child = Start-Process -FilePath $env:HERMES_RELAY_ELEVATE_PROGRAM -ArgumentList $argumentLine -Verb RunAs -WindowStyle Hidden -Wait -PassThru",
+    '  exit $child.ExitCode',
+    '} catch {',
+    "  [Console]::Error.WriteLine('Administrator request failed or was canceled: ' + $_.Exception.Message)",
+    '  exit 1',
+    '}'
+  ].join('\n')
+  return {
+    program: 'powershell.exe',
+    args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    env: {
+      ...process.env,
+      HERMES_RELAY_ELEVATE_PROGRAM: invocation.program,
+      HERMES_RELAY_ELEVATE_ARGS: Buffer.from(commandLine, 'utf8').toString('base64')
+    },
+    targetProgram: invocation.program,
+    targetArgs
+  }
+}
+
+async function runElevatedDaemonLifecycle(
+  args: ParsedArgs,
+  subcommand: DaemonLifecycleSubcommand
+): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  if (process.platform !== 'win32') {
+    process.stderr.write(t.err('--administrator is supported only on Windows') + '\n')
+    return 1
+  }
+  const plan = buildElevationLaunchPlan(args, subcommand)
+  return new Promise(resolve => {
+    let settled = false
+    const child = spawn(plan.program, plan.args, {
+      env: plan.env,
+      stdio: 'inherit',
+      windowsHide: true
+    })
+    child.once('error', error => {
+      if (settled) return
+      settled = true
+      process.stderr.write(t.err(`failed to request Administrator access: ${error.message}`) + '\n')
+      resolve(1)
+    })
+    child.once('exit', code => {
+      if (settled) return
+      settled = true
+      resolve(code === 0 ? 0 : 1)
+    })
+  })
+}
+
 /** `daemon start` / `--detach` — spawn the foreground daemon as a detached
  * background process (no console window on Windows), logging to a file. */
 async function startDetachedDaemon(args: ParsedArgs): Promise<number> {
@@ -503,12 +626,70 @@ async function restartDaemon(args: ParsedArgs): Promise<number> {
   return startDetachedDaemon(args)
 }
 
+async function restartDaemonAsUser(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  const identity = currentProcessIdentity()
+  if (identity.privilege === 'administrator') {
+    process.stderr.write(
+      t.err('cannot launch a user daemon from an Administrator process; run this command from the normal desktop UI or an unelevated terminal') + '\n'
+    )
+    return 1
+  }
+
+  const existing = await readDaemonStatus()
+  if (
+    process.platform === 'win32' &&
+    existing &&
+    isDaemonProcessAlive(existing) &&
+    existing.privilege === 'administrator'
+  ) {
+    // An unelevated caller cannot terminate an elevated daemon. Elevate only
+    // the stop operation, wait for it to finish, then start the replacement
+    // from this original unelevated process.
+    const stopped = await runElevatedDaemonLifecycle(args, 'stop')
+    if (stopped !== 0) return stopped
+    return startDetachedDaemon(args)
+  }
+
+  return restartDaemon(args)
+}
+
 export async function daemonCommand(args: ParsedArgs): Promise<number> {
   if (args.flags.help) {
     printUsage(DAEMON_USAGE, makeTheme({ noColor: !!args.flags['no-color'] }))
     return 0
   }
   const sub = args.positional[0]
+  const administrator = args.flags.administrator === true
+  const user = args.flags.user === true
+  const elevationChild = args.flags['elevation-child'] === true
+  if ((administrator || user || elevationChild) && process.platform !== 'win32') {
+    process.stderr.write('daemon: --administrator and --user are supported only on Windows\n')
+    return 1
+  }
+  if (administrator && user) {
+    process.stderr.write('daemon: --administrator and --user are mutually exclusive\n')
+    return 1
+  }
+  if ((administrator || user || elevationChild) && (sub === 'status' || args.flags.status)) {
+    process.stderr.write('daemon: privilege flags apply only to start, stop, or restart\n')
+    return 1
+  }
+  if (user && sub !== 'start' && sub !== 'restart') {
+    process.stderr.write('daemon: --user applies only to start or restart\n')
+    return 1
+  }
+  if (elevationChild && currentProcessIdentity().privilege !== 'administrator') {
+    process.stderr.write('daemon: internal elevation helper did not receive an Administrator token\n')
+    return 1
+  }
+  if (administrator && !elevationChild && currentProcessIdentity().privilege !== 'administrator') {
+    if (sub !== 'start' && sub !== 'stop' && sub !== 'restart') {
+      process.stderr.write('daemon: --administrator requires start, stop, or restart\n')
+      return 1
+    }
+    return runElevatedDaemonLifecycle(args, sub)
+  }
   if (args.flags.status || sub === 'status') {
     return printDaemonStatus(args)
   }
@@ -516,9 +697,16 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     return stopDaemon(args)
   }
   if (sub === 'restart') {
+    if (user) return restartDaemonAsUser(args)
     return restartDaemon(args)
   }
   if (sub === 'start' || args.flags.detach) {
+    if (user && currentProcessIdentity().privilege === 'administrator') {
+      process.stderr.write(
+        'daemon: cannot launch a user daemon from an Administrator process; run this command from an unelevated terminal\n'
+      )
+      return 1
+    }
     return startDetachedDaemon(args)
   }
   // Bare `daemon` (or `daemon run`) → foreground, the existing behavior below.
@@ -551,13 +739,46 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     }
   }
 
+  // Keep the selected host as the policy/storage identity, while resolving
+  // its current network route independently. A v3 pair can therefore prefer
+  // WSS/Tailscale and fall back to LAN without creating duplicate hosts.
+  const configuredUrl = url
+  const configuredSession = await getSession(configuredUrl)
+  let useSessionHeader = false
+  let brokerRoute: import('../transport/BrokerRelaySocket.js').BrokerRouteConfig | undefined
+  let activeRoute = configuredSession?.routeCandidates?.find(candidate => candidate.relay.url === configuredUrl)?.role
+    ?? (configuredSession?.routeCandidates?.length ? null : configuredSession?.endpointRole ?? inferEndpointRole(configuredUrl))
+  if (!resolveRemoteOrNull(args) && configuredSession?.routeCandidates?.length) {
+    const candidates = configuredSession.preferSecureRoutes
+      ? secureFirstCandidates(configuredSession.routeCandidates)
+      : configuredSession.routeCandidates
+    try {
+      const route = await probeCandidatesByPriority(candidates, { sessionToken: configuredSession.token })
+      url = route.relay.url
+      useSessionHeader = route.role.toLowerCase() === 'plugin_proxy' && !route.broker
+      if (route.broker && route.proxy) {
+        if (!route.proxy.certificateDerBase64) throw new Error('Hermes Reach route is missing its paired certificate')
+        brokerRoute = { url: route.broker.url, hostId: route.broker.hostId, credentialKind: route.broker.credentialKind, token: route.broker.token, innerUrl: route.relay.url, innerPinSha256: route.proxy.pinSha256, innerCertificateDerBase64: route.proxy.certificateDerBase64 }
+      }
+      activeRoute = route.broker ? 'outbound_broker' : route.role
+      log.info({ event: 'route_selected', configured_url: configuredUrl, url, role: route.role })
+    } catch (e) {
+      log.warn({
+        event: 'route_probe_failed',
+        configured_url: configuredUrl,
+        message: e instanceof Error ? e.message : String(e),
+        fallback_url: configuredUrl
+      })
+    }
+  }
+
   // Resolve credentials: daemon takes ONLY --token or stored session. No
   // pairing code path (the daemon can't do the one-time code → token
   // trade safely — the token should already be stored). No interactive
   // fallback (headless).
   const argToken = typeof args.flags.token === 'string' ? args.flags.token : undefined
   const envToken = process.env.HERMES_RELAY_TOKEN
-  const stored = await getSession(url)
+  const stored = configuredSession ?? await getSession(url)
   const token = argToken ?? envToken ?? stored?.token
 
   if (!token) {
@@ -574,10 +795,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // connectivity itself a privileged operation.
   const consented = stored?.toolsConsented === true
   const allowToolsFlag = !!args.flags['allow-tools']
-  const accessMode = effectiveHostAccessMode(
-    await getHostAccessMode(url),
-    stored?.toolsConsented === true
-  )
+  const storedAccessMode = await getHostAccessMode(configuredUrl)
+  const accessMode = effectiveHostAccessMode(storedAccessMode, stored?.toolsConsented === true)
   const toolsEnabled = consented || allowToolsFlag || accessMode !== 'ask'
 
   log.info({
@@ -598,6 +817,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     pid: process.pid,
     process_name: path.basename(process.execPath),
     url,
+    configured_url: configuredUrl,
+    active_route: activeRoute ?? undefined,
     state: 'starting',
     started_at: nowSec(),
     updated_at: nowSec(),
@@ -618,6 +839,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const relay = new RelayTransport({
     url,
     sessionToken: token,
+    sessionHeader: useSessionHeader,
+    broker: brokerRoute,
     ...desktopRelayIdentity()
   })
 
@@ -678,14 +901,23 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // or redirected daemon still fails host input closed because no visible
   // local grant approval prompt can run.
   const interactive = !!process.stdin.isTTY && !!process.stderr.isTTY
+  const capabilities = effectiveHostCapabilityPolicies(
+    storedAccessMode,
+    stored?.toolsConsented === true,
+    await getHostCapabilityPolicies(configuredUrl)
+  )
   configureComputerUseRuntime({
-    url,
+    url: configuredUrl,
     computerUseConsented: computerUseEnabled,
     consentSource: consented ? 'stored' : toolsEnabled ? 'override' : 'none',
-    accessMode
+    accessMode,
+    capabilities
   })
+  configureCapabilityPolicies(capabilities)
+  const usb = capabilities.usb !== 'disabled'
+  const adb = usb && adbBackendAvailable()
   const advertisedTools = toolsEnabled
-    ? advertisedDesktopTools({ computerUse: computerUseEnabled })
+    ? advertisedDesktopTools({ computerUse: computerUseEnabled, capabilities, usb, adb })
     : []
   const toDaemonGrantStatus = (grant: ComputerGrant | null): DaemonComputerGrantStatus => ({
     active: grant !== null,
@@ -722,7 +954,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
         consentGranted: true,
         interactive,
         hostUrl: url,
-        handlers: desktopHandlers({ computerUse: computerUseEnabled }),
+        handlers: desktopHandlers({ computerUse: computerUseEnabled, capabilities, usb, adb }),
         advertisedTools: [...advertisedTools]
       })
     : null
@@ -839,6 +1071,9 @@ export default daemonCommand
 export type { LogFields }
 export {
   daemonStatusIsReady as __daemonStatusIsReadyForTests,
+  buildDaemonChildArgs as __buildDaemonChildArgsForTests,
+  buildElevationLaunchPlan as __buildElevationLaunchPlanForTests,
+  quoteWindowsArgument as __quoteWindowsArgumentForTests,
   makeLogger as __makeLoggerForTests,
   readDetachedStartupFailure as __readDetachedStartupFailureForTests,
   rpcErrorMessage as __rpcErrorMessageForTests,

@@ -8,12 +8,13 @@ mod app {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use std::{
+        collections::BTreeMap,
         env, fs,
         fs::OpenOptions,
         io::Write,
         os::windows::process::CommandExt,
         path::{Path, PathBuf},
-        process::{Command, Output},
+        process::{Command, Output, Stdio},
         sync::{mpsc, Arc, Mutex},
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -22,16 +23,13 @@ mod app {
         image::Image,
         menu::{MenuBuilder, MenuItemBuilder},
         tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-        AppHandle, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Position, RunEvent, Size,
-        State, WindowEvent,
+        AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Position,
+        RunEvent, Size, State, WindowEvent,
     };
     use windows::{
         core::{IUnknown, PCWSTR},
         Win32::{
             Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, POINT},
-            Graphics::Gdi::{
-                GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-            },
             System::{
                 Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
                 Threading::{CreateMutexW, CREATE_NO_WINDOW},
@@ -52,10 +50,21 @@ mod app {
 
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "HermesRelayTray";
+    const SETTINGS_KEY: &str = r"HKCU\Software\Hermes-Relay CLI UI";
+    const DAEMON_AUTOSTART_VALUE: &str = "DaemonAutostart";
     const POPUP_GAP: f64 = 10.0;
     const MONITOR_MARGIN: f64 = 8.0;
-    const TRAY_SLOT_LOGICAL_WIDTH: f64 = 32.0;
-    const TRAY_SLOT_LOGICAL_HEIGHT: f64 = 48.0;
+    const MAIN_LOGICAL_WIDTH: f64 = 380.0;
+    const MAIN_LOGICAL_HEIGHT: f64 = 620.0;
+    const MAIN_MIN_LOGICAL_WIDTH: f64 = 340.0;
+    const MAIN_MIN_LOGICAL_HEIGHT: f64 = 460.0;
+    const OFFICIAL_URLS: &[&str] = &[
+        "https://hermes-relay.dev/docs/",
+        "https://hermes-relay.dev/docs/desktop/",
+        "https://hermes-relay.dev/docs/desktop/troubleshooting/",
+        "https://github.com/Codename-11/hermes-relay",
+        "https://github.com/Codename-11/hermes-relay/releases",
+    ];
 
     #[derive(Clone, Copy, Debug)]
     struct TrayAnchor {
@@ -211,6 +220,8 @@ mod app {
         #[serde(default, alias = "alive")]
         running: bool,
         url: Option<String>,
+        configured_url: Option<String>,
+        active_route: Option<String>,
         privilege: Option<String>,
         username: Option<String>,
         updated_at: Option<u64>,
@@ -232,6 +243,10 @@ mod app {
         is_active: bool,
         #[serde(default = "ask_mode")]
         access_mode: String,
+        #[serde(default)]
+        capabilities: BTreeMap<String, String>,
+        #[serde(default)]
+        broker_configured: bool,
     }
 
     fn ask_mode() -> String {
@@ -262,6 +277,22 @@ mod app {
         #[serde(skip_serializing_if = "Option::is_none")]
         args_preview: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        request_detail: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stdout: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result_detail: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stdout_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     }
 
@@ -283,6 +314,19 @@ mod app {
         activity: Vec<Activity>,
         pending_grants: Vec<PendingGrantRequest>,
         startup_enabled: bool,
+        daemon_autostart_enabled: bool,
+        hardware_availability: HardwareAvailability,
+        ui_version: &'static str,
+        cli_version: Option<String>,
+        cli_path: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct HardwareAvailability {
+        usb: bool,
+        adb: bool,
+        microphone: bool,
+        camera: bool,
     }
 
     fn home_dir() -> Result<PathBuf, String> {
@@ -375,10 +419,52 @@ mod app {
         Err(if stderr.is_empty() { stdout } else { stderr })
     }
 
+    fn run_cli_checked_with_env(args: &[&str], key: &str, value: &str) -> Result<String, String> {
+        let output = Command::new(resolve_cli()?)
+            .args(args)
+            .env(key, value)
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .output()
+            .map_err(|e| format!("failed to run hermes-relay {}: {e}", args.join(" ")))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if output.status.success() {
+            return Ok(stdout);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() { stdout } else { stderr })
+    }
+
     fn run_json(args: &[&str]) -> Result<Value, String> {
         let output = run_cli_checked(args)?;
         serde_json::from_str(&output)
             .map_err(|e| format!("invalid JSON from hermes-relay {}: {e}", args.join(" ")))
+    }
+
+    fn cli_details() -> (Option<String>, Option<String>) {
+        let Ok(path) = resolve_cli() else {
+            return (None, None);
+        };
+        let version = Command::new(&path)
+            .arg("--version")
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| clean_cli_version(&String::from_utf8_lossy(&output.stdout)))
+            .filter(|value| !value.is_empty());
+        (version, Some(path.display().to_string()))
+    }
+
+    fn clean_cli_version(output: &str) -> String {
+        output
+            .trim()
+            .strip_prefix("hermes-relay ")
+            .unwrap_or_else(|| output.trim())
+            .to_string()
+    }
+
+    fn is_official_url(url: &str) -> bool {
+        OFFICIAL_URLS.contains(&url)
     }
 
     fn active_url() -> Option<String> {
@@ -425,6 +511,8 @@ mod app {
                 } else {
                     "ask".to_string()
                 },
+                capabilities: BTreeMap::new(),
+                broker_configured: false,
             })
             .collect())
     }
@@ -502,8 +590,32 @@ mod app {
             .is_ok_and(|s| s.success())
     }
 
-    #[tauri::command]
-    async fn get_snapshot() -> Result<Snapshot, String> {
+    fn daemon_autostart_enabled() -> bool {
+        Command::new("reg.exe")
+            .args(["query", SETTINGS_KEY, "/v", DAEMON_AUTOSTART_VALUE])
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    fn hardware_availability() -> HardwareAvailability {
+        let adb = env::var_os("HERMES_RELAY_ADB_PATH")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "adb".into());
+        let adb = Command::new(adb)
+            .arg("version")
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .status()
+            .is_ok_and(|status| status.success());
+        HardwareAvailability {
+            usb: true,
+            adb,
+            microphone: false,
+            camera: false,
+        }
+    }
+
+    fn build_snapshot() -> Result<Snapshot, String> {
         let selected = active_url();
         let mut hosts = match run_json(&["hosts", "list", "--json"]) {
             Ok(value) => serde_json::from_value::<Vec<Host>>(
@@ -518,6 +630,8 @@ mod app {
         for host in &mut hosts {
             if host.access_mode == "full_access" {
                 host.access_mode = "full-access".to_string();
+            } else if host.access_mode == "ask_every_time" {
+                host.access_mode = "ask-every-time".to_string();
             }
         }
         let daemon = run_json(&["daemon", "status", "--json"])
@@ -528,6 +642,7 @@ mod app {
             .ok()
             .and_then(|value| serde_json::from_value::<Vec<PendingGrantRequest>>(value).ok())
             .unwrap_or_default();
+        let (cli_version, cli_path) = cli_details();
         Ok(Snapshot {
             hosts,
             active_url: selected,
@@ -535,7 +650,19 @@ mod app {
             activity: read_activity(),
             pending_grants,
             startup_enabled: startup_enabled(),
+            daemon_autostart_enabled: daemon_autostart_enabled(),
+            hardware_availability: hardware_availability(),
+            ui_version: env!("CARGO_PKG_VERSION"),
+            cli_version,
+            cli_path,
         })
+    }
+
+    #[tauri::command]
+    async fn get_snapshot() -> Result<Snapshot, String> {
+        tauri::async_runtime::spawn_blocking(build_snapshot)
+            .await
+            .map_err(|error| format!("snapshot task failed: {error}"))?
     }
 
     #[tauri::command]
@@ -672,7 +799,10 @@ mod app {
 
     #[tauri::command]
     fn set_host_access(remote: String, mode: String) -> Result<(), String> {
-        if !matches!(mode.as_str(), "ask" | "trusted" | "full-access") {
+        if !matches!(
+            mode.as_str(),
+            "ask" | "ask-every-time" | "structured" | "trusted" | "full-access"
+        ) {
             return Err("invalid host access mode".to_string());
         }
         let mut args = vec![
@@ -691,6 +821,40 @@ mod app {
         append_management_event(
             "host.access",
             &format!("Access changed to {mode}"),
+            Some(&remote),
+            None,
+        );
+        Ok(())
+    }
+
+    #[tauri::command]
+    fn set_host_capability(remote: String, capability: String, mode: String) -> Result<(), String> {
+        if !matches!(
+            capability.as_str(),
+            "commands" | "files" | "screen-input" | "usb" | "microphone" | "camera"
+        ) {
+            return Err("invalid host capability".to_string());
+        }
+        if !matches!(mode.as_str(), "disabled" | "ask" | "allow") {
+            return Err("invalid capability access mode".to_string());
+        }
+        let mut args = vec![
+            "hosts",
+            "capability",
+            capability.as_str(),
+            mode.as_str(),
+            "--remote",
+            remote.as_str(),
+        ];
+        if mode == "allow" {
+            args.push("--yes");
+        }
+        let was_running = daemon_is_running();
+        run_cli_checked(&args)?;
+        restart_daemon_if_running(was_running)?;
+        append_management_event(
+            "host.capability",
+            &format!("{capability} capability changed to {mode}"),
             Some(&remote),
             None,
         );
@@ -739,39 +903,245 @@ mod app {
         Ok(())
     }
 
-    fn open_pair_terminal() -> Result<(), String> {
+    fn spawn_cli_terminal(cli_args: &[&str]) -> Result<(), String> {
         let cli = resolve_cli()?;
-        let escaped = cli.display().to_string().replace('\'', "''");
-        Command::new("powershell.exe")
-            .args([
-                "-NoLogo",
-                "-NoExit",
-                "-Command",
-                &format!("& '{escaped}' pair"),
-            ])
+        let args = serde_json::to_string(cli_args)
+            .map_err(|error| format!("cannot serialize CLI arguments: {error}"))?;
+        let powershell_args = [
+            "-NoLogo",
+            "-NoExit",
+            "-NoProfile",
+            "-Command",
+            "& $env:HERMES_RELAY_CLI @((ConvertFrom-Json $env:HERMES_RELAY_ARGS))",
+        ];
+        let terminal = Command::new("wt.exe")
+            .arg("new-tab")
+            .arg("powershell.exe")
+            .args(powershell_args)
+            .env("HERMES_RELAY_CLI", &cli)
+            .env("HERMES_RELAY_ARGS", &args)
+            .spawn();
+        match terminal {
+            Ok(_) => Ok(()),
+            Err(_) => Command::new("powershell.exe")
+                .args(powershell_args)
+                .env("HERMES_RELAY_CLI", cli)
+                .env("HERMES_RELAY_ARGS", args)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("failed to open a terminal: {error}")),
+        }
+    }
+
+    #[tauri::command]
+    async fn pair_host(remote: String, code: String) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            let remote = remote.trim().to_string();
+            let code = code.trim().to_ascii_uppercase();
+            if remote.is_empty()
+                || code.len() != 6
+                || !code.chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                return Err(
+                    "Enter a ws:// or wss:// relay URL and a six-character pairing code"
+                        .to_string(),
+                );
+            }
+            run_cli_checked_with_env(
+                &["pair", "--remote", &remote, "--non-interactive"],
+                "HERMES_RELAY_CODE",
+                &code,
+            )?;
+            append_management_event("host.pair", "Host paired", Some(&remote), None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("pair host task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn test_host_route(remote: String) -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            run_json(&["hosts", "test", "--remote", remote.trim(), "--json"])
+        })
+        .await
+        .map_err(|error| format!("Secure Link test task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn open_management_from_grant(
+        app: AppHandle,
+        tray_position: State<'_, TrayPositionState>,
+    ) -> Result<(), String> {
+        let anchor = tray_position.0.lock().ok().and_then(|value| *value);
+        reveal_main_window(&app, anchor);
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.eval("window.dispatchEvent(new CustomEvent('hermes-review-grant'))");
+        }
+        Ok(())
+    }
+
+    fn wait_for_daemon_privilege(expected: Option<&str>) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while std::time::Instant::now() < deadline {
+            let status = run_json(&["daemon", "status", "--json"])
+                .ok()
+                .and_then(|value| serde_json::from_value::<DaemonStatus>(value).ok());
+            let matches = match (expected, status) {
+                (None, None) => true,
+                (Some(privilege), Some(status)) => {
+                    status.running && status.privilege.as_deref() == Some(privilege)
+                }
+                _ => false,
+            };
+            if matches {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Err(match expected {
+            Some(privilege) => format!("daemon did not become ready as {privilege}"),
+            None => "daemon did not stop after the Administrator request".to_string(),
+        })
+    }
+
+    #[tauri::command]
+    async fn restart_daemon_as_administrator() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "restart", "--administrator"])?;
+            wait_for_daemon_privilege(Some("administrator"))?;
+            append_management_event(
+                "daemon.restart_admin",
+                "Relay daemon restarted as Administrator",
+                None,
+                None,
+            );
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("Administrator restart task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn restart_daemon_as_user() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "restart", "--user"])?;
+            wait_for_daemon_privilege(Some("user"))?;
+            append_management_event(
+                "daemon.restart_user",
+                "Relay daemon restarted as standard user",
+                None,
+                None,
+            );
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("standard-user restart task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn open_terminal() -> Result<(), String> {
+        let home = home_dir()?;
+        let terminal = Command::new("wt.exe").args(["-d"]).arg(&home).spawn();
+        match terminal {
+            Ok(_) => Ok(()),
+            Err(_) => Command::new("powershell.exe")
+                .args(["-NoLogo", "-NoExit"])
+                .current_dir(home)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("failed to open a terminal: {error}")),
+        }
+    }
+
+    #[tauri::command]
+    fn open_cli_terminal() -> Result<(), String> {
+        spawn_cli_terminal(&[])
+    }
+
+    #[tauri::command]
+    fn open_logs() -> Result<(), String> {
+        let path = home_dir()?.join(".hermes").join("daemon.log");
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("cannot create daemon log directory: {error}"))?;
+            }
+            fs::write(&path, b"")
+                .map_err(|error| format!("cannot create daemon log file: {error}"))?;
+        }
+        Command::new("notepad.exe")
+            .arg(path)
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("failed to open PowerShell: {e}"))
+            .map_err(|error| format!("failed to open daemon logs: {error}"))
     }
 
     #[tauri::command]
-    fn pair_host() -> Result<(), String> {
-        open_pair_terminal()?;
-        append_management_event("host.pair", "Pairing opened", None, None);
-        Ok(())
+    fn run_diagnostics() -> Result<(), String> {
+        spawn_cli_terminal(&["doctor"])
     }
 
     #[tauri::command]
-    fn connect_daemon() -> Result<(), String> {
-        run_cli_checked(&["daemon", "start"])?;
-        append_management_event("daemon.start", "Relay daemon connected", None, None);
-        Ok(())
+    fn open_external_url(url: String) -> Result<(), String> {
+        if !is_official_url(&url) {
+            return Err("URL is not an approved Hermes-Relay destination".to_string());
+        }
+        Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", &url])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("failed to open the link: {error}"))
+    }
+
+    #[tauri::command]
+    async fn forget_host(remote: String) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            let selected_before = active_url();
+            let was_active = selected_before.as_deref() == Some(remote.as_str());
+            let was_running = daemon_is_running();
+            if was_active && was_running {
+                run_cli_checked(&["daemon", "stop"])?;
+            }
+            if let Err(error) = run_cli_checked(&["hosts", "forget", &remote, "--yes"]) {
+                if was_active && was_running {
+                    let _ = run_cli_checked(&["daemon", "start"]);
+                }
+                return Err(error);
+            }
+            let selected_after = active_url();
+            if was_active && was_running && selected_after.is_some() {
+                run_cli_checked(&["daemon", "start"])?;
+            }
+            append_management_event("host.forget", "Host forgotten", Some(&remote), None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("forget host task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn connect_daemon() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "start"])?;
+            append_management_event("daemon.start", "Relay daemon connected", None, None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("connect daemon task failed: {error}"))?
     }
     #[tauri::command]
-    fn disconnect_daemon() -> Result<(), String> {
-        run_cli_checked(&["daemon", "stop"])?;
-        append_management_event("daemon.stop", "Relay daemon disconnected", None, None);
-        Ok(())
+    async fn disconnect_daemon() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "stop"])?;
+            append_management_event("daemon.stop", "Relay daemon disconnected", None, None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("disconnect daemon task failed: {error}"))?
     }
     #[tauri::command]
     fn restart_daemon() -> Result<(), String> {
@@ -811,6 +1181,53 @@ mod app {
             Ok(())
         } else {
             Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    }
+
+    #[tauri::command]
+    fn set_daemon_autostart(enabled: bool) -> Result<(), String> {
+        if !enabled && !daemon_autostart_enabled() {
+            return Ok(());
+        }
+        let mut command = Command::new("reg.exe");
+        if enabled {
+            command.args([
+                "add",
+                SETTINGS_KEY,
+                "/v",
+                DAEMON_AUTOSTART_VALUE,
+                "/t",
+                "REG_SZ",
+                "/d",
+                "1",
+                "/f",
+            ]);
+        } else {
+            command.args(["delete", SETTINGS_KEY, "/v", DAEMON_AUTOSTART_VALUE, "/f"]);
+        }
+        let output = command
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .output()
+            .map_err(|error| format!("failed to update daemon autostart setting: {error}"))?;
+        if output.status.success() {
+            append_management_event(
+                "daemon.autostart",
+                if enabled {
+                    "Automatic daemon start enabled"
+                } else {
+                    "Automatic daemon start disabled"
+                },
+                None,
+                None,
+            );
+            Ok(())
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(if error.is_empty() {
+                "failed to update daemon autostart setting".to_string()
+            } else {
+                error
+            })
         }
     }
 
@@ -884,21 +1301,26 @@ mod app {
         )
     }
 
-    fn physical_window_size(reported: PhysicalSize<u32>, anchor: TrayAnchor) -> PhysicalSize<u32> {
-        let width_scale = anchor.width / TRAY_SLOT_LOGICAL_WIDTH;
-        let height_scale = anchor.height / TRAY_SLOT_LOGICAL_HEIGHT;
-        let scale = if width_scale.is_finite()
-            && height_scale.is_finite()
-            && (width_scale - height_scale).abs() <= 0.25
-        {
-            ((width_scale + height_scale) / 2.0).clamp(1.0, 4.0)
+    fn responsive_logical_window_size(
+        work_area: &PhysicalRect<i32, u32>,
+        scale: f64,
+    ) -> LogicalSize<f64> {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
         } else {
             1.0
         };
-        PhysicalSize::new(
-            (reported.width as f64 * scale).round() as u32,
-            (reported.height as f64 * scale).round() as u32,
-        )
+        let available_width = (work_area.size.width as f64 / scale - MONITOR_MARGIN * 2.0).max(1.0);
+        let available_height =
+            (work_area.size.height as f64 / scale - MONITOR_MARGIN * 2.0).max(1.0);
+        let width = MAIN_LOGICAL_WIDTH
+            .min(available_width)
+            .max(MAIN_MIN_LOGICAL_WIDTH.min(available_width));
+        let height = MAIN_LOGICAL_HEIGHT
+            .min(available_height)
+            .max(MAIN_MIN_LOGICAL_HEIGHT.min(available_height));
+
+        LogicalSize::new(width, height)
     }
 
     fn position_window(app: &AppHandle, anchor: TrayAnchor) {
@@ -907,40 +1329,33 @@ mod app {
         };
         let center_x = anchor.x + anchor.width / 2.0;
         let center_y = anchor.y + anchor.height / 2.0;
-        let monitor = unsafe {
-            MonitorFromPoint(
-                POINT {
-                    x: center_x.round() as i32,
-                    y: center_y.round() as i32,
-                },
-                MONITOR_DEFAULTTONEAREST,
-            )
-        };
-        let mut monitor_info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if !unsafe { GetMonitorInfoW(monitor, &mut monitor_info) }.as_bool() {
+        let Some(monitor) = window
+            .monitor_from_point(center_x, center_y)
+            .ok()
+            .flatten()
+            .or_else(|| window.current_monitor().ok().flatten())
+            .or_else(|| window.primary_monitor().ok().flatten())
+        else {
             return;
-        }
-        let bounds = monitor_info.rcMonitor;
-        let monitor_position = PhysicalPosition::new(bounds.left, bounds.top);
-        let monitor_size = PhysicalSize::new(
-            (bounds.right - bounds.left) as u32,
-            (bounds.bottom - bounds.top) as u32,
-        );
-        // A hidden first-launch window may have been created on a monitor with a
-        // different scale factor. Move it onto the tray monitor before measuring,
-        // allowing WM_DPICHANGED to resize it before the final centered placement.
+        };
+        let work_area = monitor.work_area();
+        let scale = monitor.scale_factor();
+        let logical_size = responsive_logical_window_size(work_area, scale);
+
+        // Commit the tray monitor before applying its logical size. This avoids
+        // inheriting the hidden creation monitor's DPI on first launch.
         let _ = window.set_position(PhysicalPosition::new(
             center_x.round() as i32,
             center_y.round() as i32,
         ));
-        let Ok(reported_size) = window.outer_size() else {
+        let _ = window.set_size(Size::Logical(logical_size));
+        // WebView frame metrics and monitor transitions can produce outer
+        // dimensions that differ from a logical-size times DPI calculation.
+        // Center from the authoritative post-resize bounds Windows reports.
+        let Ok(physical_size) = window.outer_size() else {
             return;
         };
-        let window_size = physical_window_size(reported_size, anchor);
-        let position = popup_position(anchor, window_size, monitor_position, monitor_size);
+        let position = popup_position(anchor, physical_size, work_area.position, work_area.size);
         let _ = window.set_position(position);
     }
 
@@ -972,7 +1387,7 @@ mod app {
     }
 
     fn grant_window_size(expanded: bool, scale: f64) -> PhysicalSize<u32> {
-        let logical_height = if expanded { 226.0 } else { 134.0 };
+        let logical_height = if expanded { 343.0 } else { 211.0 };
         PhysicalSize::new(
             (360.0_f64 * scale).round() as u32,
             (logical_height * scale).round() as u32,
@@ -1127,14 +1542,26 @@ mod app {
                 select_host,
                 rename_host,
                 set_host_access,
+                set_host_capability,
                 list_authorized_clients,
                 revoke_authorized_client,
                 resolve_grant,
                 pair_host,
+                test_host_route,
+                open_management_from_grant,
+                forget_host,
                 connect_daemon,
                 disconnect_daemon,
                 restart_daemon,
+                restart_daemon_as_administrator,
+                restart_daemon_as_user,
+                open_terminal,
+                open_cli_terminal,
+                open_logs,
+                run_diagnostics,
+                open_external_url,
                 set_startup,
+                set_daemon_autostart,
                 clear_activity,
                 present_grant_window
             ])
@@ -1201,16 +1628,25 @@ mod app {
             .expect("failed to build Hermes-Relay CLI UI");
 
         app.run(move |handle, event| match event {
-            RunEvent::Ready if show_on_launch => {
-                let anchor = current_tray_anchor(handle);
-                if let (Some(anchor), Some(state)) =
-                    (anchor, handle.try_state::<TrayPositionState>())
-                {
-                    if let Ok(mut stored) = state.0.lock() {
-                        *stored = Some(anchor);
-                    }
+            RunEvent::Ready => {
+                if daemon_autostart_enabled() {
+                    thread::spawn(|| {
+                        if !daemon_is_running() {
+                            let _ = run_cli_checked(&["daemon", "start"]);
+                        }
+                    });
                 }
-                reveal_main_window(handle, anchor);
+                if show_on_launch {
+                    let anchor = current_tray_anchor(handle);
+                    if let (Some(anchor), Some(state)) =
+                        (anchor, handle.try_state::<TrayPositionState>())
+                    {
+                        if let Ok(mut stored) = state.0.lock() {
+                            *stored = Some(anchor);
+                        }
+                    }
+                    reveal_main_window(handle, anchor);
+                }
             }
             RunEvent::ExitRequested {
                 api, code: None, ..
@@ -1250,6 +1686,26 @@ mod app {
                 candidates[2],
                 Path::new(r"C:\Users\example\.hermes\bin\hermes-relay.exe")
             );
+        }
+
+        #[test]
+        fn cli_version_is_clean_for_the_about_page() {
+            assert_eq!(
+                clean_cli_version("hermes-relay 0.4.0-alpha.7\r\n"),
+                "0.4.0-alpha.7"
+            );
+        }
+
+        #[test]
+        fn external_links_require_an_exact_official_destination() {
+            assert!(is_official_url("https://hermes-relay.dev/docs/desktop/"));
+            assert!(is_official_url(
+                "https://github.com/Codename-11/hermes-relay/releases"
+            ));
+            assert!(!is_official_url("https://hermes-relay.dev.evil.test/docs/"));
+            assert!(!is_official_url(
+                "https://github.com/Codename-11/hermes-relay/issues/new"
+            ));
         }
 
         #[test]
@@ -1298,18 +1754,24 @@ mod app {
         }
 
         #[test]
-        fn tray_slot_scale_converts_virtualized_webview_size_to_physical_pixels() {
-            let size = physical_window_size(
-                PhysicalSize::new(434, 708),
-                TrayAnchor {
-                    x: 1546.0,
-                    y: 1020.0,
-                    width: 40.0,
-                    height: 60.0,
-                },
-            );
+        fn window_size_uses_monitor_dpi_not_taskbar_icon_geometry() {
+            let work_area = PhysicalRect {
+                position: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(3440, 1390),
+            };
+            let logical = responsive_logical_window_size(&work_area, 1.25);
+            assert_eq!(logical, LogicalSize::new(380.0, 620.0));
+        }
 
-            assert_eq!(size, PhysicalSize::new(543, 885));
+        #[test]
+        fn window_height_compacts_to_a_small_scaled_work_area() {
+            let work_area = PhysicalRect {
+                position: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(1366, 728),
+            };
+            let logical = responsive_logical_window_size(&work_area, 1.5);
+            assert_eq!(logical.width, 380.0);
+            assert!(logical.height < 480.0);
         }
 
         #[test]
@@ -1338,11 +1800,11 @@ mod app {
                 size: PhysicalSize::new(1920, 1040),
             };
 
-            assert_eq!(collapsed, PhysicalSize::new(450, 168));
-            assert_eq!(expanded, PhysicalSize::new(450, 283));
+            assert_eq!(collapsed, PhysicalSize::new(450, 264));
+            assert_eq!(expanded, PhysicalSize::new(450, 429));
             assert_eq!(
                 bottom_right_position(&work_area, collapsed, 1.25),
-                PhysicalPosition::new(1455, 857)
+                PhysicalPosition::new(1455, 761)
             );
         }
     }

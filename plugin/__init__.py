@@ -105,14 +105,28 @@ def register(ctx):
         # is unaffected.
         logger.warning("Phone platform registration failed; continuing", exc_info=True)
 
-    # Apply relay-owned host enhancements. This is intentionally guarded so
-    # older Hermes hosts without the system-prompt seam still load tools/CLI.
+    # Prefer the modern profile-keyed ownership ledger. Older Hermes hosts
+    # retain the guarded process wrapper as a compatibility fallback.
     try:
-        from .enhancements import apply_phase
+        from .enhancements.context_injection import register_context_sections
 
-        apply_phase("plugin_load")
+        native_context_registered = register_context_sections(ctx)
     except Exception:
-        logger.debug("Relay plugin-load enhancements failed; continuing", exc_info=True)
+        # A current host exposing the API must not fall back to an unowned
+        # process-global mutation after a real registration failure.
+        native_context_registered = True
+        logger.warning(
+            "Relay system-prompt section registration failed; continuing without it",
+            exc_info=True,
+        )
+
+    if not native_context_registered:
+        try:
+            from .enhancements import apply_phase
+
+            apply_phase("plugin_load")
+        except Exception:
+            logger.debug("Relay plugin-load enhancements failed; continuing", exc_info=True)
 
     # Register plugin-native CLI sub-commands: hermes pair + hermes relay.
     # Wrapped in try/except so the plugin still works on older hermes-agent

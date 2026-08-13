@@ -324,6 +324,7 @@ dependencies {
 
     // QR Code scanning (ML Kit + CameraX)
     implementation(libs.mlkit.barcode)
+    implementation(libs.zxing.core)
     implementation(libs.camera.core)
     implementation(libs.camera.camera2)
     implementation(libs.camera.lifecycle)

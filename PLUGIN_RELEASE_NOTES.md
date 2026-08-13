@@ -1,23 +1,28 @@
 # Hermes-Relay-Server v__VERSION__
 
-**Release Date:** August 12, 2026
+**Release Date:** August 13, 2026
 
-This patch adds safe simultaneous routing for multiple connected desktop PCs and makes host selection explicit across command, file, screen, USB, and ADB operations.
+This release adds an operator-owned secure ingress path, promotes Tailscale as the easiest supported remote route, and introduces Hermes Reach as a disabled-by-default experimental broker for outbound-only environments.
 
 Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
 ## What's changed
 
-### Fixed
-
-- **No more latest-client-wins routing.** Connecting a second desktop no longer evicts the first. Requests are bound to the selected desktop WebSocket, and a response from another PC cannot satisfy them.
-- **Ambiguous calls fail closed.** With more than one desktop online, client-routed tools require a stable device ID or unambiguous computer name instead of silently choosing the latest heartbeat.
-- **Pairing preserves existing PCs.** Placeholder legacy device identifiers no longer collide and revoke another desktop's session.
-
 ### Added
 
-- **Target discovery.** `desktop_health` lists every connected desktop with its stable ID, name, and advertised tools.
-- **Two-level USB targeting.** USB and ADB tools use `device` for the host PC; ADB operations retain `serial` for the attached Android device.
+- **Hermes Secure Link.** A pinned-TLS ingress can expose Relay, API, and Dashboard namespaces through one self-hosted endpoint while retaining each service's native authentication.
+- **Experimental Hermes Reach.** An optional self-hosted rendezvous broker forwards opaque inner Secure Link TLS records, with hashed credentials, replay protection, bounded streams, persistence, and revocation.
+- **Remote-access status.** Dashboard and pairing metadata distinguish reachability from transport protection and show supported services without exposing certificate pins.
+
+### Changed
+
+- **Tailscale is recommended for remote access.** Tailscale Serve remains the simplest supported path; direct TLS and Secure Link are self-hosted alternatives, while Reach stays advanced and experimental.
+- **Pairing carries reviewed transport trust.** QR payloads include the Secure Link endpoint and pin before the first network request; rotation requires explicit re-pairing.
+
+### Fixed
+
+- **Route credentials remain scoped and revocable.** Reach credentials are issued only through trusted Secure Link ingress, replaced atomically per Relay session, bounded by session expiry, and removed on revocation.
+- **Proxy namespaces preserve credential isolation.** API and Dashboard headers, cookies, redirects, methods, sizes, timeouts, and loopback authority are constrained independently.
 
 ## Install / update
 

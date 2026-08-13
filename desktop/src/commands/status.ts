@@ -9,6 +9,7 @@ import type { ParsedArgs } from '../cli.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { listSessions, type RemoteSessionRecord } from '../remoteSessions.js'
+import { displayLabel } from '../endpoint.js'
 
 const STATUS_USAGE: UsageSpec = {
   name: 'status',
@@ -60,7 +61,7 @@ export async function statusCommand(args: ParsedArgs): Promise<number> {
       : Object.fromEntries(
           Object.entries(sessions).map(([url, rec]) => [
             url,
-            { ...rec, token: '(redacted)' }
+            { ...rec, token: '(redacted)', routeCandidates: rec.routeCandidates?.map(candidate => candidate.broker ? { ...candidate, broker: { ...candidate.broker, token: '(redacted)' } } : candidate) }
           ])
         )
     process.stdout.write(JSON.stringify(out, null, 2) + '\n')
@@ -93,8 +94,8 @@ export async function statusCommand(args: ParsedArgs): Promise<number> {
       kv('desktop', `${t.statusDot(!!rec.toolsConsented)} tools=${rec.toolsConsented ? 'yes' : 'no'}, computer-use=${computerUse}`) + '\n'
     )
     const role = parseRole(rec.endpointRole)
-    if (role) {
-      process.stdout.write(kv('route', roleLabel(role)) + '\n')
+    if (rec.endpointRole) {
+      process.stdout.write(kv('route', role ? roleLabel(role) : displayLabel(rec.endpointRole)) + '\n')
     }
     if (rec.grants && Object.keys(rec.grants).length > 0) {
       const formatted = Object.entries(rec.grants)

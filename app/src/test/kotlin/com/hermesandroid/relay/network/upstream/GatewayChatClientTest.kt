@@ -10,12 +10,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.WebSocket
@@ -38,6 +41,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * [GatewayChatClient] wire tests against a scripted fake tui_gateway:
@@ -93,6 +97,9 @@ class GatewayClientHarness(
     }
 
     @Volatile
+    var promptSubmitPayload: JsonObject = buildJsonObject { put("ok", true) }
+
+    @Volatile
     var reasoningEffort = "medium"
 
     @Volatile
@@ -115,6 +122,12 @@ class GatewayClientHarness(
         put("ok", true)
         put("slug", "boba")
         put("dataUri", "data:image/png;base64,iVBORw0KGgo=")
+    }
+
+    @Volatile
+    var fileAttachPayload: JsonObject = buildJsonObject {
+        put("attached", true)
+        put("ref_text", "@file:notes.txt")
     }
 
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
@@ -206,7 +219,7 @@ class GatewayClientHarness(
                 "session.activate" -> recoveryPayload(
                     (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
                 )
-                "prompt.submit" -> buildJsonObject { put("ok", true) }
+                "prompt.submit" -> promptSubmitPayload
                 "session.interrupt" -> buildJsonObject { put("ok", true) }
                 "process.list" -> buildJsonObject {
                     put(
@@ -265,10 +278,7 @@ class GatewayClientHarness(
                     put("attached", true)
                     put("pages", 1)
                 }
-                "file.attach" -> buildJsonObject {
-                    put("attached", true)
-                    put("ref_text", "@file:notes.txt")
-                }
+                "file.attach" -> fileAttachPayload
                 "clarify.respond", "sudo.respond", "secret.respond" ->
                     buildJsonObject { put("status", askResponseStatus) }
                 "approval.respond" -> buildJsonObject { put("resolved", approvalResolved) }
@@ -277,6 +287,35 @@ class GatewayClientHarness(
                         "pairs",
                         json.parseToJsonElement("""[["/help","Show help"],["/model","Pick model"]]"""),
                     )
+                }
+                "profiles.describe" -> buildJsonObject {
+                    put("name", (params["name"] as? JsonPrimitive)?.contentOrNull ?: "")
+                    put("description", "Android operator")
+                    put("soul", "# Operator")
+                    put("model", buildJsonObject {
+                        put("provider", "openai")
+                        put("default", "gpt-5.6")
+                    })
+                    put("skills", JsonArray(listOf(buildJsonObject {
+                        put("name", "weather")
+                        put("enabled", false)
+                    })))
+                    put("toolsets", JsonArray(listOf(buildJsonObject {
+                        put("name", "terminal")
+                        put("description", "Run commands")
+                        put("tool_count", 4)
+                        put("enabled", true)
+                    })))
+                    put("toolsets_pinned", true)
+                }
+                "profiles.configure" -> buildJsonObject {
+                    put("ok", false)
+                    put("applied", buildJsonObject {
+                        if (params.containsKey("description")) put("description", true)
+                        if (params.containsKey("provider")) put("model", false)
+                        if (params.containsKey("disabled_skills")) put("skills", true)
+                        if (params.containsKey("enabled_toolsets")) put("toolsets", true)
+                    })
                 }
                 "pet.thumb" -> petThumbPayload
                 "model.options" -> buildJsonObject {
@@ -625,6 +664,50 @@ class GatewayChatClientTest {
         client.shutdown()
         scope.cancel()
         harness.shutdown()
+    }
+
+    @Test
+    fun `profile editor describes exact profile and maps upstream shape`() = runBlocking {
+        val description = client.describeProfile("operator").getOrThrow()
+
+        assertEquals("operator", description.name)
+        assertEquals("openai", description.provider)
+        assertEquals("gpt-5.6", description.model)
+        assertFalse(description.skills.single().enabled)
+        assertEquals(4, description.toolsets.single().toolCount)
+        assertTrue(description.toolsetsPinned)
+        assertEquals(
+            "operator",
+            (harness.awaitRpc("profiles.describe")["name"] as? JsonPrimitive)?.contentOrNull,
+        )
+    }
+
+    @Test
+    fun `profile configure is gated by describe and reports every requested section`() = runBlocking {
+        assertTrue(client.configureProfile("operator", com.hermesandroid.relay.data.GatewayProfilePatch(description = "x")).isFailure)
+        client.describeProfile("operator").getOrThrow()
+
+        val result = client.configureProfile(
+            "operator",
+            com.hermesandroid.relay.data.GatewayProfilePatch(
+                description = "Updated",
+                provider = "openai",
+                model = "gpt-5.6-sol",
+            ),
+        ).getOrThrow()
+
+        assertEquals(setOf(com.hermesandroid.relay.data.GatewayProfileSection.Description), result.applied)
+        assertEquals(setOf(com.hermesandroid.relay.data.GatewayProfileSection.Model), result.failed)
+    }
+
+    @Test
+    fun `profile describe method not found becomes sticky unsupported capability`() = runBlocking {
+        harness.methodNotFound += "profiles.describe"
+
+        assertTrue(client.describeProfile("operator").exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException)
+        harness.rpcLog.clear()
+        assertTrue(client.describeProfile("operator").exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException)
+        assertTrue(harness.rpcLog.none { it.first == "profiles.describe" })
     }
 
     @Test
@@ -1418,6 +1501,27 @@ class GatewayChatClientTest {
         assertEquals("legacy", result.status)
     }
 
+    @Test
+    fun `compress session preserves authoritative lock contention message`() {
+        val r = Recorder()
+        client.sendTurn(null, "long job", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        harness.compressPayload = buildJsonObject {
+            put("compressed", false)
+            put("lock_held", true)
+            put("message", "Compression skipped because another request holds the lock.")
+        }
+
+        val result = runBlocking { client.compressSession().getOrThrow() }
+
+        assertEquals("noop", result.status)
+        assertEquals(
+            "Compression skipped because another request holds the lock.",
+            result.output,
+        )
+    }
+
     // --- Profile-bound sessions (upstream tui_gateway: session.create/resume
     // take a `profile` arg; a session's agent is built from it) ---
 
@@ -1706,7 +1810,7 @@ class GatewayChatClientTest {
             ),
             onPreflightFailure = { r.preflightFailures += it },
         )
-        harness.awaitRpc("prompt.submit")
+        val submit = harness.awaitRpc("prompt.submit")
 
         val attach = harness.awaitRpc("file.attach")
         assertEquals("live-1", (attach["session_id"] as? JsonPrimitive)?.contentOrNull)
@@ -1715,9 +1819,65 @@ class GatewayChatClientTest {
             (attach["data_url"] as? JsonPrimitive)?.contentOrNull,
         )
         assertEquals("notes.txt", (attach["name"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(
+            "@file:notes.txt\n\nread this",
+            (submit["text"] as? JsonPrimitive)?.contentOrNull,
+        )
         assertTrue(harness.rpcLog.none { it.first == "image.attach_bytes" })
         assertTrue(harness.rpcLog.none { it.first == "pdf.attach" })
         assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `queued document follow-up keeps its returned file reference on the queued prompt`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "compare the totals",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment(
+                    name = "quarterly report.ods",
+                    base64 = "UEsDBA==",
+                    ext = "ods",
+                    contentType = "application/vnd.oasis.opendocument.spreadsheet",
+                ),
+            ),
+            queuedFollowUp = true,
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        val submit = harness.awaitRpc("prompt.submit")
+        assertEquals(true, (submit["queued"] as? JsonPrimitive)?.booleanOrNull)
+        assertEquals(
+            "@file:notes.txt\n\ncompare the totals",
+            (submit["text"] as? JsonPrimitive)?.contentOrNull,
+        )
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `document upload without a readable reference fails before prompt submit`() {
+        harness.fileAttachPayload = buildJsonObject { put("attached", true) }
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "read this",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment("notes.txt", "aGk=", "txt", "text/plain"),
+            ),
+            onPreflightFailure = {
+                r.preflightFailures += it
+                r.completeLatch.countDown()
+            },
+        )
+
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(r.preflightFailures.single().contains("no readable file reference"))
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
     }
 
     // --- Ask responders ---
@@ -2200,6 +2360,41 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `durable rewind target and survivor row ids round trip`() {
+        harness.promptSubmitPayload = buildJsonObject {
+            put("ok", true)
+            put("survivor_user_row_ids", buildJsonArray {
+                add(JsonPrimitive(101L))
+                add(JsonNull)
+                add(JsonPrimitive("malformed"))
+            })
+        }
+        val r = Recorder()
+        val rebound = AtomicReference<List<Long?>>()
+        val reboundLatch = CountDownLatch(1)
+
+        client.sendTurn(
+            sessionId = "stored-1",
+            text = "edited message",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            truncateBeforeUserOrdinal = 2,
+            truncateBeforeRowId = 73L,
+            onSurvivorUserRowIds = {
+                rebound.set(it)
+                reboundLatch.countDown()
+            },
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        val submit = harness.awaitRpc("prompt.submit")
+        assertEquals(2, (submit["truncate_before_user_ordinal"] as? JsonPrimitive)?.intOrNull)
+        assertEquals(73L, (submit["truncate_before_row_id"] as? JsonPrimitive)?.longOrNull)
+        assertTrue(reboundLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf(101L, null, null), rebound.get())
+    }
+
+    @Test
     fun `first user truncate carries empty-history confirmation`() {
         val r = Recorder()
         client.sendTurn(
@@ -2262,9 +2457,13 @@ class GatewayChatClientTest {
     @Test
     fun `authoritative prompt rejections surface server message without preflight fallback`() {
         val cases = listOf(
+            4004 to "Truncation target must be an integer",
+            4018 to "Target user message is no longer in session history",
             4028 to "Empty-history truncate confirmation required",
             4029 to "Truncate confirmation required",
+            4030 to "Row id and ordinal identify different user turns",
             4090 to "Active session limit reached; close the session held by another client",
+            5008 to "Failed to persist history truncation",
             5070 to "Session storage is full; free disk space and retry",
             5071 to "Initial session persistence failed",
         )
@@ -2280,6 +2479,25 @@ class GatewayChatClientTest {
             assertTrue("$code must not trigger SSE fallback", r.preflightFailures.isEmpty())
             assertEquals(index + 1, harness.rpcLog.count { it.first == "prompt.submit" })
         }
+    }
+
+    @Test
+    fun `bounded transcript resume rejection stays visible and never creates a replacement session`() {
+        val message =
+            "Session has 20,001 active messages, above sessions.max_resume_messages; export or raise the limit"
+        harness.rpcErrors["session.resume"] = 4130 to message
+        val r = Recorder()
+
+        client.sendTurn("oversized-session", "continue", null, r.callbacks) {
+            r.preflightFailures += it
+        }
+
+        harness.awaitRpc("session.resume")
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf(message), r.errors.toList())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertEquals(0, harness.rpcLog.count { it.first == "session.create" })
+        assertEquals(0, harness.rpcLog.count { it.first == "prompt.submit" })
     }
 
     // --- HRUI-016: long / fire-and-forget prompt.submit ack semantics.

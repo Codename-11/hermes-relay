@@ -142,6 +142,12 @@ data class ChatMessage(
      */
     val uiKey: String = id,
     /**
+     * Durable Gateway transcript row identity for rewind/edit-regenerate.
+     * This is server-owned and can change after a truncating rewrite; it is
+     * never used as a Compose key or synthesized client-side.
+     */
+    val rowId: Long? = null,
+    /**
      * Mixture-of-Agents advisor responses surfaced during the live turn.
      * Unavailable advisors retain only neutral state, never their raw failure
      * body. A sanitized bounded copy may enter the local in-flight checkpoint,
@@ -421,6 +427,14 @@ data class ChatSession(
     /** Durable upstream session metadata, scoped by the owning connection/profile DB. */
     val pinned: Boolean = false,
     val archived: Boolean = false,
+    /** Optional newer-upstream workspace context; absent on legacy/API-only hosts. */
+    val workingDirectory: String? = null,
+    val gitBranch: String? = null,
+    val gitRepoRoot: String? = null,
+    val pullRequestNumber: Int? = null,
+    val pullRequestUrl: String? = null,
+    val pullRequestState: String? = null,
+    val pullRequestDraft: Boolean = false,
 ) {
     val activityTimestamp: Long
         get() = firstPositive(lastActivityAt, updatedAt, startedAt)

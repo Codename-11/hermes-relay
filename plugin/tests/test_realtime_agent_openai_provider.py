@@ -116,6 +116,7 @@ class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
                         "api_key": "openai-test",
                         "safety_identifier": "phone-hash",
                         "transcription_language": "en",
+                        "extra_headers": {"X-Voice-Gateway": "relay-test"},
                     },
                 )
             )
@@ -127,6 +128,7 @@ class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(captured["headers"]["Authorization"], "Bearer openai-test")
         self.assertEqual(captured["headers"]["OpenAI-Safety-Identifier"], "phone-hash")
+        self.assertEqual(captured["headers"]["X-Voice-Gateway"], "relay-test")
         session_update = fake_socket.sent[0]
         self.assertEqual(session_update["type"], "session.update")
         session = session_update["session"]

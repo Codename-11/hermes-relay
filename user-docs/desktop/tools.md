@@ -98,14 +98,17 @@ Prefer the typed file, process, job, transfer, screen, clipboard, and connected-
 device tools for ordinary work. `desktop_terminal`, `desktop_powershell`,
 detached commands, and command jobs are intentionally labeled `system.execute`:
 because they run as your Windows user, they can indirectly access files and
-attached hardware. **Structured** mode withholds those four escape hatches. Its
-separate per-host Raw USB policy defaults Off, can Ask through the local
+attached hardware. **Standard** mode withholds those four escape hatches.
+Newly paired hosts default to **Ask Every Time**, which routes every available
+command, file, screen/input, and USB operation through the local approval card.
+Raw USB can independently be Off, Ask through the local
 approval card for every operation, or can Allow after explicit confirmation.
 It governs host-wide direct execution of native/vendor USB utilities and all
 enabled USB services; it is not scoped to one physical device. ADB remains a
 secondary service and its device operations require an exact serial. Full
-Access does not bypass USB policy. Camera and microphone remain unavailable
-until controlled paths exist.
+Access overrides every available capability; changing one gate selects a matching
+preset automatically and otherwise creates a Custom policy. Camera and microphone remain unavailable and unadvertised until
+controlled paths exist.
 
 The router heartbeats `desktop.status` every 30 s, advertising the full handler-name list, so the server's `desktop` channel knows which tools your client can service. Servers ping `/desktop/_ping?tool=<name>` to fail fast when a tool isn't advertised.
 
@@ -179,7 +182,7 @@ Consent is stored per-URL in `~/.hermes/remote-sessions.json` as `toolsConsented
 The desktop tools run **in-process on your machine** with your full user privileges. That's a real risk — a compromised relay or a misaligned agent could ask to `rm -rf /`, exfiltrate tokens, or rewrite your `.ssh/config`. The walls:
 
 1. **Consent per-URL, not per-run.** Once you say yes to `ws://hermes.example.com`, the agent on THAT server has persistent tool access. A different URL re-prompts.
-2. **User privilege by default; explicit elevation only.** All tools inherit the daemon's privilege. The Windows tray remains unprivileged and requests UAC only when you explicitly choose **Start/Restart daemon as Administrator…**. While an Administrator daemon is active, approved shell and input actions run elevated; the tray labels that state and displays a stronger warning for an active control grant.
+2. **User privilege by default; explicit elevation only.** All tools inherit the daemon's privilege. The Windows tray remains unprivileged and requests UAC only when you explicitly choose **Restart as Administrator...**. **Return to user mode** stops the elevated daemon once and starts it normally. While an Administrator daemon is active, approved shell and input actions run elevated; the tray labels that state and displays a stronger warning for an active control grant.
 3. **Per-call AbortController ceiling.** 30 seconds per tool call hard stop. A long-running compromise would trip this.
 4. **Handler implementations are defensive:**
    - `desktop_read_file` caps at `max_bytes` (default 1 MB) and truncates with a marker.
@@ -275,9 +278,9 @@ If `connected: true` but the agent still says the tool is missing:
 
 `hermes-relay daemon` runs the WSS connection + tool router headless, so the agent can reach your machine while you're in another window or VS Code or off making coffee. Use `hermes-relay daemon start` to run it in the **background** (no console window, survives closing the terminal), `daemon status` to check it, and `daemon stop` to stop it. See [Subcommands → daemon](./subcommands.md#hermes-relay-daemon) for full lifecycle/log details.
 
-Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log.
+Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log. The management UI previews the latest three events and opens each event into bounded request, stdout, stderr, result, exit, timing, and truncation details. Sensitive request inputs are excluded.
 
-`daemon start` covers "background, this session." On Windows, the optional tray can start at sign-in and starts the daemon when it launches; this is a per-user login entry, not a Windows service. For Linux/macOS or a machine-level lifetime, wrap foreground `hermes-relay daemon` with your service manager of choice.
+`daemon start` covers "background, this session." On Windows, **Start UI at sign-in** registers the optional tray as a per-user login entry. **Start daemon with UI** separately opts into connecting remote access when the tray launches and defaults off for existing installs. Neither is a Windows service. For Linux/macOS or a machine-level lifetime, wrap foreground `hermes-relay daemon` with your service manager of choice.
 
 ## Related
 

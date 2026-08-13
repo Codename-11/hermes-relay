@@ -25,30 +25,58 @@ model types and we regex.
 
 ## Options (to evaluate)
 
-1. **Tool-based delivery** — a relay tool `relay_send_media(path, sensitive, caption, alt)`
-   the agent calls (generalizing `android_screenshot(sensitive)`). The tool registers with
-   the relay (carrying the bit), returns a token; the client renders structured, blurred per
-   the flag. Pro: fully structured, no prose parsing, sensitivity native. Con: the agent must
-   *choose* the tool over typing a path (prompt/tooling nudge needed).
+1. **Upstream-compatible descriptor** — generalize the upstream media shape
+   (`media_kind`, `source_url`, `content`, `filename`) for a capability-gated
+   Dashboard/Gateway event, with additive `sensitive` and `alt` fields for the
+   Android use case. Pro: one media vocabulary across Hermes clients and native
+   platform delivery. Con: requires an upstream contract before Android can
+   consume it; the connector's authenticated upload route and credentials must
+   never be exposed to the phone.
 2. **Structured marker extension** — keep `MEDIA:` but define a JSON-tail form
    (`MEDIA:{"path":...,"sensitive":true}`) the relay/client parse strictly. Pro: incremental.
    Con: still a text marker; the `MEDIA:` strip/deliver logic lives in the agent core
    (`gateway/run.py`) — extending it cleanly may need an upstream change, not a fork patch.
-3. **Relay media event over the gateway** — a structured `media.deliver` event on the
-   `/api/ws` gateway carrying the descriptor. Pro: best UX (live, structured, gateway-native).
-   Con: largest change; depends on the gateway surface.
+3. **Plugin tool fallback** — a relay tool
+   `relay_send_media(path, sensitive, caption, alt)` can register a local file
+   and return the existing bearer-gated Relay token. Pro: removable and fully
+   structured within the optional plugin. Con: creates a second agent-facing
+   media protocol and relies on the model choosing the tool instead of the
+   upstream delivery path.
+
+## HRUI-075 upstream interoperability baseline
+
+Current upstream Hermes defines a separate gateway-to-connector `send_media`
+operation. It sends media by reference with `media_kind`, `source_url`, optional
+caption in `content`, and optional `filename`; it is gated by `supported_ops`,
+uses an authenticated re-host for local files, caps uploads at 25 MB, and falls
+back safely when an older connector does not advertise the operation. Inbound
+expiring or authenticated platform URLs are localized connector-side so
+platform credentials do not cross the wire.
+
+Hermes-Relay Android and the optional phone plugin do not implement that
+gateway-to-connector protocol. They must not call its `/relay/media` route or
+reuse its connector credentials. The descriptor is nevertheless the canonical
+interoperability precedent for any future Dashboard/Gateway event. A design
+review must map ownership, authentication, expiry, size, `sensitive`, and `alt`
+before implementation.
 
 ## Recommendation
 
-Lead with **Option 1** (relay tool) — it reuses the proven `android_screenshot(sensitive)`
-pattern, is fully in our plugin, removable, and carries sensitivity natively. The
-enhancement-layer context block can nudge the agent to prefer it for file delivery. Keep the
-text-marker parsing as the back-compat fallback (now hardened for spaces). Revisit Option 3
-if/when we want live structured media on the gateway.
+Lead with **Option 1**, but only after a disposable upstream prototype proves a
+generic Dashboard/Gateway event and capability fallback. Keep the current
+`MEDIA:`/Markdown/token parsing as compatibility behavior. Do not implement the
+old tool-first proposal or duplicate the connector's authenticated media plane
+merely because both projects use the Relay name.
+
+The prototype gate covers image and document egress, inbound image
+localization, expired references, the 25 MB limit, sensitive rendering, an
+unsupported-operation fallback, and an older Hermes baseline. No implementation
+ticket should open until the phone credential boundary and additive
+`sensitive`/`alt` shape are proven.
 
 ## Constraints
 
-- Vanilla-safe + removable (relay plugin only). No fork patches — structured marker /
-  gateway-event forms that need core changes go through upstream PRs with graceful
-  degradation, per the standard-path rule.
+- Vanilla-safe + removable. No fork patches — structured marker or gateway-event
+  forms that need core changes go through upstream PRs with graceful degradation,
+  per the standard-path rule.
 - Sensitivity stays **model-emitted** (no relay-side or on-device classifier).

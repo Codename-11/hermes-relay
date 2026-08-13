@@ -9,16 +9,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.click
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardAction
+import com.hermesandroid.relay.data.HermesCardInput
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -110,6 +113,38 @@ class HermesApprovalCardInteractionTest {
         compose.onNodeWithText("Deny").performTouchInput { click() }
 
         compose.runOnIdle { assertEquals(listOf("once", "deny"), actions) }
+    }
+
+    @Test
+    fun `multi select clarify toggles choices and submits one ordered json array`() {
+        val answers = mutableListOf<String>()
+        compose.setContent {
+            MaterialTheme {
+                HermesCardBubble(
+                    card = HermesCard(
+                        type = HermesCard.BuiltInTypes.ASK_CLARIFY,
+                        title = "Choose environments",
+                        input = HermesCardInput(
+                            kind = HermesCardInput.Kinds.CHOICE,
+                            choices = listOf("dev", "stage", "prod"),
+                            multiSelect = true,
+                            allowFreeText = true,
+                        ),
+                    ),
+                    cardKey = "clarify-multi",
+                    dispatches = emptyList(),
+                    onActionTap = { _, _ -> },
+                    onInputSubmit = { _, value -> answers += value },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Submit").assertIsNotEnabled()
+        compose.onNodeWithText("prod").performTouchInput { click() }
+        compose.onNodeWithText("dev").performTouchInput { click() }
+        compose.onNodeWithText("Submit").assertIsEnabled().performTouchInput { click() }
+
+        compose.runOnIdle { assertEquals(listOf("[\"prod\",\"dev\"]"), answers) }
     }
 
     private fun approvalCard() = HermesCard(

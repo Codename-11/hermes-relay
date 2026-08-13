@@ -31,15 +31,27 @@ export interface AuditEntry {
   exit_code?: number
   /** Truncated preview of the call args, for context. */
   args_preview?: string
+  /** Bounded, redacted request detail for the local activity drilldown. */
+  request_detail?: string
+  /** Bounded command streams when returned by the handler. */
+  stdout?: string
+  stderr?: string
+  /** Bounded structured result after stdout/stderr are removed. */
+  result_detail?: string
+  request_truncated?: boolean
+  stdout_truncated?: boolean
+  stderr_truncated?: boolean
+  result_truncated?: boolean
   /** Short success summary (path / exit code / first stdout line). */
   summary?: string
   error?: string
 }
 
-export type AuditCategory = 'command' | 'files' | 'screen' | 'input' | 'system' | 'other'
+export type AuditCategory = 'command' | 'files' | 'screen' | 'input' | 'devices' | 'system' | 'other'
 
 /** Rotate the log once it crosses ~1 MB, keeping a single `.1` backup. */
 const MAX_BYTES = 1_000_000
+const MAX_DETAIL_BYTES = 32_768
 
 export function auditLogPath(): string {
   return join(homedir(), '.hermes', 'desktop-audit.jsonl')
@@ -86,7 +98,7 @@ export async function readRecentAudit(limit = 50): Promise<AuditEntry[]> {
 export function previewArgs(args: Record<string, unknown>): string | undefined {
   try {
     const parts: string[] = []
-    for (const key of ['path', 'command', 'cmd', 'pattern', 'cwd', 'pid', 'port', 'name']) {
+    for (const key of ['serial', 'source', 'destination', 'apk', 'path', 'command', 'script', 'executable', 'cmd', 'pattern', 'cwd', 'pid', 'port', 'name']) {
       const v = (args as Record<string, unknown>)[key]
       if (v !== undefined && v !== null && typeof v !== 'object') {
         parts.push(`${key}=${String(v)}`)
@@ -100,6 +112,63 @@ export function previewArgs(args: Record<string, unknown>): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function boundedText(value: string): { text: string; truncated: boolean } {
+  const bytes = Buffer.from(value, 'utf8')
+  if (bytes.length <= MAX_DETAIL_BYTES) return { text: value, truncated: false }
+  return {
+    text: `${bytes.subarray(0, MAX_DETAIL_BYTES).toString('utf8')}\n[… truncated locally at ${MAX_DETAIL_BYTES} bytes]`,
+    truncated: true
+  }
+}
+
+/** Preserve useful local drilldown evidence without logging secrets, file
+ * bodies, environment values, or unbounded process output. */
+export function auditDetails(
+  args: Record<string, unknown>,
+  result?: unknown
+): Pick<AuditEntry, 'request_detail' | 'stdout' | 'stderr' | 'result_detail' | 'request_truncated' | 'stdout_truncated' | 'stderr_truncated' | 'result_truncated'> {
+  const safeRequest: Record<string, unknown> = {}
+  for (const key of [
+    'command', 'script', 'executable', 'arguments', 'cwd', 'path', 'source', 'destination',
+    'pattern', 'serial', 'apk', 'pid', 'port', 'job_id', 'offset', 'limit', 'timeout', 'reason'
+  ]) {
+    if (args[key] !== undefined) safeRequest[key] = args[key]
+  }
+  const request = boundedText(JSON.stringify(safeRequest, null, 2))
+  const details: Pick<AuditEntry, 'request_detail' | 'stdout' | 'stderr' | 'result_detail' | 'request_truncated' | 'stdout_truncated' | 'stderr_truncated' | 'result_truncated'> = {
+    request_detail: request.text,
+    request_truncated: request.truncated || undefined
+  }
+  if (!result || typeof result !== 'object') {
+    if (result !== undefined) {
+      const value = boundedText(String(result))
+      details.result_detail = value.text
+      details.result_truncated = value.truncated || undefined
+    }
+    return details
+  }
+  const record = { ...(result as Record<string, unknown>) }
+  if (typeof record.stdout === 'string') {
+    const value = boundedText(record.stdout)
+    details.stdout = value.text
+    details.stdout_truncated = value.truncated || undefined
+    delete record.stdout
+  }
+  if (typeof record.stderr === 'string') {
+    const value = boundedText(record.stderr)
+    details.stderr = value.text
+    details.stderr_truncated = value.truncated || undefined
+    delete record.stderr
+  }
+  const serialized = JSON.stringify(record, null, 2)
+  if (serialized !== '{}') {
+    const value = boundedText(serialized)
+    details.result_detail = value.text
+    details.result_truncated = value.truncated || undefined
+  }
+  return details
 }
 
 /** Best-effort short success summary from a handler result. */
@@ -133,6 +202,7 @@ export function resultExitCode(result: unknown): number | undefined {
 /** A small stable taxonomy shared by CLI audit consumers and the tray UI. */
 export function categorizeTool(tool: string): AuditCategory {
   const value = tool.toLowerCase()
+  if (value.includes('adb') || value.includes('usb')) return 'devices'
   if (value.includes('computer_screenshot') || value.includes('screen')) return 'screen'
   if (value.includes('computer_') || value.includes('mouse') || value.includes('keyboard')) return 'input'
   if (value.includes('file') || value.includes('directory') || value.includes('patch')) return 'files'

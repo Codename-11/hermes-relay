@@ -5,6 +5,10 @@ import android.provider.Settings
 import android.util.Log
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.BrokerEndpoint
+import com.hermesandroid.relay.data.hasHermesReach
+import com.hermesandroid.relay.data.replaceHermesReachCredential
+import com.hermesandroid.relay.data.sameBrokerAuthority
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.relay.ChannelMultiplexer
@@ -15,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -558,6 +563,12 @@ class AuthManager(
      * Either way, we leave the previously-persisted list untouched.
      */
     private var pendingEndpoints: List<EndpointCandidate>? = null
+    private var activeEndpointProvider: () -> EndpointCandidate? = { null }
+
+    /** Bind auth.ok route credentials to the transport that actually carried them. */
+    fun setActiveEndpointProvider(provider: () -> EndpointCandidate?) {
+        activeEndpointProvider = provider
+    }
 
     /**
      * Server-advertised agent profiles from the `auth.ok` payload's
@@ -1042,6 +1053,7 @@ class AuthManager(
                 }
 
                 if (token != null) {
+                    applyBrokerRouteCredential(payload)
                     val s = store()
                     s.putString(KEY_SESSION_TOKEN, token)
                     val refreshToken = payload["refresh_token"]
@@ -1149,6 +1161,40 @@ class AuthManager(
             }
         }
     }
+
+    private suspend fun applyBrokerRouteCredential(payload: JsonObject) {
+        val active = activeEndpointProvider()?.takeIf { it.hasHermesReach() } ?: return
+        val current = active.broker ?: return
+        // Fresh pairing is scoped by pendingEndpoints; reconnect rotation is
+        // accepted only by this connection-scoped AuthManager's live session.
+        if (pendingEndpoints == null && _authState.value !is AuthState.Paired) return
+        val credential = payload["route_credential"] as? JsonObject ?: return
+        if (credential["kind"]?.jsonPrimitive?.contentOrNull != "broker_route") return
+        val brokerUrl = credential["broker_url"]?.jsonPrimitive?.contentOrNull ?: return
+        val hostId = credential["host_id"]?.jsonPrimitive?.contentOrNull ?: return
+        if (!sameBrokerAuthority(brokerUrl, current.url) || hostId != current.hostId) {
+            Log.w(TAG, "Ignoring broker route credential that does not match the active paired route")
+            return
+        }
+        val replacement = BrokerEndpoint(
+            url = current.url,
+            protocolVersion = current.protocolVersion,
+            hostId = current.hostId,
+            credentialKind = "route",
+            token = credential["token"]?.jsonPrimitive?.contentOrNull ?: return,
+            expiresAt = credential["expires_at"]?.jsonPrimitive?.longOrNull,
+        )
+        val validated = active.copy(broker = replacement).takeIf { it.hasHermesReach() } ?: return
+        val deviceId = getDeviceId()
+        val source = pendingEndpoints
+            ?: PairingPreferences.getDeviceEndpoints(context, deviceId).first()
+        val updated = replaceHermesReachCredential(source, current, validated)
+        if (updated == source) return
+        if (pendingEndpoints != null) pendingEndpoints = updated
+        else PairingPreferences.setDeviceEndpoints(context, deviceId, updated)
+        Log.i(TAG, "Accepted a durable Hermes Reach route credential for the active paired route")
+    }
+
 
     private fun handleAuthFail(envelope: Envelope) {
         try {

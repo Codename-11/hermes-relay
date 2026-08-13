@@ -1,8 +1,8 @@
 # Hermes-Relay CLI v__VERSION__
 
-**Release Date:** 2026-08-11
+**Release Date:** 2026-08-13
 
-This alpha replaces the right-click-only Windows tray with the compact **Hermes-Relay CLI UI** popup while keeping Hermes-Relay's desktop boundary narrow. Chat, the remote TUI, plugins, voice, and agent sessions remain CLI or upstream desktop concerns.
+This alpha makes the compact **Hermes-Relay CLI UI** responsive during connection changes, expands host and capability management, and presents live route security and diagnostics without turning the tray into a full desktop client.
 
 **Experimental phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64; the management tray is Windows-only.
 
@@ -10,25 +10,21 @@ This alpha replaces the right-click-only Windows tray with the compact **Hermes-
 
 ### Added
 
-- **Compact Windows management tray.** The popup provides connection status, host selection, per-host access, pending approval dialogs, recent activity, daemon controls, startup settings, and authorized-client revocation.
-- **Host-aware desktop access.** `hermes-relay hosts` lists and selects paired Hermes instances and stores independent Ask, Trusted, or Full Access policy for each canonical relay URL.
-- **In-window grant decisions.** New computer-use requests bring the tray forward and show the requesting host, scope, reason, and duration with explicit Approve and Reject actions.
-- **Supported UI lifecycle from the CLI.** `hermes-relay ui install|open|status` lets a CLI-only Windows installation add, reveal, or inspect the optional management UI without rerunning setup by hand.
+- **Host management hub.** Each paired Hermes host has local identity, pairing facts, access and capability controls, authorized-client revocation, re-pairing, and guarded removal.
+- **Evidence-first activity.** Overview shows the latest three events and detailed views retain bounded command, output, exit, duration, and truncation evidence.
+- **Live route details.** The Agent-to-PC path shows route type, encryption state, endpoint, packet motion, and a connection test with reachability and latency.
 
 ### Changed
 
-- **Daemon startup is connectivity-first.** Ask mode can keep an authenticated daemon connected with zero desktop tools attached, so starting the daemon does not itself grant authority.
-- **Full Access is explicit and host-scoped.** Trusted hosts may use command and file tools while screen/input remains task-granted. Full Access also removes task prompts for screen, input, and file patches for that host, while authentication, audit, revocation, emergency stop, and UAC boundaries remain enforced.
-- **Host changes apply immediately.** Selecting a different host or changing its access mode restarts an already-running daemon and the UI verifies that the daemon URL matches the selected host before showing it as connected.
-- **PowerShell remains first-class.** Agents should prefer the dedicated `desktop_powershell` RPC for native Windows work; `desktop_terminal` remains cmd-compatible for existing callers.
-- **CLI and UI updates share one verified installer.** Bundle updates coordinate shutdown and restart, allow same-version UI repair, and refuse accidental downgrade unless explicitly forced.
+- **Connection lifecycle stays responsive.** Connect, disconnect, and snapshot work run outside the UI thread with immediate transition feedback and single-flight live polling.
+- **Access presets are explicit.** Restricted, Ask Every Time, Standard, Full Access, and Custom map visibly onto individual command, file, screen/input, and hardware capabilities.
+- **Tailscale is the recommended remote route.** Direct TLS and Hermes Secure Link remain supported; Hermes Reach is marked experimental and stays below supported routes.
 
 ### Fixed
 
-- **Detached daemon start reports real readiness.** `daemon start` waits for the spawned PID to authenticate and connect, and reports configuration, authentication, early-exit, and timeout diagnostics instead of returning a false success.
-- **Normal tray operation no longer requires opening a CLI for grants.** Pending requests are resolved directly in the focused management dialog.
-- **Release checks match the management tray.** CI builds the React assets, validates Tauri metadata, and smoke-tests the packaged tray without obsolete menu-only size or window assertions.
-- **Installed tray builds no longer depend on a localhost development server.** Local and packaged builds embed their UI assets, eliminating the `127.0.0.1 refused to connect` failure.
+- **Legacy LAN and Tailscale routes no longer appear as Custom VPN.** Route testing infers generic saved roles from the endpoint and reports the correct network path.
+- **PowerShell output remains complete.** Scalar, pipeline, JSON, native output, errors, exit status, and truncation metadata return reliably through desktop RPC.
+- **Tray placement follows the real notification area.** Responsive geometry uses the tray monitor and DPI and remains anchored above the icon.
 
 ## Install
 
