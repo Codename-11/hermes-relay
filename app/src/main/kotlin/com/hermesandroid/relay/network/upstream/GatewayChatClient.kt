@@ -1,6 +1,14 @@
 package com.hermesandroid.relay.network.upstream
 
 import android.util.Log
+import com.hermesandroid.relay.data.GatewayProfileConfigureResult
+import com.hermesandroid.relay.data.GatewayProfileDescription
+import com.hermesandroid.relay.data.GatewayProfileEditorClient
+import com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException
+import com.hermesandroid.relay.data.GatewayProfilePatch
+import com.hermesandroid.relay.data.GatewayProfileSection
+import com.hermesandroid.relay.data.GatewayProfileSkill
+import com.hermesandroid.relay.data.GatewayProfileToolset
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.util.AppForegroundTracker
@@ -90,9 +98,11 @@ class GatewayChatClient(
     private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
     /** Random source for ordinary reconnect full-jitter. */
     private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
-) {
+) : GatewayProfileEditorClient {
     /** Existing upstream rich-chat vocabulary; do not invent a Relay-only source. */
     private val sessionSource = "webui"
+    @Volatile
+    private var profileEditorSupported: Boolean? = null
     companion object {
         private const val TAG = "GatewayChatClient"
 
@@ -1268,6 +1278,120 @@ class GatewayChatClient(
         }
         return rpc("commands.catalog", JsonObject(emptyMap()))
             .onSuccess { commandsCatalogCache = it }
+    }
+
+    /**
+     * Capability probe and authoritative editor snapshot. A method-not-found
+     * response is sticky for this client so older Hermes builds keep using the
+     * existing Relay inspector without repeatedly sending unsupported RPCs.
+     */
+    override suspend fun describeProfile(
+        profileName: String,
+    ): Result<GatewayProfileDescription> {
+        if (profileEditorSupported == false) {
+            return Result.failure(GatewayProfileEditorUnsupportedException())
+        }
+        val name = profileName.trim()
+        if (name.isEmpty()) return Result.failure(IllegalArgumentException("profile name required"))
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc(
+            "profiles.describe",
+            buildJsonObject { put("name", name) },
+        )
+        val error = response.exceptionOrNull()
+        if (error.isMethodNotFound()) {
+            profileEditorSupported = false
+            return Result.failure(GatewayProfileEditorUnsupportedException())
+        }
+        return response.mapCatching { payload ->
+            parseProfileDescription(payload, expectedName = name)
+        }.onSuccess {
+            profileEditorSupported = true
+        }
+    }
+
+    /** Apply only fields explicitly present in [patch]; requires a successful describe first. */
+    override suspend fun configureProfile(
+        profileName: String,
+        patch: GatewayProfilePatch,
+    ): Result<GatewayProfileConfigureResult> {
+        if (profileEditorSupported != true) {
+            return Result.failure(GatewayProfileEditorUnsupportedException())
+        }
+        val name = profileName.trim()
+        if (name.isEmpty()) return Result.failure(IllegalArgumentException("profile name required"))
+        if ((patch.provider == null) != (patch.model == null)) {
+            return Result.failure(IllegalArgumentException("provider and model must be saved together"))
+        }
+        val requested = patch.requestedSections
+        if (requested.isEmpty()) return Result.success(GatewayProfileConfigureResult(emptySet(), emptySet()))
+        val params = buildJsonObject {
+            put("name", name)
+            patch.description?.let { put("description", it) }
+            patch.soul?.let { put("soul", it) }
+            patch.provider?.let { put("provider", it) }
+            patch.model?.let { put("model", it) }
+            patch.disabledSkills?.let { names ->
+                put("disabled_skills", JsonArray(names.map(::JsonPrimitive)))
+            }
+            patch.enabledToolsets?.let { names ->
+                put("enabled_toolsets", JsonArray(names.map(::JsonPrimitive)))
+            }
+        }
+        return rpc("profiles.configure", params).mapCatching { payload ->
+            val appliedObject = payload["applied"] as? JsonObject
+                ?: throw GatewayRpcException("profiles.configure returned no applied map")
+            val applied = requested.filterTo(linkedSetOf()) { section ->
+                (appliedObject[section.wireName] as? JsonPrimitive)?.booleanOrNull == true
+            }
+            GatewayProfileConfigureResult(requested = requested, applied = applied)
+        }
+    }
+
+    private fun parseProfileDescription(
+        payload: JsonObject,
+        expectedName: String,
+    ): GatewayProfileDescription {
+        val name = payload.stringField("name")
+            ?: throw GatewayRpcException("profiles.describe returned no profile name")
+        if (name != expectedName) {
+            throw GatewayRpcException("profiles.describe returned a different profile")
+        }
+        val model = payload["model"] as? JsonObject ?: JsonObject(emptyMap())
+        val skills = (payload["skills"] as? JsonArray).orEmpty().mapNotNull { item ->
+            val obj = item as? JsonObject ?: return@mapNotNull null
+            val skillName = obj.stringField("name")?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            GatewayProfileSkill(
+                name = skillName,
+                enabled = (obj["enabled"] as? JsonPrimitive)?.booleanOrNull ?: true,
+            )
+        }
+        val toolsets = (payload["toolsets"] as? JsonArray).orEmpty().mapNotNull { item ->
+            val obj = item as? JsonObject ?: return@mapNotNull null
+            val toolsetName = obj.stringField("name")?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            GatewayProfileToolset(
+                name = toolsetName,
+                description = obj.stringField("description").orEmpty(),
+                toolCount = (obj["tool_count"] as? JsonPrimitive)?.intOrNull ?: 0,
+                enabled = (obj["enabled"] as? JsonPrimitive)?.booleanOrNull ?: true,
+            )
+        }
+        return GatewayProfileDescription(
+            name = name,
+            description = payload.stringField("description").orEmpty(),
+            soul = payload.stringField("soul").orEmpty(),
+            provider = model.stringField("provider").orEmpty(),
+            model = model.stringField("default").orEmpty(),
+            skills = skills,
+            toolsets = toolsets,
+            toolsetsPinned = (payload["toolsets_pinned"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        )
     }
 
     /**

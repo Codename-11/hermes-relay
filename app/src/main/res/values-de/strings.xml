@@ -4045,4 +4045,14 @@
     <string name="drawer_all_profiles">Alle Profile</string>
     <string name="drawer_no_profile_sessions">Keine passenden Profilsitzungen.</string>
     <string name="drawer_close">Schließen</string>
+    <string name="profile_inspector_gateway_settings">Gateway-Profileinstellungen</string>
+    <string name="profile_inspector_gateway_settings_hint">Wird für dieses ausgewählte Profil direkt über Hermes gespeichert.</string>
+    <string name="profile_inspector_edit_config">Profileinstellungen bearbeiten</string>
+    <string name="profile_inspector_description">Beschreibung</string>
+    <string name="profile_inspector_provider">Anbieter</string>
+    <string name="profile_inspector_model">Modell</string>
+    <string name="profile_inspector_save_changes">Änderungen speichern</string>
+    <string name="profile_inspector_toolsets">Toolsets</string>
+    <string name="profile_inspector_toolsets_hint">Wähle aus, welche Hermes-Werkzeuggruppen dieses Profil verwenden darf.</string>
+    <string name="profile_inspector_tool_count">%1$d Werkzeuge</string>
 </resources>

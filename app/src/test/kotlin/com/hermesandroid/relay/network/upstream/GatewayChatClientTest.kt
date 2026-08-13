@@ -288,6 +288,35 @@ class GatewayClientHarness(
                         json.parseToJsonElement("""[["/help","Show help"],["/model","Pick model"]]"""),
                     )
                 }
+                "profiles.describe" -> buildJsonObject {
+                    put("name", (params["name"] as? JsonPrimitive)?.contentOrNull ?: "")
+                    put("description", "Android operator")
+                    put("soul", "# Operator")
+                    put("model", buildJsonObject {
+                        put("provider", "openai")
+                        put("default", "gpt-5.6")
+                    })
+                    put("skills", JsonArray(listOf(buildJsonObject {
+                        put("name", "weather")
+                        put("enabled", false)
+                    })))
+                    put("toolsets", JsonArray(listOf(buildJsonObject {
+                        put("name", "terminal")
+                        put("description", "Run commands")
+                        put("tool_count", 4)
+                        put("enabled", true)
+                    })))
+                    put("toolsets_pinned", true)
+                }
+                "profiles.configure" -> buildJsonObject {
+                    put("ok", false)
+                    put("applied", buildJsonObject {
+                        if (params.containsKey("description")) put("description", true)
+                        if (params.containsKey("provider")) put("model", false)
+                        if (params.containsKey("disabled_skills")) put("skills", true)
+                        if (params.containsKey("enabled_toolsets")) put("toolsets", true)
+                    })
+                }
                 "pet.thumb" -> petThumbPayload
                 "model.options" -> buildJsonObject {
                     put("model", "gpt-5.5")
@@ -635,6 +664,50 @@ class GatewayChatClientTest {
         client.shutdown()
         scope.cancel()
         harness.shutdown()
+    }
+
+    @Test
+    fun `profile editor describes exact profile and maps upstream shape`() = runBlocking {
+        val description = client.describeProfile("operator").getOrThrow()
+
+        assertEquals("operator", description.name)
+        assertEquals("openai", description.provider)
+        assertEquals("gpt-5.6", description.model)
+        assertFalse(description.skills.single().enabled)
+        assertEquals(4, description.toolsets.single().toolCount)
+        assertTrue(description.toolsetsPinned)
+        assertEquals(
+            "operator",
+            (harness.awaitRpc("profiles.describe")["name"] as? JsonPrimitive)?.contentOrNull,
+        )
+    }
+
+    @Test
+    fun `profile configure is gated by describe and reports every requested section`() = runBlocking {
+        assertTrue(client.configureProfile("operator", com.hermesandroid.relay.data.GatewayProfilePatch(description = "x")).isFailure)
+        client.describeProfile("operator").getOrThrow()
+
+        val result = client.configureProfile(
+            "operator",
+            com.hermesandroid.relay.data.GatewayProfilePatch(
+                description = "Updated",
+                provider = "openai",
+                model = "gpt-5.6-sol",
+            ),
+        ).getOrThrow()
+
+        assertEquals(setOf(com.hermesandroid.relay.data.GatewayProfileSection.Description), result.applied)
+        assertEquals(setOf(com.hermesandroid.relay.data.GatewayProfileSection.Model), result.failed)
+    }
+
+    @Test
+    fun `profile describe method not found becomes sticky unsupported capability`() = runBlocking {
+        harness.methodNotFound += "profiles.describe"
+
+        assertTrue(client.describeProfile("operator").exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException)
+        harness.rpcLog.clear()
+        assertTrue(client.describeProfile("operator").exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException)
+        assertTrue(harness.rpcLog.none { it.first == "profiles.describe" })
     }
 
     @Test

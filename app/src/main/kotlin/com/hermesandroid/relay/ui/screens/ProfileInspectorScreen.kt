@@ -77,10 +77,12 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ProfileConfigResponse
 import com.hermesandroid.relay.data.ProfileMemoryEntry
 import com.hermesandroid.relay.data.ProfileSkillEntry
+import com.hermesandroid.relay.data.GatewayProfileToolset
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.viewmodel.InspectorSection
 import com.hermesandroid.relay.viewmodel.LoadState
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
+import com.hermesandroid.relay.viewmodel.ProfileInspectorSource
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -123,6 +125,8 @@ fun ProfileInspectorScreen(
     val soulState by viewModel.soulState.collectAsState()
     val memoryState by viewModel.memoryState.collectAsState()
     val skillsState by viewModel.skillsState.collectAsState()
+    val source by viewModel.source.collectAsState()
+    val gatewayDescription by viewModel.gatewayDescription.collectAsState()
 
     // Lazy first-load on screen entry. Keyed on the profile name so a
     // re-entry for a different profile (unlikely but possible via deep
@@ -244,6 +248,18 @@ fun ProfileInspectorScreen(
                     InspectorSection.Config -> ConfigPane(
                         state = configState,
                         onRetry = { viewModel.refreshSection(InspectorSection.Config) },
+                        gatewayEditable = source == ProfileInspectorSource.Gateway,
+                        editing = viewModel.configEditing.collectAsState().value,
+                        descriptionDraft = viewModel.configDescriptionDraft.collectAsState().value,
+                        providerDraft = viewModel.configProviderDraft.collectAsState().value,
+                        modelDraft = viewModel.configModelDraft.collectAsState().value,
+                        saving = viewModel.configSaving.collectAsState().value,
+                        onBeginEdit = viewModel::beginConfigEdit,
+                        onDescriptionChange = viewModel::updateConfigDescriptionDraft,
+                        onProviderChange = viewModel::updateConfigProviderDraft,
+                        onModelChange = viewModel::updateConfigModelDraft,
+                        onSave = viewModel::saveConfigEdit,
+                        onCancel = viewModel::cancelConfigEdit,
                     )
                     InspectorSection.Soul -> SoulPane(
                         state = soulState,
@@ -282,6 +298,13 @@ fun ProfileInspectorScreen(
                         onToggleSkill = { name, enabled ->
                             viewModel.toggleSkill(name, enabled)
                         },
+                        gatewayNative = source == ProfileInspectorSource.Gateway,
+                        skillDrafts = viewModel.skillDrafts.collectAsState().value,
+                        toolsets = gatewayDescription?.toolsets.orEmpty(),
+                        toolsetDrafts = viewModel.toolsetDrafts.collectAsState().value,
+                        saving = viewModel.skillsSaving.collectAsState().value,
+                        onToggleToolset = viewModel::toggleToolset,
+                        onSaveDrafts = viewModel::saveSkillEdits,
                     )
                 }
             }
@@ -291,6 +314,14 @@ fun ProfileInspectorScreen(
 
 private data class InspectorTab(val label: String, val section: InspectorSection)
 
+internal fun profileConfigSaveEnabled(provider: String, model: String, saving: Boolean): Boolean =
+    provider.isNotBlank() && model.isNotBlank() && !saving
+
+internal fun gatewayDraftSaveVisible(
+    skillDrafts: Map<String, Boolean>,
+    toolsetDrafts: Map<String, Boolean>,
+): Boolean = skillDrafts.isNotEmpty() || toolsetDrafts.isNotEmpty()
+
 // ---------------------------------------------------------------
 // Config pane — JSON tree with collapsible nested objects.
 // ---------------------------------------------------------------
@@ -299,6 +330,18 @@ private data class InspectorTab(val label: String, val section: InspectorSection
 private fun ConfigPane(
     state: LoadState<ProfileConfigResponse>,
     onRetry: () -> Unit,
+    gatewayEditable: Boolean,
+    editing: Boolean,
+    descriptionDraft: String,
+    providerDraft: String,
+    modelDraft: String,
+    saving: Boolean,
+    onBeginEdit: () -> Unit,
+    onDescriptionChange: (String) -> Unit,
+    onProviderChange: (String) -> Unit,
+    onModelChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     PaneShell(state = state, onRetry = onRetry) { response ->
         var showRawConfig by remember(response.profile, response.config) {
@@ -318,6 +361,21 @@ private fun ConfigPane(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (gatewayEditable) {
+                GatewayConfigEditor(
+                    editing = editing,
+                    description = descriptionDraft,
+                    provider = providerDraft,
+                    model = modelDraft,
+                    saving = saving,
+                    onBeginEdit = onBeginEdit,
+                    onDescriptionChange = onDescriptionChange,
+                    onProviderChange = onProviderChange,
+                    onModelChange = onModelChange,
+                    onSave = onSave,
+                    onCancel = onCancel,
+                )
+            }
             ConfigSummaryCard(response)
 
             OutlinedButton(
@@ -358,6 +416,75 @@ private fun ConfigPane(
                 } else {
                     JsonObjectTree(obj = response.config, depth = 0)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GatewayConfigEditor(
+    editing: Boolean,
+    description: String,
+    provider: String,
+    model: String,
+    saving: Boolean,
+    onBeginEdit: () -> Unit,
+    onDescriptionChange: (String) -> Unit,
+    onProviderChange: (String) -> Unit,
+    onModelChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.profile_inspector_gateway_settings), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        stringResource(R.string.profile_inspector_gateway_settings_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (!editing) {
+                    IconButton(onClick = onBeginEdit) {
+                        Icon(Icons.Filled.Edit, stringResource(R.string.profile_inspector_edit_config))
+                    }
+                }
+            }
+            if (editing) {
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = onDescriptionChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.profile_inspector_description)) },
+                )
+                OutlinedTextField(
+                    value = provider,
+                    onValueChange = onProviderChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.profile_inspector_provider)) },
+                )
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = onModelChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.profile_inspector_model)) },
+                )
+                EditorBottomBar(
+                    saving = saving,
+                    canSave = profileConfigSaveEnabled(provider, model, saving),
+                    onSave = onSave,
+                    onCancel = onCancel,
+                )
             }
         }
     }
@@ -1334,9 +1461,16 @@ private fun SkillsPane(
     onRetry: () -> Unit,
     toggleSupported: Boolean?,
     onToggleSkill: (String, Boolean) -> Unit,
+    gatewayNative: Boolean,
+    skillDrafts: Map<String, Boolean>,
+    toolsets: List<GatewayProfileToolset>,
+    toolsetDrafts: Map<String, Boolean>,
+    saving: Boolean,
+    onToggleToolset: (String, Boolean) -> Unit,
+    onSaveDrafts: () -> Unit,
 ) {
     PaneShell(state = state, onRetry = onRetry) { response ->
-        if (response.skills.isEmpty()) {
+        if (response.skills.isEmpty() && !gatewayNative) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1391,6 +1525,30 @@ private fun SkillsPane(
                         visibleCount = visibleSkills.size,
                     )
                 }
+                if (gatewayNative && toolsets.isNotEmpty()) {
+                    item(key = "__toolsets__") {
+                        GatewayToolsetsCard(
+                            toolsets = toolsets,
+                            drafts = toolsetDrafts,
+                            onToggle = onToggleToolset,
+                        )
+                    }
+                }
+                if (gatewayNative && gatewayDraftSaveVisible(skillDrafts, toolsetDrafts)) {
+                    item(key = "__save_gateway_drafts__") {
+                        Button(
+                            onClick = onSaveDrafts,
+                            enabled = !saving,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            if (saving) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(stringResource(if (saving) R.string.profile_inspector_saving else R.string.profile_inspector_save_changes))
+                        }
+                    }
+                }
                 if (visibleSkills.isEmpty()) {
                     item(key = "__skills_empty_filter__") {
                         Card(
@@ -1430,6 +1588,8 @@ private fun SkillsPane(
                         },
                         toggleSupported = toggleSupported,
                         onToggleSkill = onToggleSkill,
+                        gatewayNative = gatewayNative,
+                        skillDrafts = skillDrafts,
                     )
                 }
                 if (toggleSupported == false) {
@@ -1562,6 +1722,8 @@ private fun SkillCategorySection(
     onToggleExpanded: () -> Unit,
     toggleSupported: Boolean?,
     onToggleSkill: (String, Boolean) -> Unit,
+    gatewayNative: Boolean,
+    skillDrafts: Map<String, Boolean>,
 ) {
     val categoryStateDescription = stringResource(
         if (expanded) {
@@ -1622,6 +1784,7 @@ private fun SkillCategorySection(
                             skill = skill,
                             toggleSupported = toggleSupported,
                             onToggleSkill = onToggleSkill,
+                            controlledEnabled = if (gatewayNative) skillDrafts[skill.name] ?: skill.enabled else null,
                         )
                         if (index != skills.lastIndex) {
                             HorizontalDivider(
@@ -1640,6 +1803,7 @@ private fun SkillRow(
     skill: ProfileSkillEntry,
     toggleSupported: Boolean?,
     onToggleSkill: (String, Boolean) -> Unit,
+    controlledEnabled: Boolean?,
 ) {
     // Optimistic local toggle state. The VM's emitted events revert us
     // on failure; on success the next `/skills` refetch will overwrite
@@ -1652,6 +1816,7 @@ private fun SkillRow(
     // null (probe hasn't completed) → leave tappable but the PUT will
     // ask authoritatively.
     val switchEnabled = toggleSupported != false
+    val displayedEnabled = controlledEnabled ?: localEnabled
 
     Row(
         modifier = Modifier
@@ -1666,7 +1831,7 @@ private fun SkillRow(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
-                if (!localEnabled) {
+                if (!displayedEnabled) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = stringResource(R.string.profile_inspector_disabled),
@@ -1684,7 +1849,7 @@ private fun SkillRow(
             }
         }
         val toggleDescription = stringResource(
-            if (localEnabled) {
+            if (displayedEnabled) {
                 R.string.profile_inspector_disable_skill
             } else {
                 R.string.profile_inspector_enable_skill
@@ -1692,7 +1857,7 @@ private fun SkillRow(
             skill.name,
         )
         androidx.compose.material3.Switch(
-            checked = localEnabled,
+            checked = displayedEnabled,
             enabled = switchEnabled,
             modifier = Modifier.semantics {
                 contentDescription = toggleDescription
@@ -1705,7 +1870,7 @@ private fun SkillRow(
                 // the next recomposition sees — when the VM updates
                 // the flag to false post-call, we reset the switch to
                 // the prior state on the next pass.
-                localEnabled = new
+                if (controlledEnabled == null) localEnabled = new
                 onToggleSkill(skill.name, new)
             },
         )
@@ -1716,6 +1881,44 @@ private fun SkillRow(
     LaunchedEffect(toggleSupported, skill.enabled) {
         if (toggleSupported == false && localEnabled != skill.enabled) {
             localEnabled = skill.enabled
+        }
+    }
+}
+
+@Composable
+private fun GatewayToolsetsCard(
+    toolsets: List<GatewayProfileToolset>,
+    drafts: Map<String, Boolean>,
+    onToggle: (String, Boolean) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.profile_inspector_toolsets), fontWeight = FontWeight.SemiBold)
+            Text(
+                stringResource(R.string.profile_inspector_toolsets_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            toolsets.forEach { toolset ->
+                val enabled = drafts[toolset.name] ?: toolset.enabled
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(toolset.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            stringResource(R.string.profile_inspector_tool_count, toolset.toolCount),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = enabled,
+                        onCheckedChange = { onToggle(toolset.name, it) },
+                    )
+                }
+            }
         }
     }
 }
