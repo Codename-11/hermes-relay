@@ -471,6 +471,30 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
 # other routes in this file — the dashboard is loopback-only and we
 # never accept callers from elsewhere.
 
+_TAILSCALE_MANAGED_PORTS = frozenset((8767, 8642))
+
+
+def _managed_tailscale_port(body: dict[str, Any]) -> int:
+    """Return a dashboard-managed port, rejecting arbitrary proxy targets."""
+    port_raw = body.get("port", 8767)
+    if isinstance(port_raw, bool):
+        raise HTTPException(
+            status_code=400, detail=f"port must be an integer (got {port_raw!r})"
+        )
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"port must be an integer (got {port_raw!r})"
+        ) from exc
+    if port not in _TAILSCALE_MANAGED_PORTS:
+        supported = ", ".join(str(value) for value in sorted(_TAILSCALE_MANAGED_PORTS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"dashboard may manage only the Relay/API ports: {supported}",
+        )
+    return port
+
 
 def _tailscale_status_dict() -> dict[str, Any]:
     """Flatten ``tailscale.status()`` into a JSON-safe dict.
@@ -519,8 +543,43 @@ async def get_remote_access_status() -> dict[str, Any]:
     if not isinstance(pinned, str) or not pinned.strip():
         pinned = None
 
+    secure_link: dict[str, Any] = {
+        "enabled": False,
+        "reason": "Hermes Secure Link is not enabled on the Relay host",
+    }
+    try:
+        relay_health = await _proxy_get("/health")
+        candidate = (
+            relay_health.get("secure_proxy")
+            if isinstance(relay_health, dict)
+            else None
+        )
+        if isinstance(candidate, dict):
+            proxy = candidate.get("proxy")
+            relay_secure_link = relay_health.get("secure_link", {})
+            reach = relay_secure_link.get("reach", {}) if isinstance(relay_secure_link, dict) else {}
+            secure_link = {
+                "enabled": True,
+                "role": candidate.get("role"),
+                "recommended": candidate.get("recommended") is True,
+                "security": candidate.get("security"),
+                "url": proxy.get("url") if isinstance(proxy, dict) else None,
+                "surfaces": proxy.get("surfaces", []) if isinstance(proxy, dict) else [],
+                "reach": {
+                    "enabled": reach.get("enabled") is True,
+                    "state": reach.get("state") if isinstance(reach.get("state"), str) else "disabled",
+                    "last_error": reach.get("last_error") if isinstance(reach.get("last_error"), str) else None,
+                } if isinstance(reach, dict) else {"enabled": False, "state": "disabled"},
+            }
+    except HTTPException as exc:
+        secure_link = {
+            "enabled": False,
+            "reason": f"Relay status unavailable: {exc.detail}",
+        }
+
     return {
         "tailscale": _tailscale_status_dict(),
+        "secure_link": secure_link,
         "public": {"url": pinned, "reachable": None},
         "upstream_canonical": _canonical_upstream_present(),
     }
@@ -539,13 +598,9 @@ async def tailscale_enable(
             detail=f"tailscale helper unavailable: {exc}",
         ) from exc
 
-    port_raw = body.get("port", RELAY_PORT)
-    try:
-        port = int(port_raw)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=400, detail=f"port must be an integer (got {port_raw!r})"
-        ) from exc
+    if body.get("stack") is True:
+        return tailscale.enable_stack()
+    port = _managed_tailscale_port(body)
     return tailscale.enable(port=port)
 
 
@@ -562,13 +617,9 @@ async def tailscale_disable(
             detail=f"tailscale helper unavailable: {exc}",
         ) from exc
 
-    port_raw = body.get("port", RELAY_PORT)
-    try:
-        port = int(port_raw)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=400, detail=f"port must be an integer (got {port_raw!r})"
-        ) from exc
+    if body.get("stack") is True:
+        return tailscale.disable_stack()
+    port = _managed_tailscale_port(body)
     return tailscale.disable(port=port)
 
 

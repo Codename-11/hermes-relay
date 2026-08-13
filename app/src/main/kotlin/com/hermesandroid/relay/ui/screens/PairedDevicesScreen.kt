@@ -64,6 +64,8 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.hasSecureProxy
+import com.hermesandroid.relay.data.secureLinkCoversAllServices
 import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.ui.components.SessionTtlPickerDialog
 import com.hermesandroid.relay.ui.components.TransportSecurityBadge
@@ -939,6 +941,17 @@ private fun EndpointsSubList(
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.weight(1f),
                 )
+                if (candidate.hasSecureProxy()) {
+                    Text(
+                        text = if (candidate.secureLinkCoversAllServices()) {
+                            stringResource(R.string.secure_link_pinned_tls_short)
+                        } else {
+                            stringResource(R.string.secure_link_partial_short)
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 if (isActive) {
                     Text(
                         text = stringResource(R.string.paired_devices_active),

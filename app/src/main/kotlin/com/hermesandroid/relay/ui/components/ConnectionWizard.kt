@@ -105,6 +105,11 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.hasSecureProxy
+import com.hermesandroid.relay.data.hasHermesReach
+import com.hermesandroid.relay.data.presentationRouteUrl
+import com.hermesandroid.relay.data.secureLinkCoversAllServices
+import com.hermesandroid.relay.data.secureLinkServices
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.network.shared.HermesLanDiscovery
 import com.hermesandroid.relay.network.shared.HermesLanDiscoveryResult
@@ -3174,7 +3179,7 @@ private fun ConfirmStep(
     // app auto-falls back to the secure one, so a blanket "Insecure (dev)"
     // badge from endpoint[0] alone would lie to the user.
     val anySecure = endpoints.any { c ->
-        c.relay?.url?.startsWith("wss://") == true || c.api?.tls == true ||
+        c.hasSecureProxy() || c.relay?.url?.startsWith("wss://") == true || c.api?.tls == true ||
             c.relay?.transportHint.equals("wss", ignoreCase = true) ||
             c.dashboard?.url?.startsWith("https://", ignoreCase = true) == true
     }
@@ -3195,7 +3200,7 @@ private fun ConfirmStep(
     // Mixed case ("Tailscale is encrypted..." vs "Public is encrypted...").
     val firstSecureLabel = endpoints
         .firstOrNull { c ->
-            c.relay?.url?.startsWith("wss://") == true || c.api?.tls == true ||
+            c.hasSecureProxy() || c.relay?.url?.startsWith("wss://") == true || c.api?.tls == true ||
                 c.relay?.transportHint.equals("wss", ignoreCase = true) ||
                 c.dashboard?.url?.startsWith("https://", ignoreCase = true) == true
         }?.displayLabel()
@@ -3208,6 +3213,7 @@ private fun ConfirmStep(
     val distinctRoles = endpoints.map { it.role }.distinct()
     var preferRole by remember(payload) { mutableStateOf<String?>(null) }
     var preferMenuOpen by remember { mutableStateOf(false) }
+    val secureLink = endpoints.firstOrNull { it.hasSecureProxy() }
 
     Column(
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -3318,6 +3324,15 @@ private fun ConfirmStep(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    secureLink?.let { route ->
+                        SecureLinkPairingSummary(
+                            services = route.secureLinkServices(),
+                            complete = route.secureLinkCoversAllServices(),
+                            hasFallback = endpoints.size > 1,
+                            usesReach = route.hasHermesReach(),
+                        )
+                        HorizontalDivider()
+                    }
                     endpoints.forEachIndexed { index, candidate ->
                         if (index > 0) HorizontalDivider()
                         EndpointPreviewRow(
@@ -3720,7 +3735,7 @@ private fun EndpointPreviewRow(
 ) {
     // Per-row security derived from the same three signals as the overall
     // securityState computation — scheme, tls flag, transportHint.
-    val isSecure = candidate.relay?.url?.startsWith("wss://") == true ||
+    val isSecure = candidate.hasSecureProxy() || candidate.relay?.url?.startsWith("wss://") == true ||
         candidate.api?.tls == true ||
         candidate.relay?.transportHint.equals("wss", ignoreCase = true) ||
         candidate.dashboard?.url?.startsWith("https://", ignoreCase = true) == true
@@ -3756,7 +3771,7 @@ private fun EndpointPreviewRow(
                 }
             }
             Text(
-                text = candidate.primaryRouteUrl().orEmpty() +
+                text = candidate.presentationRouteUrl().orEmpty() +
                     (candidate.relay?.transportHint?.let { " \u00b7 $it" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -3769,6 +3784,75 @@ private fun EndpointPreviewRow(
             text = ordinalLabel,
             fg = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun SecureLinkPairingSummary(
+    services: List<String>,
+    complete: Boolean,
+    hasFallback: Boolean,
+    usesReach: Boolean,
+) {
+    val relayLabel = stringResource(R.string.secure_link_service_relay)
+    val apiLabel = stringResource(R.string.secure_link_service_api)
+    val dashboardLabel = stringResource(R.string.secure_link_service_dashboard)
+    val serviceText = services.map { service ->
+        when (service) {
+            "relay" -> relayLabel
+            "api" -> apiLabel
+            "dashboard" -> dashboardLabel
+            else -> service
+        }
+    }.joinToString(" · ")
+    Surface(
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                stringResource(if (usesReach) R.string.hermes_reach_title else R.string.secure_link_title),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            if (usesReach) {
+                Text(
+                    stringResource(R.string.hermes_reach_summary),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                stringResource(R.string.secure_link_pinned_tls),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                if (serviceText.isBlank()) stringResource(R.string.secure_link_no_services)
+                else stringResource(R.string.secure_link_protects, serviceText),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (!complete) {
+                Text(
+                    stringResource(R.string.secure_link_partial_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
+            Text(
+                if (hasFallback) stringResource(R.string.secure_link_fallback_ready)
+                else stringResource(R.string.secure_link_no_fallback),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                stringResource(R.string.secure_link_auth_note),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

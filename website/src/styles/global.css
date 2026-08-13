@@ -1326,6 +1326,84 @@ img {
   line-height: 1.65;
 }
 
+.secure-link-callout {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 15px;
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--violet) 55%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--violet) 12%);
+  color: var(--text);
+}
+
+.secure-link-callout:hover {
+  border-color: var(--violet-soft);
+}
+
+.tailscale-callout {
+  margin-top: 12px;
+  border-color: color-mix(in srgb, var(--cyan) 42%, var(--line));
+  background: color-mix(in srgb, var(--surface) 90%, var(--cyan) 10%);
+}
+
+.tailscale-callout:hover {
+  border-color: var(--cyan);
+}
+
+.tailscale-callout .secure-link-icon,
+.tailscale-callout .secure-link-action,
+.tailscale-callout small {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.secure-link-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--violet);
+  border-radius: 50%;
+  color: var(--violet-soft);
+}
+
+.secure-link-callout strong,
+.secure-link-callout small,
+.secure-link-callout > span > span {
+  display: block;
+}
+
+.secure-link-callout strong {
+  font-size: 0.88rem;
+}
+
+.secure-link-callout small {
+  margin: 3px 0 7px;
+  color: var(--violet-soft);
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  text-transform: uppercase;
+}
+
+.secure-link-callout > span > span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.secure-link-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--violet-soft);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
 .setup-path-links {
   display: grid;
   justify-items: start;
@@ -1872,6 +1950,14 @@ img {
 
   .setup-path-links {
     width: 100%;
+  }
+
+  .secure-link-callout {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .secure-link-action {
+    grid-column: 2;
   }
 
   .setup-path-links .button {

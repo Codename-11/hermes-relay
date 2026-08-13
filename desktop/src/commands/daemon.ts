@@ -36,6 +36,7 @@ import * as path from 'node:path'
 
 import type { ParsedArgs } from '../cli.js'
 import { desktopRelayIdentity } from '../deviceIdentity.js'
+import { inferEndpointRole } from '../endpoint.js'
 import { GatewayClient } from '../gatewayClient.js'
 import type { GatewayEvent, SessionCreateResponse } from '../gatewayTypes.js'
 import {
@@ -54,6 +55,7 @@ import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
+import { probeCandidatesByPriority, secureFirstCandidates } from '../pairingQr.js'
 import {
   advertisedDesktopTools,
   desktopHandlers,
@@ -737,13 +739,45 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     }
   }
 
+  // Keep the selected host as the policy/storage identity, while resolving
+  // its current network route independently. A v3 pair can therefore prefer
+  // WSS/Tailscale and fall back to LAN without creating duplicate hosts.
+  const configuredUrl = url
+  const configuredSession = await getSession(configuredUrl)
+  let useSessionHeader = false
+  let brokerRoute: import('../transport/BrokerRelaySocket.js').BrokerRouteConfig | undefined
+  let activeRoute = configuredSession?.routeCandidates?.find(candidate => candidate.relay.url === configuredUrl)?.role
+    ?? (configuredSession?.routeCandidates?.length ? null : configuredSession?.endpointRole ?? inferEndpointRole(configuredUrl))
+  if (!resolveRemoteOrNull(args) && configuredSession?.routeCandidates?.length) {
+    const candidates = configuredSession.preferSecureRoutes
+      ? secureFirstCandidates(configuredSession.routeCandidates)
+      : configuredSession.routeCandidates
+    try {
+      const route = await probeCandidatesByPriority(candidates, { sessionToken: configuredSession.token })
+      url = route.relay.url
+      useSessionHeader = route.role.toLowerCase() === 'plugin_proxy' && !route.broker
+      if (route.broker && route.proxy) {
+        brokerRoute = { url: route.broker.url, hostId: route.broker.hostId, credentialKind: route.broker.credentialKind, token: route.broker.token, innerUrl: route.relay.url, innerPinSha256: route.proxy.pinSha256 }
+      }
+      activeRoute = route.broker ? 'outbound_broker' : route.role
+      log.info({ event: 'route_selected', configured_url: configuredUrl, url, role: route.role })
+    } catch (e) {
+      log.warn({
+        event: 'route_probe_failed',
+        configured_url: configuredUrl,
+        message: e instanceof Error ? e.message : String(e),
+        fallback_url: configuredUrl
+      })
+    }
+  }
+
   // Resolve credentials: daemon takes ONLY --token or stored session. No
   // pairing code path (the daemon can't do the one-time code → token
   // trade safely — the token should already be stored). No interactive
   // fallback (headless).
   const argToken = typeof args.flags.token === 'string' ? args.flags.token : undefined
   const envToken = process.env.HERMES_RELAY_TOKEN
-  const stored = await getSession(url)
+  const stored = configuredSession ?? await getSession(url)
   const token = argToken ?? envToken ?? stored?.token
 
   if (!token) {
@@ -760,7 +794,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // connectivity itself a privileged operation.
   const consented = stored?.toolsConsented === true
   const allowToolsFlag = !!args.flags['allow-tools']
-  const storedAccessMode = await getHostAccessMode(url)
+  const storedAccessMode = await getHostAccessMode(configuredUrl)
   const accessMode = effectiveHostAccessMode(storedAccessMode, stored?.toolsConsented === true)
   const toolsEnabled = consented || allowToolsFlag || accessMode !== 'ask'
 
@@ -782,6 +816,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     pid: process.pid,
     process_name: path.basename(process.execPath),
     url,
+    configured_url: configuredUrl,
+    active_route: activeRoute ?? undefined,
     state: 'starting',
     started_at: nowSec(),
     updated_at: nowSec(),
@@ -802,6 +838,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const relay = new RelayTransport({
     url,
     sessionToken: token,
+    sessionHeader: useSessionHeader,
+    broker: brokerRoute,
     ...desktopRelayIdentity()
   })
 
@@ -865,10 +903,10 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const capabilities = effectiveHostCapabilityPolicies(
     storedAccessMode,
     stored?.toolsConsented === true,
-    await getHostCapabilityPolicies(url)
+    await getHostCapabilityPolicies(configuredUrl)
   )
   configureComputerUseRuntime({
-    url,
+    url: configuredUrl,
     computerUseConsented: computerUseEnabled,
     consentSource: consented ? 'stored' : toolsEnabled ? 'override' : 'none',
     accessMode,

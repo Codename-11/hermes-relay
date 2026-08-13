@@ -18,6 +18,9 @@ import {
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec, unknownSubcommand } from '../lib/usage.js'
 import { deleteSession, getSession, listSessions, saveSession } from '../remoteSessions.js'
+import { candidateDisplayLabel, displayLabel, inferEndpointRole } from '../endpoint.js'
+import { probeCandidate, secureFirstCandidates } from '../pairingQr.js'
+import { describeTransportSecurity } from '../transportSecurity.js'
 
 const HOSTS_USAGE: UsageSpec = {
   name: 'hosts',
@@ -26,6 +29,7 @@ const HOSTS_USAGE: UsageSpec = {
     'hosts [list] [--json]',
     'hosts select <relay-url>',
     'hosts rename <relay-url> <name>',
+    'hosts test [--remote <relay-url>] [--json]',
     'hosts forget <relay-url> --yes',
     'hosts access <restricted|ask-every-time|standard|full-access> [--remote <url>] [--yes]',
     'hosts capability <commands|files|screen-input|usb|microphone|camera> <disabled|ask|allow> [--remote <url>] [--yes]'
@@ -34,6 +38,7 @@ const HOSTS_USAGE: UsageSpec = {
     { verb: 'list', desc: 'List locally paired Hermes hosts (default)' },
     { verb: 'select <url>', desc: 'Choose the host used by the tray and daemon' },
     { verb: 'rename <url> <name>', desc: 'Set a local display name for a paired host' },
+    { verb: 'test', desc: 'Test saved routes and report the best available connection' },
     { verb: 'forget <url>', desc: 'Remove the local pairing, alias, and access policy' },
     { verb: 'access <mode>', desc: 'Set a Restricted, Ask Every Time, Standard, or Full Access preset' },
     { verb: 'capability <name> <mode>', desc: 'Set one capability; exact presets are recognized automatically' }
@@ -61,6 +66,7 @@ export interface LocalHostSummary {
   is_active: boolean
   access_mode: HostAccessMode
   capabilities: CapabilityPolicies
+  broker_configured: boolean
 }
 
 function hostLabel(url: string): string {
@@ -96,11 +102,12 @@ async function localHosts(): Promise<LocalHostSummary[]> {
       url,
       host: aliases[url] ?? hostLabel(url),
       server_version: session.serverVersion,
-      endpoint_role: session.endpointRole ?? null,
+      endpoint_role: session.endpointRole ?? inferEndpointRole(url),
       paired_at: session.pairedAt,
       is_active: url === active,
       access_mode: effectiveHostAccessMode(storedMode, legacyConsented),
-      capabilities: effectiveHostCapabilityPolicies(storedMode, legacyConsented, await getHostCapabilityPolicies(url))
+      capabilities: effectiveHostCapabilityPolicies(storedMode, legacyConsented, await getHostCapabilityPolicies(url)),
+      broker_configured: session.routeCandidates?.some(candidate => ['outbound_broker', 'relay_broker', 'broker'].includes(candidate.role.toLowerCase())) ?? false
     }
   })).then(hosts => hosts.sort((a, b) =>
     Number(b.is_active) - Number(a.is_active) || b.paired_at - a.paired_at || a.url.localeCompare(b.url)
@@ -139,11 +146,40 @@ async function listHosts(args: ParsedArgs): Promise<number> {
   for (const host of hosts) {
     process.stdout.write(
       `  ${host.is_active ? '*' : ' '} ${host.host}  ${displayAccessMode(host.access_mode)}\n` +
-      t.muted(`      ${host.url}${host.endpoint_role ? ` (${host.endpoint_role})` : ''}`) + '\n' +
+      t.muted(`      ${host.url}${host.endpoint_role ? ` (${displayLabel(host.endpoint_role)})` : ''}`) + '\n' +
       t.muted(`      Commands: ${host.capabilities.commands} · Files: ${host.capabilities.files} · Screen/input: ${host.capabilities.screen_input} · USB: ${host.capabilities.usb}`) + '\n'
     )
   }
   return 0
+}
+
+async function testHostRoutes(args: ParsedArgs): Promise<number> {
+  const requested = typeof args.flags.remote === 'string' ? args.flags.remote.trim() : ''
+  const url = requested || await getActiveDesktopRelayUrl() || ''
+  const session = url ? await getSession(url) : null
+  if (!url || !session) {
+    process.stderr.write('error: select or pass a locally paired Hermes host\n')
+    return 1
+  }
+  const candidates = secureFirstCandidates(session.routeCandidates?.length ? session.routeCandidates : [{
+    role: session.endpointRole ?? 'custom', priority: 0,
+    api: { host: new URL(url).hostname, port: Number(new URL(url).port || (url.startsWith('wss:') ? 443 : 80)), tls: url.startsWith('wss:') },
+    relay: { url }
+  }])
+  const results = await Promise.all(candidates.map(async candidate => {
+    const result = await probeCandidate(candidate, AbortSignal.timeout(5_000), session.token)
+    const security = describeTransportSecurity(candidate.relay.url, candidate.role)
+    return { role: candidate.role, label: candidateDisplayLabel(candidate), url: candidate.broker?.url ?? candidate.relay.url, reachable: result.reachable, elapsed_ms: result.elapsedMs, encrypted: security.encrypted, security: candidate.broker ? 'Reachability only; inner Secure Link verifies on connect' : security.label, error: result.error ?? null }
+  }))
+  const best = results.find(result => result.reachable) ?? null
+  if (args.flags.json) process.stdout.write(JSON.stringify({ ok: best !== null, host_url: url, best, routes: results }, null, 2) + '\n')
+  else {
+    const t = makeTheme({ noColor: !!args.flags['no-color'] })
+    process.stdout.write(t.bold('Hermes connection test') + '\n')
+    for (const result of results) process.stdout.write(`  ${result.reachable ? t.ok('●') : t.err('●')} ${result.label}  ${result.security}  ${result.reachable ? `${result.elapsed_ms}ms` : result.error ?? 'unreachable'}\n`)
+    process.stdout.write(best ? t.okLine(`Best route: ${best.label}`) + '\n' : t.errLine('No saved route is reachable.') + '\n')
+  }
+  return best ? 0 : 1
 }
 
 async function selectHost(args: ParsedArgs): Promise<number> {
@@ -290,6 +326,7 @@ export async function hostsCommand(args: ParsedArgs): Promise<number> {
   if (subcommand === 'list') return listHosts(args)
   if (subcommand === 'select') return selectHost(args)
   if (subcommand === 'rename') return renameHost(args)
+  if (subcommand === 'test') return testHostRoutes(args)
   if (subcommand === 'forget') return forgetHost(args)
   if (subcommand === 'access') return setAccess(args)
   if (subcommand === 'capability') return setCapability(args)

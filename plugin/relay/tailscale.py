@@ -41,6 +41,20 @@ DEFAULT_API_PORT = 8642
 DEFAULT_PORT = DEFAULT_RELAY_PORT
 
 
+def _valid_port(port: Any) -> bool:
+    """Return whether ``port`` is an integer in the TCP/UDP port range."""
+    return isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
+
+
+def _invalid_port_result(port: Any) -> dict[str, Any]:
+    """Structured validation failure preserving this module's no-raise API."""
+    return {
+        "ok": False,
+        "message": f"port must be an integer from 1 to 65535 (got {port!r})",
+        "command": None,
+    }
+
+
 def _run(argv: list[str]) -> tuple[int, str, str]:
     """Run ``argv`` and return ``(returncode, stdout, stderr)``.
 
@@ -185,6 +199,9 @@ def enable(port: int = DEFAULT_PORT, https: bool = True) -> dict[str, Any]:
     (or ``--http=<port>`` when ``https=False``). Returns ``{ok, message,
     command}``. No-op with ``ok=False`` when the CLI is absent.
     """
+    if not _valid_port(port):
+        return _invalid_port_result(port)
+
     command = _build_enable_command(port=port, https=https)
 
     if not _tailscale_available():
@@ -223,6 +240,25 @@ def enable_stack(
     single-port :func:`enable` function remains available for explicit
     relay-only deployments.
     """
+    if not _valid_port(relay_port):
+        result = _invalid_port_result(relay_port)
+        return {
+            "ok": False,
+            "message": f"relay: {result['message']}",
+            "commands": [],
+            "relay": result,
+            "api": None,
+        }
+    if api_port is not None and not _valid_port(api_port):
+        result = _invalid_port_result(api_port)
+        return {
+            "ok": False,
+            "message": f"api: {result['message']}",
+            "commands": [],
+            "relay": None,
+            "api": result,
+        }
+
     results: dict[str, dict[str, Any] | None] = {
         "relay": enable(port=relay_port, https=https),
         "api": None,
@@ -260,6 +296,9 @@ def disable(port: int = DEFAULT_PORT) -> dict[str, Any]:
     CLI changes this, update here — the outer API (``ok`` + ``message``)
     stays the same.
     """
+    if not _valid_port(port):
+        return _invalid_port_result(port)
+
     command = _build_disable_command(port=port)
 
     if not _tailscale_available():
@@ -288,6 +327,25 @@ def disable_stack(
     api_port: int | None = DEFAULT_API_PORT,
 ) -> dict[str, Any]:
     """Remove relay and API ``tailscale serve`` publications."""
+    if not _valid_port(relay_port):
+        result = _invalid_port_result(relay_port)
+        return {
+            "ok": False,
+            "message": f"relay: {result['message']}",
+            "commands": [],
+            "relay": result,
+            "api": None,
+        }
+    if api_port is not None and not _valid_port(api_port):
+        result = _invalid_port_result(api_port)
+        return {
+            "ok": False,
+            "message": f"api: {result['message']}",
+            "commands": [],
+            "relay": None,
+            "api": result,
+        }
+
     results: dict[str, dict[str, Any] | None] = {
         "relay": disable(port=relay_port),
         "api": None,
@@ -359,7 +417,7 @@ def funnel_url(port: int = DEFAULT_PORT) -> str | None:
       returns the same ``AllowFunnel`` key under the top-level Web
       config.
     """
-    if not _tailscale_available():
+    if not _valid_port(port) or not _tailscale_available():
         return None
 
     # Try the modern ``funnel status`` invocation first; fall back to

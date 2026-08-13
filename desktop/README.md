@@ -375,7 +375,13 @@ The relay discovers background server-side tmux sessions named `hermes-*`, so `s
 
 ### Multi-endpoint pairing (ADR 24)
 
-If your Hermes server is reachable via multiple routes (LAN + Tailscale + a public URL), the pairing invite encoded by the host QR carries all of them. Pass the printed `hermes-relay://pair?...` URL, raw JSON payload, or base64 payload to `--pair-qr` and the CLI probes in priority order, picks the first reachable endpoint, and records which route it used — subsequent connects show `Connected via LAN (plain)` / `Connected via Tailscale (secure)` etc.
+If your Hermes server is reachable via multiple routes (optional Hermes Secure Link, Tailscale, a public TLS URL, and LAN), the pairing invite encoded by the host QR carries all of them. Generated defaults prefer Secure Link when enabled, then other secure routes, with plain LAN retained as a fallback. Pass the printed `hermes-relay://pair?...` URL, raw JSON payload, or base64 payload to `--pair-qr`; the CLI probes in strict priority order, picks the first reachable endpoint, and records which route it used. Secure Link protects transport to the QR-paired endpoint but does not create reachability, and its Relay, API, and Dashboard credentials remain separate.
+
+**Hermes Reach** is an experimental outbound-broker fallback. The broker
+provides rendezvous while the CLI validates QR-pinned Secure Link TLS inside
+it, but Reach is never selected ahead of Tailscale, public TLS, or Direct Secure
+Link by default. It is disabled unless the host explicitly opts into the
+experimental feature. Reach failure never enables plaintext.
 
 ```sh
 # Paste the full pairing invite URL printed by hermes-pair:

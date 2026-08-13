@@ -11,12 +11,15 @@ export interface Host {
   is_active: boolean
   access_mode: AccessMode
   capabilities: Record<Capability, CapabilityMode>
+  broker_configured?: boolean
 }
 
 export interface DaemonStatus {
   state: string
   running: boolean
   url?: string | null
+  configured_url?: string | null
+  active_route?: string | null
   privilege?: string | null
   username?: string | null
   updated_at?: number | null

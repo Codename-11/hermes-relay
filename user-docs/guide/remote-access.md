@@ -1,6 +1,6 @@
 # Remote Access
 
-Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailscale, a VPN, and a public reverse proxy. The recommended path is Tailscale because it works behind CGNAT, encrypts traffic end-to-end (WireGuard), keeps access inside your tailnet ACLs, and can *optionally* front TLS for you. (Note: the WireGuard encryption is what makes a tailnet link secure — TLS via `tailscale serve --https` is a separate, optional layer on top. See [Is my connection secure?](../architecture/connection-security.md).)
+Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailscale, a VPN, and a public reverse proxy. The primary recommended path today is Tailscale Serve WSS/HTTPS because it works behind CGNAT, encrypts traffic end-to-end, keeps access inside your tailnet ACLs, and provides managed TLS. See [Is my connection secure?](../architecture/connection-security.md).
 
 ## What Uses Which Connection
 
@@ -80,6 +80,73 @@ hermes pair --mode auto --prefer tailscale
 ```
 
 You can also override from the phone: **Settings -> Connections -> active connection -> Routes -> Prefer this route**.
+
+Generated route lists prefer available secure candidates and retain LAN as a
+fallback. A plain LAN fallback still requires its explicit acknowledgement; a
+TLS or pin failure never silently converts a secure route into a plain one.
+
+## Optional Hermes Secure Link
+
+Hermes Secure Link is the Relay plugin's optional pinned-TLS ingress on port
+`9443`.
+Fixed `/relay`, `/api`, and `/dashboard` namespaces cover the Android surfaces
+without mixing their credentials. Dashboard forwarding is available only when
+its upstream OAuth/password gate is active. Pairing supplies the authority and SPKI
+pin before the app connects. Certificate or hostname rotation therefore
+requires explicit re-pairing.
+
+The QR pin verifies continuity with the paired endpoint; it does not
+independently prove the physical Hermes host's identity. Secure Link and
+Tailscale solve different problems. Tailscale, another VPN,
+LAN routing, or a public route makes the host reachable. Secure Link adds the
+pairing-pinned Hermes TLS boundary after the host is reachable; it is not a
+hosted rendezvous service and does not traverse NAT by itself. You can advertise
+both Secure Link and Tailscale Serve in one pairing invite for failover.
+
+One Secure Link origin carries fixed Relay, API, and authenticated Dashboard
+namespaces, but it does not merge their trust domains. Relay pairing/session
+auth, API bearer auth, and Dashboard cookie/native bearer auth remain separate.
+Chat, Manage, voice, and API fallback may therefore use the Secure Link
+namespaces when their own credentials are present, or use independent direct or
+Tailscale HTTPS fallback routes. Tailscale Serve remains the normal recommended
+setup; Secure Link is opt-in.
+
+Enable it with `--secure-link` or `RELAY_SECURE_LINK_ENABLED=1`, then re-pair so
+the new QR carries the exact origin and pin. The Relay `/health` response
+reports `secure_link.status`; the Secure Link endpoint at
+`https://<host>:9443/relay/health` reports its namespaces. A certificate,
+hostname, or port change requires another explicit re-pair.
+
+## Hermes Reach (experimental)
+
+Hermes Reach is an experimental outbound-only path for hosts behind NAT or a
+firewall. Both your Hermes host and phone connect outward to a hosted or
+self-hosted Reach broker, so the host does not need an inbound port.
+
+Reach provides **reachability**, while Secure Link provides **end-to-end
+transport protection**. The broker matches and forwards opaque records; the
+actual Hermes stream remains inside QR-pinned Secure Link TLS. Relay sessions,
+API bearers, and Dashboard sign-in remain separate inside that protected
+session.
+
+The broker still sees connection metadata: the routing identity, source network
+information, timing, and byte counts. It can block, delay, drop, or misroute a
+connection. It cannot read inner paths, headers, credentials, or plaintext that
+passes the pinned inner authentication. Reach is not an anonymity service.
+
+Tailscale is the recommended remote-access path. Direct, public TLS, and Secure
+Link routes are also attempted before Reach. Reach is disabled by default,
+appears only in advanced/experimental UI, and never silently enables plaintext.
+
+For operator testing, a self-hosted broker runs with `python -m
+plugin.rendezvous --credentials <private-json> --listen 0.0.0.0 --port 9444
+--tls-cert <cert> --tls-key <key>`. Configure the host with Secure Link plus
+`RELAY_EXPERIMENTAL_REACH_ENABLED=1`,
+`RELAY_SECURE_LINK_BROKER_URL=wss://<broker>` and
+`RELAY_SECURE_LINK_BROKER_HOST_TOKEN=<raw-host-token>`. Relay `/health` reports
+the connector under `secure_link.reach`; the broker's own `/health` returns only
+aggregate service, protocol, online-host, and active-stream status. Public
+listeners require TLS. Plain development mode is loopback-only.
 
 ## Which URL Do I Enter?
 

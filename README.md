@@ -70,6 +70,21 @@ an HTTPS reverse proxy. The [full walkthrough](https://hermes-relay.dev/docs/gui
 covers Windows, remote access, and dashboard authentication. You do not need to
 enable the separate API server or invent an API key for the standard path.
 
+For plugin-enabled setups, optional **Hermes Secure Link** presents Relay, API,
+and Dashboard routes through one pairing-pinned TLS origin. It protects traffic
+to the paired endpoint while each service keeps its own authentication; it does
+not provide reachability or independently identify the physical host. You still
+use LAN routing, Tailscale or another VPN, or an operator-managed public route
+to reach the listener. Secure Link is off by default and requires a fresh QR
+pairing after it is enabled. See the
+[remote-access guide](https://hermes-relay.dev/docs/guide/remote-access/).
+
+**Hermes Reach** is an experimental, advanced outbound-broker route. It remains
+available for development and self-hosted evaluation, but it is disabled by
+default, ordered after supported routes, and not recommended for normal remote
+access. Use Tailscale for the easiest supported remote setup, or a public TLS
+domain / Direct Secure Link when you want to own the complete network path.
+
 ### 3 · Connect and talk
 
 Open the app, choose **Connect to Hermes**, and enter or discover the dashboard

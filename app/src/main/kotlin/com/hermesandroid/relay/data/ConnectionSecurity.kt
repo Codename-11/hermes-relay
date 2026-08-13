@@ -63,12 +63,8 @@ fun EndpointCandidate?.isEncryptedOverlayRoute(isTailscaleDetected: Boolean): Bo
     val hint = security.orEmpty().lowercase()
     return r == "tailscale" ||
         (isTailscaleDetected && hint.contains("tailscale")) ||
-        r == "plugin_proxy" ||
-        r == "plugin-proxy" ||
-        hasSecureProxy() ||
         hint.contains("wireguard") ||
-        hint.contains("https") ||
-        hint.contains("tls")
+        (!hasSecureProxy() && (hint.contains("https") || hint.contains("tls")))
 }
 
 /** Human label for the overlay mechanism encrypting a route. */
@@ -78,7 +74,6 @@ fun EndpointCandidate?.overlayMechanism(isTailscaleDetected: Boolean): String {
     val hint = security.orEmpty().lowercase()
     return when {
         r == "tailscale" || (isTailscaleDetected && hint.contains("tailscale")) -> "Tailscale"
-        r == "plugin_proxy" || r == "plugin-proxy" || hasSecureProxy() -> "Proxy"
         hint.contains("wireguard") -> "WireGuard"
         hint.contains("https") || hint.contains("tls") -> "TLS"
         else -> "Encrypted"
@@ -92,13 +87,43 @@ fun classifySurfaceSecurity(
     activeEndpoint: EndpointCandidate?,
     isTailscaleDetected: Boolean,
 ): SurfaceSecurity {
+    val secureLinkProtected = activeEndpoint.secureLinkProtects(label, url)
     val (kind, mechanism) = when {
+        secureLinkProtected -> SurfaceSecurityKind.Tls to
+            if (activeEndpoint?.hasHermesReach() == true) "Hermes Reach" else "Hermes Secure Link"
         isTlsUrl(url) -> SurfaceSecurityKind.Tls to "TLS"
         activeEndpoint.isEncryptedOverlayRoute(isTailscaleDetected) ->
             SurfaceSecurityKind.Overlay to activeEndpoint.overlayMechanism(isTailscaleDetected)
         else -> SurfaceSecurityKind.Plain to "Plain"
     }
     return SurfaceSecurity(label = label, kind = kind, mechanism = mechanism, url = url)
+}
+
+private fun EndpointCandidate?.secureLinkProtects(label: String, url: String): Boolean {
+    val candidate = this ?: return false
+    val routes = candidate.proxy?.takeIf { candidate.hasSecureProxy() }
+        ?.let { proxy ->
+            val base = proxy.url.trim().trimEnd('/')
+            Triple(
+                "$base/dashboard",
+                "$base/api",
+                "wss://${base.substringAfter("://")}/relay/ws",
+            )
+        } ?: return false
+    val normalized = url.trim().trimEnd('/')
+    val service = when (label) {
+        "Chat & Manage" -> "dashboard"
+        "API / sessions" -> "api"
+        "Relay tools" -> "relay"
+        else -> return false
+    }
+    if (service !in candidate.secureLinkServices()) return false
+    val expected = when (service) {
+        "dashboard" -> routes.first
+        "api" -> routes.second
+        else -> routes.third
+    }
+    return normalized.equals(expected, ignoreCase = true)
 }
 
 /**

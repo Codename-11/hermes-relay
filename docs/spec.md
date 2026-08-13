@@ -58,8 +58,8 @@ Android app
   |-- Vanilla Hermes chat   -> dashboard /api/ws, then API-server SSE fallback
   |-- Vanilla Hermes Manage -> dashboard /api/*
   |-- Vanilla Hermes voice  -> dashboard /api/audio/*
-  |-- Relay terminal      -> relay WSS :8767
-  |-- Relay bridge/tools  -> relay WSS/HTTP :8767
+  |-- Relay terminal      -> Tailscale Serve WSS, or opt-in Hermes Secure Link :9443/relay/ws
+  |-- Relay bridge/tools  -> the same authenticated Relay transport
   `-- Relay voice extras  -> relay /voice/*
 
 Hermes upstream
@@ -206,6 +206,30 @@ by Manage, Gateway tickets, and standard voice.
 
 Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (plus the API server credentials and optional dashboard URL) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
+The primary secure remote path today is Tailscale Serve, which exposes Relay as
+WSS and the independently authenticated upstream API/Dashboard surfaces as
+HTTPS. The optional Relay plugin **Hermes Secure Link** is a unified alternative: when
+explicitly enabled it listens on `:9443`, advertises the operator-reviewed
+paired endpoint's SPKI material,
+and exposes fixed `/relay`, `/api`, and `/dashboard` namespaces. Each service
+retains its native credential, and Dashboard forwarding fails closed unless
+its upstream OAuth/password gate is active. Clients select secure candidates
+first and may fall back to a separately configured LAN route; the existing
+plain-route acknowledgement still applies. See
+[`docs/security-native-proxy.md`](security-native-proxy.md).
+
+Hermes Reach is the experimental `outbound_broker` candidate for hosts that cannot
+accept inbound traffic. Host and client both connect outward to broker
+`/v1/connect`; the broker only matches and forwards opaque records. QR-pinned
+Secure Link TLS remains end-to-end inside that outer WSS connection, so broker
+WSS is not itself the end-to-end security boundary. The broker may observe
+routing identity, source, timing, and byte metadata and may disrupt delivery,
+but cannot read authenticated inner paths, headers, credentials, or plaintext.
+Direct/Tailscale/Secure Link routes remain independent fallbacks, with no silent
+plaintext downgrade. Reach is disabled by default, marked experimental, and
+selected only after supported routes are unavailable.
+See [`docs/security-broker-transport.md`](security-broker-transport.md).
+
 As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candidates** (`lan` / `tailscale` / `public` / operator-defined roles). A single pairing covers every network the phone might be on — the phone picks the highest-priority reachable candidate at connect time and re-probes on network change. The single-URL top-level fields still appear in v3 QRs for backward compatibility; old phones ignore `endpoints` via `ignoreUnknownKeys = true`, new phones prefer `endpoints` and fall back to the top-level URL when the array is absent. See [`docs/remote-access.md`](remote-access.md) for the operator-facing setup per mode.
 
 ```
@@ -217,9 +241,9 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
    ~/.hermes/config.yaml or ~/.hermes/.env, and auto-detects candidate
    endpoints: LAN IP via routing lookup; Tailscale hostname via
    tailscale.status() when the CLI is present; public URL from
-   --public-url when provided. Strict-priority ordering (lan → tailscale
-   → public) with 0 = highest. --mode lan/tailscale/public emits only
-   that candidate.
+   --public-url when provided. Generated defaults order secure candidates
+   (Hermes Secure Link when enabled, then Tailscale/public TLS) before plain LAN,
+   with 0 = highest. --mode lan/tailscale/public emits only that candidate.
 3. If a relay is reachable at localhost:RELAY_PORT (default 8767):
    a. Mint a fresh 6-char code from A-Z / 0-9
    b. Compute the transport hint (wss / ws) from the relay's TLS config
@@ -252,9 +276,9 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
    expires_at + grants + transport_hint in auth.ok.
 10. Phone stores the session token in the Android Keystore (StrongBox-
     preferred) with fallback to EncryptedSharedPreferences on older /
-    unsupported devices. On the first wss handshake, records the cert
-    SHA-256 fingerprint in CertPinStore (TOFU). Subsequent connects
-    verify against the stored pin via OkHttp's CertificatePinner.
+    unsupported devices. Ordinary WSS routes use the existing first-connect
+    TOFU pin. Hermes Secure Link WSS instead requires the QR-carried SPKI pin before
+    its first health or WebSocket request.
 11. Future connections use the session token directly. Rate limiter,
     session expiry, and per-channel grants all enforced at the relay.
 12. Session expires on ttl_seconds (or never); individual grants may
@@ -264,7 +288,11 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
 
 **Old API-only QRs** (no `relay` block, no `hermes` field, or `hermes: 1`) still parse — the phone just skips the relay setup step and can be paired against a relay later via Settings. **v1 QRs with a relay block** (no TTL / grants / sig fields) still parse via `ignoreUnknownKeys`; the phone treats missing TTL as "prompt the user with defaults". **v3 QRs with an `endpoints` array** (ADR 24) also parse on v0.6.x and earlier clients — they ignore the array and keep using the top-level fields. New clients prefer `endpoints` and fall back to the top-level fields when absent.
 
-**Re-pair explicitly resets the TOFU pin** for the target host (`applyServerIssuedCodeAndReset(code, relayUrl)` wipes `CertPinStore[host:port]`) — a QR rescan is taken as consent to possibly-new certificate material. This is the documented recovery path when a relay restarts with a new self-signed cert.
+**Re-pair explicitly resets transport trust** for the target host. Ordinary TLS
+routes retain their existing TOFU behavior. A Hermes Secure Link route is stricter:
+its SPKI pin must arrive in the operator-reviewed QR before the first request,
+and a certificate or authority rotation requires another explicit re-pair. A
+TLS or pin failure never silently downgrades that route to HTTP/WS.
 
 **Phase 3 (bridge)** will introduce a symmetric phone-generates-code, host-approves flow. The `POST /pairing/approve` route is stubbed in this cycle — same wire shape as `/pairing/register`, same loopback gate — with a `# TODO(Phase 3)` pointing at the pending-codes store + operator approval UI that still needs to be built.
 
@@ -275,34 +303,34 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
 ```json
 {
   "hermes": 3,
-  "host": "192.168.1.100",
+  "host": "hermes.tail-scale.ts.net",
   "port": 8642,
   "key": "api-bearer-token",
-  "tls": false,
+  "tls": true,
   "relay": {
-    "url": "ws://192.168.1.100:8767",
+    "url": "wss://hermes.tail-scale.ts.net:8767",
     "code": "ABCD12",
     "ttl_seconds": 2592000,
     "grants": { "terminal": 2592000, "bridge": 604800 },
-    "transport_hint": "ws"
+    "transport_hint": "wss"
   },
   "endpoints": [
-    { "role": "lan",       "priority": 0,
-      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
-      "relay": { "url": "ws://192.168.1.100:8767", "transport_hint": "ws" } },
-    { "role": "tailscale", "priority": 1,
+    { "role": "tailscale", "priority": 0,
       "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
       "relay": { "url": "wss://hermes.tail-scale.ts.net:8767", "transport_hint": "wss" } },
-    { "role": "public",    "priority": 2,
+    { "role": "public",    "priority": 1,
       "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
-      "relay": { "url": "wss://hermes.example.com/relay", "transport_hint": "wss" } }
+      "relay": { "url": "wss://hermes.example.com/relay", "transport_hint": "wss" } },
+    { "role": "lan",       "priority": 2,
+      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+      "relay": { "url": "ws://192.168.1.100:8767", "transport_hint": "ws" } }
   ],
   "sig": "base64url-hmac-sha256"
 }
 ```
 
 - `hermes` — payload version. `1` is the legacy shape (no new fields); `2` is set when any v2-only field (`ttl_seconds`, `grants`, `transport_hint`) is present in the `relay` block; `3` is set when `endpoints` is present (ADR 24). All three versions parse on the current Android client.
-- `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` get styled UI; anything else renders as "Custom VPN (<role>)"). Per-endpoint entries intentionally carry **only** `api` + `relay` — the pairing code, TTL, and grants stay at the top level because they're per-pair artifacts, not per-endpoint. Full schema in ADR 24.
+- `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` / `plugin_proxy` / `outbound_broker` get styled UI; `plugin_proxy` is the compatibility wire role for Hermes Secure Link and `outbound_broker` is the wire role for Hermes Reach, while anything else renders as "Custom VPN (<role>)"). Entries can carry independently optional `api`, `dashboard`, `relay`, Secure Link, and Reach routing metadata; pairing code, TTL, and grants stay at the top level because they are per-pair artifacts. Full schema in ADR 24, the Secure Link trust contract in [`security-native-proxy.md`](security-native-proxy.md), and the Reach broker contract in [`security-broker-transport.md`](security-broker-transport.md).
 - Top-level fields (`host`/`port`/`key`/`tls`) configure the direct Hermes API Server. Unchanged since v1.
 - `relay` — **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
 - `relay.url` — full WebSocket URL (`ws://` for dev, `wss://` for production).

@@ -1084,32 +1084,36 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
 ```json
 {
   "hermes": 3,
-  "host": "192.168.1.100",
+  "host": "hermes.tail-scale.ts.net",
   "port": 8642,
   "key": "optional-api-key",
-  "tls": false,
-  "relay": { "url": "ws://192.168.1.100:8767", "code": "ABC123",
+  "tls": true,
+  "relay": { "url": "wss://hermes.tail-scale.ts.net:8767", "code": "ABC123",
              "ttl_seconds": 2592000, "grants": {...},
-             "transport_hint": "ws" },
+             "transport_hint": "wss" },
   "endpoints": [
-    { "role": "lan",       "priority": 0,
-      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
-      "relay": { "url": "ws://192.168.1.100:8767",
-                 "transport_hint": "ws" } },
-    { "role": "tailscale", "priority": 1,
+    { "role": "tailscale", "priority": 0,
       "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
       "relay": { "url": "wss://hermes.tail-scale.ts.net:8767",
                  "transport_hint": "wss" } },
-    { "role": "public",    "priority": 2,
+    { "role": "public",    "priority": 1,
       "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
       "relay": { "url": "wss://hermes.example.com/relay",
-                 "transport_hint": "wss" } }
+                 "transport_hint": "wss" } },
+    { "role": "lan",       "priority": 2,
+      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+      "relay": { "url": "ws://192.168.1.100:8767",
+                 "transport_hint": "ws" } }
   ],
   "sig": "base64-hmac-sha256"
 }
 ```
 
 **Semantics (locked):**
+- **Generated defaults are secure-first (amended 2026-08-12).** An available
+  pinned Hermes Secure Link, Tailscale Serve, and configured public TLS candidates
+  precede plain LAN. LAN remains a signed, independently acknowledged fallback.
+  An explicit operator preference can still change the strict order.
 - **`role` is an open string.** Known values `lan` / `tailscale` / `public`
   get styled chips + icons on the phone. Anything else (`wireguard`,
   `zerotier`, `netbird-eu`, whatever the operator wants) renders with a
@@ -2955,3 +2959,85 @@ visible and reversible, while the management UI and automatic startup retain
 normal user privilege. The product stays a thin CLI/TUI plus compact Windows
 management surface; chat, plugins, voice, and terminal rendering remain outside
 the tray.
+
+---
+
+## ADR 54 — Hermes Secure Link is pinned and service-isolated
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** Tailscale Serve is the primary supported secure remote path today,
+but some operators need encrypted Relay access without adding an external
+reverse proxy or tailnet. Expanding a plugin-owned listener across API,
+Dashboard, and Relay would collapse independent trust domains and expose
+loopback-authorized management routes.
+
+**Decision.** Keep Tailscale Serve WSS/HTTPS as the primary documented path.
+Add an opt-in Relay plugin ingress, named **Hermes Secure Link**, on port `9443`
+with fixed `/relay`, `/api`, and `/dashboard` namespaces. Pairing carries its exact HTTPS authority and SPKI
+SHA-256 pin in the signed, operator-reviewed QR. Relay sessions, API bearer
+authentication, and Dashboard cookie/native bearer authentication remain
+independent. Dashboard forwarding fails closed unless its upstream
+OAuth/password gate is active, so loopback-token HTML is never re-exported.
+
+Clients require the QR-provided authority and pin before the first proxy
+request, retain hostname verification, and fail closed on malformed, missing,
+or changed trust. A rotation requires explicit re-pairing. Secure candidates
+are ordered before LAN by default, while LAN remains an independently configured
+fallback with its existing plaintext acknowledgement.
+
+The three namespaces share one pinned TLS authority but not credentials: Relay
+keeps pairing/session authentication, API keeps its bearer, and Dashboard keeps
+its cookie/native bearer. Direct and Tailscale HTTPS routes remain independent
+fallback candidates. Secure Link verifies continuity with the paired endpoint
+and protects transport, but it does not establish the physical host's identity
+or make the listener reachable across NAT or a firewall. Full invariants and acceptance checks live in
+[`security-native-proxy.md`](security-native-proxy.md).
+
+**Consequences.** Hermes Secure Link adds a narrow pinned-TLS option without
+becoming a general host proxy or a second authentication system. Failure to
+initialize it does not make the ordinary Relay unavailable or advertise a
+candidate. Certificate rotation is explicit, and the vanilla upstream path
+remains independent of the optional Relay plugin.
+
+---
+
+## ADR 55 — Outbound broker transport carries opaque Secure Link streams
+
+**Status:** Experimental (2026-08-13).
+
+**Context.** Hermes Secure Link encrypts an already reachable connection but
+does not traverse NAT or firewalls. A native zero-configuration remote route
+needs both host and client to connect outbound without giving a rendezvous
+service access to Hermes credentials or payloads. It must also preserve
+multi-device targeting and the direct, Tailscale, and LAN routes.
+
+**Decision.** Add an optional outbound rendezvous candidate named **Hermes
+Reach**. The client and host
+connector use system-trusted WSS to reach the broker, which authenticates their
+route credentials and matches an explicit opaque host identifier. The resulting
+stream carries a second, inner TLS 1.3 connection to the host's existing Hermes
+Secure Link listener. The client validates the exact authority and SPKI pin from
+the operator-reviewed pairing QR. The broker and connector route bytes but do
+not terminate inner TLS, parse Hermes protocols, or receive Relay/API/Dashboard
+credentials.
+
+Host and client broker credentials are separate. Initial client bootstrap is
+short-lived and one-time; durable route access is scoped and independently
+revocable. A host connection supports isolated simultaneous streams with
+explicit framing, quotas, replay handling, and device targeting. Broker or pin
+failure never downgrades to plaintext. Secure Link certificate rotation remains
+an explicit re-pair. The detailed wire, threat, rotation, and acceptance
+contract is [`security-broker-transport.md`](security-broker-transport.md).
+
+**Consequences.** Hermes Reach remains an explicitly enabled experimental
+fallback and must be ordered after Tailscale, public TLS, Direct Secure Link,
+and other supported routes. It is not promoted in normal setup or marketing.
+Hermes Reach can provide reachability while its broker can
+observe connection
+metadata, but a malicious or compromised broker can only deny, delay, replay,
+or misroute ciphertext; inner TLS detects modification and wrong-host routing.
+Hermes authorization remains local and the vanilla upstream path remains
+independent. Implementing the client requires a TLS-over-broker byte-stream
+adapter; advertising the candidate is forbidden until that adapter and the
+cross-platform acceptance gates are complete.

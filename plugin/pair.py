@@ -51,9 +51,10 @@ version bit when it's actually emitting endpoints::
 Top-level fields configure the direct-chat Hermes API server (port 8642 by
 default) and mirror the priority-0 endpoint candidate for backward compat.
 The optional ``relay`` block configures the Hermes-Relay WSS connection
-used by the terminal and bridge channels — present only when a local
-relay is running and we were able to pre-register a pairing code with it
-via ``POST /pairing/register``.
+used by the terminal and bridge channels. The normal CLI flow obtains the
+fully signed invite from the local Relay via ``POST /pairing/mint`` so
+server-owned Secure Link and Reach candidates are included. Older Relays may
+use ``POST /pairing/register`` only when Reach is not configured.
 """
 
 from __future__ import annotations
@@ -611,8 +612,9 @@ def build_endpoint_candidates(
 
     ``mode`` is one of ``auto`` / ``lan`` / ``tailscale`` / ``public``
     (see ADR 24). Priority is strictly increasing by role, starting at
-    0 for LAN and going up — matching DNS SRV semantics (lower number
-    = higher priority). An empty list is returned when no candidates
+    0 for secure routes and going up — matching DNS SRV semantics (lower
+    number = higher priority). Tailscale and public TLS precede plain LAN,
+    which remains the final fallback. An empty list is returned when no candidates
     could be detected (e.g. ``--mode tailscale`` on a host without
     Tailscale installed); callers should treat that as "stay on the
     single-endpoint v2 payload".
@@ -648,19 +650,6 @@ def build_endpoint_candidates(
     want_lan = mode in ("auto", "lan")
     want_tailscale = mode in ("auto", "tailscale")
     want_public = mode in ("auto", "public")
-
-    if want_lan:
-        _emit(
-            _lan_endpoint(
-                api_host,
-                api_port,
-                api_tls,
-                relay_host,
-                relay_port,
-                relay_tls,
-                priority=next_priority,
-            )
-        )
 
     if want_tailscale:
         status = _tailscale_status()
@@ -712,6 +701,22 @@ def build_endpoint_candidates(
                 "--mode public requires --public-url <url> "
                 "(no Tailscale Funnel detected for this port)"
             )
+
+    # Plain LAN is deliberately last in auto mode. It remains available as
+    # an explicit fallback, while Android and desktop receive the same signed
+    # secure-first ordering instead of applying divergent client heuristics.
+    if want_lan:
+        _emit(
+            _lan_endpoint(
+                api_host,
+                api_port,
+                api_tls,
+                relay_host,
+                relay_port,
+                relay_tls,
+                priority=next_priority,
+            )
+        )
 
     # Priority override — promote the named role to priority 0 and
     # renumber the rest in their existing relative order. Role string
@@ -941,6 +946,68 @@ def register_relay_code(
             return bool(data.get("ok"))
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
         return False
+
+
+def mint_relay_pairing(
+    localhost_port: int,
+    *,
+    host: str,
+    port: int,
+    api_key: str,
+    tls: bool,
+    ttl_seconds: int,
+    grants: dict[str, int] | None,
+    transport_hint: str,
+    endpoints: list[dict] | None,
+    dashboard_url: str | None,
+    timeout_s: float = 5.0,
+) -> dict[str, Any] | None:
+    """Ask the running Relay to mint the authoritative signed invite.
+
+    Reach bootstrap credentials are created server-side and exist only in the
+    returned payload. This function deliberately never logs the request or
+    response because both may contain pairing and route credentials.
+    """
+    body: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "api_key": api_key,
+        "tls": tls,
+        "ttl_seconds": ttl_seconds,
+        "transport_hint": transport_hint,
+    }
+    if grants:
+        body["grants"] = grants
+    if endpoints:
+        body["endpoints"] = endpoints
+    if dashboard_url:
+        body["dashboard_url"] = dashboard_url
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{localhost_port}/pairing/mint",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            if response.status != 200:
+                return None
+            result = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        return None
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        return None
+    qr_payload = result.get("qr_payload")
+    pairing_url = result.get("pairing_url")
+    if not isinstance(qr_payload, str) or not isinstance(pairing_url, str):
+        return None
+    try:
+        parsed = json.loads(qr_payload)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("relay"), dict):
+        return None
+    return result
 
 
 def probe_relay(localhost_port: int, timeout_s: float = 1.0) -> Optional[dict]:
@@ -1241,12 +1308,10 @@ def pair_command(args) -> None:
 
     # ── Relay pre-pairing ────────────────────────────────────────────────
     #
-    # If a relay is running locally, mint a fresh pairing code, register it
-    # with the relay via the loopback-only /pairing/register endpoint, and
-    # embed both the relay URL and the code in the QR payload. The phone
-    # gets everything it needs to connect to chat + terminal in a single
-    # scan. If the relay isn't running (or we can't register), we render an
-    # API-only QR and print a warning pointing at `hermes relay start`.
+    # If a relay is running locally, ask its loopback-only /pairing/mint
+    # endpoint for the authoritative signed payload. This is essential for
+    # server-owned one-use Reach credentials. A legacy /pairing/register
+    # fallback is allowed only when Reach is not configured.
 
     # ── TTL + grants from CLI flags ──────────────────────────────────────
     ttl_spec = getattr(args, "ttl", None) or "30d"
@@ -1266,6 +1331,7 @@ def pair_command(args) -> None:
             sys.exit(2)
 
     relay_block: Optional[dict] = None
+    relay_health: Optional[dict] = None
     skip_relay = getattr(args, "no_relay", False)
     if not skip_relay:
         relay_cfg = read_relay_config()
@@ -1273,8 +1339,8 @@ def pair_command(args) -> None:
         relay_tls = bool(relay_cfg.get("tls"))
         transport_hint = "wss" if relay_tls else "ws"
 
-        health = probe_relay(relay_port)
-        if health is None:
+        relay_health = probe_relay(relay_port)
+        if relay_health is None:
             print(
                 "  [info] Relay not running at localhost:"
                 f"{relay_port} — QR will configure chat only."
@@ -1284,28 +1350,17 @@ def pair_command(args) -> None:
                 "(or: python -m plugin.relay --no-ssl)\n"
             )
         else:
-            relay_code = _generate_relay_code()
-            if register_relay_code(
-                relay_port,
-                relay_code,
+            # A provisional block gates endpoint discovery. The authoritative
+            # code and signed payload come from /pairing/mint below.
+            relay_block = build_relay_pairing_block(
+                relay_url=_relay_lan_base_url(
+                    relay_cfg["host"], relay_port, tls=relay_tls
+                ),
+                code="PENDING",
                 ttl_seconds=ttl_seconds,
                 grants=grants_dict,
                 transport_hint=transport_hint,
-            ):
-                relay_block = build_relay_pairing_block(
-                    relay_url=_relay_lan_base_url(
-                        relay_cfg["host"], relay_port, tls=relay_tls
-                    ),
-                    code=relay_code,
-                    ttl_seconds=ttl_seconds,
-                    grants=grants_dict,
-                    transport_hint=transport_hint,
-                )
-            else:
-                print(
-                    "  [warn] Relay is running but /pairing/register was "
-                    "rejected — QR will configure chat only.\n"
-                )
+            )
 
     # ── Multi-endpoint detection (ADR 24) ────────────────────────────────
     # Build an ``endpoints`` array whenever the operator asked for multi-
@@ -1338,16 +1393,88 @@ def pair_command(args) -> None:
             print(f"  [error] --mode/--public-url: {exc}", file=sys.stderr)
             sys.exit(2)
 
-    payload = build_pairing_qr_payload(
-        host=host,
-        port=port,
-        key=key,
-        tls=tls,
-        relay=relay_block,
-        endpoints=endpoints or None,
-        dashboard_url=dashboard_url,
-    )
-    invite_url = build_pairing_invite_url(payload)
+    payload: str
+    invite_url: str
+    if relay_block is not None:
+        broker_status = (
+            relay_health.get("secure_link", {}).get("broker", {})
+            if isinstance(relay_health, dict)
+            and isinstance(relay_health.get("secure_link"), dict)
+            else {}
+        )
+        reach_requested = bool(
+            isinstance(broker_status, dict) and broker_status.get("enabled")
+        )
+        minted = mint_relay_pairing(
+            relay_port,
+            host=host,
+            port=port,
+            api_key=key,
+            tls=tls,
+            ttl_seconds=ttl_seconds,
+            grants=grants_dict,
+            transport_hint=transport_hint,
+            endpoints=endpoints or None,
+            dashboard_url=dashboard_url,
+        )
+        if minted is not None:
+            payload = str(minted["qr_payload"])
+            invite_url = str(minted["pairing_url"])
+            parsed_payload = json.loads(payload)
+            relay_block = parsed_payload["relay"]
+        elif not reach_requested:
+            # Compatibility with pre-/pairing/mint Relay versions only. Never
+            # downgrade a configured Reach host to a locally constructed QR,
+            # because that would silently omit its one-use route credential.
+            relay_code = _generate_relay_code()
+            if register_relay_code(
+                relay_port,
+                relay_code,
+                ttl_seconds=ttl_seconds,
+                grants=grants_dict,
+                transport_hint=transport_hint,
+            ):
+                relay_block = build_relay_pairing_block(
+                    relay_url=_relay_lan_base_url(
+                        relay_cfg["host"], relay_port, tls=relay_tls
+                    ),
+                    code=relay_code,
+                    ttl_seconds=ttl_seconds,
+                    grants=grants_dict,
+                    transport_hint=transport_hint,
+                )
+                payload = build_pairing_qr_payload(
+                    host=host, port=port, key=key, tls=tls,
+                    relay=relay_block, endpoints=endpoints or None,
+                    dashboard_url=dashboard_url,
+                )
+                invite_url = build_pairing_invite_url(payload)
+            else:
+                relay_block = None
+                print("  [warn] Relay pairing mint was rejected — QR will configure chat only.\n")
+                payload = build_pairing_qr_payload(
+                    host=host, port=port, key=key, tls=tls,
+                    dashboard_url=dashboard_url,
+                )
+                invite_url = build_pairing_invite_url(payload)
+        else:
+            relay_block = None
+            print(
+                "  [error] Hermes Reach is configured, but the Relay could not "
+                "mint its secure pairing invite. No downgraded relay QR was created.\n",
+                file=sys.stderr,
+            )
+            payload = build_pairing_qr_payload(
+                host=host, port=port, key=key, tls=tls,
+                dashboard_url=dashboard_url,
+            )
+            invite_url = build_pairing_invite_url(payload)
+    else:
+        payload = build_pairing_qr_payload(
+            host=host, port=port, key=key, tls=tls,
+            dashboard_url=dashboard_url,
+        )
+        invite_url = build_pairing_invite_url(payload)
 
     # Always show text block — works in any terminal including Hermes TUI
     print(

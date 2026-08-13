@@ -117,4 +117,54 @@ class ConnectionSecurityTest {
         assertEquals(ConnectionSecurityLevel.Overlay, result.level)
         assertEquals("Tailscale", result.mechanism)
     }
+
+    @Test
+    fun relayOnlySecureLink_withPlainStandardServices_isMixed() {
+        val pin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        val secureLink = EndpointCandidate(
+            role = "plugin_proxy",
+            proxy = ProxyEndpoint(
+                url = "https://relay.example:9443",
+                pinSha256 = pin,
+                surfaces = listOf("relay"),
+            ),
+            security = "pinned_tls",
+        )
+        val result = computeConnectionSecurity(
+            apiUrl = "http://192.168.1.10:8642",
+            dashboardUrl = "http://192.168.1.10:9119",
+            relayUrl = "wss://relay.example:9443/relay/ws",
+            relayConfigured = true,
+            activeEndpoint = secureLink,
+            isTailscaleDetected = false,
+        )
+        assertEquals(ConnectionSecurityLevel.Mixed, result.level)
+        assertEquals(false, result.isEncrypted)
+        assertEquals(listOf("Plain", "Plain", "Hermes Secure Link"), result.surfaces.map { it.mechanism })
+    }
+
+    @Test
+    fun completeSecureLink_classifiesEachExactProxyNamespace() {
+        val pin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        val secureLink = EndpointCandidate(
+            role = "plugin_proxy",
+            proxy = ProxyEndpoint(
+                url = "https://relay.example:9443",
+                pinSha256 = pin,
+                surfaces = listOf("relay", "api", "dashboard"),
+            ),
+            security = "pinned_tls",
+        )
+        val result = computeConnectionSecurity(
+            apiUrl = "https://relay.example:9443/api",
+            dashboardUrl = "https://relay.example:9443/dashboard",
+            relayUrl = "wss://relay.example:9443/relay/ws",
+            relayConfigured = true,
+            activeEndpoint = secureLink,
+            isTailscaleDetected = false,
+        )
+        assertEquals(ConnectionSecurityLevel.Tls, result.level)
+        assertEquals(true, result.isEncrypted)
+        assertEquals(setOf("Hermes Secure Link"), result.surfaces.map { it.mechanism }.toSet())
+    }
 }

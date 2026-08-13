@@ -4,6 +4,7 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.data.ProxyEndpoint
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import kotlinx.coroutines.test.runTest
@@ -81,6 +82,18 @@ class EndpointResolverTest {
         val winner = resolver.resolve(listOf(lan, tail))
         assertNotNull("expected priority-0 winner", winner)
         assertEquals("lan", winner!!.role)
+    }
+
+    @Test
+    fun supportedRouteWins_overHigherPriorityExperimentalReach() = runTest {
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val reach = candidate("outbound_broker", priority = 0, server = reachableServer)
+            .copy(experimental = true)
+        val tailscale = candidate("tailscale", priority = 1, server = secondReachableServer)
+
+        val winner = resolver.resolve(listOf(reach, tailscale))
+
+        assertEquals("tailscale", winner?.role)
     }
 
     // ---------------------------------------------------------------
@@ -429,6 +442,50 @@ class EndpointResolverTest {
         assertNull("a failed Relay /health must not be masked by Dashboard health", relayWinner)
         assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
         assertEquals("/health", secondReachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+    }
+
+    @Test
+    fun secureLinkStandardSurfacesProbeIndependently() {
+        val pin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        val candidate = EndpointCandidate(
+            role = "plugin_proxy",
+            proxy = ProxyEndpoint(
+                url = "https://relay.example:9443",
+                pinSha256 = pin,
+                surfaces = listOf("relay", "api", "dashboard"),
+            ),
+        )
+        val resolver = EndpointResolver(fastClient)
+
+        assertEquals(
+            "https://relay.example:9443/dashboard/api/status",
+            resolver.probeRequestUrlForTest(candidate, EndpointSurface.Dashboard),
+        )
+        assertEquals(
+            "https://relay.example:9443/api/health",
+            resolver.probeRequestUrlForTest(candidate, EndpointSurface.Api),
+        )
+        assertEquals(
+            "https://relay.example:9443/relay/health",
+            resolver.probeRequestUrlForTest(candidate, EndpointSurface.Relay),
+        )
+    }
+
+    @Test
+    fun secureLinkDoesNotProbeUnadvertisedStandardService() {
+        val candidate = EndpointCandidate(
+            role = "plugin_proxy",
+            proxy = ProxyEndpoint(
+                url = "https://relay.example:9443",
+                pinSha256 = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                surfaces = listOf("relay"),
+            ),
+        )
+        val resolver = EndpointResolver(fastClient)
+
+        assertNull(resolver.probeRequestUrlForTest(candidate, EndpointSurface.Dashboard))
+        assertNull(resolver.probeRequestUrlForTest(candidate, EndpointSurface.Api))
+        assertNotNull(resolver.probeRequestUrlForTest(candidate, EndpointSurface.Relay))
     }
 
     @Test

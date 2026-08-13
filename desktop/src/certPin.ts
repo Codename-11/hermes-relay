@@ -40,6 +40,27 @@ export const extractSpkiSha256 = (peerCertDer: Buffer): string => {
   return `${PIN_PREFIX}${digest}`
 }
 
+/** Read the leaf DER across supported Node TLS APIs. Node 24 can return an
+ * empty legacy PeerCertificate for a valid TLS 1.3 connection while the
+ * X509Certificate API remains populated. Prefer the modern API and retain the
+ * legacy fallback for Node 21-23. */
+export const peerCertificateDer = (socket: {
+  getPeerX509Certificate?: () => { raw?: Buffer } | undefined
+  getPeerCertificate?: (detailed?: boolean) => { raw?: Buffer }
+}): Buffer | null => {
+  const modern = socket.getPeerX509Certificate?.()?.raw
+  if (Buffer.isBuffer(modern) && modern.length > 0) return modern
+  const legacy = socket.getPeerCertificate?.(false)?.raw
+  return Buffer.isBuffer(legacy) && legacy.length > 0 ? legacy : null
+}
+
+/** Convert the already pin-verified leaf to a PEM trust anchor for the live
+ * WebSocket handshake. This binds the live connection to the checked cert. */
+export const certificateDerToPem = (der: Buffer): string => {
+  const base64 = der.toString('base64').match(/.{1,64}/g)?.join('\n') ?? ''
+  return `-----BEGIN CERTIFICATE-----\n${base64}\n-----END CERTIFICATE-----\n`
+}
+
 /**
  * Canonical pin-store key for a URL — lowercase `host:port`. Explicit port
  * is required (no implicit 443/80) so `wss://host/` and `wss://host:443/`

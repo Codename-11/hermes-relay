@@ -30,7 +30,7 @@
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "98b1486236c704546f7a1123369b9038e13c6a46d6db49dbdd15946380d20791"
+      "website_source_sha256": "d4eeb605a56856e1f5002783268049870646bcea4dbccc907467cc0c2e011122"
     },
     "en": {
       "native_name": "English",
@@ -65,7 +65,7 @@
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "98b1486236c704546f7a1123369b9038e13c6a46d6db49dbdd15946380d20791"
+      "website_source_sha256": "d4eeb605a56856e1f5002783268049870646bcea4dbccc907467cc0c2e011122"
     },
     "ja": {
       "native_name": "日本語",
@@ -89,7 +89,7 @@
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "98b1486236c704546f7a1123369b9038e13c6a46d6db49dbdd15946380d20791"
+      "website_source_sha256": "d4eeb605a56856e1f5002783268049870646bcea4dbccc907467cc0c2e011122"
     },
     "pt-BR": {
       "native_name": "Português (Brasil)",
@@ -113,7 +113,7 @@
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "98b1486236c704546f7a1123369b9038e13c6a46d6db49dbdd15946380d20791"
+      "website_source_sha256": "d4eeb605a56856e1f5002783268049870646bcea4dbccc907467cc0c2e011122"
     },
     "ru": {
       "native_name": "Русский",
@@ -152,7 +152,7 @@
         "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "98b1486236c704546f7a1123369b9038e13c6a46d6db49dbdd15946380d20791"
+      "website_source_sha256": "d4eeb605a56856e1f5002783268049870646bcea4dbccc907467cc0c2e011122"
     }
   }
 }

@@ -88,7 +88,7 @@ export function enableTailscale(port) {
   return fetchJSON("/remote-access/tailscale/enable", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(port !== undefined ? { port } : {}),
+    body: JSON.stringify(port !== undefined ? { port } : { stack: true }),
   });
 }
 
@@ -96,7 +96,7 @@ export function disableTailscale(port) {
   return fetchJSON("/remote-access/tailscale/disable", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(port !== undefined ? { port } : {}),
+    body: JSON.stringify(port !== undefined ? { port } : { stack: true }),
   });
 }
 

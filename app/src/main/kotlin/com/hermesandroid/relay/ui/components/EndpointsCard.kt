@@ -57,6 +57,9 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.SurfaceSecurityKind
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.hasSecureProxy
+import com.hermesandroid.relay.data.secureLinkCoversAllServices
+import com.hermesandroid.relay.data.secureLinkServices
 import com.hermesandroid.relay.data.isEncryptedOverlayRoute
 import com.hermesandroid.relay.data.isKnownRole
 import com.hermesandroid.relay.data.isTlsUrl
@@ -323,6 +326,9 @@ private fun EndpointRow(
                 val apiLabel = stringResource(R.string.active_section_api_server)
                 val relayLabel = stringResource(R.string.active_section_relay)
                 val surfaceSummary = listOfNotNull(
+                    candidate.proxy?.takeIf { candidate.hasSecureProxy() }?.let {
+                        stringResource(R.string.secure_link_pinned_tls_short)
+                    },
                     dashboardSurfaceUrl?.let { "$dashboardLabel ${displayPort(it)}" },
                     candidate.api?.url?.let { "$apiLabel ${displayPort(it)}" },
                     candidate.relay?.url?.let { "$relayLabel ${displayPort(it)}" },
@@ -356,6 +362,36 @@ private fun EndpointRow(
                             modifier = Modifier.size(16.dp),
                         )
                     }
+                }
+                if (candidate.hasSecureProxy()) {
+                    val secureRelayLabel = stringResource(R.string.secure_link_service_relay)
+                    val secureApiLabel = stringResource(R.string.secure_link_service_api)
+                    val secureDashboardLabel = stringResource(R.string.secure_link_service_dashboard)
+                    val services = candidate.secureLinkServices().map { service ->
+                        when (service) {
+                            "relay" -> secureRelayLabel
+                            "api" -> secureApiLabel
+                            "dashboard" -> secureDashboardLabel
+                            else -> service
+                        }
+                    }.joinToString(" · ")
+                    Text(
+                        text = stringResource(R.string.secure_link_protects, services),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    if (!candidate.secureLinkCoversAllServices()) {
+                        Text(
+                            text = stringResource(R.string.secure_link_partial_warning),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
+                    Text(
+                        text = stringResource(R.string.secure_link_auth_note),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 
@@ -680,6 +716,7 @@ private fun roleIcon(role: String): ImageVector = when (role.lowercase()) {
  * be classified independently before it's the active route.
  */
 private fun EndpointCandidate.routeSecurityKind(): SurfaceSecurityKind = when {
+    hasSecureProxy() -> SurfaceSecurityKind.Tls
     isTlsUrl(primaryRouteUrl().orEmpty()) -> SurfaceSecurityKind.Tls
     isEncryptedOverlayRoute(isTailscaleDetected = false) -> SurfaceSecurityKind.Overlay
     else -> SurfaceSecurityKind.Plain
