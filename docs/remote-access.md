@@ -25,18 +25,34 @@ tailnet-ACL identity. Publish the upstream Dashboard independently for
 Chat, Manage, and standard voice; its cookie/ticket authentication and
 the API server's bearer authentication never become Relay credentials.
 
-An **opt-in native secure proxy** is also available for Relay-only traffic.
+Optional **Hermes Secure Link**
+is also available for Android traffic.
 It listens on `:9443`, uses the SPKI pin carried by the pairing QR, and exposes
-only `/relay/health` and `/relay/ws`. It does not proxy the Dashboard or API
-server. See [`docs/security-native-proxy.md`](security-native-proxy.md) for the
+fixed `/relay`, `/api`, and `/dashboard` namespaces. Each service retains its
+own authentication. See [`docs/security-native-proxy.md`](security-native-proxy.md) for the
 security contract.
+
+These are different layers, not competing names for the same tunnel. Tailscale
+provides reachability across NAT plus tailnet ACL identity and can terminate
+publicly trusted TLS. Secure Link provides a pairing-pinned Hermes ingress after
+the host is reachable; it does not run a rendezvous service, traverse NAT, or
+replace the network path. They can coexist, and pairing may advertise both.
+
+**Hermes Reach** is a third, experimental layer retained for advanced testing. It
+supplies outbound-only rendezvous when neither side can accept a direct inbound
+connection. The host and client each open WSS to a Reach broker; the broker
+matches opaque streams while the actual Hermes session remains inside
+QR-pinned Secure Link TLS. Reach can be hosted or self-hosted. It does not
+replace Relay/API/Dashboard authentication, identify the physical host, or
+provide anonymity.
 
 ## Decision matrix
 
 | Mode | Recommended for | Setup complexity | Notes |
 |------|----------------|------------------|-------|
 | **Tailscale (built-in)** | 95% of operators | One command | **Default recommendation.** `hermes-relay-tailscale enable`. Managed TLS, tailnet ACLs, works behind CGNAT, no DNS or certs to own. |
-| **Native Relay proxy** | Operators who need pinned Relay TLS without Tailscale | Low | Opt-in Relay-only listener on `:9443`; QR-trusted SPKI; `/relay/health` and `/relay/ws` only. API and Dashboard remain direct. |
+| **Hermes Secure Link** | Operators who need a pairing-pinned Hermes ingress | Low | Opt-in `:9443` listener; QR-pinned endpoint SPKI; fixed Relay, API, and authenticated Dashboard namespaces. Requires an independently reachable host via LAN, VPN/Tailscale, or public routing. |
+| **Hermes Reach** *(experimental)* | Advanced evaluation of outbound rendezvous | High | Disabled by default and always ordered last. Both sides connect outbound to a self-hosted broker while inner Secure Link TLS protects Hermes traffic. Not recommended for normal remote access. |
 | **Caddy + Let's Encrypt** | Operators with a public domain | Moderate | Real public URL, real CA-signed cert, any browser can reach the dashboard. Requires a domain + port 80/443 reachable from the internet. |
 | **Cloudflare Tunnel** | Residential / CGNAT setups | Moderate | No inbound ports, no domain required (free tryCloudflare subdomains work). Cloudflare is in the path — acceptable for the operator-owned trust model, but note the HTTP-level intercept. |
 | **Self-hosted WireGuard** | Advanced operators | High | No external dependency. You own the crypto + peer config. We don't ship a WireGuard helper — use the upstream WireGuard docs. |
@@ -113,21 +129,98 @@ The QR will carry a `role: public` endpoint with
 `relay.url = wss://hermes.example.com/relay` and
 `api = { host: hermes.example.com, port: 443, tls: true }`.
 
-### Native Relay secure proxy
+### Hermes Secure Link
 
-Enable the native proxy only when a pinned Relay-only route is desired. Its
-default listener is `https://<host>:9443`; health is
-`GET /relay/health` and the authenticated Relay WebSocket is
+Enable Secure Link when a pairing-pinned unified route is desired. Its
+default listener is `https://<host>:9443`; Relay health is
+`GET /relay/health`, the authenticated Relay WebSocket is
 `wss://<host>:9443/relay/ws`. The operator-reviewed pairing QR carries the
-authority and SPKI SHA-256 pin before either Android or the desktop CLI makes a
-proxy request.
+pin. API-server traffic uses `/api/*`; Dashboard traffic uses `/dashboard/*`
+and is enabled only while Dashboard's real authentication gate is active.
+Android and the desktop CLI validate the advertised authority and SPKI SHA-256
+pin before making a proxy request.
 
-The proxy is intentionally not a general reverse proxy. API-server and
-Dashboard routes are absent, as are pairing, session-management, bridge HTTP,
-media-inspection, and other loopback-trusted Relay routes. Those upstream
-surfaces keep their own direct or Tailscale HTTPS URLs and authentication.
+Secure Link does not itself make the host reachable from outside the LAN. Use
+Tailscale, another VPN, port forwarding, or a public tunnel for that layer. With
+Tailscale enabled, Secure Link may travel over the tailnet while preserving its
+separate pairing pin; direct Tailscale Serve WSS/HTTPS remains a valid sibling
+candidate and fallback.
+
+Secure Link is intentionally not a general reverse proxy. Its fixed API and
+Dashboard namespaces forward only to their configured loopback services, and
+its Relay namespace exposes only health and the authenticated WebSocket.
+Pairing, session-management, bridge HTTP, media-inspection, and other
+loopback-trusted Relay routes remain absent. Relay sessions, API bearer
+credentials, and Dashboard cookies or native bearer credentials remain
+isolated even though all three services share one pinned TLS origin.
 Certificate or hostname rotation requires explicit re-pairing; clients do not
 learn replacement trust from a health response or `auth.ok`.
+
+Secure Link is opt-in. Start the Relay with `--secure-link` or set
+`RELAY_SECURE_LINK_ENABLED=1`; the default bind is `0.0.0.0:9443`. The Relay
+health payload reports `secure_link.status` as `disabled`, `available`, or
+`unavailable`, and `GET https://<host>:9443/relay/health` reports the enabled
+capabilities. Pair again after enabling it so the signed QR contains the exact
+authority and SPKI pin. Legacy `RELAY_SECURE_PROXY_*` environment names remain
+accepted for compatibility, but new configuration should use
+`RELAY_SECURE_LINK_*`.
+
+### Hermes Reach (experimental)
+
+Hermes Reach is the public name for the experimental `outbound_broker` route. It is a
+reachability service, not another name for Secure Link or Tailscale:
+
+- **Reach** gets two outbound connections to meet when the host cannot accept an
+  inbound connection.
+- **Secure Link** supplies the QR-pinned inner TLS session and fixed
+  Relay/API/Dashboard namespaces.
+- **Tailscale** supplies a private overlay network and device identity.
+
+The standalone broker runs as `python -m plugin.rendezvous`, exposes
+`GET /health`, and accepts public WSS streams at `/v1/connect`. A host maintains
+one outbound control connection; client streams are matched through opaque
+identifiers. After matching, the broker forwards framed ciphertext without
+terminating the inner Secure Link TLS session.
+
+The broker can observe the broker account or host identity used for routing,
+source network information, connection timing, and byte counts. It can deny,
+delay, drop, or misroute traffic. It cannot read inner paths, headers,
+application credentials, or plaintext that successfully authenticates through
+the QR-pinned inner TLS session. Do not describe Reach as anonymous,
+zero-knowledge, or secure merely because the outer hop uses WSS.
+
+The QR bootstrap credential is raw, one-use, and expiring. The broker stores
+and atomically consumes only its SHA-256 hash. A durable route token is scoped
+to an opaque credential/session identifier and is returned only inside the
+inner Relay `auth.ok` after successful pairing. Durable reconnect is implemented,
+but Reach remains experimental while deployment, recovery, and operator UX are
+still being evaluated.
+
+Direct, Tailscale, public TLS, and Secure Link routes remain independent
+candidates. A Reach failure may select another explicitly configured secure
+route; it never authorizes a silent plaintext downgrade. Exact connector flags,
+status fields, and production hosting instructions are intentionally explicit:
+
+1. The host connector persists an opaque host ID (by default under
+   `~/.hermes/relay-secure-link/host-id`). Provision one raw host-registration
+   token to the host, then register that host ID and only the token's base64url
+   SHA-256 digest in the broker's private `hosts` credential file.
+2. Run the broker with `python -m plugin.rendezvous --credentials <file>
+   --state /var/lib/hermes-reach/routes.json --listen 0.0.0.0 --port 9444
+   --tls-cert <cert> --tls-key <key>`. The state file stores only credential
+   hashes and bounded expiry/revocation metadata; preserve it across restarts.
+3. On the Hermes host, explicitly enable experimental Reach with
+   `RELAY_EXPERIMENTAL_REACH_ENABLED=1`, enable Secure Link, and set
+   `RELAY_SECURE_LINK_BROKER_URL=wss://<broker>` plus
+   `RELAY_SECURE_LINK_BROKER_HOST_TOKEN=<raw-host-token>`, then restart Relay.
+4. Check Relay `/health` → `secure_link.reach.state`. Expected connector states
+   are `connecting`, `connected`, or `backoff`; `unavailable` indicates partial
+   configuration or a missing local Secure Link listener.
+
+The broker itself reports only `ok`, `service: "hermes_reach"`, protocol
+version, online-host count, and active-stream count from `GET /health`. The host
+token is never placed in a QR. End-user pairing remains gated on the pairing
+publisher and durable-token acceptance tests described above.
 
 ### Cloudflare Tunnel
 
@@ -184,7 +277,7 @@ interception risk.
 the signed ordering secure-first and retain LAN as a separately configured
 fallback:
 
-1. If the opt-in native proxy is enabled, emit its pinned `plugin_proxy`
+1. If Hermes Secure Link is enabled, emit its pinned `plugin_proxy`
    candidate.
 2. If Tailscale Serve is available, emit its WSS/HTTPS candidate as the normal
    primary remote path.
@@ -372,7 +465,7 @@ failure above. Leave the override blank and let `mode=auto` pick.
   criteria, alternatives rejected.
 - `docs/security.md` — remote-connectivity section + overall trust
   model.
-- `docs/security-native-proxy.md` — native proxy trust boundary, route
+- `docs/security-native-proxy.md` — Hermes Secure Link trust boundary, route
   allowlist, pinning, and rotation contract.
 - `docs/relay-server.md` — `hermes-relay-tailscale` CLI reference +
   environment variables (`TS_AUTO`, `TS_DECLINE`).

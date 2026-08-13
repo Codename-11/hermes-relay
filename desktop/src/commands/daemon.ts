@@ -36,6 +36,7 @@ import * as path from 'node:path'
 
 import type { ParsedArgs } from '../cli.js'
 import { desktopRelayIdentity } from '../deviceIdentity.js'
+import { inferEndpointRole } from '../endpoint.js'
 import { GatewayClient } from '../gatewayClient.js'
 import type { GatewayEvent, SessionCreateResponse } from '../gatewayTypes.js'
 import {
@@ -744,6 +745,9 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const configuredUrl = url
   const configuredSession = await getSession(configuredUrl)
   let useSessionHeader = false
+  let brokerRoute: import('../transport/BrokerRelaySocket.js').BrokerRouteConfig | undefined
+  let activeRoute = configuredSession?.routeCandidates?.find(candidate => candidate.relay.url === configuredUrl)?.role
+    ?? (configuredSession?.routeCandidates?.length ? null : configuredSession?.endpointRole ?? inferEndpointRole(configuredUrl))
   if (!resolveRemoteOrNull(args) && configuredSession?.routeCandidates?.length) {
     const candidates = configuredSession.preferSecureRoutes
       ? secureFirstCandidates(configuredSession.routeCandidates)
@@ -751,7 +755,11 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     try {
       const route = await probeCandidatesByPriority(candidates, { sessionToken: configuredSession.token })
       url = route.relay.url
-      useSessionHeader = route.role.toLowerCase() === 'plugin_proxy'
+      useSessionHeader = route.role.toLowerCase() === 'plugin_proxy' && !route.broker
+      if (route.broker && route.proxy) {
+        brokerRoute = { url: route.broker.url, hostId: route.broker.hostId, credentialKind: route.broker.credentialKind, token: route.broker.token, innerUrl: route.relay.url, innerPinSha256: route.proxy.pinSha256 }
+      }
+      activeRoute = route.broker ? 'outbound_broker' : route.role
       log.info({ event: 'route_selected', configured_url: configuredUrl, url, role: route.role })
     } catch (e) {
       log.warn({
@@ -809,6 +817,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     process_name: path.basename(process.execPath),
     url,
     configured_url: configuredUrl,
+    active_route: activeRoute ?? undefined,
     state: 'starting',
     started_at: nowSec(),
     updated_at: nowSec(),
@@ -830,6 +839,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     url,
     sessionToken: token,
     sessionHeader: useSessionHeader,
+    broker: brokerRoute,
     ...desktopRelayIdentity()
   })
 

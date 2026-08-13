@@ -77,6 +77,9 @@ class UpstreamTransportController(
      * `hermes_dashboard_<id>` file (original behavior).
      */
     private val tokenStoreKeyProvider: (String) -> String? = { null },
+    /** Applies pairing-bound TLS to a standard authenticated client when needed. */
+    private val pinnedClientProvider: (String, okhttp3.OkHttpClient) -> okhttp3.OkHttpClient? =
+        { _, _ -> null },
 ) {
 
     // --- Per-connection dashboard cookie stores ----------------------------
@@ -147,30 +150,34 @@ class UpstreamTransportController(
      * factory the dashboard-surface callers (profile lists, session/message
      * scoping, the gateway client, standard-API setup probe) route through.
      */
-    fun dashboardClientFor(connectionId: String, dashboardUrl: String): DashboardApiClient =
-        DashboardApiClient(
-            baseUrl = dashboardUrl,
-            okHttpClient = DashboardApiClient.defaultClient(
-                cookieStore = dashboardCookieStoreFor(connectionId),
-                bearerAuth = bearerAuthForTrustedDashboard(connectionId, dashboardUrl),
-            ),
+    fun dashboardClientFor(connectionId: String, dashboardUrl: String): DashboardApiClient {
+        val base = DashboardApiClient.defaultClient(
+            cookieStore = dashboardCookieStoreFor(connectionId),
+            bearerAuth = bearerAuthForTrustedDashboard(connectionId, dashboardUrl),
         )
+        return DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = pinnedClientProvider(dashboardUrl, base) ?: base,
+        )
+    }
 
     /**
      * Build a [DashboardApiClient] for the active connection against
      * [dashboardUrl], falling back to an in-memory cookie store when there is
      * no active connection (the standard-voice probe path).
      */
-    fun dashboardClientForActive(dashboardUrl: String): DashboardApiClient =
-        DashboardApiClient(
-            baseUrl = dashboardUrl,
-            okHttpClient = DashboardApiClient.defaultClient(
-                cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
-                bearerAuth = activeConnectionIdProvider()?.let {
-                    bearerAuthForTrustedDashboard(it, dashboardUrl)
-                },
-            ),
+    fun dashboardClientForActive(dashboardUrl: String): DashboardApiClient {
+        val base = DashboardApiClient.defaultClient(
+            cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
+            bearerAuth = activeConnectionIdProvider()?.let {
+                bearerAuthForTrustedDashboard(it, dashboardUrl)
+            },
         )
+        return DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = pinnedClientProvider(dashboardUrl, base) ?: base,
+        )
+    }
 
     /**
      * Native PKCE client for the active connection's exact trusted dashboard
@@ -190,9 +197,16 @@ class UpstreamTransportController(
         ) {
             return null
         }
+        val base = okhttp3.OkHttpClient.Builder()
+            .retryOnConnectionFailure(false)
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
         return NativeDashboardAuthClient(
             baseUrl = dashboardUrl,
             tokenStore = dashboardTokenStoreFor(connectionId),
+            client = pinnedClientProvider(dashboardUrl, base) ?: base,
         )
     }
 
@@ -205,12 +219,14 @@ class UpstreamTransportController(
             disposeDashboardHttpClient(client)
             dashboardHttpClientCache = null
         }
-        return DashboardApiClient.defaultClient(
+        val base = DashboardApiClient.defaultClient(
             cookieStore = activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
             bearerAuth = activeConnectionIdProvider()?.let { activeId ->
                 bearerAuthForTrustedDashboard(activeId, dashboardUrl)
             },
-        ).also { dashboardHttpClientCache = Triple(connectionId, dashboardUrl, it) }
+        )
+        return (pinnedClientProvider(dashboardUrl, base) ?: base)
+            .also { dashboardHttpClientCache = Triple(connectionId, dashboardUrl, it) }
     }
 
     @Synchronized

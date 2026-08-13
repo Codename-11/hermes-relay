@@ -55,6 +55,8 @@ data class RouteProbeOutcome(
  */
 enum class EndpointSurface {
     Standard,
+    Dashboard,
+    Api,
     Relay,
 }
 
@@ -198,6 +200,10 @@ class EndpointResolver(
             val authority = when (surface) {
                 EndpointSurface.Standard ->
                     candidate.routeAuthority() ?: candidate.primaryRouteUrl().orEmpty().lowercase()
+                EndpointSurface.Dashboard ->
+                    routeAuthority(candidate.pluginProxyRoutesOrNull()?.dashboardBaseUrl ?: candidate.dashboard?.url).orEmpty()
+                EndpointSurface.Api ->
+                    routeAuthority(candidate.pluginProxyRoutesOrNull()?.apiBaseUrl ?: candidate.api?.url).orEmpty()
                 EndpointSurface.Relay ->
                     candidate.pluginProxyRoutesOrNull()?.authority
                         ?: routeAuthority(candidate.relay?.url).orEmpty()
@@ -242,11 +248,16 @@ class EndpointResolver(
         val eligible = candidates.filter { probeTarget(it, surface) != null }
         if (eligible.isEmpty()) return null
 
-        // Strict priority: sort ascending so priority-0 lands first. Grouping
-        // preserves emitted order within a priority class (DNS SRV parity).
-        val groups = eligible.groupBy { it.priority }.toSortedMap()
+        // Supported routes always run before experimental routes. Priority is
+        // strict inside each stability tier, so Reach remains available as a
+        // last-resort fallback without displacing Tailscale or direct TLS.
+        val supported = eligible.filterNot { it.experimental || it.role.equals("outbound_broker", ignoreCase = true) }
+        val experimental = eligible.filter { it.experimental || it.role.equals("outbound_broker", ignoreCase = true) }
+        val groups = (supported.groupBy { it.priority }.toSortedMap().values +
+            experimental.groupBy { it.priority }.toSortedMap().values)
 
-        for ((priority, group) in groups) {
+        for (group in groups) {
+            val priority = group.first().priority
             Log.d(TAG, "probing priority=$priority group (size=${group.size})")
             val winner = raceGroup(group, surface)
             if (winner != null) {
@@ -359,6 +370,8 @@ class EndpointResolver(
         val startedAtMs = clock()
         val operation = when (surface) {
             EndpointSurface.Standard -> "Dashboard or API route health probe"
+            EndpointSurface.Dashboard -> "Dashboard route health probe"
+            EndpointSurface.Api -> "API route health probe"
             EndpointSurface.Relay -> "Relay route health probe"
         }
         val target = probeTarget(candidate, surface)
@@ -483,6 +496,22 @@ class EndpointResolver(
         candidate: EndpointCandidate,
         surface: EndpointSurface,
     ): ProbeTarget? {
+        if (surface == EndpointSurface.Dashboard) {
+            candidate.pluginProxyRoutesOrNull()?.dashboardBaseUrl?.let { base ->
+                return ProbeTarget(base, "$base/api/status", "/dashboard/api/status")
+            }
+            candidate.dashboard?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }?.let { base ->
+                return ProbeTarget(base, "$base/api/status", "/api/status")
+            }
+            return null
+        }
+        if (surface == EndpointSurface.Api) {
+            candidate.pluginProxyRoutesOrNull()?.apiBaseUrl?.let { base ->
+                return ProbeTarget(base, "$base/health", "/api/health")
+            }
+            candidate.api?.url?.let { base -> return ProbeTarget(base, "$base/health", "/health") }
+            return null
+        }
         if (surface == EndpointSurface.Relay) candidate.pluginProxyRoutesOrNull()?.let { proxy ->
             return ProbeTarget(
                 baseUrl = proxy.relayHttpUrl,
@@ -539,6 +568,11 @@ class EndpointResolver(
         return null
     }
 
+    internal fun probeRequestUrlForTest(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface,
+    ): String? = probeTarget(candidate, surface)?.requestUrl
+
     /**
      * Map a probe exception to a short, actionable string for the Routes
      * card. The TLS case is the headline: a route saved with `https://`
@@ -556,6 +590,8 @@ class EndpointResolver(
 
     private fun EndpointSurface.diagnosticTarget(): String = when (this) {
         EndpointSurface.Standard -> "Dashboard or API server"
+        EndpointSurface.Dashboard -> "Dashboard"
+        EndpointSurface.Api -> "API server"
         EndpointSurface.Relay -> "Relay"
     }
 

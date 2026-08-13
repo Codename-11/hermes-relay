@@ -15,9 +15,11 @@ export interface StoredRouteCandidate {
   priority: number
   api: { host: string; port: number; tls: boolean }
   relay: { url: string; transportHint?: string }
-  proxy?: { url: string; transportHint?: string; pinSha256: string }
+  proxy?: { url: string; transportHint?: string; pinSha256: string; surfaces?: string[] }
   security?: string
   recommended?: boolean
+  experimental?: boolean
+  broker?: { url: string; hostId: string; credentialKind: 'bootstrap' | 'route'; token: string; expiresAt?: string | number | null }
 }
 
 export interface RemoteSessionRecord {

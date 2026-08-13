@@ -63,9 +63,30 @@ export interface EndpointCandidate {
     url: string
     transportHint?: string
     pinSha256: string
+    surfaces?: string[]
   }
   security?: string
   recommended?: boolean
+  /** Experimental routes are supported for explicit evaluation but are
+   * never presented as the default remote-access recommendation. */
+  experimental?: boolean
+  broker?: {
+    url: string
+    hostId: string
+    credentialKind: 'bootstrap' | 'route'
+    token: string
+    expiresAt?: string | number | null
+  }
+}
+
+export function candidateDisplayLabel(candidate: Pick<EndpointCandidate, 'role' | 'broker'> & Partial<Pick<EndpointCandidate, 'relay'>>): string {
+  const role = candidate.role.toLowerCase()
+  if (candidate.broker && (role === 'outbound_broker' || role === 'broker' || role === 'relay_broker')) return 'Hermes Reach (experimental)'
+  // Older session files used the generic `custom` role even for ordinary
+  // private-address routes. Keep named operator-defined roles intact, but
+  // classify that legacy placeholder from its actual relay URL.
+  if (role === 'custom' && candidate.relay?.url) return displayLabel(inferEndpointRole(candidate.relay.url))
+  return displayLabel(candidate.role)
 }
 
 /**
@@ -105,6 +126,9 @@ export function isKnownRole(role: string): boolean {
  * exactly what they labeled it.
  */
 export function displayLabel(role: string): string {
+  const normalized = role.toLowerCase()
+  if (normalized === 'plugin_proxy') return 'Hermes Secure Link'
+  if (normalized === 'outbound_broker' || normalized === 'relay_broker' || normalized === 'broker') return 'Hermes Reach (experimental)'
   switch (parseRawRole(role)) {
     case 'lan':
       return 'LAN'
@@ -114,6 +138,36 @@ export function displayLabel(role: string): string {
       return 'Public'
     default:
       return `Custom VPN (${role})`
+  }
+}
+
+/** Infer a built-in role for legacy/direct sessions that did not persist one. */
+export function inferEndpointRole(rawUrl: string): EndpointRole {
+  try {
+    const parsed = new URL(rawUrl)
+    const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+    const octets = host.split('.').map(Number)
+    const ipv4 = octets.length === 4 && octets.every(part => Number.isInteger(part) && part >= 0 && part <= 255)
+
+    if (host.endsWith('.ts.net') || (ipv4 && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127)) {
+      return 'tailscale'
+    }
+    if (
+      host === 'localhost' || host.endsWith('.local') || host === '::1' ||
+      host.startsWith('fc') || host.startsWith('fd') ||
+      /^(fe8|fe9|fea|feb)/.test(host) ||
+      (ipv4 && (
+        octets[0] === 10 || octets[0] === 127 ||
+        (octets[0] === 169 && octets[1] === 254) ||
+        (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+        (octets[0] === 192 && octets[1] === 168)
+      ))
+    ) {
+      return 'lan'
+    }
+    return 'public'
+  } catch {
+    return 'custom'
   }
 }
 

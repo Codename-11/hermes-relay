@@ -11,9 +11,12 @@ import {
 import logo from '../icons/icon-256.png'
 import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
 import { describeTransportSecurity } from '../../src/transportSecurity'
+import { displayLabel as displayRouteLabel, inferEndpointRole } from '../../src/endpoint'
 
 type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'pair-host' | 'host-detail' | 'settings' | 'help' | 'activity' | 'activity-detail'
 type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: Capability; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient; remote: string } | { type: 'repair' | 'forget'; host: Host } | { type: 'clear-activity' } | null
+type RouteTestResult = { label: string; url: string; reachable: boolean; elapsed_ms: number; encrypted: boolean; security: string; error?: string | null }
+type RouteTestReport = { best?: RouteTestResult | null; routes?: RouteTestResult[] }
 
 const isGrantWindow = '__TAURI_INTERNALS__' in window && getCurrentWindow().label === 'grant'
 
@@ -44,6 +47,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     ] as T
     if (command === 'check_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: true, latest_version: '0.4.0-alpha.2', installed: false, needs_restart: false } as T
     if (command === 'install_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: false, installed: true, needs_restart: true } as T
+    if (command === 'test_host_route') return { best: { label: 'LAN', url: 'ws://172.16.24.250:8767', reachable: true, elapsed_ms: 36, encrypted: false, security: 'Unencrypted relay connection' }, routes: [] } as T
     return undefined as T
   }
   return invoke<T>(command, args)
@@ -206,8 +210,11 @@ function ManagementApp() {
   const [activityDetailBack, setActivityDetailBack] = useState<Page>('activity')
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null)
   const [selectorOpen, setSelectorOpen] = useState(false)
+  const [routeDetailsOpen, setRouteDetailsOpen] = useState(false)
+  const [routeTest, setRouteTest] = useState<RouteTestReport | null>(null)
   const [clients, setClients] = useState<AuthorizedClient[]>([])
   const [busy, setBusy] = useState<string | null>(null)
+  const [connectionTransition, setConnectionTransition] = useState<'connecting' | 'disconnecting' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<PendingAction>(null)
   const [windowVisible, setWindowVisible] = useState(true)
@@ -215,8 +222,11 @@ function ManagementApp() {
   const selectorRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLElement>(null)
   const hideTimer = useRef<number | null>(null)
+  const refreshInFlight = useRef(false)
 
   const refresh = useCallback(async () => {
+    if (refreshInFlight.current) return
+    refreshInFlight.current = true
     try {
       const next = await call<Snapshot>('get_snapshot')
       next.hosts = next.hosts.map(h => {
@@ -238,13 +248,14 @@ function ManagementApp() {
       setSelectedUrl(current => current && next.hosts.some(h => h.url === current) ? current : next.active_url ?? next.hosts[0]?.url ?? null)
       setError(null)
     } catch (e) { setError(String(e)) }
+    finally { refreshInFlight.current = false }
   }, [])
 
   useEffect(() => {
     refresh()
-    const timer = window.setInterval(refresh, 5000)
+    const timer = window.setInterval(refresh, connectionTransition ? 350 : 5000)
     return () => window.clearInterval(timer)
-  }, [refresh])
+  }, [refresh, connectionTransition])
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -271,6 +282,35 @@ function ManagementApp() {
     setBusy(name)
     try { await call(name, args); await refresh(); setError(null); return true }
     catch (e) { setError(String(e)); return false }
+    finally { setBusy(null) }
+  }
+
+  async function changeConnection() {
+    if (busy) return
+    const command = connected ? 'disconnect_daemon' : 'connect_daemon'
+    const transition = connected ? 'disconnecting' : 'connecting'
+    setBusy(command)
+    setConnectionTransition(transition)
+    setError(null)
+    try {
+      await call(command)
+      await refresh()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setConnectionTransition(null)
+      setBusy(null)
+    }
+  }
+
+  async function testRoute(remote: string) {
+    setBusy('test_host_route')
+    setRouteTest(null)
+    try {
+      const report = await call<RouteTestReport>('test_host_route', { remote })
+      setRouteTest(report)
+      setError(null)
+    } catch (e) { setRouteTest(null); setError(String(e)) }
     finally { setBusy(null) }
   }
 
@@ -378,7 +418,7 @@ function ManagementApp() {
 
     <main className="content" ref={contentRef}>
       {page === 'overview' && <>
-        <section className={`connection-route ${connected ? 'online' : 'offline'}`}>
+        <section className={`connection-route ${connected ? 'online' : 'offline'} ${connectionTransition ?? ''} ${snapshot.daemon.active_route === 'plugin_proxy' ? 'secure-link' : ''}`} aria-busy={connectionTransition !== null}>
           {snapshot.hosts.length === 0 ?
             <button className="empty-pair" onClick={() => openPair()}><Link2 /><span><strong>Pair host</strong><small>Connect this PC to a Hermes instance</small></span><ChevronRight /></button> :
             <div className="route-grid" ref={selectorRef}>
@@ -397,11 +437,21 @@ function ManagementApp() {
               </div>
               <i className="route-link right" />
               <span className="route-endpoint"><Monitor /><small>This PC</small></span>
-              {connected && <span className="route-traffic" aria-hidden="true">
+              {(connected || connectionTransition === 'connecting') && <span className="route-traffic" aria-hidden="true">
                 <i className="packet packet-outbound" /><i className="packet packet-outbound packet-late" />
                 <i className="packet packet-inbound" /><i className="packet packet-inbound packet-late" />
               </span>}
-              {(() => { const security = describeTransportSecurity(snapshot.daemon.url ?? host?.url ?? '', host?.endpoint_role); return <div className={`route-status ${connected && !security.encrypted ? 'insecure' : ''}`}><strong>{connected ? 'Connected' : 'Disconnected'}</strong><span>·</span><small>{connected ? security.label : 'Relay connection offline'}</small></div> })()}
+              {(() => {
+                const activeRole = snapshot.daemon.active_route ?? host?.endpoint_role ?? inferEndpointRole(snapshot.daemon.url ?? host?.url ?? '')
+                const security = describeTransportSecurity(snapshot.daemon.url ?? host?.url ?? '', activeRole)
+                return <div className={`route-status ${connected && !security.encrypted ? 'insecure' : ''}`} aria-live="polite" aria-atomic="true">
+                  <strong>{connectionTransition === 'connecting' ? 'Connecting' : connectionTransition === 'disconnecting' ? 'Disconnecting' : connected ? 'Connected' : 'Disconnected'}</strong>
+                  {connected && <button className={`route-badge ${security.kind}`} aria-expanded={routeDetailsOpen} onClick={() => setRouteDetailsOpen(open => !open)}><ShieldCheck />{displayRouteLabel(activeRole ?? 'custom')}<ChevronDown /></button>}
+                  {connectionTransition && <small>{connectionTransition === 'connecting' ? 'Starting daemon and opening relay tunnel' : 'Closing relay tunnel'}</small>}
+                  {!connected && !connectionTransition && <small>Relay connection offline</small>}
+                  {connected && routeDetailsOpen && <aside className="route-detail-card"><div><ShieldCheck /><span><strong>{displayRouteLabel(activeRole ?? 'custom')}</strong><small>{security.detail}</small></span></div><dl><div><dt>Security</dt><dd>{security.label}</dd></div><div><dt>Endpoint</dt><dd title={snapshot.daemon.url ?? undefined}>{snapshot.daemon.url ?? 'Not reported'}</dd></div></dl><button className="route-test-button" disabled={busy === 'test_host_route'} onClick={() => host && testRoute(host.url)}>{busy === 'test_host_route' ? <LoaderCircle className="spin" /> : routeTest ? <RefreshCw /> : <ActivityIcon />}<span>{busy === 'test_host_route' ? <><strong>Testing connection…</strong><small>Checking every saved route</small></> : <><strong>{routeTest ? 'Test again' : 'Test connection'}</strong><small>Measure reachability and latency</small></>}</span></button>{routeTest && <div className={`route-test-result ${routeTest.best ? 'reachable' : 'unreachable'}`} aria-live="polite">{routeTest.best ? <><div className="route-test-summary"><span><Check /></span><strong>{routeTest.best.label} reachable</strong><em>{routeTest.best.elapsed_ms} ms</em></div><dl><div><dt>Protection</dt><dd className={routeTest.best.encrypted ? 'secure' : 'warning'}>{routeTest.best.security}</dd></div><div><dt>Tested endpoint</dt><dd title={routeTest.best.url}>{routeTest.best.url}</dd></div></dl><small>{Math.max(1, routeTest.routes?.length ?? 0)} saved route{(routeTest.routes?.length ?? 0) === 1 ? '' : 's'} checked</small></> : <div className="route-test-summary"><span><X /></span><strong>No route reachable</strong><em>Check host</em></div>}</div>}</aside>}
+                </div>
+              })()}
             </div>}
         </section>
 
@@ -420,7 +470,10 @@ function ManagementApp() {
           </button>
         </section>}
 
-        <button className="tunnel-button" disabled={busy !== null} onClick={() => action(connected ? 'disconnect_daemon' : 'connect_daemon')}><Power />{connected ? 'Disconnect Tunnel' : 'Connect Tunnel'}</button>
+        <button className={`tunnel-button ${connectionTransition ? 'pending' : ''}`} disabled={busy !== null} aria-busy={connectionTransition !== null} onClick={() => void changeConnection()}>
+          {connectionTransition ? <LoaderCircle className="spin" /> : <Power />}
+          <span><strong>{connectionTransition === 'connecting' ? 'Connecting…' : connectionTransition === 'disconnecting' ? 'Disconnecting…' : connected ? 'Disconnect Tunnel' : 'Connect Tunnel'}</strong>{connectionTransition && <small>{connectionTransition === 'connecting' ? 'Waiting for the relay' : 'Stopping the local daemon'}</small>}</span>
+        </button>
 
         <section className="activity-section">
           <div className="section-heading"><h2>Recent activity</h2><button onClick={() => { setActivityBack('overview'); setPage('activity') }}>View all <ChevronRight /></button></div>
@@ -689,6 +742,7 @@ function PairHostPage({ initialUrl, busy, onBack, onPair }: { initialUrl: string
     <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button>
     <div className="page-title"><div><p>New connection</p><h1>{initialUrl ? 'Re-pair host' : 'Pair host'}</h1></div></div>
     <p className="page-intro">Enter the relay address and the six-character code shown by Hermes.</p>
+    <div className="secure-link-setup"><ShieldCheck /><span><strong>Hermes Secure Link ready</strong><small>When the pairing invite advertises Secure Link, the CLI prefers its pinned, encrypted route automatically and keeps private-network routes as fallback.</small></span></div>
     <form className="pair-form" onSubmit={async event => { event.preventDefault(); if (canSubmit) await onPair(remote.trim(), normalizedCode) }}>
       <label><span>Relay URL</span><div className="pair-input-action"><input aria-label="Relay URL" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="wss://relay.example.com" value={remote} onChange={event => setRemote(event.target.value)} /><button type="button" title={remote ? 'Copy relay URL' : 'Paste relay URL'} aria-label={remote ? 'Copy relay URL' : 'Paste relay URL'} onClick={async () => { if (remote) await navigator.clipboard.writeText(remote.trim()); else setRemote(await navigator.clipboard.readText()) }}><Copy /></button></div></label>
       {validUrl && <div className={`transport-notice ${security.encrypted ? 'secure' : 'insecure'}`}>{security.encrypted ? <ShieldCheck /> : <AlertTriangle />}<span><strong>{security.label}</strong><small>{security.detail}</small></span></div>}
@@ -716,7 +770,9 @@ function HostDetailPage({ host, clients, busy, onBack, onConnect, onRename, onAc
     <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button>
     <div className="host-detail-hero"><span className="host-icon"><Server /></span><span><p>{host.is_active ? 'Active host' : 'Paired host'}</p><h1>{host.name}</h1><small>{host.url}</small></span><button className="copy-host-url" aria-label="Copy relay URL" title="Copy relay URL" onClick={() => navigator.clipboard.writeText(host.url)}><Copy /></button></div>
     <div className="settings-group"><h2>Display name</h2><div className="rename-host"><input value={name} maxLength={64} aria-label="Host display name" onChange={event => setName(event.target.value)} /><button disabled={!changed || busy} onClick={() => onRename(host.url, name.trim())}>Save</button></div><p className="group-help host-name-help">Stored locally on this PC. It does not rename the Hermes server.</p></div>
-    <div className="settings-group"><h2>Connection</h2><div className="settings-card host-detail"><dl><div><dt>Route</dt><dd>{host.endpoint_role ?? 'Custom'}</dd></div><div><dt>Relay</dt><dd>{host.server_version ?? 'Unknown'}</dd></div><div><dt>Paired</dt><dd>{formatPairedAt(host.paired_at)}</dd></div></dl></div></div>
+    <div className="settings-group"><h2>Connection</h2><div className="settings-card host-detail"><dl><div><dt>Active route</dt><dd>{displayRouteLabel(host.endpoint_role ?? inferEndpointRole(host.url))}</dd></div><div><dt>Relay</dt><dd>{host.server_version ?? 'Unknown'}</dd></div><div><dt>Paired</dt><dd>{formatPairedAt(host.paired_at)}</dd></div></dl></div><p className="group-help">Tailscale is recommended for remote access. A public TLS domain or Direct Secure Link can provide a fully self-hosted alternative.</p></div>
+    <div className="settings-group"><h2>Recommended remote access</h2><div className="settings-card broker-summary configured"><span className="setting-icon"><Radio /></span><span><strong>Tailscale</strong><small>Private reachability, managed TLS, and no inbound port forwarding. Install Tailscale on this PC and the Hermes host, then re-pair.</small></span><em>Recommended</em></div><p className="group-help">For a fully self-hosted public route, point a domain at the host and use a trusted TLS reverse proxy or Direct Secure Link.</p></div>
+    {host.broker_configured && <div className="settings-group experimental-group"><h2>Experimental</h2><div className="settings-card broker-summary"><span className="setting-icon"><Radio /></span><span><strong>Hermes Reach</strong><small>Brokered fallback saved for evaluation. It is tried after supported direct, Tailscale, public TLS, and Secure Link routes.</small></span><em>Experimental</em></div><p className="group-help">Reach is not recommended for normal setup and may change before release.</p></div>}
     <div className="settings-group"><h2>Remote access</h2><div className="settings-card management-links">
       <button onClick={onAccess}><span className="setting-icon"><LockKeyhole /></span><span><strong>Desktop access</strong><small>Choose how this host requests control.</small></span><em>{hostAccessLabel(host)}</em><ChevronRight /></button>
       <button onClick={onCapabilities}><span className="setting-icon"><SlidersHorizontal /></span><span><strong>Capabilities</strong><small>Commands, files, screen, input and hardware.</small></span><em>{host.access_mode === 'full-access' ? 'All allow' : 'Review'}</em><ChevronRight /></button>

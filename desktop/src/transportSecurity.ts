@@ -1,4 +1,4 @@
-export type TransportSecurityKind = 'tls' | 'overlay' | 'plain'
+export type TransportSecurityKind = 'secure-link' | 'broker' | 'tls' | 'overlay' | 'plain'
 
 export interface TransportSecurity {
   kind: TransportSecurityKind
@@ -28,6 +28,20 @@ export function isOverlayRoute(url: string, endpointRole?: string | null): boole
  * ws:// over a known Tailscale/WireGuard route is still encrypted by the
  * authenticated overlay. All other ws:// routes are plain transport. */
 export function describeTransportSecurity(url: string, endpointRole?: string | null): TransportSecurity {
+  const role = endpointRole?.trim().toLowerCase()
+  if (role === 'plugin_proxy') {
+    return { kind: 'secure-link', encrypted: true, label: 'Hermes Secure Link', detail: 'Pinned TLS protects this Relay connection and verifies the paired endpoint.' }
+  }
+  if (role === 'outbound_broker' || role === 'relay_broker' || role === 'broker') {
+    const encrypted = url.trim().toLowerCase().startsWith('wss://')
+    return {
+      kind: 'broker', encrypted,
+      label: encrypted ? 'Broker hop protected with TLS' : 'Broker hop is not protected',
+      detail: encrypted
+        ? 'Hermes Reach provides outbound reachability. TLS protects the broker hop only; payload end-to-end protection is reported separately when the protocol validates it.'
+        : 'Hermes Reach provides outbound reachability, but this broker hop is not using WSS. No payload end-to-end protection is implied.'
+    }
+  }
   try {
     if (new URL(url).protocol === 'wss:') {
       return { kind: 'tls', encrypted: true, label: 'Encrypted with TLS', detail: 'Relay traffic is protected end to end with WSS.' }

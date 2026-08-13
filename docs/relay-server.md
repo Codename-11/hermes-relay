@@ -137,6 +137,12 @@ python -m relay_server [OPTIONS]
   --no-ssl           Disable TLS requirement (dev/localhost only)
   --log-level LEVEL  DEBUG, INFO, WARNING, ERROR (default: INFO)
   --config PATH      Path to hermes config.yaml
+  --secure-link / --no-secure-link
+                     Enable or disable Hermes Secure Link (opt-in)
+  --secure-link-host HOST
+                     Secure Link bind and advertised host
+  --secure-link-port PORT
+                     Secure Link port (default: 9443)
   --allow-insecure-api-key
                      Allow API-key voice auth over plain LAN HTTP at startup
 ```
@@ -154,6 +160,16 @@ All settings can be configured via environment variables. These override CLI def
 | `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server base URL |
 | `RELAY_HERMES_CONFIG` | `~/.hermes/config.yaml` | Hermes config path (for profile loading) |
 | `RELAY_LOG_LEVEL` | `INFO` | Python logging level |
+| `RELAY_SECURE_LINK_ENABLED` | `0` | Enable optional Hermes Secure Link. Restart and re-pair so the QR carries the exact origin and SPKI pin. |
+| `RELAY_SECURE_LINK_HOST` | `0.0.0.0` | Secure Link bind and advertised host. The listener must already be reachable through LAN, VPN/Tailscale, or operator-managed public routing. |
+| `RELAY_SECURE_LINK_PORT` | `9443` | Secure Link HTTPS port. |
+| `RELAY_SECURE_LINK_CERT` | generated | Optional TLS certificate path. Changing the identity requires explicit re-pairing. |
+| `RELAY_SECURE_LINK_KEY` | generated | Optional TLS private-key path. |
+| `RELAY_SECURE_LINK_DASHBOARD_URL` | `http://127.0.0.1:9119` | Loopback Dashboard upstream for the fixed `/dashboard` namespace. |
+| `RELAY_EXPERIMENTAL_REACH_ENABLED` | `0` | Explicitly enable experimental Hermes Reach. Not recommended for normal remote access. |
+| `RELAY_SECURE_LINK_BROKER_URL` | — | Experimental Reach broker `wss://` base URL. Requires Secure Link and the explicit Reach flag. |
+| `RELAY_SECURE_LINK_BROKER_HOST_TOKEN` | — | Raw host-registration token for the outbound connector. Configure with the broker URL; never put it in a QR or broker credential file. |
+| `RELAY_SECURE_LINK_BROKER_HOST_ID_FILE` | `~/.hermes/relay-secure-link/host-id` | Persistent opaque Reach host-ID file. Changing it requires broker credential reconciliation. |
 | `RELAY_TRUST_PROXY_HEADERS` | `0` | When `1`, trust `X-Forwarded-Proto: https` from your own reverse proxy for Hermes API bearer auth on `/voice/*`. Only enable when the proxy strips untrusted incoming forwarded headers. |
 | `RELAY_ALLOW_INSECURE_API_BEARER` | `0` | Dev-only escape hatch. When `1`, allows Hermes API bearer auth on non-loopback plaintext `/voice/*` requests. Leave off for production. For a running relay, prefer `hermes relay insecure-api-key on` or the standalone `hermes-relay insecure-api-key on` shim so no restart is needed. |
 | `RELAY_VOICE_OUTPUT_CONFIG` | `~/.hermes-relay/config.yaml` | Relay-owned config file for assistant speech rendering defaults under `voice_output:`. This is intentionally separate from upstream Hermes `~/.hermes/config.yaml`, which still owns legacy `stt:` and `tts:` fallback helpers. |
@@ -191,6 +207,69 @@ python -m relay_server
 ```
 
 Or use a reverse proxy (nginx/Caddy) to terminate TLS in front of the relay. Full decision matrix (Tailscale / Caddy / Cloudflare Tunnel / WireGuard / plaintext-over-VPN) with setup recipes lives in [`docs/remote-access.md`](remote-access.md).
+
+### Hermes Secure Link
+
+Hermes Secure Link is the Relay plugin's optional pinned-TLS ingress. One exact
+origin exposes only `/relay`, `/api`, and `/dashboard`; Relay sessions, API
+bearers, and Dashboard cookies/native bearers remain independently authenticated.
+The pairing QR establishes the endpoint authority and SPKI pin before the first
+request. The pin verifies continuity with the paired endpoint, not the physical
+host's identity. Secure Link does not supply reachability or traverse NAT.
+
+After enabling it, check the ordinary Relay `/health` response for
+`secure_link.status` (`disabled`, `available`, or `unavailable`) and re-pair.
+The pinned endpoint also exposes `GET /relay/health`. Legacy
+`RELAY_SECURE_PROXY_*` variable names remain accepted for compatibility.
+
+### Hermes Reach broker (experimental)
+
+Hermes Reach is an optional, separately deployable outbound rendezvous service:
+
+```bash
+python -m plugin.rendezvous \
+  --credentials /etc/hermes-reach/hosts.json \
+  --state /var/lib/hermes-reach/routes.json \
+  --listen 0.0.0.0 --port 9444 \
+  --tls-cert /etc/hermes-reach/fullchain.pem \
+  --tls-key /etc/hermes-reach/privkey.pem
+```
+
+Its public contract is `GET /health` plus WSS `/v1/connect`. Hosts and clients
+connect outward; the broker matches streams and forwards opaque records. The
+inner connection is QR-pinned Secure Link TLS, so the broker never terminates
+the Hermes security session and never receives Relay/API/Dashboard credentials
+or plaintext. It can still observe routing identity, source, timing, and byte
+metadata and can deny, delay, drop, or misroute streams.
+
+Reach is not part of the ordinary Relay listener and is not required for LAN,
+Tailscale, public TLS, or direct Secure Link routes. A self-hosted broker is
+supported by the architecture. The required state file contains only bounded,
+expiring credential hashes and revocation/replay metadata, never raw client
+tokens. Its parent directory and file are maintained with private permissions
+and atomic replacement so broker maintenance restarts preserve paired routes.
+
+The host connector requires `RELAY_EXPERIMENTAL_REACH_ENABLED=1` plus
+`RELAY_SECURE_LINK_BROKER_URL` and `RELAY_SECURE_LINK_BROKER_HOST_TOKEN`, which
+must be configured together.
+Hermes Secure Link must also be enabled and available. The ordinary Relay
+`/health` response exposes the connector under `secure_link.reach`: `state` is
+`disabled`, `unavailable`, `stopped`, `connecting`, `connected`, or `backoff`.
+Connected status also includes the broker URL, opaque host ID, loopback target,
+active/maximum and completed streams, connection attempts, connection time, and
+a bounded last error. `transport: "opaque_inner_tls"` describes the inner
+stream and does not claim broker metadata is hidden.
+
+The credential file is private JSON with a `hosts` object keyed by the opaque
+22-character base64url host ID (128 random bits). Each value contains only
+`host_token_sha256`, a base64url SHA-256 digest—not the raw host registration
+token. Public listeners require both TLS files. `--insecure-dev` is accepted
+only on loopback. `GET /health` returns `service: "hermes_reach"`, protocol
+version, online-host count, and active-stream count; it never returns host IDs
+or credentials.
+
+The broker has no environment-variable configuration in v1; use the command
+arguments and private credential file above.
 
 ## Tailscale helper
 

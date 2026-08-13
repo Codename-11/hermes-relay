@@ -22,8 +22,8 @@ import {
 } from './endpoint.js'
 import { describeTransportSecurity } from './transportSecurity.js'
 import https from 'node:https'
-import type { TLSSocket } from 'node:tls'
-import { comparePins, extractSpkiSha256 } from './certPin.js'
+import tls from 'node:tls'
+import { comparePins, extractSpkiSha256, peerCertificateDer } from './certPin.js'
 
 /**
  * Per-candidate HEAD `/health` probe timeout. Matches Kotlin
@@ -161,6 +161,66 @@ function parseCandidate(v: unknown): EndpointCandidate | null {
   const o = v as Record<string, unknown>
   if (typeof o.role !== 'string') return null
   const priority = typeof o.priority === 'number' ? o.priority : 0
+  if (typeof o.broker === 'object' && o.broker !== null && typeof o.proxy === 'object' && o.proxy !== null) {
+    if (!['outbound_broker', 'broker', 'relay_broker'].includes(o.role.toLowerCase())) return null
+    const broker = o.broker as Record<string, unknown>
+    const proxy = o.proxy as Record<string, unknown>
+    // The v1 pairing candidate does not require a redundant protocol_version;
+    // the fixed /v1/connect path supplies that version boundary. Accept an
+    // explicit 1 for compatibility, but reject any other advertised version.
+    const supportedVersion = broker.protocol_version === undefined || broker.protocol_version === 1
+    if (supportedVersion && typeof broker.url === 'string' && typeof broker.host_id === 'string' && /^[A-Za-z0-9_-]{22}$/.test(broker.host_id) && (broker.credential_kind === 'bootstrap' || broker.credential_kind === 'route') && typeof broker.token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(broker.token) && typeof proxy.url === 'string' && typeof proxy.pin_sha256 === 'string') {
+      try {
+        const base = new URL(proxy.url)
+        const brokerUrl = new URL(broker.url)
+        if (brokerUrl.protocol !== 'wss:' || brokerUrl.pathname !== '/v1/connect' || base.protocol !== 'https:') return null
+        return {
+          role: o.role, priority,
+          api: { host: base.hostname, port: Number(base.port || 443), tls: true },
+          relay: { url: `wss://${base.host}/relay/ws`, transportHint: 'wss' },
+          proxy: { url: proxy.url, pinSha256: proxy.pin_sha256, surfaces: ['relay'] },
+          broker: { url: broker.url, hostId: broker.host_id, credentialKind: broker.credential_kind, token: broker.token, ...((typeof broker.expires_at === 'string' || typeof broker.expires_at === 'number' || broker.expires_at === null) ? { expiresAt: broker.expires_at } : {}) },
+          ...(typeof o.security === 'string' ? { security: o.security } : {}),
+          ...(typeof o.recommended === 'boolean' ? { recommended: o.recommended } : {}),
+          ...(typeof o.experimental === 'boolean' ? { experimental: o.experimental } : {}),
+        }
+      } catch { return null }
+    }
+  }
+  if (typeof o.proxy === 'object' && o.proxy !== null) {
+    const proxy = o.proxy as Record<string, unknown>
+    if (typeof proxy.url === 'string' && typeof proxy.pin_sha256 === 'string') {
+      try {
+        const base = new URL(proxy.url)
+        if (base.protocol !== 'https:' || !base.hostname) return null
+        const port = Number(base.port || 443)
+        return {
+          role: o.role,
+          priority,
+          api: { host: base.hostname, port, tls: true },
+          relay: {
+            url: `wss://${base.host}/relay/ws`,
+            transportHint: 'wss',
+          },
+          proxy: {
+            url: proxy.url,
+            pinSha256: proxy.pin_sha256,
+            ...(typeof proxy.transport_hint === 'string'
+              ? { transportHint: proxy.transport_hint }
+              : {}),
+            ...(Array.isArray(proxy.surfaces)
+              ? { surfaces: proxy.surfaces.filter((surface): surface is string => typeof surface === 'string') }
+              : {}),
+          },
+          ...(typeof o.security === 'string' ? { security: o.security } : {}),
+          ...(typeof o.recommended === 'boolean' ? { recommended: o.recommended } : {}),
+          ...(typeof o.experimental === 'boolean' ? { experimental: o.experimental } : {}),
+        }
+      } catch {
+        return null
+      }
+    }
+  }
   if (!isApiEndpointShape(o.api)) return null
   if (!isRelayEndpointShape(o.relay)) return null
   const api: ApiEndpoint = {
@@ -175,16 +235,7 @@ function parseCandidate(v: unknown): EndpointCandidate | null {
   const candidate: EndpointCandidate = { role: o.role, priority, api, relay }
   if (typeof o.security === 'string') candidate.security = o.security
   if (typeof o.recommended === 'boolean') candidate.recommended = o.recommended
-  if (typeof o.proxy === 'object' && o.proxy !== null) {
-    const proxy = o.proxy as Record<string, unknown>
-    if (typeof proxy.url === 'string' && typeof proxy.pin_sha256 === 'string') {
-      candidate.proxy = {
-        url: proxy.url,
-        pinSha256: proxy.pin_sha256,
-        ...(typeof proxy.transport_hint === 'string' ? { transportHint: proxy.transport_hint } : {})
-      }
-    }
-  }
+  if (typeof o.experimental === 'boolean') candidate.experimental = o.experimental
   return candidate
 }
 
@@ -378,6 +429,38 @@ export function isValidPinnedProxyCandidate(candidate: EndpointCandidate): boole
     /^sha256\/[A-Za-z0-9+/]{43}=$/.test(candidate.proxy.pinSha256)
 }
 
+async function verifyPinnedProxyCertificate(
+  candidate: EndpointCandidate,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const parsed = new URL(candidate.proxy!.url)
+  return await new Promise<boolean>((resolve, reject) => {
+    const socket = tls.connect({
+      host: parsed.hostname,
+      port: Number(parsed.port || 443),
+      servername: parsed.hostname,
+      rejectUnauthorized: false,
+    })
+    const abort = () => socket.destroy(new Error('probe aborted'))
+    signal.addEventListener('abort', abort, { once: true })
+    socket.once('secureConnect', () => {
+      signal.removeEventListener('abort', abort)
+      try {
+        const raw = peerCertificateDer(socket)
+        socket.end()
+        resolve(raw !== null && comparePins(
+          candidate.proxy!.pinSha256,
+          extractSpkiSha256(raw),
+        ))
+      } catch (error) {
+        socket.destroy()
+        reject(error)
+      }
+    })
+    socket.once('error', reject)
+  })
+}
+
 /**
  * Fire one HEAD-equivalent probe. We use GET (not HEAD) because not every
  * relay flavor answers HEAD — Tailscale Serve in particular has been
@@ -392,24 +475,43 @@ export async function probeCandidate(
   sessionToken?: string,
 ): Promise<ProbeResult> {
   const started = Date.now()
-  // Native secure proxy v1 is Relay-only. Probe only its scoped health route;
-  // API/dashboard remain on their independently authenticated candidates.
+  if (c.broker) {
+    try {
+      const broker = new URL(c.broker.url)
+      const health = new URL('/health', `${broker.protocol === 'wss:' ? 'https:' : 'http:'}//${broker.host}`)
+      // Use the runtime fetch stack for the public broker health check. The
+      // packaged Bun runtime applies NODE_USE_SYSTEM_CA to fetch/WebSocket;
+      // node:https can use a different compatibility trust path and falsely
+      // reject the same Windows-trusted broker that the live WSS route opens.
+      // No Reach credential is sent, so this cannot consume the bootstrap.
+      const response = await fetch(health, { method: 'GET', signal, headers: { Accept: '*/*' } })
+      const reachable = response.ok
+      return { candidate: c, reachable, elapsedMs: Date.now() - started, ...(reachable ? {} : { error: 'Hermes Reach broker health check failed' }) }
+    } catch (error) {
+      return { candidate: c, reachable: false, elapsedMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  // The secure proxy has one pinned origin with isolated service namespaces.
+  // Reachability remains anchored to its non-sensitive Relay health route.
   const url = isValidPinnedProxyCandidate(c)
     ? `${c.proxy!.url.replace(/\/+$/, '')}/relay/health`
     : `${apiUrl(c.api)}/health`
   try {
     if (isValidPinnedProxyCandidate(c)) {
       const url = `${c.proxy!.url.replace(/\/+$/, '')}/relay/health`
+      const certificateMatches = await verifyPinnedProxyCertificate(c, signal)
+      if (!certificateMatches) {
+        return { candidate: c, reachable: false, elapsedMs: Date.now() - started,
+          error: 'paired certificate pin did not match' }
+      }
       const reachable = await new Promise<boolean>((resolve, reject) => {
         const request = https.get(url, {
           rejectUnauthorized: false,
           signal,
           headers: sessionToken ? { 'X-Hermes-Relay-Session': sessionToken } : undefined
         }, response => {
-          const raw = (response.socket as TLSSocket).getPeerCertificate(false).raw
-          const pinMatches = Buffer.isBuffer(raw) && comparePins(c.proxy!.pinSha256, extractSpkiSha256(raw))
           response.resume()
-          resolve(pinMatches && (response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300)
+          resolve((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300)
         })
         request.once('error', reject)
       })
@@ -470,9 +572,13 @@ export async function probeCandidatesByPriority(
     groups.set(c.priority, bucket)
   }
   const priorities = [...groups.keys()].sort((a, b) => a - b)
+  const orderedGroups = [
+    ...priorities.map(priority => groups.get(priority) ?? []).filter(group => group.some(candidate => candidate.experimental !== true && candidate.role.toLowerCase() !== 'outbound_broker'))
+      .map(group => group.filter(candidate => candidate.experimental !== true && candidate.role.toLowerCase() !== 'outbound_broker')),
+    ...priorities.map(priority => groups.get(priority) ?? []).map(group => group.filter(candidate => candidate.experimental === true || candidate.role.toLowerCase() === 'outbound_broker')).filter(group => group.length > 0),
+  ]
 
-  for (const priority of priorities) {
-    const group = groups.get(priority) ?? []
+  for (const group of orderedGroups) {
 
     // Fast path: any cached-reachable candidate wins without touching the
     // network. Matches Kotlin's pre-race cache scan.
@@ -546,7 +652,10 @@ export function secureFirstCandidates(candidates: EndpointCandidate[]): Endpoint
     .sort((left, right) => {
       const leftSecure = isValidPinnedProxyCandidate(left.candidate) || describeTransportSecurity(left.candidate.relay.url, left.candidate.role).encrypted
       const rightSecure = isValidPinnedProxyCandidate(right.candidate) || describeTransportSecurity(right.candidate.relay.url, right.candidate.role).encrypted
-      return Number(rightSecure) - Number(leftSecure) ||
+      const leftExperimental = left.candidate.experimental === true || left.candidate.role.toLowerCase() === 'outbound_broker'
+      const rightExperimental = right.candidate.experimental === true || right.candidate.role.toLowerCase() === 'outbound_broker'
+      return Number(leftExperimental) - Number(rightExperimental) ||
+        Number(rightSecure) - Number(leftSecure) ||
         left.candidate.priority - right.candidate.priority || left.index - right.index
     })
     .map(({ candidate }, priority) => ({ ...candidate, priority }))

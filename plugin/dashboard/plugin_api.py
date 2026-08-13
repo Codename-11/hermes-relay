@@ -543,8 +543,43 @@ async def get_remote_access_status() -> dict[str, Any]:
     if not isinstance(pinned, str) or not pinned.strip():
         pinned = None
 
+    secure_link: dict[str, Any] = {
+        "enabled": False,
+        "reason": "Hermes Secure Link is not enabled on the Relay host",
+    }
+    try:
+        relay_health = await _proxy_get("/health")
+        candidate = (
+            relay_health.get("secure_proxy")
+            if isinstance(relay_health, dict)
+            else None
+        )
+        if isinstance(candidate, dict):
+            proxy = candidate.get("proxy")
+            relay_secure_link = relay_health.get("secure_link", {})
+            reach = relay_secure_link.get("reach", {}) if isinstance(relay_secure_link, dict) else {}
+            secure_link = {
+                "enabled": True,
+                "role": candidate.get("role"),
+                "recommended": candidate.get("recommended") is True,
+                "security": candidate.get("security"),
+                "url": proxy.get("url") if isinstance(proxy, dict) else None,
+                "surfaces": proxy.get("surfaces", []) if isinstance(proxy, dict) else [],
+                "reach": {
+                    "enabled": reach.get("enabled") is True,
+                    "state": reach.get("state") if isinstance(reach.get("state"), str) else "disabled",
+                    "last_error": reach.get("last_error") if isinstance(reach.get("last_error"), str) else None,
+                } if isinstance(reach, dict) else {"enabled": False, "state": "disabled"},
+            }
+    except HTTPException as exc:
+        secure_link = {
+            "enabled": False,
+            "reason": f"Relay status unavailable: {exc.detail}",
+        }
+
     return {
         "tailscale": _tailscale_status_dict(),
+        "secure_link": secure_link,
         "public": {"url": pinned, "reachable": None},
         "upstream_canonical": _canonical_upstream_present(),
     }
@@ -563,6 +598,8 @@ async def tailscale_enable(
             detail=f"tailscale helper unavailable: {exc}",
         ) from exc
 
+    if body.get("stack") is True:
+        return tailscale.enable_stack()
     port = _managed_tailscale_port(body)
     return tailscale.enable(port=port)
 
@@ -580,6 +617,8 @@ async def tailscale_disable(
             detail=f"tailscale helper unavailable: {exc}",
         ) from exc
 
+    if body.get("stack") is True:
+        return tailscale.disable_stack()
     port = _managed_tailscale_port(body)
     return tailscale.disable(port=port)
 

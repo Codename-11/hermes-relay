@@ -488,5 +488,105 @@ class RegisterRelayCodeWireShapeTests(unittest.TestCase):
         self.assertEqual(body, {"code": "ABCD12"})
 
 
+class MintRelayPairingTests(unittest.TestCase):
+    def test_mint_posts_candidate_inputs_and_returns_exact_signed_payload(self) -> None:
+        signed = json.dumps({
+            "hermes": 3, "host": "10.0.0.42", "port": 8642,
+            "key": "api-secret", "tls": False,
+            "relay": {"url": "ws://10.0.0.42:8767", "code": "ABC123"},
+            "endpoints": [{
+                "role": "outbound_broker", "security": "e2ee_pinned_tls",
+                "broker": {"protocol_version": 1, "token": "route-secret"},
+            }],
+            "sig": "server-signature",
+        })
+        response_body = json.dumps({
+            "ok": True, "qr_payload": signed,
+            "pairing_url": "hermes-relay://pair?payload=server",
+        }).encode()
+        captured: dict[str, object] = {}
+
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *exc): return False
+            def read(self): return response_body
+
+        def urlopen(request, timeout=None):
+            captured["url"] = request.full_url
+            captured["body"] = json.loads(request.data.decode())
+            return Response()
+
+        with patch("plugin.pair.urllib.request.urlopen", side_effect=urlopen):
+            result = pair.mint_relay_pairing(
+                8767, host="10.0.0.42", port=8642,
+                api_key="api-secret", tls=False, ttl_seconds=3600,
+                grants={"terminal": 600}, transport_hint="ws",
+                endpoints=[{"role": "lan", "priority": 0}],
+                dashboard_url="https://dash.example",
+            )
+
+        self.assertEqual(captured["url"], "http://127.0.0.1:8767/pairing/mint")
+        self.assertEqual(result["qr_payload"], signed)
+        body = captured["body"]
+        self.assertEqual(body["api_key"], "api-secret")
+        self.assertEqual(body["endpoints"], [{"role": "lan", "priority": 0}])
+
+    def test_pair_command_uses_server_minted_reach_invite_without_legacy_register(self) -> None:
+        signed = json.dumps({
+            "hermes": 3, "host": "10.0.0.42", "port": 8642,
+            "key": "api-secret", "tls": False,
+            "relay": {"url": "wss://reach.example/relay/ws", "code": "ABC123"},
+            "endpoints": [{
+                "role": "outbound_broker", "security": "e2ee_pinned_tls",
+                "broker": {"protocol_version": 1, "token": "one-use-secret"},
+            }],
+            "sig": "server-signature",
+        })
+        minted = {"ok": True, "qr_payload": signed,
+                  "pairing_url": "hermes-relay://pair?payload=authoritative"}
+        captured: dict[str, object] = {}
+
+        def render(*args, **kwargs):
+            captured["relay"] = kwargs.get("relay")
+            captured["invite"] = kwargs.get("invite_url")
+            return "rendered"
+
+        with patch.object(pair, "read_server_config", return_value={
+            "host": "10.0.0.42", "port": 8642, "key": "api-secret", "tls": False,
+        }), patch.object(pair, "read_relay_config", return_value={
+            "host": "0.0.0.0", "port": 8767, "tls": False,
+        }), patch.object(pair, "probe_relay", return_value={
+            "status": "ok", "secure_link": {"broker": {"enabled": True}},
+        }), patch.object(pair, "build_endpoint_candidates", return_value=[{
+            "role": "lan", "priority": 0,
+        }]), patch.object(pair, "mint_relay_pairing", return_value=minted), patch.object(
+            pair, "register_relay_code"
+        ) as legacy, patch.object(pair, "render_text_block", side_effect=render):
+            with redirect_stdout(io.StringIO()):
+                pair.pair_command(_pair_args())
+
+        legacy.assert_not_called()
+        self.assertEqual(captured["invite"], minted["pairing_url"])
+        self.assertEqual(captured["relay"], json.loads(signed)["relay"])
+
+    def test_reach_mint_failure_never_falls_back_to_legacy_register(self) -> None:
+        with patch.object(pair, "read_server_config", return_value={
+            "host": "10.0.0.42", "port": 8642, "key": "api-secret", "tls": False,
+        }), patch.object(pair, "read_relay_config", return_value={
+            "host": "0.0.0.0", "port": 8767, "tls": False,
+        }), patch.object(pair, "probe_relay", return_value={
+            "status": "ok", "secure_link": {"broker": {"enabled": True}},
+        }), patch.object(pair, "build_endpoint_candidates", return_value=[]), patch.object(
+            pair, "mint_relay_pairing", return_value=None
+        ), patch.object(pair, "register_relay_code") as legacy:
+            error = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(error):
+                pair.pair_command(_pair_args())
+
+        legacy.assert_not_called()
+        self.assertIn("No downgraded relay QR", error.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

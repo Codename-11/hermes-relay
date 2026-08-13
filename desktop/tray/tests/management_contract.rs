@@ -93,6 +93,13 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "Encrypted with TLS",
         "Encrypted by ${name}",
         "Unencrypted relay connection",
+        "Hermes Secure Link",
+        "test_host_route",
+        "route-detail-card",
+        "Hermes Reach",
+        "broker_configured",
+        "Brokered fallback saved for evaluation",
+        "Experimental",
         "open_management_from_grant",
         "Open in UI",
     ] {
@@ -150,6 +157,7 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("mpsc::channel::<TrayAction>()"));
     assert!(native.contains("app.run_on_main_thread"));
     assert!(native.contains("async fn get_snapshot"));
+    assert!(native.contains("spawn_blocking(build_snapshot)"));
     assert!(native.contains("async fn check_desktop_update"));
     assert!(native.contains("async fn install_desktop_update"));
     assert!(native.contains("fn set_host_capability"));
@@ -198,6 +206,7 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
     let config = include_str!("../tauri.conf.json");
     let ui = include_str!("../ui/App.tsx");
     let styles = include_str!("../ui/styles.css");
+    let native = include_str!("../src/main.rs");
     let capability = include_str!("../capabilities/default.json");
 
     assert!(config.contains("\"width\": 380"));
@@ -217,6 +226,19 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
     assert!(ui.contains("snapshot.activity.slice(-3).reverse()"));
     assert!(ui.contains("packet packet-outbound"));
     assert!(ui.contains("packet packet-inbound"));
+    assert!(ui.contains("connectionTransition"));
+    assert!(ui.contains("refreshInFlight"));
+    assert!(ui.contains("Starting daemon and opening relay tunnel"));
+    assert!(ui.contains("Stopping the local daemon"));
+    assert!(ui.contains("aria-live=\"polite\""));
+    assert!(native.contains("async fn connect_daemon"));
+    assert!(native.contains("async fn disconnect_daemon"));
+    assert!(native.contains("connect daemon task failed"));
+    assert!(styles.contains("@keyframes tunnel-progress"));
+    assert!(ui.contains("Measure reachability and latency"));
+    assert!(ui.contains("Testing connection…"));
+    assert!(ui.contains("saved route"));
+    assert!(styles.contains("route-test-summary"));
     assert!(styles.contains("@keyframes packet-outbound"));
     assert!(styles.contains("@keyframes packet-inbound"));
     assert!(ui.contains("setPage('activity-detail')"));

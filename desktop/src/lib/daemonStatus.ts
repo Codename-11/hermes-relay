@@ -32,6 +32,8 @@ export interface DaemonStatus {
   url: string
   /** Logical host selected by the user when `url` is a resolved fallback route. */
   configured_url?: string
+  /** Wire route role selected for the current connection. */
+  active_route?: string
   state: DaemonState
   /** Epoch seconds. */
   started_at: number

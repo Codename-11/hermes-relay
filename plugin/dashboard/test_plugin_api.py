@@ -308,15 +308,62 @@ class RemoteAccessStatusTests(PluginApiTestCase):
         self.addCleanup(lambda: setattr(ts_mod, "status", orig_status))
         self.addCleanup(lambda: setattr(ts_mod, "canonical_upstream_present", orig_canonical))
 
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/health")
+            return httpx.Response(200, json={"status": "ok"})
+
+        _install_mock_transport(self, handler)
+
         resp = self.client.get("/remote-access/status")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["tailscale"]["hostname"], "hermes.tail1234.ts.net")
         self.assertIsNone(body["public"]["url"])
         self.assertFalse(body["upstream_canonical"])
+        self.assertFalse(body["secure_link"]["enabled"])
+
+    def test_status_surfaces_secure_link_without_exposing_pin(self) -> None:
+        from plugin.relay import tailscale as ts_mod
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/health")
+            return httpx.Response(200, json={
+                "status": "ok",
+                "secure_proxy": {
+                    "role": "plugin_proxy",
+                    "recommended": True,
+                    "security": "pinned_tls",
+                    "proxy": {
+                        "url": "https://relay.example:9443",
+                        "pin_sha256": "sha256/secret-pin-material",
+                        "surfaces": ["relay", "api", "dashboard"],
+                    },
+                },
+            })
+
+        _install_mock_transport(self, handler)
+        with patch.object(ts_mod, "status", return_value=None), patch.object(
+            ts_mod, "canonical_upstream_present", return_value=False
+        ):
+            resp = self.client.get("/remote-access/status")
+        self.assertEqual(resp.status_code, 200)
+        secure_link = resp.json()["secure_link"]
+        self.assertTrue(secure_link["enabled"])
+        self.assertEqual(secure_link["url"], "https://relay.example:9443")
+        self.assertEqual(secure_link["surfaces"], ["relay", "api", "dashboard"])
+        self.assertNotIn("pin_sha256", secure_link)
 
 
 class RemoteAccessTailscaleActionTests(PluginApiTestCase):
+    def test_recommended_setup_enables_full_tailscale_stack(self) -> None:
+        from plugin.relay import tailscale as ts_mod
+
+        with patch.object(ts_mod, "enable_stack", return_value={"ok": True, "commands": ["relay", "api"]}) as enable_stack:
+            resp = self.client.post("/remote-access/tailscale/enable", json={"stack": True})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["ok"])
+        enable_stack.assert_called_once_with()
+
     def test_enable_allows_only_supported_relay_and_api_ports(self) -> None:
         from plugin.relay import tailscale as ts_mod
 

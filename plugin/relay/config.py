@@ -52,6 +52,13 @@ class RelayConfig:
     secure_proxy_port: int = 9443
     secure_proxy_cert: str | None = None
     secure_proxy_key: str | None = None
+    secure_proxy_dashboard_url: str = "http://127.0.0.1:9119"
+    # Optional outbound-only reachability broker. The host registration token
+    # is distinct from pair-scoped client route tokens and is never advertised.
+    secure_link_broker_url: str | None = None
+    secure_link_broker_host_token: str | None = None
+    secure_link_broker_host_id_path: str | None = None
+    experimental_reach_enabled: bool = False
 
     # Profile discovery — scan ``~/.hermes/profiles/*/`` for upstream-style
     # isolated profile directories. When False, ``_load_profiles`` returns an
@@ -165,12 +172,46 @@ class RelayConfig:
             log_level=os.getenv("RELAY_LOG_LEVEL", cls.log_level),
             terminal_shell=os.getenv("RELAY_TERMINAL_SHELL") or None,
             secure_proxy_enabled=os.getenv(
-                "RELAY_SECURE_PROXY_ENABLED", "0"
+                "RELAY_SECURE_LINK_ENABLED",
+                os.getenv("RELAY_SECURE_PROXY_ENABLED", "0"),
             ).strip().lower() not in ("0", "false", "no", "off"),
-            secure_proxy_host=os.getenv("RELAY_SECURE_PROXY_HOST", "0.0.0.0"),
-            secure_proxy_port=int(os.getenv("RELAY_SECURE_PROXY_PORT", "9443")),
-            secure_proxy_cert=os.getenv("RELAY_SECURE_PROXY_CERT") or None,
-            secure_proxy_key=os.getenv("RELAY_SECURE_PROXY_KEY") or None,
+            secure_proxy_host=os.getenv(
+                "RELAY_SECURE_LINK_HOST",
+                os.getenv("RELAY_SECURE_PROXY_HOST", "0.0.0.0"),
+            ),
+            secure_proxy_port=int(os.getenv(
+                "RELAY_SECURE_LINK_PORT",
+                os.getenv("RELAY_SECURE_PROXY_PORT", "9443"),
+            )),
+            secure_proxy_cert=(
+                os.getenv("RELAY_SECURE_LINK_CERT")
+                or os.getenv("RELAY_SECURE_PROXY_CERT")
+                or None
+            ),
+            secure_proxy_key=(
+                os.getenv("RELAY_SECURE_LINK_KEY")
+                or os.getenv("RELAY_SECURE_PROXY_KEY")
+                or None
+            ),
+            secure_proxy_dashboard_url=os.getenv(
+                "RELAY_SECURE_LINK_DASHBOARD_URL",
+                os.getenv(
+                    "RELAY_SECURE_PROXY_DASHBOARD_URL",
+                    "http://127.0.0.1:9119",
+                ),
+            ),
+            secure_link_broker_url=(
+                os.getenv("RELAY_SECURE_LINK_BROKER_URL") or None
+            ),
+            secure_link_broker_host_token=(
+                os.getenv("RELAY_SECURE_LINK_BROKER_HOST_TOKEN") or None
+            ),
+            secure_link_broker_host_id_path=(
+                os.getenv("RELAY_SECURE_LINK_BROKER_HOST_ID_FILE") or None
+            ),
+            experimental_reach_enabled=os.getenv(
+                "RELAY_EXPERIMENTAL_REACH_ENABLED", "0"
+            ).strip().lower() not in ("0", "false", "no", "off"),
             realtime_voice_config_path=(
                 os.getenv("RELAY_REALTIME_VOICE_CONFIG")
                 or str(default_realtime_voice_config_path())

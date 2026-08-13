@@ -15,6 +15,7 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
+import javax.net.SocketFactory
 
 /** Runtime endpoints exposed beneath one plugin-owned pinned-TLS origin. */
 data class PluginProxyRoutes(
@@ -23,6 +24,8 @@ data class PluginProxyRoutes(
     val port: Int,
     val relayHttpUrl: String,
     val relayWebSocketUrl: String,
+    val apiBaseUrl: String?,
+    val dashboardBaseUrl: String?,
     val pinSha256: String,
 )
 
@@ -44,12 +47,15 @@ fun ProxyEndpoint.toPluginProxyRoutesOrNull(): PluginProxyRoutes? {
     val authority = "$host:$port"
     val wsBase = "wss://${formatHost(host)}${if (port == 443) "" else ":$port"}$rawPath"
         .trimEnd('/')
+    val surfaces = surfaces.map(String::lowercase).toSet()
     return PluginProxyRoutes(
         authority = authority,
         host = host,
         port = port,
         relayHttpUrl = "$base/relay",
         relayWebSocketUrl = "$wsBase/relay/ws",
+        apiBaseUrl = "$base/api".takeIf { "api" in surfaces },
+        dashboardBaseUrl = "$base/dashboard".takeIf { "dashboard" in surfaces },
         pinSha256 = pin,
     )
 }
@@ -68,6 +74,8 @@ fun buildPluginProxyClient(
     baseBuilder: OkHttpClient.Builder,
     routes: PluginProxyRoutes,
     sessionTokenProvider: () -> String?,
+    includeRelaySessionHeader: Boolean = true,
+    rawSocketFactory: SocketFactory? = null,
 ): OkHttpClient {
     val expectedHost = routes.host
     val expectedPort = routes.port
@@ -77,6 +85,7 @@ fun buildPluginProxyClient(
         init(null, arrayOf(pinnedTrust), SecureRandom())
     }
 
+    if (rawSocketFactory != null) baseBuilder.socketFactory(rawSocketFactory)
     return baseBuilder
         .sslSocketFactory(sslContext.socketFactory, pinnedTrust)
         .certificatePinner(
@@ -89,7 +98,8 @@ fun buildPluginProxyClient(
             ) {
                 throw java.io.IOException("Pinned proxy redirect left its paired authority")
             }
-            val token = sessionTokenProvider()?.takeIf { it.isNotBlank() }
+            val token = sessionTokenProvider().takeIf { includeRelaySessionHeader }
+                ?.takeIf { it.isNotBlank() }
             val request = if (token != null) {
                 chain.request().newBuilder()
                     .header("X-Hermes-Relay-Session", token)

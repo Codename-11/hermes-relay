@@ -232,6 +232,8 @@ class ConnectionManager(
     // Endpoints card in Settings.
     private val _activeEndpoint = MutableStateFlow<EndpointCandidate?>(null)
     val activeEndpoint: StateFlow<EndpointCandidate?> = _activeEndpoint.asStateFlow()
+    private val _activeApiEndpoint = MutableStateFlow<EndpointCandidate?>(null)
+    val activeApiEndpoint: StateFlow<EndpointCandidate?> = _activeApiEndpoint.asStateFlow()
 
     /** Relay-only winner, deliberately separate from the standard route. */
     private val _activeRelayEndpoint = MutableStateFlow<EndpointCandidate?>(null)
@@ -356,11 +358,14 @@ class ConnectionManager(
         // behavior for freshly-upgraded installs and for v1/v2 QRs where
         // the synthesized list just collapses to the same URL anyway.
         scope.launch {
-            val resolved = resolveBestEndpointSafe(EndpointSurface.Standard)
+            val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
+                ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+            val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
             val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
             val resolvedRelayUrl = relayResolved?.relayWebSocketUrl()?.takeIf { it.isNotBlank() }
             val targetUrl = resolvedRelayUrl ?: url.takeIf { it.isNotBlank() }
             _activeRelayEndpoint.value = relayResolved
+            _activeApiEndpoint.value = apiResolved
             if (resolved != null) {
                 _activeEndpoint.value = resolved
                 Log.i(TAG, "connect: standard resolver picked role=${resolved.role} " +
@@ -542,7 +547,8 @@ class ConnectionManager(
      * for any reason we don't block the connect loop forever.
      */
     suspend fun resolveBestEndpoint(): EndpointCandidate? =
-        resolveBestEndpointSafe(EndpointSurface.Standard)
+        resolveBestEndpointSafe(EndpointSurface.Dashboard)
+            ?: resolveBestEndpointSafe(EndpointSurface.Standard)
 
     private suspend fun resolveBestEndpointSafe(
         surface: EndpointSurface,
@@ -620,7 +626,9 @@ class ConnectionManager(
     suspend fun probeAndReconnectNow(): EndpointCandidate? {
         endpointResolver?.clearCache()
         val current = serverUrl
-        val resolved = resolveBestEndpointSafe(EndpointSurface.Standard)
+        val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
+            ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+        val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
         val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
@@ -629,6 +637,7 @@ class ConnectionManager(
             return _activeEndpoint.value
         }
         _activeEndpoint.value = resolved
+        _activeApiEndpoint.value = apiResolved
         if (relayResolved != null) _activeRelayEndpoint.value = relayResolved
         val targetUrl = relayResolved?.relayWebSocketUrl() ?: current ?: return resolved
         val normalizedTarget = normalizeRelayUrl(targetUrl)
@@ -667,7 +676,9 @@ class ConnectionManager(
      */
     suspend fun refreshActiveEndpoint(clearProbeCache: Boolean = false): EndpointCandidate? {
         if (clearProbeCache) endpointResolver?.clearCache()
-        val resolved = resolveBestEndpointSafe(EndpointSurface.Standard)
+        val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
+            ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+        val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
             // (slow resume, mid-handoff blip) — keep publishing the live
@@ -676,6 +687,7 @@ class ConnectionManager(
             return _activeEndpoint.value
         }
         _activeEndpoint.value = resolved
+        _activeApiEndpoint.value = apiResolved
         return resolved
     }
 
@@ -718,7 +730,9 @@ class ConnectionManager(
             // manages its own cache (clear + markUnreachable) and passes false.
             if (wipeCache) endpointResolver.clearCache()
             val current = serverUrl
-            val resolved = resolveBestEndpointSafe(EndpointSurface.Standard)
+            val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
+                ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+            val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
             if (resolved == null) {
                 // Hysteresis for the AUTOMATIC (network-callback) path. A
                 // transient cold-route probe miss must NOT null the published
@@ -755,6 +769,7 @@ class ConnectionManager(
             }
             sustainedLossDeclared = false
             _activeEndpoint.value = resolved
+            _activeApiEndpoint.value = apiResolved
             if (current == null) return@launch
             // After an explicit disconnect() the route still publishes above
             // (HTTP surfaces keep roaming), but no socket action: without
@@ -910,6 +925,7 @@ class ConnectionManager(
         // the ViewModel on the next connection load.
         _manualRoleOverride.value = null
         _activeEndpoint.value = null
+        _activeApiEndpoint.value = null
         _activeRelayEndpoint.value = null
         reconnectState.reset()
     }

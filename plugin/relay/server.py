@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import base64
 import binascii
+import copy
 import json
 import logging
 import math
@@ -62,11 +63,21 @@ from .channels.terminal import TerminalHandler
 from .channels.tui import TuiHandler
 from .config import RelayConfig
 from .secure_proxy import (
+    SECURE_LINK_CAPABILITIES,
+    SECURE_LINK_DESCRIPTION,
+    SECURE_LINK_NAME,
     advertised_candidate,
     create_secure_proxy_app,
     ensure_tls_identity,
     spki_pin_sha256,
+    secure_link_services,
     tls_context as secure_proxy_tls_context,
+)
+from .secure_link_connector import (
+    SecureLinkConnector,
+    credential_id_for,
+    load_or_create_host_id,
+    token_sha256,
 )
 from .image_activity import read_image_activity
 from .media import (
@@ -105,6 +116,10 @@ class RelayServer:
         self.secure_proxy_internal_secret = secrets.token_urlsafe(32)
         self.secure_proxy_candidate: dict[str, Any] | None = None
         self.secure_proxy_runner: web.AppRunner | None = None
+        self.secure_link_connector: SecureLinkConnector | None = None
+        self.secure_link_broker_error: str | None = None
+        self.secure_link_route_credentials: dict[str, dict[str, Any]] = {}
+        self.secure_link_route_lock = asyncio.Lock()
         if config.secure_proxy_enabled:
             hermes_dir = Path(config.hermes_config_path).expanduser().parent
             cert_path = (
@@ -142,7 +157,43 @@ class RelayServer:
                 subprocess.SubprocessError,
                 ssl.SSLError,
             ) as exc:
-                logger.error("Secure proxy disabled: identity setup failed: %s", exc)
+                logger.error(
+                    "%s disabled: identity setup failed: %s",
+                    SECURE_LINK_NAME,
+                    exc,
+                )
+
+        broker_url = config.secure_link_broker_url
+        broker_token = config.secure_link_broker_host_token
+        if (broker_url or broker_token) and not config.experimental_reach_enabled:
+            self.secure_link_broker_error = (
+                "Hermes Reach is experimental; set "
+                "RELAY_EXPERIMENTAL_REACH_ENABLED=1 to enable it explicitly"
+            )
+        elif broker_url or broker_token:
+            if not broker_url or not broker_token:
+                self.secure_link_broker_error = (
+                    "broker URL and host registration token must be configured together"
+                )
+            elif self.secure_proxy_candidate is None:
+                self.secure_link_broker_error = (
+                    "local Hermes Secure Link must be available before broker reachability"
+                )
+            else:
+                hermes_dir = Path(config.hermes_config_path).expanduser().parent
+                host_id_path = Path(
+                    config.secure_link_broker_host_id_path
+                    or hermes_dir / "relay-secure-link" / "host-id"
+                ).expanduser()
+                try:
+                    self.secure_link_connector = SecureLinkConnector(
+                        broker_url=broker_url,
+                        host_id=load_or_create_host_id(host_id_path),
+                        host_registration_token=broker_token,
+                        local_port=config.secure_proxy_port,
+                    )
+                except (OSError, ValueError) as exc:
+                    self.secure_link_broker_error = str(exc)
 
         # Auth — SessionManager persistence is opt-in via
         # ``config.session_persistence_path``. ``RelayConfig.from_env``
@@ -236,6 +287,8 @@ class RelayServer:
         if self.secure_proxy_runner is not None:
             await self.secure_proxy_runner.cleanup()
             self.secure_proxy_runner = None
+        if self.secure_link_connector is not None:
+            await self.secure_link_connector.stop()
         logger.info("Relay server shut down — all connections closed")
 
 
@@ -251,7 +304,39 @@ async def handle_health(request: web.Request) -> web.Response:
             "clients": server.client_count,
             "sessions": server.sessions.active_count(),
         }
+    secure_link_status: dict[str, Any] = {
+        "display_name": SECURE_LINK_NAME,
+        "description": SECURE_LINK_DESCRIPTION,
+        "enabled": server.config.secure_proxy_enabled,
+        "status": (
+            "available"
+            if server.secure_proxy_candidate is not None
+            else "unavailable"
+            if server.config.secure_proxy_enabled
+            else "disabled"
+        ),
+        "security": "pinned_tls",
+        "capabilities": list(SECURE_LINK_CAPABILITIES),
+        "services": secure_link_services(),
+    }
+    if server.secure_link_connector is not None:
+        secure_link_status["reach"] = server.secure_link_connector.status()
+    else:
+        secure_link_status["reach"] = {
+            "enabled": bool(
+                server.config.experimental_reach_enabled
+                and (
+                    server.config.secure_link_broker_url
+                    or server.config.secure_link_broker_host_token
+                )
+            ),
+            "state": "unavailable" if server.secure_link_broker_error else "disabled",
+            "last_error": server.secure_link_broker_error,
+            "transport": "opaque_inner_tls",
+        }
+    payload["secure_link"] = secure_link_status
     if server.secure_proxy_candidate is not None:
+        # Backward-compatible wire field consumed by existing pairing flows.
         payload["secure_proxy"] = server.secure_proxy_candidate
     return web.json_response(payload)
 
@@ -569,14 +654,74 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
                 "Normalized pairing endpoint candidates before QR signing",
             )
         endpoints_list = normalized_endpoints
+    pairing_expires_at = int(time.time() + _PAIRING_CODE_TTL)
+    secure_link_candidates: list[dict[str, Any]] = []
     if server.secure_proxy_candidate is not None:
         # Trust is bootstrapped by the operator-displayed QR, before any
         # network connection. Runtime auth never replaces this reviewed pin.
-        existing = endpoints_list or []
-        for candidate in existing:
-            if isinstance(candidate, dict):
-                candidate["priority"] = int(candidate.get("priority", 0)) + 1
-        endpoints_list = [server.secure_proxy_candidate, *existing]
+        if (server.secure_link_connector is not None
+                and server.secure_link_connector.status()["connected"]):
+            pairing_id = secrets.token_urlsafe(16)
+            try:
+                route_token = await server.secure_link_connector.publish_bootstrap(
+                    pairing_id=pairing_id,
+                    expires_at=pairing_expires_at,
+                )
+                broker_candidate = {
+                    "role": "outbound_broker",
+                    "priority": 0,
+                    "recommended": False,
+                    "experimental": True,
+                    "security": "e2ee_pinned_tls",
+                    "broker": {
+                        "protocol_version": 1,
+                        "url": server.secure_link_connector.connect_url,
+                        "host_id": server.secure_link_connector.host_id,
+                        "credential_kind": "bootstrap",
+                        "token": route_token,
+                        "expires_at": pairing_expires_at,
+                    },
+                    "proxy": copy.deepcopy(
+                        server.secure_proxy_candidate.get("proxy", {})
+                    ),
+                }
+                secure_link_candidates.append(broker_candidate)
+            except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
+                logger.warning(
+                    "Secure Link broker bootstrap unavailable for pairing: %s", exc
+                )
+        # Direct Secure Link remains an independently configured encrypted
+        # ingress. It may be unreachable off-LAN; clients probe candidates
+        # independently.
+        direct_candidate = copy.deepcopy(server.secure_proxy_candidate)
+        direct_candidate["recommended"] = False
+        secure_link_candidates.append(direct_candidate)
+
+        # Product ordering is deliberately independent of the broker's
+        # availability. Tailscale is the recommended remote path, public TLS
+        # and direct Secure Link follow, plain LAN remains available, and the
+        # experimental Reach transport is always last. Reindex after grouping
+        # so Android and Desktop receive the same signed route policy.
+        existing = [candidate for candidate in (endpoints_list or [])
+                    if isinstance(candidate, dict)]
+        tailscale = [candidate for candidate in existing
+                     if str(candidate.get("role", "")).lower() == "tailscale"]
+        public = [candidate for candidate in existing
+                  if str(candidate.get("role", "")).lower() == "public"]
+        lan = [candidate for candidate in existing
+               if str(candidate.get("role", "")).lower() == "lan"]
+        other = [candidate for candidate in existing
+                 if str(candidate.get("role", "")).lower()
+                 not in {"tailscale", "public", "lan"}]
+        direct = [candidate for candidate in secure_link_candidates
+                  if str(candidate.get("role", "")).lower() == "plugin_proxy"]
+        reach = [candidate for candidate in secure_link_candidates
+                 if str(candidate.get("role", "")).lower() == "outbound_broker"]
+        endpoints_list = [*tailscale, *public, *direct, *other, *lan, *reach]
+        for priority, candidate in enumerate(endpoints_list):
+            candidate["priority"] = priority
+            if str(candidate.get("role", "")).lower() == "tailscale":
+                candidate["recommended"] = True
 
     relay_block = build_relay_pairing_block(
         relay_url=relay_url,
@@ -607,7 +752,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     # to 60s when no session TTL was passed, which made dashboard-minted
     # QRs appear to expire in ~1 minute even though the code itself was
     # valid for 10.
-    expires_at = int(time.time() + _PAIRING_CODE_TTL)
+    expires_at = pairing_expires_at
 
     # Same rationale as /pairing/register and /pairing/approve — a phone
     # self-banned on the rate limiter (e.g. reconnect-loop after a relay
@@ -864,6 +1009,18 @@ async def handle_sessions_revoke(request: web.Request) -> web.Response:
     target = matches[0]
     revoked_self = current_token is not None and target.token == current_token
     server.sessions.revoke_session(target.token)
+    route_credential_id = credential_id_for(target.token)
+    server.secure_link_route_credentials.pop(route_credential_id, None)
+    if server.secure_link_connector is not None:
+        try:
+            await server.secure_link_connector.revoke_route(
+                credential_id=route_credential_id
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
+            # Session revocation remains authoritative locally. Broker expiry
+            # bounds the residual route, while reconnect cannot authenticate
+            # with the revoked Relay session even if the broker is offline.
+            logger.warning("Secure Link broker route revoke deferred: %s", exc)
     logger.info(
         "Revoked session %s... (%s)%s",
         target.token[:8],
@@ -3859,10 +4016,11 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
     """
     server: RelayServer = request.app["server"]
     remote_ip = request.remote or "unknown"
-    if remote_ip in ("127.0.0.1", "::1") and secrets.compare_digest(
+    via_secure_link = remote_ip in ("127.0.0.1", "::1") and secrets.compare_digest(
         request.headers.get("X-Hermes-Proxy-Secret", ""),
         server.secure_proxy_internal_secret,
-    ):
+    )
+    if via_secure_link:
         remote_ip = request.headers.get("X-Hermes-Proxy-Peer", "").strip() or remote_ip
 
     # Rate-limit check
@@ -3880,7 +4038,9 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
 
     session_token: str | None = None
     try:
-        session_token = await _authenticate(ws, server, remote_ip, request)
+        session_token = await _authenticate(
+            ws, server, remote_ip, request, via_secure_link=via_secure_link
+        )
     except _AuthFailed as exc:
         logger.info("Auth failed from %s: %s", remote_ip, exc)
         server._client_capabilities.pop(ws, None)
@@ -3966,7 +4126,7 @@ def _extract_client_capabilities(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_auth_ok_payload(
-    session: Session, server: RelayServer
+    session: Session, server: RelayServer, route_credential: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Construct the payload for a successful ``auth.ok`` envelope.
 
@@ -3993,7 +4153,48 @@ def _build_auth_ok_payload(
     }
     if session.refresh_token:
         payload["refresh_token"] = session.refresh_token
+    if route_credential is not None:
+        payload["route_credential"] = route_credential
     return payload
+
+
+async def _route_credential_for_auth(
+    session: Session, server: RelayServer
+) -> dict[str, Any] | None:
+    """Issue a broker route token only through the authenticated TLS response."""
+    connector = server.secure_link_connector
+    if connector is None or not connector.status()["connected"]:
+        return None
+    credential_id = credential_id_for(session.token)
+    device_id_hash = token_sha256(session.device_id or session.token)
+    expires_at = (
+        time.time() + 30 * 24 * 60 * 60
+        if math.isinf(session.expires_at)
+        else session.expires_at
+    )
+    async with server.secure_link_route_lock:
+        cached = server.secure_link_route_credentials.get(credential_id)
+        if cached is not None and float(cached["expires_at"]) > time.time():
+            return dict(cached)
+        try:
+            token = await connector.publish_route(
+                credential_id=credential_id,
+                expires_at=expires_at,
+                device_id_hash=device_id_hash,
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
+            logger.warning("Secure Link route credential unavailable: %s", exc)
+            return None
+        credential: dict[str, Any] = {
+            "kind": "broker_route",
+            "broker_url": connector.connect_url,
+            "host_id": connector.host_id,
+            "credential_id": credential_id,
+            "token": token,
+            "expires_at": expires_at,
+        }
+        server.secure_link_route_credentials[credential_id] = credential
+        return dict(credential)
 
 
 async def _authenticate(
@@ -4001,6 +4202,8 @@ async def _authenticate(
     server: RelayServer,
     remote_ip: str,
     request: web.Request,
+    *,
+    via_secure_link: bool = False,
 ) -> str | None:
     """Wait for an auth message and validate it.
 
@@ -4087,8 +4290,12 @@ async def _authenticate(
             ):
                 server.sessions.issue_refresh_token_for_session(session)
             server.rate_limiter.record_success(remote_ip)
+            route_credential = (
+                await _route_credential_for_auth(session, server)
+                if via_secure_link else None
+            )
             await _send_system(
-                ws, "auth.ok", _build_auth_ok_payload(session, server)
+                ws, "auth.ok", _build_auth_ok_payload(session, server, route_credential)
             )
             return session.token
 
@@ -4110,8 +4317,12 @@ async def _authenticate(
         )
         if session is not None:
             server.rate_limiter.record_success(remote_ip)
+            route_credential = (
+                await _route_credential_for_auth(session, server)
+                if via_secure_link else None
+            )
             await _send_system(
-                ws, "auth.ok", _build_auth_ok_payload(session, server)
+                ws, "auth.ok", _build_auth_ok_payload(session, server, route_credential)
             )
             return session.token
 
@@ -4139,8 +4350,12 @@ async def _authenticate(
                 issue_refresh_token=True,
             )
             server.rate_limiter.record_success(remote_ip)
+            route_credential = (
+                await _route_credential_for_auth(session, server)
+                if via_secure_link else None
+            )
             await _send_system(
-                ws, "auth.ok", _build_auth_ok_payload(session, server)
+                ws, "auth.ok", _build_auth_ok_payload(session, server, route_credential)
             )
             return session.token
 
@@ -4741,7 +4956,7 @@ async def _on_secure_proxy_startup(app: web.Application) -> None:
     if server.secure_proxy_candidate is None:
         return
     if not config.secure_proxy_cert or not config.secure_proxy_key:
-        raise RuntimeError("secure proxy identity is unavailable")
+        raise RuntimeError(f"{SECURE_LINK_NAME} identity is unavailable")
     proxy_app = create_secure_proxy_app(server)
     runner = web.AppRunner(proxy_app, access_log=None)
     await runner.setup()
@@ -4758,11 +4973,14 @@ async def _on_secure_proxy_startup(app: web.Application) -> None:
     except (OSError, ssl.SSLError) as exc:
         await runner.cleanup()
         server.secure_proxy_candidate = None
-        logger.error("Secure proxy disabled: listener failed: %s", exc)
+        logger.error("%s disabled: listener failed: %s", SECURE_LINK_NAME, exc)
         return
     server.secure_proxy_runner = runner
+    if server.secure_link_connector is not None:
+        await server.secure_link_connector.start()
     logger.info(
-        "Secure proxy listening on https://%s:%d",
+        "%s listening on https://%s:%d (Relay, API, Dashboard)",
+        SECURE_LINK_NAME,
         config.secure_proxy_host,
         config.secure_proxy_port,
     )
@@ -4823,6 +5041,33 @@ def main() -> None:
         help="Hermes WebAPI base URL (default: http://localhost:8642)",
     )
     parser.add_argument(
+        "--secure-link",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Enable or disable Hermes Secure Link pinned-TLS ingress "
+            "(default: RELAY_SECURE_LINK_ENABLED; legacy "
+            "RELAY_SECURE_PROXY_ENABLED remains supported)"
+        ),
+    )
+    parser.add_argument(
+        "--secure-link-host",
+        default=None,
+        help=(
+            "Hermes Secure Link bind/advertised host "
+            "(default: 0.0.0.0, or RELAY_SECURE_LINK_HOST)"
+        ),
+    )
+    parser.add_argument(
+        "--secure-link-port",
+        type=int,
+        default=None,
+        help=(
+            "Hermes Secure Link TLS port "
+            "(default: 9443, or RELAY_SECURE_LINK_PORT)"
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -4868,6 +5113,12 @@ def main() -> None:
         config.hermes_config_path = args.config
     if args.webapi_url is not None:
         config.webapi_url = args.webapi_url
+    if args.secure_link is not None:
+        config.secure_proxy_enabled = args.secure_link
+    if args.secure_link_host is not None:
+        config.secure_proxy_host = args.secure_link_host
+    if args.secure_link_port is not None:
+        config.secure_proxy_port = args.secure_link_port
     if args.config is not None or args.webapi_url is not None:
         # Reload profiles with any CLI-overridden Hermes home or API base URL.
         from .config import _load_profiles
@@ -4930,6 +5181,19 @@ def main() -> None:
         config.port,
     )
     logger.info("WebAPI target: %s", config.webapi_url)
+    if config.secure_proxy_enabled:
+        logger.info(
+            "%s: enabled on %s:%d",
+            SECURE_LINK_NAME,
+            config.secure_proxy_host,
+            config.secure_proxy_port,
+        )
+    else:
+        logger.info(
+            "%s: disabled (enable with --secure-link or "
+            "RELAY_SECURE_LINK_ENABLED=1)",
+            SECURE_LINK_NAME,
+        )
     logger.info(
         "Profile discovery: %s",
         "enabled" if config.profile_discovery_enabled else "disabled",

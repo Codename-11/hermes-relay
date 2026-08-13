@@ -11,11 +11,17 @@ class PluginProxyTransportTest {
 
     @Test
     fun `derives all proxy surfaces from one authority`() {
-        val routes = ProxyEndpoint("https://relay.example:9443", pinSha256 = pin)
+        val routes = ProxyEndpoint(
+            "https://relay.example:9443",
+            pinSha256 = pin,
+            surfaces = listOf("relay", "api", "dashboard"),
+        )
             .toPluginProxyRoutesOrNull()!!
         assertEquals("relay.example:9443", routes.authority)
         assertEquals("https://relay.example:9443/relay", routes.relayHttpUrl)
         assertEquals("wss://relay.example:9443/relay/ws", routes.relayWebSocketUrl)
+        assertEquals("https://relay.example:9443/api", routes.apiBaseUrl)
+        assertEquals("https://relay.example:9443/dashboard", routes.dashboardBaseUrl)
     }
 
     @Test

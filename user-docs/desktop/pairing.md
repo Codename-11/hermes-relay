@@ -74,7 +74,20 @@ hermes-relay pair F3W7EY --remote ws://<host>:8767
 
 ## Multi-endpoint pairing (ADR 24)
 
-If your Hermes server is reachable from multiple routes — LAN + Tailscale + public URL — the host can mint a **single QR payload** containing all of them. The CLI probes endpoints in priority order (LAN → Tailscale → public), printing each one's result + latency as it races them, picks the first reachable one, and records which route it picked so the banner shows "Connected via LAN (plain)" or "Connected via Tailscale (secure)" on reconnect. On every network change, the client re-probes — moving from home Wi-Fi to a coffee shop transparently fails over to Tailscale or the public URL.
+If your Hermes server is reachable from multiple routes — optional Hermes Secure Link, Tailscale, a public TLS URL, and LAN — the host can mint a **single QR payload** containing all of them. Generated defaults put Secure Link first when it is enabled, then other secure candidates, with plain LAN retained as the last fallback. The CLI probes endpoints in strict priority order, printing each result and latency, picks the first reachable route, and records what it used so reconnect banners remain clear. Network changes trigger another probe, allowing a move between trusted LAN and remote routes without re-pairing.
+
+Hermes Secure Link is one QR-pinned TLS origin for Relay, API, and authenticated
+Dashboard namespaces. Their credentials remain separate, and Secure Link does
+not make the host reachable; LAN, VPN/Tailscale, or public routing must already
+reach port `9443`. A certificate, hostname, or port change requires re-pairing.
+
+Hermes Reach is an experimental outbound-only broker route.
+It lets the host and CLI connect outward when the host cannot accept an inbound
+connection. The Reach broker forwards opaque records; QR-pinned Secure Link TLS
+remains end-to-end inside that route. The broker sees routing/source metadata,
+timing, and byte counts, not inner Hermes credentials or plaintext. It is
+disabled by default and attempted only after Tailscale and supported direct TLS
+routes. Broker failure never enables plain transport.
 
 ```
 Probing 3 endpoint(s)…

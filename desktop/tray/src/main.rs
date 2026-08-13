@@ -221,6 +221,7 @@ mod app {
         running: bool,
         url: Option<String>,
         configured_url: Option<String>,
+        active_route: Option<String>,
         privilege: Option<String>,
         username: Option<String>,
         updated_at: Option<u64>,
@@ -244,6 +245,8 @@ mod app {
         access_mode: String,
         #[serde(default)]
         capabilities: BTreeMap<String, String>,
+        #[serde(default)]
+        broker_configured: bool,
     }
 
     fn ask_mode() -> String {
@@ -509,6 +512,7 @@ mod app {
                     "ask".to_string()
                 },
                 capabilities: BTreeMap::new(),
+                broker_configured: false,
             })
             .collect())
     }
@@ -611,8 +615,7 @@ mod app {
         }
     }
 
-    #[tauri::command]
-    async fn get_snapshot() -> Result<Snapshot, String> {
+    fn build_snapshot() -> Result<Snapshot, String> {
         let selected = active_url();
         let mut hosts = match run_json(&["hosts", "list", "--json"]) {
             Ok(value) => serde_json::from_value::<Vec<Host>>(
@@ -653,6 +656,13 @@ mod app {
             cli_version,
             cli_path,
         })
+    }
+
+    #[tauri::command]
+    async fn get_snapshot() -> Result<Snapshot, String> {
+        tauri::async_runtime::spawn_blocking(build_snapshot)
+            .await
+            .map_err(|error| format!("snapshot task failed: {error}"))?
     }
 
     #[tauri::command]
@@ -950,6 +960,15 @@ mod app {
     }
 
     #[tauri::command]
+    async fn test_host_route(remote: String) -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            run_json(&["hosts", "test", "--remote", remote.trim(), "--json"])
+        })
+        .await
+        .map_err(|error| format!("Secure Link test task failed: {error}"))?
+    }
+
+    #[tauri::command]
     fn open_management_from_grant(
         app: AppHandle,
         tray_position: State<'_, TrayPositionState>,
@@ -1105,16 +1124,24 @@ mod app {
     }
 
     #[tauri::command]
-    fn connect_daemon() -> Result<(), String> {
-        run_cli_checked(&["daemon", "start"])?;
-        append_management_event("daemon.start", "Relay daemon connected", None, None);
-        Ok(())
+    async fn connect_daemon() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "start"])?;
+            append_management_event("daemon.start", "Relay daemon connected", None, None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("connect daemon task failed: {error}"))?
     }
     #[tauri::command]
-    fn disconnect_daemon() -> Result<(), String> {
-        run_cli_checked(&["daemon", "stop"])?;
-        append_management_event("daemon.stop", "Relay daemon disconnected", None, None);
-        Ok(())
+    async fn disconnect_daemon() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "stop"])?;
+            append_management_event("daemon.stop", "Relay daemon disconnected", None, None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("disconnect daemon task failed: {error}"))?
     }
     #[tauri::command]
     fn restart_daemon() -> Result<(), String> {
@@ -1520,6 +1547,7 @@ mod app {
                 revoke_authorized_client,
                 resolve_grant,
                 pair_host,
+                test_host_route,
                 open_management_from_grant,
                 forget_host,
                 connect_daemon,

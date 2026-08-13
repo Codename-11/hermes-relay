@@ -58,7 +58,7 @@ Android app
   |-- Vanilla Hermes chat   -> dashboard /api/ws, then API-server SSE fallback
   |-- Vanilla Hermes Manage -> dashboard /api/*
   |-- Vanilla Hermes voice  -> dashboard /api/audio/*
-  |-- Relay terminal      -> Tailscale Serve WSS, or opt-in pinned proxy :9443/relay/ws
+  |-- Relay terminal      -> Tailscale Serve WSS, or opt-in Hermes Secure Link :9443/relay/ws
   |-- Relay bridge/tools  -> the same authenticated Relay transport
   `-- Relay voice extras  -> relay /voice/*
 
@@ -200,13 +200,27 @@ Pairing is QR-driven. The operator runs the pair command on the host — `hermes
 
 The primary secure remote path today is Tailscale Serve, which exposes Relay as
 WSS and the independently authenticated upstream API/Dashboard surfaces as
-HTTPS. The optional Relay plugin native proxy is a narrower alternative: when
-explicitly enabled it listens on `:9443`, advertises QR-trusted SPKI material,
-and exposes only `GET`/`HEAD /relay/health` plus WebSocket `/relay/ws`. It never
-proxies the API server or Dashboard. Clients select ordered secure candidates
+HTTPS. The optional Relay plugin **Hermes Secure Link** is a unified alternative: when
+explicitly enabled it listens on `:9443`, advertises the operator-reviewed
+paired endpoint's SPKI material,
+and exposes fixed `/relay`, `/api`, and `/dashboard` namespaces. Each service
+retains its native credential, and Dashboard forwarding fails closed unless
+its upstream OAuth/password gate is active. Clients select secure candidates
 first and may fall back to a separately configured LAN route; the existing
 plain-route acknowledgement still applies. See
 [`docs/security-native-proxy.md`](security-native-proxy.md).
+
+Hermes Reach is the experimental `outbound_broker` candidate for hosts that cannot
+accept inbound traffic. Host and client both connect outward to broker
+`/v1/connect`; the broker only matches and forwards opaque records. QR-pinned
+Secure Link TLS remains end-to-end inside that outer WSS connection, so broker
+WSS is not itself the end-to-end security boundary. The broker may observe
+routing identity, source, timing, and byte metadata and may disrupt delivery,
+but cannot read authenticated inner paths, headers, credentials, or plaintext.
+Direct/Tailscale/Secure Link routes remain independent fallbacks, with no silent
+plaintext downgrade. Reach is disabled by default, marked experimental, and
+selected only after supported routes are unavailable.
+See [`docs/security-broker-transport.md`](security-broker-transport.md).
 
 As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candidates** (`lan` / `tailscale` / `public` / operator-defined roles). A single pairing covers every network the phone might be on — the phone picks the highest-priority reachable candidate at connect time and re-probes on network change. The single-URL top-level fields still appear in v3 QRs for backward compatibility; old phones ignore `endpoints` via `ignoreUnknownKeys = true`, new phones prefer `endpoints` and fall back to the top-level URL when the array is absent. See [`docs/remote-access.md`](remote-access.md) for the operator-facing setup per mode.
 
@@ -220,7 +234,7 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
    endpoints: LAN IP via routing lookup; Tailscale hostname via
    tailscale.status() when the CLI is present; public URL from
    --public-url when provided. Generated defaults order secure candidates
-   (native proxy when enabled, then Tailscale/public TLS) before plain LAN,
+   (Hermes Secure Link when enabled, then Tailscale/public TLS) before plain LAN,
    with 0 = highest. --mode lan/tailscale/public emits only that candidate.
 3. If a relay is reachable at localhost:RELAY_PORT (default 8767):
    a. Mint a fresh 6-char code from A-Z / 0-9
@@ -255,7 +269,7 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
 10. Phone stores the session token in the Android Keystore (StrongBox-
     preferred) with fallback to EncryptedSharedPreferences on older /
     unsupported devices. Ordinary WSS routes use the existing first-connect
-    TOFU pin. Native proxy WSS instead requires the QR-carried SPKI pin before
+    TOFU pin. Hermes Secure Link WSS instead requires the QR-carried SPKI pin before
     its first health or WebSocket request.
 11. Future connections use the session token directly. Rate limiter,
     session expiry, and per-channel grants all enforced at the relay.
@@ -267,7 +281,7 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
 **Old API-only QRs** (no `relay` block, no `hermes` field, or `hermes: 1`) still parse — the phone just skips the relay setup step and can be paired against a relay later via Settings. **v1 QRs with a relay block** (no TTL / grants / sig fields) still parse via `ignoreUnknownKeys`; the phone treats missing TTL as "prompt the user with defaults". **v3 QRs with an `endpoints` array** (ADR 24) also parse on v0.6.x and earlier clients — they ignore the array and keep using the top-level fields. New clients prefer `endpoints` and fall back to the top-level fields when absent.
 
 **Re-pair explicitly resets transport trust** for the target host. Ordinary TLS
-routes retain their existing TOFU behavior. A plugin-proxy route is stricter:
+routes retain their existing TOFU behavior. A Hermes Secure Link route is stricter:
 its SPKI pin must arrive in the operator-reviewed QR before the first request,
 and a certificate or authority rotation requires another explicit re-pair. A
 TLS or pin failure never silently downgrades that route to HTTP/WS.
@@ -308,7 +322,7 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
 ```
 
 - `hermes` — payload version. `1` is the legacy shape (no new fields); `2` is set when any v2-only field (`ttl_seconds`, `grants`, `transport_hint`) is present in the `relay` block; `3` is set when `endpoints` is present (ADR 24). All three versions parse on the current Android client.
-- `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` / `plugin_proxy` get styled UI; anything else renders as "Custom VPN (<role>)"). Entries can carry independently optional `api`, `dashboard`, `relay`, and native-proxy routing metadata; pairing code, TTL, and grants stay at the top level because they are per-pair artifacts. Full schema in ADR 24 and the proxy trust contract in [`security-native-proxy.md`](security-native-proxy.md).
+- `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` / `plugin_proxy` / `outbound_broker` get styled UI; `plugin_proxy` is the compatibility wire role for Hermes Secure Link and `outbound_broker` is the wire role for Hermes Reach, while anything else renders as "Custom VPN (<role>)"). Entries can carry independently optional `api`, `dashboard`, `relay`, Secure Link, and Reach routing metadata; pairing code, TTL, and grants stay at the top level because they are per-pair artifacts. Full schema in ADR 24, the Secure Link trust contract in [`security-native-proxy.md`](security-native-proxy.md), and the Reach broker contract in [`security-broker-transport.md`](security-broker-transport.md).
 - Top-level fields (`host`/`port`/`key`/`tls`) configure the direct Hermes API Server. Unchanged since v1.
 - `relay` — **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
 - `relay.url` — full WebSocket URL (`ws://` for dev, `wss://` for production).

@@ -88,10 +88,12 @@ function candidateUrlsFrom(endpoints) {
   return out;
 }
 
-function TailscaleCard({ status, onEnable, onDisable, port, busy, resultMessage }) {
+function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
   const available = !!(status && status.available);
   const servePorts = (status && status.serve_ports) || [];
-  const serving = servePorts.includes(port);
+  const relayServing = servePorts.includes(8767);
+  const apiServing = servePorts.includes(8642);
+  const serving = relayServing && apiServing;
   const hostname = (status && status.hostname) || null;
   const ip = (status && status.tailscale_ip) || null;
   const reason = status && status.reason;
@@ -99,10 +101,15 @@ function TailscaleCard({ status, onEnable, onDisable, port, busy, resultMessage 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Tailscale</CardTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>Tailscale Serve</CardTitle>
+          <Badge className="text-xs">Recommended</Badge>
+          <Badge variant="outline" className="text-xs">Remote access</Badge>
+        </div>
         <CardDescription>
-          Front the relay's loopback port with a Tailscale-managed hostname
-          (ACL-gated, TLS-terminated). Requires the <code className="font-mono">tailscale</code> CLI.
+          The easiest supported way to reach this self-hosted Hermes installation
+          away from home. Tailscale supplies private routing, ACLs, and managed TLS;
+          Hermes authentication and access controls still apply.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -112,8 +119,12 @@ function TailscaleCard({ status, onEnable, onDisable, port, busy, resultMessage 
             <span>CLI: {available ? "installed" : "not installed"}</span>
           </div>
           <div className="flex items-center gap-2">
-            <Dot tone={serving ? "ok" : available ? "warn" : "muted"} />
-            <span>serve :{port}: {serving ? "active" : "off"}</span>
+            <Dot tone={relayServing ? "ok" : available ? "warn" : "muted"} />
+            <span>Relay: {relayServing ? "active" : "off"}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Dot tone={apiServing ? "ok" : available ? "warn" : "muted"} />
+            <span>API: {apiServing ? "active" : "off"}</span>
           </div>
         </div>
 
@@ -146,12 +157,12 @@ function TailscaleCard({ status, onEnable, onDisable, port, busy, resultMessage 
 
         <div className="flex gap-2">
           <Button size="sm" disabled={busy || !available || serving} onClick={onEnable}>
-            {busy === "enable" ? "Enabling…" : "Enable"}
+            {busy === "enable" ? "Enabling…" : "Enable recommended setup"}
           </Button>
           <Button
             size="sm"
             variant="outline"
-            disabled={busy || !available || !serving}
+            disabled={busy || !available || (!relayServing && !apiServing)}
             onClick={onDisable}
           >
             {busy === "disable" ? "Disabling…" : "Disable"}
@@ -165,6 +176,79 @@ function TailscaleCard({ status, onEnable, onDisable, port, busy, resultMessage 
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+function SecureLinkCard({ status }) {
+  const enabled = !!(status && status.enabled);
+  const url = status && status.url;
+  const surfaces = Array.isArray(status && status.surfaces) ? status.surfaces : [];
+  const reason = status && status.reason;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>Hermes Secure Link</CardTitle>
+          <Badge variant="outline" className="text-xs">Secure ingress</Badge>
+        </div>
+        <CardDescription>
+          Pairing-pinned TLS for Hermes services. Secure Link authenticates the
+          route but does not create internet reachability or perform NAT traversal;
+          use LAN, Tailscale, a VPN, or a public route to reach this host.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Dot tone={enabled ? "ok" : "muted"} />
+          <span>{enabled ? "Enabled" : "Not enabled"}</span>
+          {enabled ? <Badge variant="outline">Pinned TLS</Badge> : null}
+        </div>
+        {url ? (
+          <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs space-y-1">
+            <div>
+              <span className="uppercase tracking-wider text-muted-foreground">Advertised route</span>{" "}
+              <span className="font-mono break-all">{url}</span>
+            </div>
+            {surfaces.length > 0 ? (
+              <div className="flex flex-wrap gap-1 items-center">
+                <span className="uppercase tracking-wider text-muted-foreground">Services</span>
+                {surfaces.map((surface) => (
+                  <Badge key={surface} variant="outline" className="text-xs capitalize">{surface}</Badge>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : reason ? (
+          <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            {reason}
+          </div>
+        ) : null}
+        <p className="text-xs text-muted-foreground">
+          When enabled, new pairing invites include Secure Link alongside other
+          reachable candidates. Existing devices must re-pair to trust its certificate pin.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ExperimentalReachCard({ status }) {
+  const reach = status && status.reach;
+  if (!reach || (!reach.enabled && reach.state === "disabled")) return null;
+  return (
+    <details className="rounded-lg border border-dashed border-border bg-muted/10 px-4 py-3">
+      <summary className="cursor-pointer list-none flex flex-wrap items-center gap-2 text-sm font-medium">
+        <span>Hermes Reach</span>
+        <Badge variant="outline" className="text-xs">Experimental</Badge>
+        <span className="ml-auto text-xs text-muted-foreground">{reach.state || "disabled"}</span>
+      </summary>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Advanced brokered fallback for evaluation. Reach is disabled by default,
+        tried after supported routes, and not recommended instead of Tailscale.
+      </p>
+      {reach.last_error ? <pre className="mt-2 whitespace-pre-wrap text-xs text-destructive">{reach.last_error}</pre> : null}
+    </details>
   );
 }
 
@@ -575,10 +659,20 @@ export default function RemoteAccess({ autoRefresh }) {
   }
 
   const ts = (status && status.tailscale) || {};
+  const secureLink = (status && status.secure_link) || {};
   const upstream = !!(status && status.upstream_canonical);
 
   return (
     <div className="space-y-4">
+      <Alert>
+        <AlertTitle>Recommended remote-access setup</AlertTitle>
+        <AlertDescription>
+          Start with <strong>Tailscale</strong> for private remote reachability.
+          Operators with a domain or reachable WAN address can instead use a public
+          TLS reverse proxy or <strong>Hermes Secure Link</strong>. Experimental
+          broker routes are kept out of the normal setup path.
+        </AlertDescription>
+      </Alert>
       {upstream ? (
         <Alert>
           <AlertTitle>Upstream helper detected</AlertTitle>
@@ -591,12 +685,15 @@ export default function RemoteAccess({ autoRefresh }) {
 
       <TailscaleCard
         status={ts}
-        port={8767}
         onEnable={onEnable}
         onDisable={onDisable}
         busy={busy === "enable" || busy === "disable" ? busy : null}
         resultMessage={helperMessage}
       />
+
+      <SecureLinkCard status={secureLink} />
+
+      <ExperimentalReachCard status={secureLink} />
 
       <PublicUrlCard
         initialUrl={publicUrl}

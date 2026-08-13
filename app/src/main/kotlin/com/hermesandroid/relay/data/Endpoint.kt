@@ -45,8 +45,13 @@ data class EndpointCandidate(
     val relay: RelayEndpoint? = null,
     val dashboard: DashboardEndpoint? = null,
     val proxy: ProxyEndpoint? = null,
+    /** Optional outbound rendezvous carrying the pinned [proxy] byte stream. */
+    val broker: BrokerEndpoint? = null,
     val security: String? = null,
     val recommended: Boolean = false,
+    val experimental: Boolean = false,
+    @SerialName("display_name")
+    val displayName: String? = null,
 )
 
 /**
@@ -110,6 +115,27 @@ data class ProxyEndpoint(
     val transportHint: String? = null,
     @SerialName("pin_sha256")
     val pinSha256: String? = null,
+    /** Independently authenticated services carried by this pinned origin. */
+    val surfaces: List<String> = listOf("relay"),
+)
+
+/**
+ * Hermes Reach rendezvous metadata from an operator-reviewed pairing payload.
+ * The token authenticates only this broker route; Hermes service credentials
+ * remain inside the QR-pinned Secure Link TLS connection.
+ */
+@Serializable
+data class BrokerEndpoint(
+    val url: String,
+    @SerialName("protocol_version")
+    val protocolVersion: Int = 1,
+    @SerialName("host_id")
+    val hostId: String,
+    @SerialName("credential_kind")
+    val credentialKind: String,
+    val token: String,
+    @SerialName("expires_at")
+    val expiresAt: Long? = null,
 )
 
 /**
@@ -123,7 +149,7 @@ data class ProxyEndpoint(
  */
 fun EndpointCandidate.isKnownRole(): Boolean {
     return when (role.lowercase()) {
-        "lan", "tailscale", "public", "plugin_proxy", "plugin-proxy", "https" -> true
+        "lan", "tailscale", "public", "plugin_proxy", "plugin-proxy", "outbound_broker", "https" -> true
         else -> false
     }
 }
@@ -146,7 +172,8 @@ fun EndpointCandidate.displayLabel(): String {
             "Public"
         }
         "https" -> "HTTPS"
-        "plugin_proxy", "plugin-proxy" -> "Plugin proxy"
+        "plugin_proxy", "plugin-proxy" -> "Hermes Secure Link"
+        "outbound_broker", "broker", "relay_broker" -> "Hermes Reach · Experimental"
         else -> "Custom VPN ($role)"
     }
 }
@@ -178,6 +205,62 @@ fun EndpointCandidate.routeAuthority(): String? {
 
 fun EndpointCandidate.hasSecureProxy(): Boolean =
     proxy?.isValidPinnedProxy() == true
+
+/** Product-facing service inventory; wire identifiers remain unchanged. */
+fun EndpointCandidate.secureLinkServices(): List<String> =
+    if (!hasSecureProxy()) emptyList() else proxy.orEmptySurfaces()
+
+fun EndpointCandidate.secureLinkCoversAllServices(): Boolean =
+    secureLinkServices().containsAll(listOf("relay", "api", "dashboard"))
+
+fun EndpointCandidate.presentationRouteUrl(): String? =
+    broker?.url?.takeIf { hasHermesReach() } ?: proxy?.url?.takeIf { hasSecureProxy() } ?: primaryRouteUrl()
+
+fun EndpointCandidate.hasHermesReach(): Boolean =
+    role.lowercase() in setOf("outbound_broker", "broker", "relay_broker") &&
+        broker?.isValidHermesReach() == true && hasSecureProxy()
+
+fun BrokerEndpoint.isValidHermesReach(): Boolean {
+    if (protocolVersion != 1 || !hostId.isCanonicalBase64Url(16) || !token.isCanonicalBase64Url(32)) return false
+    if (credentialKind !in setOf("bootstrap", "route")) return false
+    if (credentialKind == "bootstrap" && expiresAt?.let { it <= System.currentTimeMillis() / 1000L } == true) return false
+    val uri = runCatching { URI(url.trim()) }.getOrNull() ?: return false
+    if (!uri.scheme.equals("wss", ignoreCase = true) || uri.host.isNullOrBlank()) return false
+    if (!uri.rawUserInfo.isNullOrBlank() || uri.rawQuery != null || uri.rawFragment != null) return false
+    return uri.rawPath.orEmpty().let { it.isEmpty() || it == "/" || it == "/v1/connect" }
+}
+
+private fun String.isCanonicalBase64Url(byteCount: Int): Boolean {
+    if (isBlank() || '=' in this) return false
+    val decoded = runCatching { java.util.Base64.getUrlDecoder().decode(this) }.getOrNull() ?: return false
+    return decoded.size == byteCount &&
+        java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(decoded) == this
+}
+
+/** Exact host locator + broker authority replacement; never crosses devices. */
+internal fun replaceHermesReachCredential(
+    source: List<EndpointCandidate>,
+    expected: BrokerEndpoint,
+    replacement: EndpointCandidate,
+): List<EndpointCandidate> = source.map { candidate ->
+    if (candidate.broker?.hostId == expected.hostId &&
+        sameBrokerAuthority(candidate.broker.url, expected.url)
+    ) replacement else candidate
+}
+
+internal fun sameBrokerAuthority(left: String, right: String): Boolean = runCatching {
+    val a = URI(left.trim())
+    val b = URI(right.trim())
+    fun port(uri: URI) = if (uri.port > 0) uri.port else 443
+    a.scheme.equals("wss", true) && b.scheme.equals("wss", true) &&
+        a.host.equals(b.host, true) && port(a) == port(b) &&
+        a.rawPath.orEmpty().trimEnd('/') == b.rawPath.orEmpty().trimEnd('/')
+}.getOrDefault(false)
+
+private fun ProxyEndpoint?.orEmptySurfaces(): List<String> = this?.surfaces.orEmpty()
+    .map { it.trim().lowercase() }
+    .filter { it in setOf("relay", "api", "dashboard") }
+    .distinct()
 
 fun ProxyEndpoint.isValidPinnedProxy(): Boolean {
     val uri = runCatching { URI(url.trim().trimEnd('/')) }.getOrNull() ?: return false
