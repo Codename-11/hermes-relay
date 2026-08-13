@@ -142,6 +142,12 @@ data class ChatMessage(
      */
     val uiKey: String = id,
     /**
+     * Durable Gateway transcript row identity for rewind/edit-regenerate.
+     * This is server-owned and can change after a truncating rewrite; it is
+     * never used as a Compose key or synthesized client-side.
+     */
+    val rowId: Long? = null,
+    /**
      * Mixture-of-Agents advisor responses surfaced during the live turn.
      * Unavailable advisors retain only neutral state, never their raw failure
      * body. A sanitized bounded copy may enter the local in-flight checkpoint,

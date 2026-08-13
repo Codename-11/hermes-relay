@@ -10,12 +10,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.WebSocket
@@ -38,6 +41,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * [GatewayChatClient] wire tests against a scripted fake tui_gateway:
@@ -91,6 +95,9 @@ class GatewayClientHarness(
         put("before_messages", 8)
         put("after_messages", 4)
     }
+
+    @Volatile
+    var promptSubmitPayload: JsonObject = buildJsonObject { put("ok", true) }
 
     @Volatile
     var reasoningEffort = "medium"
@@ -206,7 +213,7 @@ class GatewayClientHarness(
                 "session.activate" -> recoveryPayload(
                     (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
                 )
-                "prompt.submit" -> buildJsonObject { put("ok", true) }
+                "prompt.submit" -> promptSubmitPayload
                 "session.interrupt" -> buildJsonObject { put("ok", true) }
                 "process.list" -> buildJsonObject {
                     put(
@@ -2221,6 +2228,41 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `durable rewind target and survivor row ids round trip`() {
+        harness.promptSubmitPayload = buildJsonObject {
+            put("ok", true)
+            put("survivor_user_row_ids", buildJsonArray {
+                add(101L)
+                add(JsonNull)
+                add("malformed")
+            })
+        }
+        val r = Recorder()
+        val rebound = AtomicReference<List<Long?>>()
+        val reboundLatch = CountDownLatch(1)
+
+        client.sendTurn(
+            sessionId = "stored-1",
+            text = "edited message",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            truncateBeforeUserOrdinal = 2,
+            truncateBeforeRowId = 73L,
+            onSurvivorUserRowIds = {
+                rebound.set(it)
+                reboundLatch.countDown()
+            },
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        val submit = harness.awaitRpc("prompt.submit")
+        assertEquals(2, (submit["truncate_before_user_ordinal"] as? JsonPrimitive)?.intOrNull)
+        assertEquals(73L, (submit["truncate_before_row_id"] as? JsonPrimitive)?.longOrNull)
+        assertTrue(reboundLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf(101L, null, null), rebound.get())
+    }
+
+    @Test
     fun `first user truncate carries empty-history confirmation`() {
         val r = Recorder()
         client.sendTurn(
@@ -2283,9 +2325,13 @@ class GatewayChatClientTest {
     @Test
     fun `authoritative prompt rejections surface server message without preflight fallback`() {
         val cases = listOf(
+            4004 to "Truncation target must be an integer",
+            4018 to "Target user message is no longer in session history",
             4028 to "Empty-history truncate confirmation required",
             4029 to "Truncate confirmation required",
+            4030 to "Row id and ordinal identify different user turns",
             4090 to "Active session limit reached; close the session held by another client",
+            5008 to "Failed to persist history truncation",
             5070 to "Session storage is full; free disk space and retry",
             5071 to "Initial session persistence failed",
         )
@@ -2301,6 +2347,25 @@ class GatewayChatClientTest {
             assertTrue("$code must not trigger SSE fallback", r.preflightFailures.isEmpty())
             assertEquals(index + 1, harness.rpcLog.count { it.first == "prompt.submit" })
         }
+    }
+
+    @Test
+    fun `bounded transcript resume rejection stays visible and never creates a replacement session`() {
+        val message =
+            "Session has 20,001 active messages, above sessions.max_resume_messages; export or raise the limit"
+        harness.rpcErrors["session.resume"] = 4130 to message
+        val r = Recorder()
+
+        client.sendTurn("oversized-session", "continue", null, r.callbacks) {
+            r.preflightFailures += it
+        }
+
+        harness.awaitRpc("session.resume")
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf(message), r.errors.toList())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertEquals(0, harness.rpcLog.count { it.first == "session.create" })
+        assertEquals(0, harness.rpcLog.count { it.first == "prompt.submit" })
     }
 
     // --- HRUI-016: long / fire-and-forget prompt.submit ack semantics.

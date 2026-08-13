@@ -513,6 +513,10 @@ class GatewayChatClient(
      *   into the session's USER messages (counted from the first user
      *   message). The server drops that message and everything after it
      *   before running [text] as a fresh turn.
+     * @param truncateBeforeRowId durable identity of the same target user row
+     *   when current Gateway history supplied one. Sent alongside the ordinal
+     *   so the server can fail closed if local position and durable identity
+     *   diverge; omitted for older Gateway history without row ids.
      * @param queuedFollowUp true only when Android is draining a prompt the
      *   user explicitly queued behind an active turn. Newer gateways use the
      *   additive `queued:true` marker to preserve run-after semantics while
@@ -530,7 +534,9 @@ class GatewayChatClient(
         callbacks: GatewayTurnCallbacks,
         attachments: List<GatewayAttachment> = emptyList(),
         truncateBeforeUserOrdinal: Int? = null,
+        truncateBeforeRowId: Long? = null,
         queuedFollowUp: Boolean = false,
+        onSurvivorUserRowIds: (List<Long?>) -> Unit = { },
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
         val turn = GatewayTurn(dispatchOn(callbacks))
@@ -571,6 +577,7 @@ class GatewayChatClient(
                             put("confirm_truncate", true)
                             if (ordinal == 0) put("confirm_empty_truncate", true)
                         }
+                        truncateBeforeRowId?.let { put("truncate_before_row_id", it) }
                         if (queuedFollowUp) put("queued", true)
                     },
                     // Long-running RPC, not a generic 15s ack — see the
@@ -613,12 +620,25 @@ class GatewayChatClient(
                         submitError?.message ?: "prompt.submit failed",
                     )
                 }
+                (submitted.getOrNull()?.get("survivor_user_row_ids") as? JsonArray)?.let { raw ->
+                    val rebound = raw.map { element ->
+                        (element as? JsonPrimitive)?.longOrNull
+                    }
+                    callbackDispatcher { onSurvivorUserRowIds(rebound) }
+                }
                 turn.tracer.mark("submit")
                 // One INFO line per turn so logcat shows which transport
                 // served a send — the SSE paths log their SSE events, and
                 // a silent happy path here made on-device verification a
                 // read-the-absence exercise.
                 Log.i(TAG, "Gateway turn submitted (session=$storedSessionId)")
+            } catch (e: GatewayAuthoritativeResumeException) {
+                if (activeTurn === turn) activeTurn = null
+                if (!turn.cancelled) {
+                    turn.disarmWatchdog()
+                    turn.tracer.done("resume-rejected")
+                    turn.callbacks.onError(e.message ?: "Hermes could not resume this session")
+                }
             } catch (e: Exception) {
                 if (activeTurn === turn) activeTurn = null
                 if (!turn.cancelled) {
@@ -1999,6 +2019,12 @@ class GatewayChatClient(
                 },
             )
             val result = resumed.getOrNull()
+            val resumeError = resumed.exceptionOrNull()
+            if ((resumeError as? GatewayRpcException)?.code == 4130) {
+                throw GatewayAuthoritativeResumeException(
+                    resumeError.message ?: "Session transcript exceeds the configured resume limit",
+                )
+            }
             val live = result?.stringField("session_id")
             if (live != null) {
                 liveSessionId = live
@@ -3167,14 +3193,21 @@ internal class GatewayPreflightException(message: String) : Exception(message)
 /** One connect attempt failed; [GatewayChatClient] may retry with a fresh ticket. */
 internal class GatewayConnectAttemptException(message: String) : Exception(message)
 
+/** Server intentionally refused a durable resume; never create/fallback into a context-free turn. */
+internal class GatewayAuthoritativeResumeException(message: String) : Exception(message)
+
 /** [code] is the JSON-RPC error code when the failure came from the server (e.g. 4018, -32601). */
 internal class GatewayRpcException(message: String, val code: Int? = null) : Exception(message)
 
 private const val JSONRPC_METHOD_NOT_FOUND = -32601
 private val AUTHORITATIVE_PROMPT_SUBMIT_REJECTIONS = setOf(
+    4004, // malformed truncation target
+    4018, // durable/ordinal target is no longer present
     4028, // first-turn truncate requires explicit empty-history confirmation
     4029, // every destructive truncate requires explicit confirmation
+    4030, // durable row id and client ordinal disagree
     4090, // active-session capacity policy
+    5008, // durable truncation could not be persisted
     5070, // initial session persistence failed: storage full
     5071, // other authoritative initial session persistence failure
 )

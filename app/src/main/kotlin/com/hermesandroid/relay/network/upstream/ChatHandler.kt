@@ -524,6 +524,29 @@ class ChatHandler {
         }
     }
 
+    /**
+     * Rebind visible user turns after Gateway rewrites a truncated durable
+     * prefix. The response is positional in the same user-ordinal space used
+     * for edit/regenerate. Missing entries clear cached ids so a later rewind
+     * cannot accidentally send an archived pre-rewrite row id.
+     */
+    fun rebindSurvivorUserRowIds(rowIds: List<Long?>) {
+        var ordinal = 0
+        _messages.update { messages ->
+            messages.map { message ->
+                if (!message.isGatewayRewindUser()) return@map message
+                val rebound = rowIds.getOrNull(ordinal)
+                ordinal += 1
+                if (message.rowId == rebound) message else message.copy(rowId = rebound)
+            }
+        }
+    }
+
+    private fun ChatMessage.isGatewayRewindUser(): Boolean =
+        role == MessageRole.USER &&
+            !id.startsWith("voice-intent-") &&
+            !id.startsWith("steer-")
+
     fun replaceMessageContent(messageId: String, content: String) {
         _messages.update { messages ->
             messages.map { message ->
@@ -1497,6 +1520,7 @@ class ChatHandler {
                 // this as the same visible row across the post-turn reload.
                 prior.copy(
                     id = messageId,
+                    rowId = item.rowId,
                     role = role,
                     content = cleanedContent,
                     attachments = carriedAttachments,
@@ -1527,6 +1551,7 @@ class ChatHandler {
                 // nothing local to carry).
                 ChatMessage(
                     id = messageId,
+                    rowId = item.rowId,
                     role = role,
                     content = cleanedContent,
                     attachments = carriedAttachments,

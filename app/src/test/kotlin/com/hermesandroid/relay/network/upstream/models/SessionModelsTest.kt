@@ -302,6 +302,27 @@ class SessionModelsTest {
     }
 
     @Test
+    fun messageItem_rowIdIsMixedVersionSafe() {
+        assertEquals(
+            73L,
+            json.decodeFromString<MessageItem>(
+                """{"role":"user","row_id":73}""",
+            ).rowId,
+        )
+        assertEquals(
+            74L,
+            json.decodeFromString<MessageItem>(
+                """{"role":"user","row_id":"74"}""",
+            ).rowId,
+        )
+        assertNull(
+            json.decodeFromString<MessageItem>(
+                """{"role":"user","row_id":{"unexpected":true}}""",
+            ).rowId,
+        )
+    }
+
+    @Test
     fun messageItem_roundTrip() {
         val original = MessageItem(
             id = "1",
