@@ -387,7 +387,7 @@ Sources: `plugin/relay/channels/notifications.py`, `app/src/main/kotlin/.../noti
 
 | Type | Direction | Payload |
 |------|-----------|---------|
-| `desktop.command` | Server → Client | `{request_id, tool, args}` |
+| `desktop.command` | Server → Client | `{request_id, tool, args, control_session?}` |
 | `desktop.response` | Client → Server | `{request_id, ok: true, result}` or `{request_id, ok: false, error}` |
 | `desktop.status` | Client → Server | `{advertised_tools, device_id, host, platform, version, computer_use?}` |
 | `desktop.workspace` | Client → Server | Workspace context snapshot |
@@ -402,6 +402,24 @@ be an exact device ID or an unambiguous host/device name. The Relay binds each
 pending request to the selected WebSocket, ignores responses from other PCs,
 and includes resolved target metadata in the response. `/desktop/health` lists
 the connected targets.
+
+For `desktop_computer_*`, current relays can attach a server-owned
+`control_session` object with `version`, opaque `id`, `request_id`,
+`requester_device_id`, `target_device_id`, and `run_id`, plus optional
+`chat_session_id` and `profile`. The desktop client validates the version and
+all required fields, requires the embedded request and target to match the
+outer command and local installation, and never reads identity from tool
+arguments. A malformed supplied binding is rejected. Omission remains
+backward-compatible for legacy computer handlers, but identity-sensitive CUA
+operations fail closed until the relay supplies an authenticated binding.
+
+The plugin's standard tool route is loopback-only. Executor context is passed
+in internal headers and is trusted only inside the existing same-user host
+boundary; any local process running as that user can reach the same boundary.
+When a paired bearer is present, the relay derives `requester_device_id` from
+the authenticated plugin session instead. The model-facing tool wrapper drops
+reserved identity arguments, and the relay—not the caller—mints the opaque
+control-session ID and binds each selected target and request.
 
 Per-host Structured access withholds `desktop_terminal`,
 `desktop_powershell`, `desktop_spawn_detached`, and `desktop_job_start` from

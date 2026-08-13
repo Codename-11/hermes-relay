@@ -78,6 +78,34 @@ import requests
 
 
 _DESKTOP_TARGET: ContextVar[str | None] = ContextVar("desktop_target", default=None)
+_DESKTOP_CALL_CONTEXT: ContextVar[dict[str, str]] = ContextVar(
+    "desktop_call_context", default={}
+)
+
+_CONTROL_CONTEXT_HEADERS = {
+    "chat_session_id": "X-Hermes-Relay-Chat-Session",
+    "run_id": "X-Hermes-Relay-Run-Id",
+    "profile": "X-Hermes-Relay-Profile",
+}
+
+
+def _bounded_context_value(value: Any, limit: int = 256) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = "".join(ch for ch in value.strip() if ch.isprintable())
+    return cleaned[:limit] or None
+
+
+def _trusted_call_context(kwargs: dict[str, Any]) -> dict[str, str]:
+    """Extract executor-owned identity without consulting model arguments."""
+
+    values = {
+        "chat_session_id": _bounded_context_value(kwargs.get("session_id")),
+        "run_id": _bounded_context_value(kwargs.get("task_id")),
+        "profile": _bounded_context_value(kwargs.get("profile"))
+        or _bounded_context_value(os.getenv("HERMES_PROFILE")),
+    }
+    return {key: value for key, value in values.items() if value is not None}
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -115,11 +143,16 @@ def _post(path: str, payload: dict, *, timeout: Optional[float] = None) -> dict:
     target = _DESKTOP_TARGET.get()
     if target:
         payload["device"] = target
+    headers = _auth_headers()
+    for field, value in _DESKTOP_CALL_CONTEXT.get().items():
+        header = _CONTROL_CONTEXT_HEADERS.get(field)
+        if header:
+            headers[header] = value
     try:
         r = requests.post(
             f"{_relay_url()}{path}",
             json=payload,
-            headers=_auth_headers(),
+            headers=headers,
             timeout=_timeout() if timeout is None else timeout,
         )
     except requests.RequestException as exc:
@@ -588,8 +621,12 @@ def desktop_computer_screenshot(
     include_cursor: bool = True,
     redact_sensitive: bool = True,
     save_to: Optional[str] = None,
+    pid: Optional[int] = None,
+    window_id: Optional[int] = None,
+    query: Optional[str] = None,
+    include_screenshot: bool = True,
 ) -> str:
-    """[EXPERIMENTAL] Capture a desktop screenshot in observe mode."""
+    """[EXPERIMENTAL] Capture a display or a structured CUA window snapshot."""
     payload: dict[str, Any] = {
         "display": display,
         "include_cursor": bool(include_cursor),
@@ -599,6 +636,15 @@ def desktop_computer_screenshot(
         payload["region"] = region
     if save_to is not None:
         payload["save_to"] = save_to
+    for key, value in {
+        "pid": pid,
+        "window_id": window_id,
+        "query": query,
+    }.items():
+        if value is not None:
+            payload[key] = value
+    if pid is not None or window_id is not None or not include_screenshot:
+        payload["include_screenshot"] = bool(include_screenshot)
     data = _post("/desktop/desktop_computer_screenshot", payload)
     return json.dumps(data)
 
@@ -1160,6 +1206,10 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "string",
                     "description": "Optional path on the desktop client to save the PNG instead of returning bytes.",
                 },
+                "pid": {"type": "integer", "minimum": 1},
+                "window_id": {"type": "integer", "minimum": 1},
+                "query": {"type": "string", "description": "Optional accessibility-tree projection query."},
+                "include_screenshot": {"type": "boolean", "default": True},
             },
         },
     },
@@ -1189,6 +1239,10 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                         "type",
                         "type_text",
                         "wait",
+                        "click_element",
+                        "set_value",
+                        "press_key",
+                        "scroll_element",
                     ],
                 },
                 "coordinate": {
@@ -1227,6 +1281,13 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "string",
                     "description": "Human-readable reason for the requested action.",
                 },
+                "pid": {"type": "integer", "minimum": 1},
+                "window_id": {"type": "integer", "minimum": 1},
+                "snapshot_token": {"type": "string"},
+                "snapshot_generation": {"type": "string"},
+                "value": {"type": "string"},
+                "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                "amount": {"type": "integer", "minimum": 1, "maximum": 20},
             },
             "required": ["action"],
             "additionalProperties": False,
@@ -1333,10 +1394,17 @@ def _targeted_handler(handler: Any) -> Any:
     def invoke(args: dict[str, Any], **kwargs: Any) -> Any:
         call_args = dict(args)
         target = call_args.pop("device", None) or call_args.pop("device_id", None)
+        # Identity is never a model-owned argument. Drop every reserved shape
+        # before dispatch, then obtain authoritative context from Hermes'
+        # executor kwargs instead.
+        call_args.pop("control_session", None)
+        call_args.pop("control_context", None)
         token = _DESKTOP_TARGET.set(str(target).strip() if target else None)
+        context_token = _DESKTOP_CALL_CONTEXT.set(_trusted_call_context(kwargs))
         try:
             return handler(call_args, **kwargs)
         finally:
+            _DESKTOP_CALL_CONTEXT.reset(context_token)
             _DESKTOP_TARGET.reset(token)
 
     return invoke

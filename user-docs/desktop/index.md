@@ -129,6 +129,15 @@ The Windows one-liner installs the checksum-verified CLI and UI bundle by defaul
 
 The CLI section can **Open terminal** at a normal prompt, **Open Hermes CLI** directly into the paired Hermes TUI, **View daemon log**, or **Run diagnostics**. Updates manage the CLI and UI bundle together. **Help & About** shows the UI, CLI, and connected Relay versions and links to the [desktop documentation](https://hermes-relay.dev/docs/desktop/), [troubleshooting guide](https://hermes-relay.dev/docs/desktop/troubleshooting/), [release notes](https://github.com/Codename-11/hermes-relay/releases?q=desktop), logs, and diagnostics. External links open in the default browser.
 
+**Settings → Computer control** also reports whether the optional CUA Driver
+engine is absent, incompatible, degraded, or ready. A ready runtime can replace
+legacy Windows input for structured actions, keep input routed to a named
+window in the background, and display a separate animated virtual cursor for
+each agent control session without moving the physical mouse. CUA remains
+optional: Windows input is the default fallback, this release keeps foreground
+escalation disabled, and Hermes never silently installs or updates the driver.
+See [Computer-use engines](./tools.md#computer-use-engines).
+
 ## Why both shell AND chat modes?
 
 They're not the same thing:

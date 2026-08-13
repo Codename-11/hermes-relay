@@ -221,6 +221,66 @@ Use `hermes-relay computer-use status` to see the persisted preference, daemon p
 
 Input injection is currently **Windows-only**; `status` / `screenshot` work cross-platform.
 
+### Computer-use engines
+
+The `desktop_computer_*` contract stays the same regardless of the local engine.
+On Windows you can choose:
+
+| Engine | Behavior |
+|--------|----------|
+| **Windows input** | Default compatibility engine. Uses the original Windows input path and can depend on foreground focus or move the physical pointer for some actions. |
+| **CUA Driver** | Optional structured engine. Targets a named PID and window, prefers UI Automation and background dispatch, and can show an animated virtual cursor without moving the physical pointer. |
+
+Check the detected runtime and current selection from the CLI:
+
+```powershell
+hermes-relay computer-use status --json
+hermes-relay computer-use engine cua
+hermes-relay computer-use cursor on
+hermes-relay computer-use foreground off
+```
+
+The management UI exposes the same choices under **Settings → Computer
+control**. Selecting `cua` succeeds only when Hermes finds the canonical runtime
+at `%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe` and verifies its
+supported version, manifest identity, allowlisted tools, non-unrestricted
+permission mode, and live health report. Hermes does not trust whichever `cua-driver.exe`
+happens to appear first on `PATH`. If the runtime is missing, incompatible, or
+degraded, the UI explains why and the effective engine remains Windows input.
+
+CUA sessions follow Hermes control sessions. Hermes derives the driver session
+identity locally; an agent cannot choose or share a cursor ID. Each action uses
+a fresh target-window snapshot, and element handles are wrapped in a short-lived,
+single-use Hermes token bound to the control authority, grant, PID, window, and
+snapshot generation. The handler returns a post-action snapshot so the caller
+can verify whether the expected state actually changed. Grant expiry, cancellation, disconnect, policy change,
+emergency stop, or daemon shutdown revokes the associated local state.
+
+**Background is the default.** A target that cannot accept background input
+returns a failure instead of silently bringing itself forward. The foreground
+escalation control is reserved for a later explicit-authority path; this release
+always reports it off, even if an older preview saved the preference, and Full
+Access cannot enable it. The animated agent cursor is optional. It is a visual overlay
+with a distinct session identity—not another Windows hardware pointer—and the
+operator's physical cursor remains untouched by CUA actions.
+
+CUA Driver is a separate optional dependency. Hermes-Relay does not bundle,
+auto-install, or auto-update it. Install or update it through the upstream CUA
+Driver distribution only after an explicit local choice. Hermes forces CUA
+telemetry off for its child invocations; any future telemetry opt-in belongs to
+the local operator. `hermes-relay update` continues to manage only the
+Hermes-Relay CLI and Windows UI.
+
+::: warning CUA does not sandbox raw commands
+CUA's PID/window and snapshot boundaries apply to structured computer-control
+actions. If Commands, PowerShell, or terminal execution is allowed, the agent
+can still invoke ordinary OS automation through that broader trusted path.
+Disable raw command access when scoped computer control is part of your threat
+model. Full Access never bypasses authenticated targeting, sensitive-surface
+checks, UAC or Windows-session boundaries, audit, health checks, or emergency
+stop.
+:::
+
 ## Diagnosing routing
 
 If the agent says "desktop_terminal is not available" or calls time out immediately:

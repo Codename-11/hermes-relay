@@ -3048,6 +3048,18 @@ cross-platform acceptance gates are complete.
 
 **Status:** Accepted for phased implementation (2026-08-13).
 
+**Implementation note (2026-08-13).** The first Windows integration keeps the
+public `desktop_computer_*` contract and adds canonical runtime discovery,
+manifest/version/tool/permission/health checks, an allowlisted CUA adapter,
+server-owned control-session envelopes, per-session grants, sensitive-target
+preflight, single-use snapshot tokens, pre/action/post snapshot flow, and local
+CLI/UI engine status. CUA actions are background-only in this phase; foreground
+escalation remains reserved and reports disabled. The optional driver is not
+bundled or updated by Hermes-Relay, and Hermes forces driver telemetry off for
+every child process it starts. The legacy engine remains the default and the
+fail-closed fallback while the live Windows acceptance and remaining scope,
+redaction, and grant-bridge hardening gates tracked in `TODO.md` stay open.
+
 **Context.** The first Windows input backend uses PowerShell, `SetCursorPos`,
 `mouse_event`, and `SendKeys`. It can move the operator's physical pointer and
 depends on foreground focus. CUA Driver provides target-process/window UI

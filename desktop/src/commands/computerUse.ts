@@ -5,11 +5,13 @@ import { readDaemonStatus, isDaemonProcessAlive } from '../lib/daemonStatus.js'
 import {
   readDesktopUseSettings,
   requestComputerGrantCancellation,
+  setComputerControlSettings,
   setDesktopUseEnabled
 } from '../lib/desktopUseSettings.js'
 import { listPendingGrantRequests } from '../lib/grantBridge.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec, unknownSubcommand } from '../lib/usage.js'
+import { CuaDriverAdapter, type CuaRuntimeStatus } from '../tools/cuaDriver.js'
 
 const COMPUTER_USE_USAGE: UsageSpec = {
   name: 'computer-use',
@@ -18,13 +20,17 @@ const COMPUTER_USE_USAGE: UsageSpec = {
     'computer-use status [--json]',
     'computer-use enable [--yes]',
     'computer-use disable',
-    'computer-use cancel'
+    'computer-use cancel',
+    'computer-use engine <legacy|cua>',
+    'computer-use cursor <on|off>'
   ],
   subcommands: [
     { verb: 'status', desc: 'Show preference, daemon state, active grant, and pending requests' },
     { verb: 'enable', desc: 'Persist desktop-use enablement after explicit confirmation' },
     { verb: 'disable', desc: 'Disable desktop use and request cancellation of any active grant' },
-    { verb: 'cancel', desc: 'Cancel the active task-scoped desktop grant' }
+    { verb: 'cancel', desc: 'Cancel the active task-scoped desktop grant' },
+    { verb: 'engine', desc: 'Choose legacy Windows input or a ready CUA Driver backend' },
+    { verb: 'cursor', desc: 'Show or hide the CUA virtual agent cursor' }
   ],
   flags: [
     { flag: '--json', desc: 'Emit machine-readable status' },
@@ -62,6 +68,23 @@ async function statusPayload(): Promise<Record<string, unknown>> {
   const activeGrant = daemonAlive && daemon?.computer_grant?.active === true
     ? daemon.computer_grant
     : null
+  let cua: CuaRuntimeStatus | null = null
+  try {
+    cua = await CuaDriverAdapter.status()
+  } catch {
+    // The optional backend must not make ordinary desktop-use status fail.
+  }
+  const cuaReason = cua?.reason?.toLowerCase() ?? ''
+  const cuaState = !cua?.available
+    ? 'not_installed'
+    : cua.ready
+      ? 'ready'
+      : /(?:incompatible|unsupported|version|manifest|permission mode|missing required tools)/.test(cuaReason)
+        ? 'incompatible'
+        : /(?:degraded|health)/.test(cuaReason)
+          ? 'degraded'
+          : 'error'
+  const cuaReady = cuaState === 'ready'
   return {
     enabled: settings.computer_use_enabled,
     daemon_alive: daemonAlive,
@@ -69,7 +92,19 @@ async function statusPayload(): Promise<Record<string, unknown>> {
     daemon_computer_use_enabled: daemonAlive ? (daemon?.computer_use_enabled ?? false) : false,
     active_grant: activeGrant,
     pending_grants: pending.length,
-    restart_required: daemonAlive && daemon?.computer_use_enabled !== settings.computer_use_enabled
+    restart_required: daemonAlive && daemon?.computer_use_enabled !== settings.computer_use_enabled,
+    computer_control_engine: {
+      selected: settings.computer_control_engine,
+      effective: settings.computer_control_engine === 'cua' && cuaReady ? 'cua' : 'legacy',
+      available: cua?.available === true,
+      state: cuaState,
+      version: cua?.binaryVersion ?? null,
+      health: cua?.health ?? null,
+      path: cua?.binaryPath ?? null,
+      cursor_enabled: settings.cua_cursor_enabled,
+      foreground_escalation_enabled: false,
+      message: cua?.reason ?? null
+    }
   }
 }
 
@@ -126,6 +161,42 @@ export async function computerUseCommand(args: ParsedArgs): Promise<number> {
     }
     await requestComputerGrantCancellation('cancelled from local desktop controls')
     process.stdout.write(t.okLine('active desktop-use grant cancellation requested') + '\n')
+    return 0
+  }
+
+  if (subcommand === 'engine') {
+    const engine = args.positional[1]
+    if (engine !== 'legacy' && engine !== 'cua') {
+      process.stderr.write(t.err('engine must be legacy or cua') + '\n')
+      return 1
+    }
+    if (engine === 'cua') {
+      const payload = await statusPayload()
+      const status = payload.computer_control_engine as { state?: string }
+      if (status.state !== 'ready') {
+        process.stderr.write(t.err('CUA Driver is not ready; engine selection was not changed') + '\n')
+        return 1
+      }
+    }
+    await setComputerControlSettings({ computer_control_engine: engine })
+    process.stdout.write(t.okLine(`computer control engine set to ${engine}`) + '\n')
+    return 0
+  }
+
+  if (subcommand === 'cursor') {
+    const value = args.positional[1]
+    if (value !== 'on' && value !== 'off') {
+      process.stderr.write(t.err(`${subcommand} must be on or off`) + '\n')
+      return 1
+    }
+    const payload = await statusPayload()
+    const status = payload.computer_control_engine as { selected?: string; state?: string }
+    if (status.selected !== 'cua' || status.state !== 'ready') {
+      process.stderr.write(t.err(`CUA Driver must be selected and ready before changing ${subcommand}`) + '\n')
+      return 1
+    }
+    await setComputerControlSettings({ cua_cursor_enabled: value === 'on' })
+    process.stdout.write(t.okLine(`CUA ${subcommand} ${value}`) + '\n')
     return 0
   }
 

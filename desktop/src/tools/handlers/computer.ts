@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 
 import {
   cancelComputerGrant,
+  computerGrantAllowsTarget,
   getActiveComputerGrant,
   getComputerGrantSummary,
   getComputerUseRuntimeSummary,
@@ -13,12 +14,15 @@ import {
   requestComputerGrant,
   type ComputerGrantMode
 } from '../computerGrants.js'
+import { evaluateSensitiveTarget, hasAuthenticatedControlIdentity, type ComputerTarget } from '../computerControlSecurity.js'
+import { CuaDriverAdapter, closeCuaControlSession, getCuaControlSession } from '../cuaDriver.js'
 import { approveComputerGrant } from '../computerActionApproval.js'
 import {
   runComputerInputAction,
   validateComputerAction
 } from '../computerInput.js'
-import type { ToolHandler } from '../router.js'
+import type { ToolContext, ToolHandler } from '../router.js'
+import { readDesktopUseSettingsSync } from '../../lib/desktopUseSettings.js'
 import { screenshotHandler } from './screenshot.js'
 
 const STATUS_TIMEOUT_MS = 5_000
@@ -212,13 +216,18 @@ function pngDimensions(base64: string): { width: number; height: number } | null
   }
 }
 
-function failure(code: string, message: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+function failure(
+  code: string,
+  message: string,
+  extra: Record<string, unknown> = {},
+  authority?: ToolContext['controlSession']
+): Record<string, unknown> {
   return {
     ok: false,
     code,
     message,
     ...EXPERIMENTAL_META,
-    grant: getComputerGrantSummary(),
+    grant: getComputerGrantSummary(authority),
     ...extra
   }
 }
@@ -230,17 +239,145 @@ function parseGrantMode(value: unknown): ComputerGrantMode | null {
   return null
 }
 
+function positiveInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+function cuaTarget(args: Record<string, unknown>): Pick<ComputerTarget, 'pid' | 'windowId'> | null {
+  const pid = positiveInteger(args.pid)
+  const windowId = positiveInteger(args.window_id)
+  if (pid === null || windowId === null) return null
+  return { pid, windowId }
+}
+
+async function cuaPreflight(args: Record<string, unknown>, ctx: ToolContext): Promise<
+  | { ok: true; target: ComputerTarget; grantId: string | null; session: Awaited<ReturnType<typeof getCuaControlSession>> }
+  | { ok: false; result: Record<string, unknown> }
+> {
+  if (!hasAuthenticatedControlIdentity(ctx.controlSession) || !ctx.controlSecurity) {
+    return { ok: false, result: failure('authenticated_control_session_required', 'Structured CUA control requires server-attested relay, requester, run, and target identity.', {}, ctx.controlSession) }
+  }
+  const requested = cuaTarget(args)
+  if (!requested) return { ok: false, result: failure('invalid_target', 'Structured CUA control requires positive pid and window_id.', {}, ctx.controlSession) }
+  const session = await getCuaControlSession({ ...ctx.controlSession, targetDeviceId: ctx.controlSession.targetDeviceId })
+  const listed = await session.listWindows(requested.pid, ctx.abortSignal)
+  const windows = Array.isArray(listed.windows) ? listed.windows : []
+  const exact = windows.find(item => isObject(item) && item.window_id === requested.windowId)
+  if (!isObject(exact)) {
+    return { ok: false, result: failure('target_not_found', 'CUA Driver did not report the exact requested PID and window.', {}, ctx.controlSession) }
+  }
+  const target: ComputerTarget = {
+    ...requested,
+    app: typeof exact.app_name === 'string' ? exact.app_name : undefined,
+    title: typeof exact.title === 'string' ? exact.title : undefined,
+    executable: typeof exact.executable === 'string' ? exact.executable : undefined
+  }
+  const sensitive = evaluateSensitiveTarget(target)
+  if (!sensitive.allowed) {
+    return { ok: false, result: failure('sensitive_target_blocked', 'Structured control is blocked for missing or sensitive application identity.', { reason: sensitive.reason }, ctx.controlSession) }
+  }
+  if (!computerGrantAllowsTarget(ctx.controlSession, target)) {
+    return { ok: false, result: failure('grant_target_mismatch', 'The active computer grant does not cover this application target.', {}, ctx.controlSession) }
+  }
+  return { ok: true, target, grantId: getActiveComputerGrant(ctx.controlSession)?.id ?? null, session }
+}
+
+async function cuaSnapshot(args: Record<string, unknown>, ctx: ToolContext): Promise<Record<string, unknown>> {
+  const check = await cuaPreflight(args, ctx)
+  if (!check.ok) return check.result
+  const authority = ctx.controlSession!
+  const raw = await check.session.snapshot({
+    pid: check.target.pid,
+    windowId: check.target.windowId,
+    query: argString(args.query).trim() || undefined,
+    includeScreenshot: args.include_screenshot !== false,
+    maxElements: typeof args.max_elements === 'number' ? args.max_elements : undefined,
+    maxDepth: typeof args.max_depth === 'number' ? args.max_depth : undefined
+  }, ctx.abortSignal)
+  const generation = typeof raw.snapshot_id === 'string' ? raw.snapshot_id : ''
+  if (!generation) return failure('invalid_backend_response', 'CUA Driver snapshot did not include a generation.', {}, authority)
+  const elements = Array.isArray(raw.elements) ? raw.elements : []
+  const safeElements = elements.slice(0, 1_000).map(item => {
+    if (!isObject(item)) return item
+    const driverToken = typeof item.element_token === 'string' ? item.element_token : undefined
+    const output = { ...item }
+    delete output.element_token
+    if (driverToken) {
+      output.snapshot_token = ctx.controlSecurity!.issueSnapshotToken({
+        authority,
+        grantId: check.grantId,
+        target: check.target,
+        snapshotGeneration: generation,
+        driverElementToken: driverToken
+      })
+    }
+    return output
+  })
+  return {
+    ok: true,
+    ...EXPERIMENTAL_META,
+    backend: 'cua_driver',
+    snapshot_generation: generation,
+    target: check.target,
+    elements: safeElements,
+    tree_markdown: raw.tree_markdown,
+    screenshot_base64: raw.screenshot_base64,
+    screenshot_width: raw.screenshot_width,
+    screenshot_height: raw.screenshot_height,
+    truncated: elements.length > safeElements.length
+  }
+}
+
+async function cuaAction(args: Record<string, unknown>, ctx: ToolContext): Promise<Record<string, unknown>> {
+  const check = await cuaPreflight(args, ctx)
+  if (!check.ok) return check.result
+  const authority = ctx.controlSession!
+  const token = argString(args.snapshot_token).trim()
+  const binding = token ? ctx.controlSecurity!.consumeSnapshotToken(token, {
+    authority,
+    grantId: check.grantId,
+    target: check.target,
+    ...(typeof args.snapshot_generation === 'string' ? { snapshotGeneration: args.snapshot_generation } : {})
+  }) : null
+  if (!binding?.driverElementToken) {
+    return failure('invalid_or_stale_snapshot', 'A fresh one-use snapshot_token for this exact session, grant, PID, and window is required.', {}, authority)
+  }
+  const element = { pid: check.target.pid, windowId: check.target.windowId, elementToken: binding.driverElementToken }
+  const action = argString(args.action).trim()
+  let result: Record<string, unknown>
+  if (action === 'click_element') result = await check.session.clickElement(element, ctx.abortSignal)
+  else if (action === 'set_value') result = await check.session.setElementValue(element, argString(args.value), ctx.abortSignal)
+  else if (action === 'press_key') result = await check.session.pressKey(check.target, argString(args.key), ctx.abortSignal)
+  else if (action === 'scroll_element') {
+    const direction = argString(args.direction) as 'up' | 'down' | 'left' | 'right'
+    if (!['up', 'down', 'left', 'right'].includes(direction)) return failure('invalid_request', 'direction must be up, down, left, or right.', {}, authority)
+    result = await check.session.scroll(element, direction, positiveInteger(args.amount) ?? 1, ctx.abortSignal)
+  } else return failure('invalid_request', 'Unsupported structured CUA action.', {}, authority)
+
+  const after = await check.session.snapshot({ pid: check.target.pid, windowId: check.target.windowId, includeScreenshot: false }, ctx.abortSignal)
+  return { ok: true, ...EXPERIMENTAL_META, backend: 'cua_driver', action, result, verification_snapshot: after }
+}
+
 export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
-  const grant = getActiveComputerGrant()
-  const runtime = getComputerUseRuntimeSummary()
+  const grant = getActiveComputerGrant(ctx.controlSession)
+  const runtime = getComputerUseRuntimeSummary(ctx.controlSession)
   const inputBackendReady = runtime.consented === true && process.platform === 'win32'
   const fullAccess = runtime.full_access === true
+  const settings = readDesktopUseSettingsSync()
+  const cua = settings.computer_control_engine === 'cua' ? await CuaDriverAdapter.status() : null
   return {
     ok: true,
     ...EXPERIMENTAL_META,
     platform: process.platform,
     displays: await getDisplays(),
     runtime,
+    computer_control_engine: {
+      selected: settings.computer_control_engine,
+      effective: settings.computer_control_engine === 'cua' && cua?.ready ? 'cua' : 'legacy',
+      cursor_enabled: settings.cua_cursor_enabled,
+      foreground_escalation_enabled: false,
+      cua
+    },
     permissions: {
       screenshot: fullAccess ? 'full_access' : grant ? 'granted' : 'grant_required',
       input: fullAccess || grant?.mode === 'assist' || grant?.mode === 'control'
@@ -248,9 +385,9 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
           ? fullAccess ? 'full_access' : 'granted_until_expiry'
           : 'grant_active_but_input_backend_unavailable'
         : 'not_granted',
-      accessibility: 'not_implemented'
+      accessibility: cua?.ready ? 'available' : 'unavailable'
     },
-    grant: getComputerGrantSummary(),
+    grant: getComputerGrantSummary(ctx.controlSession),
     overlay: {
       visible: ctx.interactive,
       state: ctx.interactive ? 'cli_grant_prompt_available' : 'not_available',
@@ -267,11 +404,18 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
 }
 
 export const computerScreenshotHandler: ToolHandler = async (args, ctx) => {
-  if (!hasComputerObserveGrant()) {
+  if (!hasComputerObserveGrant(ctx.controlSession)) {
     return failure(
       'grant_required',
-      'Screenshot observe mode requires an active observe/assist/control grant. Call desktop_computer_grant_request first.'
+      'Screenshot observe mode requires an active observe/assist/control grant. Call desktop_computer_grant_request first.',
+      {},
+      ctx.controlSession
     )
+  }
+
+  const settings = readDesktopUseSettingsSync()
+  if (settings.computer_control_engine === 'cua' && (args.pid !== undefined || args.window_id !== undefined)) {
+    return cuaSnapshot(args, ctx)
   }
 
   if (args.region !== undefined && args.region !== null) {
@@ -318,7 +462,7 @@ export const computerScreenshotHandler: ToolHandler = async (args, ctx) => {
       applied: false,
       reason: 'Sensitive-window redaction is planned but not implemented yet.'
     },
-    grant: getComputerGrantSummary()
+    grant: getComputerGrantSummary(ctx.controlSession)
   }
 }
 
@@ -327,17 +471,25 @@ export const computerActionHandler: ToolHandler = async (args, ctx) => {
   if (!action) {
     return failure('invalid_request', 'desktop_computer_action requires an action name.')
   }
+  const settings = readDesktopUseSettingsSync()
+  if (settings.computer_control_engine === 'cua' && ['click_element', 'set_value', 'press_key', 'scroll_element'].includes(action)) {
+    if (!hasComputerInputGrant(ctx.controlSession)) {
+      return failure('grant_required', 'Structured host input requires an active assist/control grant.', { action }, ctx.controlSession)
+    }
+    return cuaAction(args, ctx)
+  }
   const displays = await getDisplays()
   const validation = validateComputerAction(args, displays)
   if (!validation.ok) {
     return failure(validation.code, validation.message, { action })
   }
 
-  if (!hasComputerInputGrant()) {
+  if (!hasComputerInputGrant(ctx.controlSession)) {
     return failure(
       'grant_required',
       'Host input is disabled. Request and locally approve an assist/control grant first.',
-      { action }
+      { action },
+      ctx.controlSession
     )
   }
 
@@ -353,7 +505,7 @@ export const computerActionHandler: ToolHandler = async (args, ctx) => {
     duration_ms: Date.now() - started,
     input_backend: inputResult.backend,
     platform: inputResult.platform,
-    grant: getComputerGrantSummary()
+    grant: getComputerGrantSummary(ctx.controlSession)
   }
   if (normalized.returnScreenshot) {
     response.after_screenshot = await computerScreenshotHandler({ display: args.display ?? 'primary' }, ctx)
@@ -366,7 +518,7 @@ export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
   if (!mode) {
     return failure('invalid_request', 'mode must be one of observe, assist, or control.')
   }
-  const runtime = getComputerUseRuntimeSummary()
+  const runtime = getComputerUseRuntimeSummary(ctx.controlSession)
   if (runtime.full_access === true) {
     return {
       ...requestComputerGrant({
@@ -374,7 +526,7 @@ export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
         scope: args.scope,
         duration_seconds: args.duration_seconds,
         reason: args.reason
-      }),
+      }, ctx.controlSession),
       ...EXPERIMENTAL_META
     }
   }
@@ -382,7 +534,9 @@ export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
     if (runtime.consented !== true) {
       return failure(
         'computer_use_consent_required',
-        'Assist/control grants require local desktop-tool consent for this relay URL before task-scoped input grants can be created.'
+        'Assist/control grants require local desktop-tool consent for this relay URL before task-scoped input grants can be created.',
+        {},
+        ctx.controlSession
       )
     }
     const approval = await approveComputerGrant({
@@ -406,17 +560,18 @@ export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
       scope: args.scope,
       duration_seconds: args.duration_seconds,
       reason: args.reason
-    }),
+    }, ctx.controlSession),
     ...EXPERIMENTAL_META
   }
 }
 
-export const computerCancelHandler: ToolHandler = async (args) => {
+export const computerCancelHandler: ToolHandler = async (args, ctx) => {
   const reason = typeof args.reason === 'string' && args.reason.trim()
     ? args.reason.trim()
     : 'cancelled by desktop_computer_cancel'
+  if (ctx.controlSession) await closeCuaControlSession(ctx.controlSession.controlSessionId, reason)
   return {
-    ...cancelComputerGrant(reason),
+    ...cancelComputerGrant(reason, ctx.controlSession),
     ...EXPERIMENTAL_META
   }
 }

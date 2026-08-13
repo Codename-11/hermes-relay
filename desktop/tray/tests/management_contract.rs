@@ -102,6 +102,18 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "Experimental",
         "open_management_from_grant",
         "Open in UI",
+        "computer_control_engine",
+        "Computer control",
+        "CUA Driver",
+        "Not installed",
+        "Incompatible",
+        "Degraded",
+        "Ready",
+        "Animated agent cursor",
+        "Background only",
+        "set_computer_control_engine",
+        "set_cua_cursor_enabled",
+        "visual overlays—not additional Windows hardware pointers",
     ] {
         assert!(
             source.contains(required) || security.contains(required),

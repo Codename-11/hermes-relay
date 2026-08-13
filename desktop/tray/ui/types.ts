@@ -25,6 +25,19 @@ export interface DaemonStatus {
   updated_at?: number | null
 }
 
+export interface ComputerControlEngine {
+  selected: 'legacy' | 'cua'
+  effective: 'legacy' | 'cua' | 'unavailable'
+  available: boolean
+  state: 'not_installed' | 'incompatible' | 'degraded' | 'ready' | 'error'
+  version?: string | null
+  health?: string | null
+  path?: string | null
+  cursor_enabled?: boolean
+  foreground_escalation_enabled: boolean
+  message?: string | null
+}
+
 export interface Activity {
   ts: number
   kind?: 'tool.completed' | 'management.completed'
@@ -61,6 +74,7 @@ export interface Snapshot {
   cli_version?: string | null
   cli_path?: string | null
   hardware_availability: { usb: boolean; adb: boolean; microphone: boolean; camera: boolean }
+  computer_control_engine?: ComputerControlEngine | null
 }
 
 export interface PendingGrantRequest {

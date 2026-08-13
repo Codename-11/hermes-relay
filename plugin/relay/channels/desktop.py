@@ -22,7 +22,7 @@ Two jobs over the same WSS ``desktop`` envelope stream:
    client auth re-advertises if the relay restarts.
 
 Wire envelopes (frozen — do not rename fields):
-  * ``desktop.command``       — server → client: ``{request_id, tool, args}``
+  * ``desktop.command``       — server → client: ``{request_id, tool, args, control_session?}``
   * ``desktop.response``      — client → server: ``{request_id, status, result}``
   * ``desktop.status``        — client → server: ``{advertised_tools, host?, platform?, cwd?, ...}``
   * ``desktop.workspace``     — client → server: opaque dict (``cwd`` / ``git_root`` / ``git_branch`` / ...)
@@ -58,10 +58,22 @@ _REDACT_KEYS = frozenset({"password", "token", "secret", "otp", "bearer", "api_k
 
 # Cap for the recent-commands ring buffer.
 RECENT_COMMANDS_MAX = 100
+CONTROL_SESSIONS_MAX = 256
+CONTROL_SESSION_IDLE_SECONDS = 3600.0
 
 
 class DesktopError(Exception):
     """Raised when a desktop command cannot be dispatched or times out."""
+
+
+@dataclass(frozen=True)
+class DesktopRequesterContext:
+    """Trusted caller context supplied by the loopback HTTP boundary."""
+
+    requester_device_id: str | None = None
+    chat_session_id: str | None = None
+    run_id: str | None = None
+    profile: str | None = None
 
 
 def _redact_args(value: Any) -> Any:
@@ -190,6 +202,57 @@ class DesktopHandler:
         # registry. Cleared per-ws in :meth:`detach_ws` so disconnected
         # clients don't leak session structs.
         self._sessions: dict[web.WebSocketResponse, DesktopSession] = {}
+        # Stable opaque ids for active computer-control runs. Callers provide
+        # only trusted context fields; this handler always owns the id and
+        # binds every emitted identity to the selected target + request id.
+        self._control_sessions: dict[tuple[str, str, str, str, str], tuple[str, float]] = {}
+
+    def _control_session(
+        self,
+        *,
+        request_id: str,
+        target_device_id: str,
+        requester: DesktopRequesterContext | None,
+    ) -> dict[str, Any] | None:
+        context = requester or DesktopRequesterContext()
+        # A server-owned UUID is not useful authority by itself. Require an
+        # executor-authenticated requester and run before advertising the
+        # identity; older/unauthenticated callers stay in compatibility mode.
+        if not context.requester_device_id or not context.run_id:
+            return None
+        now = time.monotonic()
+        expired = [
+            key for key, (_session_id, touched) in self._control_sessions.items()
+            if now - touched > CONTROL_SESSION_IDLE_SECONDS
+        ]
+        for key in expired:
+            self._control_sessions.pop(key, None)
+        key = (
+            context.requester_device_id,
+            context.chat_session_id or "",
+            context.run_id or "",
+            context.profile or "",
+            target_device_id or "legacy-desktop",
+        )
+        current = self._control_sessions.get(key)
+        if current is None:
+            if len(self._control_sessions) >= CONTROL_SESSIONS_MAX:
+                oldest = min(self._control_sessions, key=lambda item: self._control_sessions[item][1])
+                self._control_sessions.pop(oldest, None)
+            session_id = f"control-{uuid.uuid4()}"
+        else:
+            session_id = current[0]
+        self._control_sessions[key] = (session_id, now)
+        return {
+            "version": 1,
+            "id": session_id,
+            "request_id": request_id,
+            "requester_device_id": key[0],
+            "target_device_id": key[4],
+            **({"chat_session_id": context.chat_session_id} if context.chat_session_id else {}),
+            **({"run_id": context.run_id} if context.run_id else {}),
+            **({"profile": context.profile} if context.profile else {}),
+        }
 
     # ── Envelope dispatch ────────────────────────────────────────────────
 
@@ -389,6 +452,7 @@ class DesktopHandler:
         method: str,
         args: dict[str, Any] | None = None,
         device: str | None = None,
+        requester: DesktopRequesterContext | None = None,
     ) -> dict[str, Any]:
         """Dispatch a ``desktop_*`` tool call to the connected client.
 
@@ -433,6 +497,14 @@ class DesktopHandler:
                 else None
             ),
         }
+        if method.startswith("desktop_computer_"):
+            control_session = self._control_session(
+                request_id=request_id,
+                target_device_id=str(command_payload["target_device_id"] or "legacy-desktop"),
+                requester=requester,
+            )
+            if control_session is not None:
+                command_payload["control_session"] = control_session
         logger.info(
             "desktop >>> %s args=%s",
             method,
@@ -736,6 +808,17 @@ class DesktopHandler:
                 "desktop: session detached (had workspace from %s)",
                 session.workspace_context.get("hostname", "?"),
             )
+        if session is not None:
+            target_device_id = (
+                session.device_id
+                or str(session.client_status.get("device_id", "") or "").strip()
+            )
+            if target_device_id:
+                self._control_sessions = {
+                    key: value
+                    for key, value in self._control_sessions.items()
+                    if key[4] != target_device_id
+                }
 
         # Tool-routing cleanup — only if this ws was the latched client.
         if self.client_ws is ws:
@@ -774,6 +857,7 @@ class DesktopHandler:
         self.client_ws = None
         self.advertised_tools = set()
         self._sessions.clear()
+        self._control_sessions.clear()
         await self._fail_pending("Relay server shutting down")
 
 

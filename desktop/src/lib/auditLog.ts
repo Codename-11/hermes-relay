@@ -25,6 +25,10 @@ export interface AuditEntry {
   request_id?: string
   /** Relay identity that issued the action, when known. */
   host_url?: string
+  relay_session_id?: string
+  requester_device_id?: string
+  run_id?: string
+  target_device_id?: string
   /** Handler wall time, excluding relay transport latency. */
   duration_ms?: number
   /** Process exit code when the handler returns one. Non-zero is attention-worthy. */

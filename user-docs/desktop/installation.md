@@ -60,6 +60,29 @@ hermes-relay ui          # same as: hermes-relay ui open
 hermes-relay ui status
 ```
 
+### Optional CUA Driver
+
+CUA Driver is an optional Windows computer-control engine and is **not** bundled
+with either Hermes-Relay installer surface. Hermes resolves only the canonical
+upstream package at
+`%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe`; it does not use an
+arbitrary PATH shim.
+
+Install or update CUA Driver through its upstream distribution only after an
+explicit operator choice, then verify readiness with:
+
+```powershell
+hermes-relay computer-use status --json
+```
+
+When the report says the CUA engine is ready, select it in **UI → Settings →
+Computer control** or run `hermes-relay computer-use engine cua`. The legacy
+Windows input engine remains available as the fallback. Hermes does not
+auto-install or auto-update CUA Driver, and `hermes-relay update` manages only
+the Hermes-Relay CLI/UI bundle. Hermes also disables CUA telemetry for every
+driver process it starts; telemetry is not silently enabled as part of pairing,
+Full Access, or engine selection.
+
 ### SmartScreen warning on first launch
 
 The binaries are unsigned during the experimental phase. Windows may show "Windows protected your PC" for the installer or first launch. Click **More info → Run anyway**. For a CLI-only install, you can also pre-allow the executable from PowerShell:

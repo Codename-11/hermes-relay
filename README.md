@@ -219,6 +219,13 @@ It pairs against the **same relay and credential store** as the Android app — 
 
 On Windows, the default installer adds the optional compact **Hermes-Relay CLI UI** tray popup for host selection and pairing, connection and daemon state, per-host Ask/Trusted/Full Access, local grant dialogs, authorized-client revocation, activity, settings, and emergency stop. It is a management surface only—chat, TUI, plugins, voice, and agent sessions remain CLI/upstream concerns.
 
+Structured Windows computer control can optionally use a compatible local CUA
+Driver runtime for window-targeted background actions and virtual per-session
+agent cursors. It remains behind Hermes host policy, grants, targeting, audit,
+and emergency stop; the legacy Windows input path stays available as a fallback.
+CUA Driver is installed and updated separately and is never exposed as a raw
+remote tool surface. See the [desktop tools guide](https://hermes-relay.dev/docs/desktop/tools.html#computer-use-engines).
+
 - **Docs:** [CLI guide](https://hermes-relay.dev/docs/desktop/) · [`desktop/README.md`](desktop/README.md)
 - **AI-agent setup recipe:** `/hermes-relay-desktop-setup`
 

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Windows computer control can use an optional CUA Driver engine.** Hermes keeps its existing host policy, grants, routing, audit, and emergency stop while a compatible local CUA runtime provides window-targeted background actions and optional per-session animated agent cursors without moving the physical pointer. The legacy Windows input engine remains the default fallback; foreground escalation is separately disabled by default, driver telemetry is forced off, and installation or driver updates remain explicit operator actions.
 - **Android can edit current Hermes profiles through the standard Gateway.** The Profile Inspector capability-gates `profiles.describe` and `profiles.configure`, keeps Relay-only memory editing and older-Hermes fallback intact, and reports partial section saves without discarding failed drafts.
 - **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
 - Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.

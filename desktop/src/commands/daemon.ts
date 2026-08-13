@@ -62,12 +62,13 @@ import {
   shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
 import {
-  cancelComputerGrant,
+  cancelAllComputerGrants,
   configureComputerUseRuntime,
-  getActiveComputerGrant,
+  expireComputerControlSessions,
   setComputerGrantChangeListener,
   type ComputerGrant
 } from '../tools/computerGrants.js'
+import { closeCuaControlSession } from '../tools/cuaDriver.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { configureCapabilityPolicies } from '../tools/capabilityRuntime.js'
 import { adbBackendAvailable } from '../tools/handlers/adb.js'
@@ -925,8 +926,11 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     expires_at: grant?.expires_at ?? null,
     reason: grant?.reason
   })
-  const restoreGrantListener = setComputerGrantChangeListener(grant => {
+  const restoreGrantListener = setComputerGrantChangeListener((grant, controlSessionId) => {
     updateStatus({ computer_grant: toDaemonGrantStatus(grant), last_event: 'grant_changed' })
+    if (!grant && controlSessionId) {
+      void closeCuaControlSession(controlSessionId, 'computer grant ended')
+    }
   })
 
   let cancellationCheckRunning = false
@@ -936,10 +940,10 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     try {
       const request = await consumeComputerGrantCancellation()
       if (request) {
-        const result = cancelComputerGrant(request.reason)
+        const result = { cancelled: cancelAllComputerGrants(request.reason) }
         log.info({ event: 'computer_grant_cancelled_locally', reason: request.reason, result })
       } else {
-        getActiveComputerGrant()
+        expireComputerControlSessions()
       }
     } catch (error) {
       log.warn({ event: 'computer_grant_control_failed', message: rpcErrorMessage(error) })

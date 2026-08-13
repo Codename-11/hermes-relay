@@ -445,6 +445,38 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .settings-group h2 span { color: var(--faint); font-weight: 400; margin-left: 4px; }
 .group-help { margin: -2px 0 8px; }
 .settings-card { border: 1px solid var(--line); border-radius: 8px; background: #111922a8; overflow: hidden; }
+.engine-card { position: relative; }
+.engine-card::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 2px; background: var(--faint); }
+.engine-card.engine-ready::before { background: var(--green); box-shadow: 0 0 10px #50e57788; }
+.engine-card.engine-degraded::before, .engine-card.engine-incompatible::before { background: var(--amber); }
+.engine-status { min-height: 67px; padding: 10px 11px 10px 13px; display: flex; align-items: center; gap: 9px; }
+.engine-status > span:nth-child(2) { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.engine-status strong { font-size: 13px; font-weight: 570; }
+.engine-status small { color: var(--muted); font-size: 10px; line-height: 1.35; }
+.engine-status em { flex: 0 0 auto; align-self: flex-start; margin-top: 2px; border: 1px solid #46515d; border-radius: 10px; color: var(--muted); padding: 2px 6px; font-size: 8.5px; font-style: normal; text-transform: uppercase; letter-spacing: .5px; }
+.engine-ready .engine-status em { border-color: #346443; color: var(--green); background: #163c2524; }
+.engine-degraded .engine-status em, .engine-incompatible .engine-status em { border-color: #705528; color: var(--amber); background: #251e12; }
+.engine-options { border-top: 1px solid var(--line); }
+.engine-choice { min-height: 68px; padding: 9px 11px 9px 13px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+.engine-choice > span { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.engine-choice strong { font-size: 12.5px; font-weight: 550; }
+.engine-choice small { color: var(--muted); font-size: 9.5px; line-height: 1.25; }
+.engine-choice > div { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #46515d; border-radius: 6px; overflow: hidden; }
+.engine-choice button { min-width: 54px; height: 28px; border: 0; border-right: 1px solid #46515d; background: #121b24; color: var(--muted); font-size: 10px; cursor: pointer; }
+.engine-choice button:last-child { border-right: 0; }
+.engine-choice button.active { background: #6137bd; color: #fff; }
+.engine-options .setting-row { min-height: 64px; padding-left: 13px; }
+.engine-options .setting-row strong { font-size: 12.5px; }
+.engine-options .setting-row small { max-width: 250px; font-size: 9.5px; line-height: 1.3; }
+.background-only { background: #5c41150f; }
+.background-only em { flex: 0 0 auto; color: #b5bdc6; font-size: 9px; font-style: normal; text-transform: uppercase; letter-spacing: .45px; }
+.engine-help { display: flex; align-items: flex-start; gap: 5px; margin: 6px 2px 0; color: var(--faint); font-size: 9.5px; line-height: 1.35; }
+.engine-help svg { width: 13px; height: 13px; flex: 0 0 13px; color: var(--violet); }
+.help-note { min-height: 92px; padding: 11px; display: flex; align-items: flex-start; gap: 9px; }
+.help-note > svg { width: 18px; flex: 0 0 18px; color: var(--violet); }
+.help-note span { display: grid; gap: 4px; }
+.help-note strong { font-size: 12px; }
+.help-note small { color: var(--muted); font-size: 10px; line-height: 1.45; }
 .settings-card.padded { padding: 0 11px; }
 .activity-panel { display: grid; gap: 8px; }
 .activity-summary { display: grid; grid-template-columns: 1fr 1fr auto; gap: 7px; align-items: stretch; }

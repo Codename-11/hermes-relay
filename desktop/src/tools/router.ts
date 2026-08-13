@@ -35,13 +35,24 @@ import {
 } from '../lib/auditLog.js'
 import { VERSION } from '../version.js'
 import { desktopDeviceId } from '../deviceIdentity.js'
-import { getComputerGrantSummary, getComputerUseRuntimeSummary } from './computerGrants.js'
+import {
+  getComputerGrantSummary,
+  getComputerUseRuntimeSummary,
+  initializeComputerControlSession,
+  revokeComputerControlSession
+} from './computerGrants.js'
+import {
+  ComputerControlSecurityState,
+  type ComputerControlAuthority
+} from './computerControlSecurity.js'
+import { closeAllCuaControlSessions } from './cuaDriver.js'
 
 /** The payload shape server → client for a single tool invocation. */
 export interface ToolCallPayload {
   request_id: string
   tool: string
   args: Record<string, unknown>
+  control_session?: unknown
 }
 
 /** Either a success with a free-form result, or a failure with an error
@@ -67,6 +78,10 @@ export interface ToolContext {
   cwd: string
   abortSignal: AbortSignal
   interactive: boolean
+  /** Server-attested control identity. Optional only for legacy handlers. */
+  controlSession?: ComputerControlAuthority
+  /** Hermes-owned snapshot/token binding state for this router lifecycle. */
+  controlSecurity?: ComputerControlSecurityState
 }
 
 /** A tool handler. Throws → router responds with `{ok:false, error}`. */
@@ -122,6 +137,53 @@ function isToolCallPayload(x: unknown): x is ToolCallPayload {
   )
 }
 
+function parseControlAuthority(
+  value: unknown,
+  requestId: string,
+  hostUrl: string | undefined
+): ComputerControlAuthority | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Record<string, unknown>
+  const required = (field: string): string | null => {
+    const current = raw[field]
+    if (typeof current !== 'string') return null
+    const normalized = current.trim()
+    if (!normalized || normalized.length > 256 || /[\u0000-\u001f\u007f]/u.test(normalized)) return null
+    return normalized
+  }
+  if (raw.version !== 1) return null
+  const id = required('id')
+  const boundRequestId = required('request_id')
+  const requesterDeviceId = required('requester_device_id')
+  const targetDeviceId = required('target_device_id')
+  const runId = required('run_id')
+  if (
+    !id || !boundRequestId || boundRequestId !== requestId || !requesterDeviceId ||
+    !targetDeviceId || targetDeviceId !== desktopDeviceId() || !runId
+  ) return null
+  const optional = (field: string): string | undefined => {
+    const current = raw[field]
+    if (typeof current !== 'string') return undefined
+    const normalized = current.trim()
+    return normalized && normalized.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(normalized)
+      ? normalized
+      : undefined
+  }
+  return {
+    controlSessionId: id,
+    // The relay-owned control session is the authenticated execution-session
+    // identity currently available on the wire. Keep the adapter contract
+    // explicit while avoiding any identity supplied through tool args.
+    relaySessionId: id,
+    requesterDeviceId,
+    targetDeviceId,
+    requestId,
+    chatSessionId: optional('chat_session_id'),
+    runId,
+    ...(hostUrl ? { hostUrl } : {})
+  }
+}
+
 /** Default interactive detection — true iff stdin is a TTY AND we're not
  * flagged as the daemon subcommand. The daemon command sets
  * HERMES_RELAY_DAEMON=1 in its own process.env before constructing the
@@ -151,6 +213,9 @@ export class DesktopToolRouter {
    * timeout, abort). Surfaced in the heartbeat so an agent or the dashboard
    * can ask "is this client healthy?" without parsing transcript history. */
   private lastError: { message: string; tool: string; ts: number } | null = null
+  private readonly controlAuthority: ComputerControlAuthority
+  private readonly controlSecurity: ComputerControlSecurityState
+  private readonly activeControlAuthorities = new Map<string, ComputerControlAuthority>()
 
   constructor(opts: DesktopToolRouterOpts) {
     this.handlers = opts.handlers
@@ -161,6 +226,13 @@ export class DesktopToolRouter {
     // capture it once at construct time so a short shell session that
     // happens to get its stdin redirected mid-flight doesn't flip mode.
     this.interactive = opts.interactive ?? detectInteractive()
+    this.controlAuthority = {
+      controlSessionId: `router-${desktopDeviceId()}-${this.startedAtMs}`,
+      ...(this.hostUrl ? { hostUrl: this.hostUrl } : {})
+    }
+    this.controlSecurity = new ComputerControlSecurityState(this.controlAuthority)
+    initializeComputerControlSession(this.controlAuthority)
+    this.activeControlAuthorities.set(this.controlAuthority.controlSessionId, this.controlAuthority)
   }
 
   /** Install the `onChannel('desktop')` listener and start heartbeats.
@@ -202,6 +274,7 @@ export class DesktopToolRouter {
   /** Remove the channel listener and stop heartbeats. Idempotent. */
   detach(): void {
     if (!this.attached) {
+      this.revokeControlAuthority()
       return
     }
     this.attached = false
@@ -215,6 +288,16 @@ export class DesktopToolRouter {
       /* ignore */
     }
     this.relay = null
+    this.revokeControlAuthority()
+  }
+
+  private revokeControlAuthority(): void {
+    this.controlSecurity.revoke()
+    for (const authority of this.activeControlAuthorities.values()) {
+      revokeComputerControlSession(authority, 'desktop router detached')
+    }
+    this.activeControlAuthorities.clear()
+    void closeAllCuaControlSessions('desktop router detached')
   }
 
   /** Broadcast the advertised-tools heartbeat. Safe to call when detached
@@ -241,8 +324,8 @@ export class DesktopToolRouter {
         device_name: os.hostname()
       }
       if (this.advertisedTools.some(name => name.startsWith('desktop_computer_'))) {
-        const runtime = getComputerUseRuntimeSummary()
-        const grant = getComputerGrantSummary()
+        const runtime = getComputerUseRuntimeSummary(this.controlAuthority)
+        const grant = getComputerGrantSummary(this.controlAuthority)
         const inputGrantActive =
           grant.active === true && (grant.mode === 'assist' || grant.mode === 'control')
         payload.computer_use = {
@@ -289,6 +372,22 @@ export class DesktopToolRouter {
       return
     }
 
+    const relayAuthority = parseControlAuthority(cmd.control_session, request_id, this.hostUrl)
+    if (tool.startsWith('desktop_computer_') && cmd.control_session !== undefined && !relayAuthority) {
+      this.sendResponse({ request_id, ok: false, error: 'invalid server control_session binding' })
+      return
+    }
+    const requestAuthority = relayAuthority ?? this.controlAuthority
+    if (relayAuthority) {
+      initializeComputerControlSession(relayAuthority)
+      this.activeControlAuthorities.set(relayAuthority.controlSessionId, relayAuthority)
+    }
+    const controlSession = this.controlSecurity.bindRequest(request_id, requestAuthority)
+    if (!controlSession) {
+      this.sendResponse({ request_id, ok: false, error: 'duplicate or invalid desktop request_id' })
+      return
+    }
+
     const controller = new AbortController()
     const timeoutMs = tool.startsWith('desktop_computer_') || tool.startsWith('desktop_adb_') || tool.startsWith('desktop_usb_')
       ? COMPUTER_USE_HANDLER_TIMEOUT_MS
@@ -303,7 +402,9 @@ export class DesktopToolRouter {
     const ctx: ToolContext = {
       cwd: process.cwd(),
       abortSignal: controller.signal,
-      interactive: this.interactive
+      interactive: this.interactive,
+      controlSession,
+      controlSecurity: this.controlSecurity
     }
 
     try {
@@ -326,6 +427,10 @@ export class DesktopToolRouter {
         exit_code: resultExitCode(result),
         args_preview: previewArgs(args),
         summary: summarizeResult(result),
+        ...(controlSession.relaySessionId ? { relay_session_id: controlSession.relaySessionId } : {}),
+        ...(controlSession.requesterDeviceId ? { requester_device_id: controlSession.requesterDeviceId } : {}),
+        ...(controlSession.runId ? { run_id: controlSession.runId } : {}),
+        ...(controlSession.targetDeviceId ? { target_device_id: controlSession.targetDeviceId } : {}),
         ...auditDetails(args, result)
       })
     } catch (e) {
@@ -355,6 +460,10 @@ export class DesktopToolRouter {
         host_url: this.hostUrl,
         duration_ms: Date.now() - startedAt,
         args_preview: previewArgs(args),
+        ...(controlSession.relaySessionId ? { relay_session_id: controlSession.relaySessionId } : {}),
+        ...(controlSession.requesterDeviceId ? { requester_device_id: controlSession.requesterDeviceId } : {}),
+        ...(controlSession.runId ? { run_id: controlSession.runId } : {}),
+        ...(controlSession.targetDeviceId ? { target_device_id: controlSession.targetDeviceId } : {}),
         ...auditDetails(args),
         error: message
       })

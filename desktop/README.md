@@ -441,6 +441,59 @@ assist/control grant is active because approved input inherits that privilege.
 
 Default computer-use policy blocks password managers, credential prompts, banking/payment/crypto surfaces, OS security/admin settings, and private-key/token material. `~/.hermes/desktop-control.json` lets operators tighten or extend that baseline.
 
+#### Optional CUA Driver engine
+
+On Windows, Hermes-Relay can use a compatible local
+[CUA Driver](https://github.com/trycua/cua) runtime as an optional structured
+computer-control engine. It stays behind the same `desktop_computer_*` tools:
+the agent does not receive CUA's raw tool surface, configuration, updater,
+recording, replay, JavaScript, application-launch, or process-termination
+operations.
+
+The legacy Windows input engine remains the default and compatibility fallback.
+Inspect the detected runtime and selected/effective engine with:
+
+```powershell
+hermes-relay computer-use status --json
+hermes-relay computer-use engine cua       # only succeeds when CUA is ready
+hermes-relay computer-use engine legacy
+hermes-relay computer-use cursor on
+hermes-relay computer-use foreground off
+```
+
+The management UI exposes the same controls under **Settings → Computer
+control**. CUA is selected only when its canonical Windows package resolves from
+`%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe`, its supported
+version and manifest agree, its required tools are present, its permission mode
+is not unrestricted, and its live health report is healthy. Hermes ignores an unrelated
+or stale `cua-driver.exe` found earlier on `PATH`.
+
+Background dispatch is the default. If an application cannot accept a
+background action, the action fails instead of silently stealing focus.
+**Allow foreground escalation** is reserved for a later explicitly approved
+path; this release always reports it off and dispatches CUA actions in the
+background. **Animated agent cursor** shows a virtual, session-scoped pointer
+for agent activity; it does not move the operator's physical Windows cursor and
+is not another hardware pointer. Hermes binds driver sessions and snapshot
+tokens to its own control authority, target PID/window, grant, and fresh
+snapshot; an element token cannot be reused across windows or after it is
+consumed or expires.
+
+CUA Driver is not bundled with the Hermes-Relay installer. Install it using the
+upstream CUA Driver installer only after an explicit operator choice. Hermes
+does not auto-install or auto-update it, and every child invocation forces CUA
+telemetry off. Driver installation, updates, and any future telemetry opt-in
+remain separately owned by the local operator; Hermes-Relay's updater manages
+only the CLI and management UI.
+
+CUA improves structured screen/input isolation, but it is not a sandbox for
+general commands. If Commands, PowerShell, or terminal execution is allowed,
+that trusted path can still use ordinary operating-system automation. Disable
+raw command access when CUA's scoped UI-control boundary is part of the security
+model. Full Access can remove ordinary task prompts, but it does not bypass
+authenticated targeting, sensitive-surface checks, snapshot freshness, UAC or
+Windows-session boundaries, audit, driver health, or emergency stop.
+
 ### Devices — server-side session management
 
 ```sh
