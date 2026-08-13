@@ -389,7 +389,7 @@ internal class ReachInputStream : InputStream() {
         offset += count
         queuedBytes -= count
         if (offset == chunk.size) {
-            chunks.removeAt(0)
+            chunks.remove(chunk)
             offset = 0
         }
         return count
