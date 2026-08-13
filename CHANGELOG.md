@@ -9,36 +9,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Android can edit current Hermes profiles through the standard Gateway.** The Profile Inspector capability-gates `profiles.describe` and `profiles.configure`, keeps Relay-only memory editing and older-Hermes fallback intact, and reports partial section saves without discarding failed drafts.
-- **Windows management separates each Relay host from this PC.** Host detail is now the per-host hub for identity, connection and pairing/session metadata, access, capabilities, authorized-client deauthorization, re-pairing, and guarded removal. Settings owns local daemon lifecycle, separate UI-at-sign-in and daemon-with-UI preferences, explicit UAC elevation and return to user mode, terminal/CLI launchers, daemon logs, diagnostics, updates, and a Help & About page with version details and documentation links. Existing installs keep automatic daemon startup off until enabled.
-- **Desktop access uses four clear presets.** Restricted keeps every desktop capability off, Ask Every Time requests local approval for each available operation, Standard allows files while asking for screen/input/USB and withholding raw commands, and Full Access allows every available capability without task grants. New pairings default to Ask Every Time; existing hosts keep their stored policy. Individual changes snap to an exact preset when possible and otherwise become Custom.
-- **The connected-host control is visibly interactive.** The compact Agent-to-PC route now gives the selected host a labeled server icon, host identity, Change affordance, stronger card treatment, and responsive width instead of presenting the host name as a cramped status pill.
-- **The connection route shows real bidirectional traffic.** Staggered data packets now travel continuously from Agent to PC and PC to Agent, pass behind the selected host as the relay hop, and stop animating when the tunnel is offline or reduced motion is requested.
-- **Nested management pages have a clear return control.** Host access, capabilities, activity, and host detail views now use a bordered Back button with a larger target, visible focus treatment, and explicit destination. Access copy also spells out that Standard allows files, asks for screen/input/USB, and keeps raw commands off.
-- **Desktop activity supports evidence-first drilldown.** Overview shows the latest three events; the full activity view opens each event into bounded, locally stored request, stdout, stderr, structured result, exit, timing, and truncation details with sensitive request fields excluded.
 - **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
 - Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.
 
-### Changed
-
-- **Remote access now recommends Tailscale and isolates experimental Reach.** Pairing, Desktop, Android, Dashboard, docs, and marketing present Tailscale as the easiest supported remote route. Hermes Reach is disabled unless explicitly enabled, marked experimental, shown only in advanced UI, and attempted only after supported routes.
-- **Relay voice custom transports follow upstream provider security options.** Relay-owned OpenAI/xAI realtime and TTS clients now honor explicit custom headers, custom CA bundles, the standard CA environment precedence, and an opt-in warned `ssl_verify=false` development mode without changing public-provider defaults or logging header values.
-- **Voice Lab xAI sign-in uses device authorization.** The standalone xAI login now shows a verification URL and user code and polls for approval, matching upstream Hermes and removing the loopback callback/SSH-tunnel requirement while preserving existing Voice Lab token files and refresh behavior.
-
 ### Fixed
 
-- **Phone delivery remains compatible with strict Hermes targets.** The plugin registers version-tolerant parser and validator hooks for its single configured Phone destination while retaining older-host registration and exactly-once standalone delivery.
-- **Profile-owned Relay registrations stay isolated.** Current Hermes uses its profile-scoped prompt-section ownership and context-local profile home; legacy hosts retain the guarded compatibility wrapper.
 - **Android preserves authoritative Gateway outcomes.** Protected-file cards cannot offer forbidden persistent scopes, compression no-ops show the server result, bounded resume failures do not create context-free replacement sessions, and edit/regenerate retains durable row identities across consecutive rewinds.
 - **Android routes and uploads against live upstream truth.** Multiplex API fallback trusts `served_profiles` instead of installed profiles, and generic documents carry the Gateway-issued `@file:` reference into ordinary and queued prompts.
-- **Ask-mode approval cards show the requested action.** A bounded command or action preview appears in the compact card, with full context in the expandable detail view and an option to review the live request in the main UI.
-- **Mixed desktop capability policies are labeled Custom.** Overview no longer presents a misleading preset when individual capability controls differ.
-- **Desktop pairing and connection security are explicit.** The management UI supports URL/code pairing directly and distinguishes encrypted `wss://` relay connections from unencrypted `ws://` routes.
-- **Windows tray placement follows the notification-area monitor at its real DPI.** The management popup now derives responsive logical dimensions from the tray monitor's work area instead of guessing scale from the icon slot, keeping compact and high-DPI desktops consistently anchored.
-- **PowerShell success output is complete and self-describing.** Scripts execute through a private UTF-8 temporary file, native exit status propagates, stdout and stderr are drained independently, and bounded output reports total, captured, and truncated bytes instead of returning unexplained empty success.
-- **Phone is discoverable as a proactive delivery target.** The Relay phone adapter now publishes its configured home destination through Hermes' standard channel directory, so target listings can offer `phone` before any historical phone session exists.
 - **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
+
+## [1.7.0] - 2026-08-13
+
+### Added
+
+- **Hermes Secure Link provides self-hosted pinned TLS ingress.** Relay, API, and Dashboard namespaces share one operator-owned TLS endpoint while retaining their native authentication boundaries, QR-carried certificate continuity, explicit rotation, and fail-closed route validation.
+- **Hermes Reach is available for explicit experimentation.** The optional self-hosted rendezvous broker carries opaque Secure Link TLS records over outbound-only connections with bounded multiplexing, hashed credentials, replay protection, persistence, revocation, and no access to Hermes payloads.
+- **Remote-access management exposes supported reachability clearly.** Dashboard status and pairing metadata distinguish Tailscale reachability, Secure Link transport protection, direct routes, and experimental Reach without presenting the broker as a replacement for authentication.
+
+### Changed
+
+- **Tailscale is the recommended remote route.** Pairing, Dashboard, documentation, and public site guidance present Tailscale as the easiest supported remote-access path; Reach remains disabled by default, advanced, and lower priority than supported routes.
+- **Relay voice custom transports follow upstream provider security options.** Relay-owned OpenAI/xAI realtime and TTS clients honor custom headers, custom CA bundles, standard CA environment precedence, and an explicitly warned development-only verification override.
+- **Voice Lab xAI sign-in uses device authorization.** The standalone login shows a verification URL and user code and polls for approval without requiring a loopback callback.
+
+### Fixed
+
+- **Phone delivery remains compatible with strict Hermes targets.** Version-tolerant parser and validator hooks retain older-host registration and exactly-once standalone delivery.
+- **Profile-owned Relay registrations stay isolated.** Current Hermes uses profile-scoped ownership and context-local profile homes while legacy hosts retain a guarded compatibility path.
+- **Phone is discoverable before its first historical session.** The Relay phone adapter publishes its configured home destination through Hermes' standard channel directory.
+
+## [0.4.0-alpha.8] - 2026-08-13
+
+### Added
+
+- **Windows management separates each Relay host from this PC.** Host detail owns identity, pairing, access, capabilities, authorized clients, re-pairing, and guarded removal; Settings owns local daemon lifecycle, startup, privilege, terminal, logs, diagnostics, updates, and Help & About.
+- **Desktop access uses clear host-scoped presets and capabilities.** Restricted, Ask Every Time, Standard, Full Access, and Custom remain explicit across commands, files, screen/input, USB, microphone, and camera controls.
+- **Activity drilldown preserves bounded execution evidence.** Overview shows the latest three events and detail views expose request, output, result, exit, duration, and truncation metadata without copying sensitive inputs.
+- **Connection presentation shows the live Agent-to-PC path.** Host selection, bidirectional packet motion, transition feedback, route details, and connection testing stay compact, responsive, and reduced-motion aware.
+
+### Changed
+
+- **Connect and disconnect remain responsive during daemon work.** Lifecycle calls and snapshot collection run outside the UI thread, transition status polls quickly without overlapping probes, and progress remains visible until authoritative daemon state arrives.
+- **Tailscale is recommended for remote access.** Secure Link and direct TLS routes remain supported, while Hermes Reach is visibly experimental and lower priority.
+
+### Fixed
+
+- **Connection tests classify legacy private routes correctly.** A saved generic role is inferred from its actual endpoint, so LAN and Tailscale routes no longer appear as Custom VPN; results include reachability, latency, security, endpoint, and route count.
+- **Ask-mode approval cards show the requested action.** A bounded preview appears in the compact card with full context and an Open in UI action.
+- **Mixed capability policies are labeled Custom.** Overview no longer claims a preset when individual capability controls differ.
+- **Tray placement follows the notification-area monitor and DPI.** Responsive popup geometry stays anchored above the tray icon across compact and high-DPI desktops.
+- **PowerShell success output is complete and self-describing.** Scalar, pipeline, JSON, native stdout/stderr, exit status, and truncation metadata survive the desktop RPC response.
 
 ## [1.6.4] - 2026-08-12
 
