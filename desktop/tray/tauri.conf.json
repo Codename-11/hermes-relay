@@ -47,6 +47,40 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "center": false
+      },
+      {
+        "label": "notice",
+        "title": "Hermes-Relay connection status",
+        "width": 360,
+        "height": 126,
+        "resizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": true,
+        "backgroundColor": [0, 0, 0, 0],
+        "shadow": false,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": false
+      },
+      {
+        "label": "evidence",
+        "title": "Hermes-Relay screenshot evidence",
+        "width": 900,
+        "height": 650,
+        "minWidth": 560,
+        "minHeight": 420,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": true,
+        "backgroundColor": [0, 0, 0, 0],
+        "shadow": true,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true
       }
     ],
     "security": {

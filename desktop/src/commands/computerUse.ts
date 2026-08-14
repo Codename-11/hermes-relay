@@ -29,7 +29,7 @@ const COMPUTER_USE_USAGE: UsageSpec = {
     'computer-use cancel',
     'computer-use engine <legacy|cua>',
     'computer-use cursor <on|off>',
-    'computer-use cua <status|install|check-update|update> [--json] [--yes]'
+    'computer-use cua <status|health|install|check-update|update> [--json] [--yes]'
   ],
   subcommands: [
     { verb: 'status', desc: 'Show preference, daemon state, active grant, and pending requests' },
@@ -38,7 +38,7 @@ const COMPUTER_USE_USAGE: UsageSpec = {
     { verb: 'cancel', desc: 'Cancel the active task-scoped desktop grant' },
     { verb: 'engine', desc: 'Choose legacy Windows input or a ready CUA Driver backend' },
     { verb: 'cursor', desc: 'Show or hide the CUA virtual agent cursor' },
-    { verb: 'cua', desc: 'Manage the canonical CUA Driver package explicitly' }
+    { verb: 'cua', desc: 'Manage the canonical CUA Driver package and recheck accessibility health' }
   ],
   flags: [
     { flag: '--json', desc: 'Emit machine-readable status' },
@@ -48,6 +48,7 @@ const COMPUTER_USE_USAGE: UsageSpec = {
     'hermes-relay computer-use status',
     'hermes-relay computer-use enable',
     'hermes-relay computer-use cua status',
+    'hermes-relay computer-use cua health',
     'hermes-relay computer-use cua check-update',
     'hermes-relay computer-use cua install --yes',
     'hermes-relay computer-use cancel',
@@ -145,6 +146,18 @@ export async function computerUseCommand(args: ParsedArgs): Promise<number> {
     const action = args.positional[1] ?? 'status'
     const json = args.flags.json === true
     try {
+      if (action === 'health') {
+        const health = await CuaDriverAdapter.healthStatus()
+        if (json) process.stdout.write(JSON.stringify(health, null, 2) + '\n')
+        else {
+          process.stdout.write(t.bold('CUA Driver accessibility health') + `\n  state: ${health.state}\n`)
+          if (health.reason) process.stdout.write(t.warnLine(`  ${health.reason}`) + '\n')
+          process.stdout.write(t.muted('  This diagnostic does not disable the runtime while the temporary Windows compatibility policy is active.') + '\n')
+        }
+        // The probe result is data, not command failure. Callers (including the
+        // tray) inspect state while still receiving the JSON for degradation.
+        return 0
+      }
       const payload = action === 'status'
         ? await getCuaManagementStatus()
         : action === 'check-update'
@@ -159,7 +172,7 @@ export async function computerUseCommand(args: ParsedArgs): Promise<number> {
                 : null
               : undefined
       if (payload === undefined) {
-        process.stderr.write(t.err('cua action must be status, install, check-update, or update') + '\n')
+        process.stderr.write(t.err('cua action must be status, health, install, check-update, or update') + '\n')
         return 1
       }
       if (payload === null) {

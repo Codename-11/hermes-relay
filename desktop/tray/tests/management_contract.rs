@@ -114,10 +114,11 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "Preferred structured engine",
         "Compatibility",
         "Active session",
-        "Computer control timeline",
+        "Event timeline",
         "Post-action snapshot captured",
         "Authenticated control session",
         "computer_cua_status",
+        "computer_cua_health",
         "computer_cua_install",
         "computer_cua_check_update",
         "computer_cua_update",
@@ -151,7 +152,9 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
         .and_then(|windows| windows.iter().find(|window| window["label"] == "grant"))
         .expect("grant window configuration");
 
-    assert!(ui.contains("isGrantWindow ? <GrantWindow /> : <ManagementApp />"));
+    assert!(ui.contains("isGrantWindow ? <GrantWindow />"));
+    assert!(ui.contains("isNoticeWindow ? <ConnectionNoticeWindow />"));
+    assert!(ui.contains("isEvidenceWindow ? <EvidenceWindow />"));
     assert!(ui.contains("present_grant_window"));
     assert!(ui.contains("Remote access request"));
     assert!(native.contains("start_grant_watcher"));
@@ -163,7 +166,8 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
         serde_json::json!([0, 0, 0, 0])
     );
     assert_eq!(grant_window["shadow"], false);
-    assert!(ui.contains("(snapshot.daemon.configured_url ?? snapshot.daemon.url) === host.url"));
+    assert!(ui.contains("const daemonTargetsHost"));
+    assert!(ui.contains("(snapshot?.daemon.configured_url ?? snapshot?.daemon.url) === host.url"));
     assert!(ui.contains("formatGrantScope(grant.scope)"));
     assert!(ui.contains("grantAction(grant.scope)"));
     assert!(ui.contains("Requested action"));
@@ -172,6 +176,10 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("management.completed"));
     assert!(native.contains("append_management_event"));
     assert!(native.contains("fn clear_activity"));
+    assert!(native.contains("fn get_activity_screenshot"));
+    assert!(native.contains("fn set_activity_screenshot_retention"));
+    assert!(native.contains("fn start_connection_watcher"));
+    assert!(native.contains("fn present_connection_notice"));
     assert!(native.contains("skip_serializing_if = \"Option::is_none\""));
     assert!(native.contains("popup_position"));
     assert!(native.contains("window.outer_size()"));
@@ -185,6 +193,7 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("async fn install_desktop_update"));
     for command in [
         "async fn computer_cua_status",
+        "async fn computer_cua_health",
         "async fn computer_cua_install",
         "async fn computer_cua_check_update",
         "async fn computer_cua_update",
@@ -249,7 +258,7 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
     assert!(config.contains("\"minWidth\": 340"));
     assert!(config.contains("\"minHeight\": 460"));
     assert!(config.contains("\"resizable\": false"));
-    assert_eq!(config.matches("\"alwaysOnTop\": true").count(), 2);
+    assert_eq!(config.matches("\"alwaysOnTop\": true").count(), 4);
     assert!(!ui.contains("toggleMaximize"));
     assert!(!ui.contains("data-tauri-drag-region"));
     assert!(!capability.contains("allow-start-dragging"));
@@ -262,6 +271,10 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
     assert!(ui.contains("packet packet-outbound"));
     assert!(ui.contains("packet packet-inbound"));
     assert!(ui.contains("connectionTransition"));
+    assert!(ui.contains("daemon.reconnect_attempt"));
+    assert!(ui.contains("Retry now"));
+    assert!(ui.contains("Screenshot evidence"));
+    assert!(ui.contains("View larger"));
     assert!(ui.contains("refreshInFlight"));
     assert!(ui.contains("Starting daemon and opening relay tunnel"));
     assert!(ui.contains("Stopping the local daemon"));

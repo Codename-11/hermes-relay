@@ -13,7 +13,7 @@ import {
   updateCuaDriver,
   type CuaManagementFetch
 } from '../src/tools/cuaManagement.js'
-import type { CuaProcessResult, CuaProcessRunner } from '../src/tools/cuaDriver.js'
+import { CuaDriverAdapter, type CuaProcessResult, type CuaProcessRunner } from '../src/tools/cuaDriver.js'
 import { computerUseCommand } from '../src/commands/computerUse.js'
 
 const ok = (stdout = ''): CuaProcessResult => ({ stdout, stderr: '', exitCode: 0 })
@@ -243,7 +243,7 @@ test('install rejects an installer whose bytes do not match release metadata', a
   }
 })
 
-test('post-install degraded health fails the canonical runtime gate', async () => {
+test('post-install runtime verification succeeds while explicit health remains degraded', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hermes-cua-degraded-'))
   const script = Buffer.from('installer')
   const checksum = createHash('sha256').update(script).digest('hex')
@@ -255,7 +255,7 @@ test('post-install degraded health fails the canonical runtime gate', async () =
     await symlink(release, join(root, '.cua-driver', 'packages', 'current'), 'junction')
   }, 'degraded')
   try {
-    await assert.rejects(installCuaDriver({
+    const installed = await installCuaDriver({
       platform: 'win32', homeDir: root, path: '', runner, systemRoot: 'C:\\Windows',
       fetch: async url => ({
         ok: true,
@@ -270,7 +270,10 @@ test('post-install degraded health fails the canonical runtime gate', async () =
           }
         }
       })
-    }), /health is degraded/)
+    })
+    assert.equal(installed.operation?.runtime_verified, true)
+    const health = await CuaDriverAdapter.healthStatus({ platform: 'win32', homeDir: root, runner })
+    assert.equal(health.state, 'degraded')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

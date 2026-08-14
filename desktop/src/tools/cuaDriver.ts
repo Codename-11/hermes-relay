@@ -43,8 +43,16 @@ export interface CuaRuntimeStatus {
   binaryPath?: string
   binaryVersion?: string
   permissionMode?: 'standard' | 'bounded'
-  health?: 'ok'
+  health?: 'ok' | 'not_checked'
   reason?: string
+}
+
+export interface CuaHealthStatus {
+  state: 'healthy' | 'degraded' | 'error'
+  checkedAt: string
+  overall?: string
+  reason?: string
+  temporaryWindowsCompatibility: true
 }
 
 export interface CuaControlSessionIdentity {
@@ -484,10 +492,13 @@ export class CuaDriverAdapter {
       throw new CuaRuntimeError('CUA Driver permission mode is unavailable or unrestricted', 'incompatible')
     }
     const permissionMode = permissionMatch[1]!.toLowerCase() as 'standard' | 'bounded'
-    const health = parseJsonObject(await run(['call', 'health_report'], '{}'), 'CUA Driver health report') as CuaHealthReport
-    if (health.schema_version !== '1' || health.driver_version !== versionTuple.join('.') || health.overall !== 'ok') {
-      throw new CuaRuntimeError(`CUA Driver health is ${String(health.overall ?? 'unknown')}`, 'degraded')
-    }
+    // Temporary Windows compatibility policy for trycua/cua#3103. The global
+    // health_report performs a whole-desktop UIA walk with a fixed timeout and
+    // can poison the driver's busy flag after a false timeout. Runtime
+    // readiness is therefore based on the canonical binary, manifest, tool
+    // contract, daemon status, and safe permission mode. Individual structured
+    // actions still fail closed. Keep health_report as an explicit diagnostic
+    // via healthStatus(), and remove this split when upstream fixes #3103.
     return new CuaDriverAdapter(
       binaryPath,
       versionTuple.join('.'),
@@ -507,11 +518,50 @@ export class CuaDriverAdapter {
         binaryPath: adapter.binaryPath,
         binaryVersion: adapter.binaryVersion,
         permissionMode: adapter.permissionMode,
-        health: 'ok'
+        health: 'not_checked',
+        reason: 'Runtime checks passed; Windows accessibility health is checked separately.'
       }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       return { available: error instanceof CuaRuntimeError && error.code !== 'unavailable', ready: false, reason }
+    }
+  }
+
+  static async healthStatus(options: CuaRuntimeOptions = {}): Promise<CuaHealthStatus> {
+    const checkedAt = new Date().toISOString()
+    try {
+      const adapter = await CuaDriverAdapter.connect(options)
+      const runner = options.runner ?? new SpawnCuaProcessRunner()
+      const result = await runner.run(adapter.binaryPath, ['call', 'health_report'], {
+        stdin: '{}',
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        env: cuaDriverEnvironment()
+      })
+      if (result.exitCode !== 0) {
+        return {
+          state: 'error', checkedAt, temporaryWindowsCompatibility: true,
+          reason: `CUA Driver health probe exited ${result.exitCode}`
+        }
+      }
+      const health = parseJsonObject(result.stdout.trim(), 'CUA Driver health report') as CuaHealthReport
+      if (health.schema_version !== '1' || health.driver_version !== adapter.binaryVersion) {
+        return {
+          state: 'error', checkedAt, temporaryWindowsCompatibility: true,
+          reason: 'CUA Driver health report schema or version is incompatible'
+        }
+      }
+      const overall = String(health.overall ?? 'unknown')
+      return overall === 'ok'
+        ? { state: 'healthy', checkedAt, overall, temporaryWindowsCompatibility: true }
+        : {
+            state: 'degraded', checkedAt, overall, temporaryWindowsCompatibility: true,
+            reason: `CUA Driver reported ${overall}; runtime remains available and actions still fail closed.`
+          }
+    } catch (error) {
+      return {
+        state: 'error', checkedAt, temporaryWindowsCompatibility: true,
+        reason: error instanceof Error ? error.message : String(error)
+      }
     }
   }
 

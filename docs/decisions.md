@@ -3075,12 +3075,13 @@ state—while omitting accessibility text, screenshots, entered values, and raw
 driver responses.
 
 Hermes now owns an explicit Windows lifecycle surface without bundling the
-driver: `computer-use cua status|install|check-update|update`, with `--yes`
+driver: `computer-use cua status|health|install|check-update|update`, with `--yes`
 required for install/update. Mutations accept only supported upstream releases
 (`>=0.19.3 <0.20.0`), verify the `trycua/cua` product/version manifest and
 installer SHA-256 before running a temporary installer under a sanitized
 environment, then verify the canonical `packages/current` binary, manifest,
-version, path, permission mode, and health. There is no automatic install or
+version, path, and permission mode. Accessibility health is an explicit
+diagnostic. There is no automatic install or
 update.
 
 **Context.** The first Windows input backend uses PowerShell, `SetCursorPos`,
@@ -3105,7 +3106,7 @@ dispatch, application launch/termination, JavaScript execution, recording,
 replay, configuration, and driver updates require separate, explicit local
 authority. Full Access may bypass ordinary task prompts, but never authenticated
 targeting, sensitive-surface blocks, UAC/session boundaries, audit, emergency
-stop, or driver health checks.
+stop, runtime validation, or per-action failures.
 
 Every semantic element action requires a fresh pre-action window snapshot, an
 opaque element token bound to its snapshot generation, authenticated principal,
@@ -3125,9 +3126,17 @@ change, or daemon shutdown ends the corresponding driver session immediately.
 CUA runs in the interactive user's logon session, never Windows Session 0.
 Initial packaging remains optional and resolves the canonical installed package
 rather than an untrusted PATH entry. Readiness uses the driver's live manifest,
-schema, permission mode, and health report and fails closed on an absent,
-degraded, or incompatible backend. Telemetry and driver updates remain explicit
+schema, tool surface, daemon status, and permission mode and fails closed on an
+absent or incompatible backend. Telemetry and driver updates remain explicit
 operator choices.
+
+**Temporary Windows implementation note (2026-08-14).** Until
+`trycua/cua#3103` is fixed in the supported driver range, the whole-desktop
+`health_report` is not a session-start gate: its fixed UIA timeout can report a
+false degradation and leave the driver temporarily busy. Operators can re-run
+that diagnostic from the CLI or UI. Structured actions retain their existing
+target, grant, snapshot, timeout, and fail-closed checks. Remove this exception
+when the upstream probe is bounded and cannot poison later actions.
 
 **Consequences.** Hermes can gain background, element-aware control and clean
 per-agent animated cursors without replacing its Relay protocol or permission

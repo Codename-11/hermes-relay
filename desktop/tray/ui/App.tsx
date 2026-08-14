@@ -6,10 +6,10 @@ import {
   CircleHelp, Clock3, Download, ExternalLink, Eye, FileText, FolderOpen, Home, Info, Laptop, Link2,
   Copy, LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
   Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X, Usb,
-  LockKeyhole, SlidersHorizontal, Mic, Video, MousePointerClick
+  LockKeyhole, SlidersHorizontal, Mic, Video, MousePointerClick, Maximize2, RotateCcw
 } from 'lucide-react'
 import logo from '../icons/icon-256.png'
-import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, CuaManagementStatus, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
+import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, CuaHealthStatus, CuaManagementStatus, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
 import { describeTransportSecurity } from '../../src/transportSecurity'
 import { displayLabel as displayRouteLabel, inferEndpointRole } from '../../src/endpoint'
 
@@ -18,7 +18,10 @@ type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'
 type RouteTestResult = { label: string; url: string; reachable: boolean; elapsed_ms: number; encrypted: boolean; security: string; error?: string | null }
 type RouteTestReport = { best?: RouteTestResult | null; routes?: RouteTestResult[] }
 
-const isGrantWindow = '__TAURI_INTERNALS__' in window && getCurrentWindow().label === 'grant'
+const windowLabel = '__TAURI_INTERNALS__' in window ? getCurrentWindow().label : 'main'
+const isGrantWindow = windowLabel === 'grant'
+const isNoticeWindow = windowLabel === 'notice'
+const isEvidenceWindow = windowLabel === 'evidence'
 
 const demo: Snapshot = {
   hosts: [{ url: 'wss://home-hermes.local:8767', name: 'Docker-Server', server_version: '1.6.3', endpoint_role: 'tailscale', paired_at: 1786458000, is_active: true, access_mode: 'full-access', capabilities: { commands: 'allow', files: 'allow', screen_input: 'allow', usb: 'allow', microphone: 'allow', camera: 'allow' } }],
@@ -30,6 +33,7 @@ const demo: Snapshot = {
   cli_version: '0.4.0-alpha.4',
   cli_path: 'C:\\Program Files\\Hermes-Relay CLI\\hermes-relay.exe',
   hardware_availability: { usb: true, adb: true, microphone: false, camera: false },
+  activity_screenshot_retention: { enabled: true, days: 7, count: 2, bytes: 842_000 },
   computer_control_engine: {
     selected: 'legacy', effective: 'legacy', available: false, state: 'not_installed',
     foreground_escalation_enabled: false, message: 'CUA Driver is not installed. Legacy input remains active.'
@@ -53,6 +57,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     if (command === 'install_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: false, installed: true, needs_restart: true } as T
     if (command === 'test_host_route') return { best: { label: 'LAN', url: 'ws://172.16.24.250:8767', reachable: true, elapsed_ms: 36, encrypted: false, security: 'Unencrypted relay connection' }, routes: [] } as T
     if (command === 'computer_cua_status') return { installed: false, stale_path_shim: false, compatible: false, compatibility_reason: 'CUA Driver is not installed', supported_range: { minimum: '0.19.3', maximum_exclusive: '0.20.0' } } as T
+    if (command === 'computer_cua_health') return { state: 'degraded', checkedAt: new Date().toISOString(), overall: 'degraded', reason: 'UI Automation desktop enumeration exceeded 2000ms.', temporaryWindowsCompatibility: true } as T
     return undefined as T
   }
   return invoke<T>(command, args)
@@ -121,6 +126,8 @@ function activityName(tool: string): string {
     'host.access': 'Changed host access', 'host.pair': 'Pair host',
     'client.revoke': 'Deauthorized client', 'grant.resolve': 'Resolved access request',
     'daemon.start': 'Connected daemon', 'daemon.stop': 'Disconnected daemon',
+    'daemon.reconnecting': 'Connection interrupted', 'daemon.reconnected': 'Tunnel restored',
+    'daemon.disconnected': 'Tunnel disconnected', 'daemon.auth_failed': 'Connection failed',
     'daemon.restart': 'Restarted daemon', 'startup.change': 'Changed startup setting'
   }
   return names[tool] ?? tool.replace(/^desktop[._]/, '').replaceAll('_', ' ').replaceAll('.', ' ').replace(/\b\w/g, value => value.toUpperCase())
@@ -138,6 +145,35 @@ function controlVerificationLabel(value?: string): string {
   return value === 'snapshot_captured' ? 'Post-action snapshot captured'
     : value === 'failed' ? 'Verification failed'
       : value ? value.replaceAll('_', ' ') : 'Not reported'
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+type ActivityStep = { title: string; detail: string; state: 'done' | 'failed' | 'pending' }
+
+function activitySteps(entry: Activity): ActivityStep[] {
+  if (isComputerControl(entry)) return [
+    { title: 'Authorized session', detail: entry.control_session_id ? 'Authenticated control session' : 'Authenticated by Hermes', state: 'done' },
+    { title: controlActionLabel(entry), detail: `${entry.backend === 'cua' ? 'CUA structured engine' : 'Windows input · Compatibility'} · ${entry.dispatch ?? 'background'}`, state: entry.ok ? 'done' : 'failed' },
+    { title: 'Verification', detail: controlVerificationLabel(entry.verification), state: entry.verification === 'failed' ? 'failed' : entry.verification ? 'done' : 'pending' }
+  ]
+  const category = activityCategory(entry)
+  if (category === 'system') {
+    const reconnecting = entry.tool === 'daemon.reconnecting'
+    return [
+      { title: 'Connection state changed', detail: entry.summary ?? activityName(entry.tool), state: entry.ok ? 'done' : 'failed' },
+      ...(reconnecting ? [{ title: 'Automatic retry', detail: 'Relay transport is retrying with backoff', state: 'pending' as const }] : [])
+    ]
+  }
+  return [
+    { title: 'Request received', detail: entry.args_preview ?? 'Validated local request', state: 'done' },
+    { title: activityName(entry.tool), detail: entry.aborted ? 'Stopped before completion' : entry.error ?? entry.summary ?? 'Local execution', state: entry.ok ? 'done' : 'failed' },
+    { title: 'Result recorded', detail: entry.ok ? (isNonZeroExit(entry) ? `Process exited ${activityExitCode(entry)}` : 'Evidence saved to local activity') : 'Failure details recorded', state: entry.ok ? 'done' : 'failed' }
+  ]
 }
 
 function age(ts?: number): string {
@@ -215,7 +251,54 @@ function hostAccessLabel(host: Host): string {
 }
 
 export default function App() {
-  return isGrantWindow ? <GrantWindow /> : <ManagementApp />
+  return isGrantWindow ? <GrantWindow /> : isNoticeWindow ? <ConnectionNoticeWindow /> : isEvidenceWindow ? <EvidenceWindow /> : <ManagementApp />
+}
+
+type ConnectionNotice = { tone: 'connected' | 'warning' | 'offline'; title: string; detail: string }
+
+function ConnectionNoticeWindow() {
+  const [notice, setNotice] = useState<ConnectionNotice | null>(null)
+  const hideTimer = useRef<number | null>(null)
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<ConnectionNotice>).detail
+      setNotice(detail)
+      if (hideTimer.current) window.clearTimeout(hideTimer.current)
+      hideTimer.current = window.setTimeout(() => void getCurrentWindow().hide(), detail.tone === 'warning' ? 6500 : 4200)
+    }
+    window.addEventListener('hermes-connection-notice', receive)
+    return () => { window.removeEventListener('hermes-connection-notice', receive); if (hideTimer.current) window.clearTimeout(hideTimer.current) }
+  }, [])
+  if (!notice) return null
+  return <div className={`connection-notice-shell ${notice.tone}`}>
+    <section className="connection-notice-card" role="status" aria-live="polite">
+      <span className="connection-notice-icon">{notice.tone === 'connected' ? <Check /> : notice.tone === 'warning' ? <RotateCcw /> : <Unplug />}</span>
+      <span><small>Hermes-Relay tunnel</small><strong>{notice.title}</strong><p>{notice.detail}</p></span>
+      <button className="connection-notice-open" onClick={() => call('open_management_from_notice')}>Open</button>
+      <button className="connection-notice-close" aria-label="Dismiss" onClick={() => getCurrentWindow().hide()}><X /></button>
+    </section>
+  </div>
+}
+
+function EvidenceWindow() {
+  const [evidenceId, setEvidenceId] = useState<string | null>(null)
+  const [source, setSource] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const id = (event as CustomEvent<{ evidenceId: string }>).detail.evidenceId
+      setEvidenceId(id); setSource(null); setError(null)
+      void call<string>('get_activity_screenshot', { evidenceId: id }).then(setSource).catch(value => setError(String(value)))
+    }
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') void getCurrentWindow().hide() }
+    window.addEventListener('hermes-screenshot-evidence', receive)
+    window.addEventListener('keydown', close)
+    return () => { window.removeEventListener('hermes-screenshot-evidence', receive); window.removeEventListener('keydown', close) }
+  }, [])
+  return <div className="evidence-shell">
+    <header><span><Eye /><strong>Screenshot evidence</strong><small>Stored locally with this activity event</small></span><button aria-label="Close screenshot" onClick={() => getCurrentWindow().hide()}><X /></button></header>
+    <main>{source ? <img src={source} alt="Retained desktop screenshot" /> : error ? <div className="evidence-error"><AlertTriangle /><strong>Screenshot unavailable</strong><small>{error}</small></div> : <div className="evidence-loading"><LoaderCircle className="spin" /><span>{evidenceId ? 'Loading screenshot…' : 'Preparing viewer…'}</span></div>}</main>
+  </div>
 }
 
 function ManagementApp() {
@@ -270,11 +353,13 @@ function ManagementApp() {
     finally { refreshInFlight.current = false }
   }, [])
 
+  const daemonRetrying = Boolean(snapshot?.daemon.running && snapshot.daemon.state === 'reconnecting')
+
   useEffect(() => {
     refresh()
-    const timer = window.setInterval(refresh, connectionTransition ? 350 : 5000)
+    const timer = window.setInterval(refresh, connectionTransition ? 350 : daemonRetrying ? 1000 : 5000)
     return () => window.clearInterval(timer)
-  }, [refresh, connectionTransition])
+  }, [refresh, connectionTransition, daemonRetrying])
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -285,7 +370,11 @@ function ManagementApp() {
   }, [])
 
   const host = useMemo(() => snapshot?.hosts.find(item => item.url === selectedUrl) ?? null, [snapshot, selectedUrl])
-  const connected = Boolean(snapshot?.daemon.running && snapshot.daemon.state === 'connected' && host && (snapshot.daemon.configured_url ?? snapshot.daemon.url) === host.url)
+  const daemonTargetsHost = Boolean(host && (snapshot?.daemon.configured_url ?? snapshot?.daemon.url) === host.url)
+  const daemonActive = Boolean(snapshot?.daemon.running && daemonTargetsHost)
+  const connected = Boolean(daemonActive && snapshot?.daemon.state === 'connected')
+  const reconnecting = Boolean(daemonActive && snapshot?.daemon.state === 'reconnecting')
+  const retrySeconds = reconnecting && snapshot?.daemon.retry_at ? Math.max(0, snapshot.daemon.retry_at - Math.floor(Date.now() / 1000)) : null
 
   useEffect(() => {
     if (page !== 'host-detail' || !detailUrl) return
@@ -306,8 +395,8 @@ function ManagementApp() {
 
   async function changeConnection() {
     if (busy) return
-    const command = connected ? 'disconnect_daemon' : 'connect_daemon'
-    const transition = connected ? 'disconnecting' : 'connecting'
+    const command = daemonActive ? 'disconnect_daemon' : 'connect_daemon'
+    const transition = daemonActive ? 'disconnecting' : 'connecting'
     setBusy(command)
     setConnectionTransition(transition)
     setError(null)
@@ -320,6 +409,16 @@ function ManagementApp() {
       setConnectionTransition(null)
       setBusy(null)
     }
+  }
+
+  async function retryConnection() {
+    if (busy) return
+    setBusy('restart_daemon')
+    setConnectionTransition('connecting')
+    setError(null)
+    try { await call('restart_daemon'); await refresh() }
+    catch (e) { setError(String(e)) }
+    finally { setConnectionTransition(null); setBusy(null) }
   }
 
   async function testRoute(remote: string) {
@@ -437,7 +536,7 @@ function ManagementApp() {
 
     <main className="content" ref={contentRef}>
       {page === 'overview' && <>
-        <section className={`connection-route ${connected ? 'online' : 'offline'} ${connectionTransition ?? ''} ${snapshot.daemon.active_route === 'plugin_proxy' ? 'secure-link' : ''}`} aria-busy={connectionTransition !== null}>
+        <section className={`connection-route ${connected ? 'online' : reconnecting ? 'retrying' : 'offline'} ${connectionTransition ?? ''} ${snapshot.daemon.active_route === 'plugin_proxy' ? 'secure-link' : ''}`} aria-busy={connectionTransition !== null || reconnecting}>
           {snapshot.hosts.length === 0 ?
             <button className="empty-pair" onClick={() => openPair()}><Link2 /><span><strong>Pair host</strong><small>Connect this PC to a Hermes instance</small></span><ChevronRight /></button> :
             <div className="route-grid" ref={selectorRef}>
@@ -464,10 +563,11 @@ function ManagementApp() {
                 const activeRole = snapshot.daemon.active_route ?? host?.endpoint_role ?? inferEndpointRole(snapshot.daemon.url ?? host?.url ?? '')
                 const security = describeTransportSecurity(snapshot.daemon.url ?? host?.url ?? '', activeRole)
                 return <div className={`route-status ${connected && !security.encrypted ? 'insecure' : ''}`} aria-live="polite" aria-atomic="true">
-                  <strong>{connectionTransition === 'connecting' ? 'Connecting' : connectionTransition === 'disconnecting' ? 'Disconnecting' : connected ? 'Connected' : 'Disconnected'}</strong>
+                  <strong>{connectionTransition === 'connecting' ? 'Connecting' : connectionTransition === 'disconnecting' ? 'Disconnecting' : reconnecting ? 'Reconnecting' : connected ? 'Connected' : 'Disconnected'}</strong>
                   {connected && <button className={`route-badge ${security.kind}`} aria-expanded={routeDetailsOpen} onClick={() => setRouteDetailsOpen(open => !open)}><ShieldCheck />{displayRouteLabel(activeRole ?? 'custom')}<ChevronDown /></button>}
                   {connectionTransition && <small>{connectionTransition === 'connecting' ? 'Starting daemon and opening relay tunnel' : 'Closing relay tunnel'}</small>}
-                  {!connected && !connectionTransition && <small>Relay connection offline</small>}
+                  {reconnecting && !connectionTransition && <><small>Attempt {snapshot.daemon.reconnect_attempt ?? 1}{retrySeconds !== null ? ` · retry in ${retrySeconds}s` : ' · retry scheduled'}</small><button className="retry-now" disabled={busy !== null} onClick={() => void retryConnection()}><RefreshCw /> Retry now</button></>}
+                  {!connected && !reconnecting && !connectionTransition && <small>{snapshot.daemon.last_error ?? 'Relay connection offline'}</small>}
                   {connected && routeDetailsOpen && <aside className="route-detail-card"><div><ShieldCheck /><span><strong>{displayRouteLabel(activeRole ?? 'custom')}</strong><small>{security.detail}</small></span></div><dl><div><dt>Security</dt><dd>{security.label}</dd></div><div><dt>Endpoint</dt><dd title={snapshot.daemon.url ?? undefined}>{snapshot.daemon.url ?? 'Not reported'}</dd></div></dl><button className="route-test-button" disabled={busy === 'test_host_route'} onClick={() => host && testRoute(host.url)}>{busy === 'test_host_route' ? <LoaderCircle className="spin" /> : routeTest ? <RefreshCw /> : <ActivityIcon />}<span>{busy === 'test_host_route' ? <><strong>Testing connection…</strong><small>Checking every saved route</small></> : <><strong>{routeTest ? 'Test again' : 'Test connection'}</strong><small>Measure reachability and latency</small></>}</span></button>{routeTest && <div className={`route-test-result ${routeTest.best ? 'reachable' : 'unreachable'}`} aria-live="polite">{routeTest.best ? <><div className="route-test-summary"><span><Check /></span><strong>{routeTest.best.label} reachable</strong><em>{routeTest.best.elapsed_ms} ms</em></div><dl><div><dt>Protection</dt><dd className={routeTest.best.encrypted ? 'secure' : 'warning'}>{routeTest.best.security}</dd></div><div><dt>Tested endpoint</dt><dd title={routeTest.best.url}>{routeTest.best.url}</dd></div></dl><small>{Math.max(1, routeTest.routes?.length ?? 0)} saved route{(routeTest.routes?.length ?? 0) === 1 ? '' : 's'} checked</small></> : <div className="route-test-summary"><span><X /></span><strong>No route reachable</strong><em>Check host</em></div>}</div>}</aside>}
                 </div>
               })()}
@@ -489,9 +589,9 @@ function ManagementApp() {
           </button>
         </section>}
 
-        <button className={`tunnel-button ${connectionTransition ? 'pending' : ''}`} disabled={busy !== null} aria-busy={connectionTransition !== null} onClick={() => void changeConnection()}>
-          {connectionTransition ? <LoaderCircle className="spin" /> : <Power />}
-          <span><strong>{connectionTransition === 'connecting' ? 'Connecting…' : connectionTransition === 'disconnecting' ? 'Disconnecting…' : connected ? 'Disconnect Tunnel' : 'Connect Tunnel'}</strong>{connectionTransition && <small>{connectionTransition === 'connecting' ? 'Waiting for the relay' : 'Stopping the local daemon'}</small>}</span>
+        <button className={`tunnel-button ${connectionTransition || reconnecting ? 'pending' : ''}`} disabled={busy !== null} aria-busy={connectionTransition !== null} onClick={() => void changeConnection()}>
+          {connectionTransition ? <LoaderCircle className="spin" /> : reconnecting ? <Unplug /> : <Power />}
+          <span><strong>{connectionTransition === 'connecting' ? 'Connecting…' : connectionTransition === 'disconnecting' ? 'Disconnecting…' : reconnecting ? 'Disconnect Tunnel' : connected ? 'Disconnect Tunnel' : 'Connect Tunnel'}</strong>{(connectionTransition || reconnecting) && <small>{connectionTransition === 'connecting' ? 'Waiting for the relay' : connectionTransition === 'disconnecting' ? 'Stopping the local daemon' : 'Automatic retry remains active'}</small>}</span>
         </button>
 
         <section className="activity-section">
@@ -508,7 +608,7 @@ function ManagementApp() {
       {page === 'hosts' && <HostsPage hosts={snapshot.hosts} selected={host} onOpen={url => { setDetailUrl(url); setSelectedUrl(url); setPage('host-detail') }} onPair={() => openPair()} />}
       {page === 'pair-host' && <PairHostPage initialUrl={pairInitialUrl} busy={busy === 'pair_host'} onBack={() => setPage('hosts')} onPair={pairHost} />}
       {page === 'host-detail' && <HostDetailPage host={snapshot.hosts.find(item => item.url === detailUrl) ?? null} clients={clients} busy={busy !== null} onBack={() => setPage('hosts')} onConnect={connectHost} onRename={(remote, name) => action('rename_host', { remote, name })} onAccess={() => { setPolicyBack('host-detail'); setPage('access') }} onCapabilities={() => { setPolicyBack('host-detail'); setPage('capabilities') }} onRevoke={(remote, client) => setPending({ type: 'revoke', client, remote })} onRepair={host => setPending({ type: 'repair', host })} onForget={host => setPending({ type: 'forget', host })} />}
-      {page === 'settings' && <SettingsPage daemon={snapshot.daemon} computerControl={snapshot.computer_control_engine ?? null} startup={snapshot.startup_enabled} daemonAutostart={snapshot.daemon_autostart_enabled ?? false} activity={snapshot.activity} onAction={action} onStartup={value => action('set_startup', { enabled: value })} onDaemonAutostart={value => action('set_daemon_autostart', { enabled: value })} onHelp={() => setPage('help')} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} onOpenActivity={entry => { setSelectedActivity(entry); setActivityDetailBack('settings'); setPage('activity-detail') }} />}
+      {page === 'settings' && <SettingsPage daemon={snapshot.daemon} computerControl={snapshot.computer_control_engine ?? null} startup={snapshot.startup_enabled} daemonAutostart={snapshot.daemon_autostart_enabled ?? false} activity={snapshot.activity} screenshotRetention={snapshot.activity_screenshot_retention} onAction={action} onStartup={value => action('set_startup', { enabled: value })} onDaemonAutostart={value => action('set_daemon_autostart', { enabled: value })} onHelp={() => setPage('help')} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} onOpenActivity={entry => { setSelectedActivity(entry); setActivityDetailBack('settings'); setPage('activity-detail') }} />}
       {page === 'help' && <HelpPage snapshot={snapshot} host={host} onBack={() => { setSelectedUrl(snapshot.active_url ?? null); setPage('settings') }} onAction={action} />}
       {page === 'activity' && <ActivityPage entries={snapshot.activity} host={host} onBack={() => setPage(activityBack)} onClear={() => setPending({ type: 'clear-activity' })} onOpen={entry => { setSelectedActivity(entry); setActivityDetailBack('activity'); setPage('activity-detail') }} />}
       {page === 'activity-detail' && <ActivityDetailPage entry={selectedActivity} host={host} onBack={() => setPage(activityDetailBack)} />}
@@ -684,29 +784,29 @@ function ActivityPage({ entries, host, onBack, onClear, onOpen }: { entries: Act
 }
 
 function ActivityDetailPage({ entry, host, onBack }: { entry: Activity | null; host: Host | null; onBack: () => void }) {
+  const [evidenceError, setEvidenceError] = useState<string | null>(null)
   if (!entry) return <section className="page-panel"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Activity</button><div className="large-empty"><ActivityIcon /><h2>Event unavailable</h2></div></section>
   const attention = needsAttention(entry)
   const warning = isNonZeroExit(entry)
   const status = entry.aborted ? 'Aborted' : !entry.ok ? 'Failed' : warning ? `Exit ${activityExitCode(entry)}` : 'Completed'
   const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
   const computerControl = isComputerControl(entry)
+  const steps = activitySteps(entry)
   const blocks = [
     ['Request', entry.request_detail ?? entry.args_preview, entry.request_truncated],
     ['Standard output', entry.stdout, entry.stdout_truncated],
     ['Standard error', entry.stderr, entry.stderr_truncated],
-    ['Result', entry.result_detail, entry.result_truncated],
-    ['Error', entry.error, false]
+    ['Result', entry.result_detail, entry.result_truncated]
   ] as const
   return <section className="page-panel activity-detail-page">
     <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Activity</button>
     <div className="activity-detail-title"><span className={`activity-icon ${attention || warning ? 'amber' : 'violet'}`}>{computerControl ? <MousePointerClick /> : <TerminalSquare />}</span><span><p>{computerControl ? 'Computer control' : activityCategory(entry)}</p><h1>{computerControl ? controlActionLabel(entry) : activityName(entry.tool)}</h1><small>{eventHost}</small></span></div>
     <dl className="activity-detail-meta"><div><dt>Status</dt><dd className={attention ? 'attention' : warning ? 'warning' : 'success'}>{status}</dd></div><div><dt>When</dt><dd>{formatDateTime(entry.ts)}</dd></div><div><dt>Duration</dt><dd>{formatDuration(entry.duration_ms)}</dd></div></dl>
-    {computerControl && <section className="control-timeline" aria-label="Computer control timeline">
-      <div className="done"><i /><span><strong>Authorized session</strong><small>{entry.control_session_id ? 'Authenticated control session' : 'Authenticated by Hermes'}</small></span></div>
-      <div className={entry.ok ? 'done' : 'failed'}><i /><span><strong>{controlActionLabel(entry)}</strong><small>{entry.backend === 'cua' ? 'CUA structured engine' : 'Windows input · Compatibility'} · {entry.dispatch ?? 'background'}</small></span></div>
-      <div className={entry.verification === 'failed' ? 'failed' : entry.verification ? 'done' : ''}><i /><span><strong>Verification</strong><small>{controlVerificationLabel(entry.verification)}</small></span></div>
-    </section>}
+    <section className="control-timeline" aria-label="Event timeline">{steps.map((step, index) => <div className={step.state} key={`${step.title}-${index}`}><i /><span><strong>{step.title}</strong><small>{step.detail}</small></span></div>)}</section>
     {computerControl && (entry.target_app || entry.target_title || entry.target_pid || entry.target_window_id) && <dl className="control-target"><div><dt>Application</dt><dd>{entry.target_app ?? 'Not reported'}</dd></div><div><dt>Window</dt><dd title={entry.target_title}>{entry.target_title ?? 'Not reported'}</dd></div><div><dt>Target</dt><dd>{entry.target_pid ? `PID ${entry.target_pid}` : 'PID —'} · {entry.target_window_id ? `Window ${entry.target_window_id}` : 'Window —'}</dd></div></dl>}
+    {entry.error && <aside className="activity-error-callout" role="alert"><AlertTriangle /><span><strong>{entry.aborted ? 'Action stopped' : 'Action failed'}</strong><small>{entry.error}</small></span></aside>}
+    {entry.screenshot_evidence_id && <button className="screenshot-evidence-card" onClick={() => { setEvidenceError(null); void call('present_activity_screenshot', { evidenceId: entry.screenshot_evidence_id }).catch(error => setEvidenceError(String(error))) }}><span><Eye /><strong>Screenshot captured</strong><small>{entry.screenshot_width && entry.screenshot_height ? `${entry.screenshot_width} × ${entry.screenshot_height} PNG` : 'Retained local evidence'}</small></span><em><Maximize2 /> View larger</em></button>}
+    {evidenceError && <aside className="activity-error-callout"><AlertTriangle /><span><strong>Screenshot unavailable</strong><small>{evidenceError}</small></span></aside>}
     <div className="activity-output-list">{blocks.filter(([, value]) => value).map(([label, value, truncated]) => <section key={label}><header><strong>{label}</strong>{truncated && <em>Truncated</em>}</header><pre>{value}</pre></section>)}</div>
     {entry.request_id && <div className="activity-request-id">Request ID {entry.request_id}</div>}
   </section>
@@ -811,18 +911,28 @@ function HostDetailPage({ host, clients, busy, onBack, onConnect, onRename, onAc
   </section>
 }
 
-function SettingsPage({ daemon, computerControl, startup, daemonAutostart, activity, onAction, onStartup, onDaemonAutostart, onHelp, onViewActivity, onOpenActivity }: { daemon: Snapshot['daemon']; computerControl: Snapshot['computer_control_engine']; startup: boolean; daemonAutostart: boolean; activity: Activity[]; onAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>; onStartup: (value: boolean) => void; onDaemonAutostart: (value: boolean) => void; onHelp: () => void; onViewActivity: () => void; onOpenActivity: (entry: Activity) => void }) {
+function SettingsPage({ daemon, computerControl, startup, daemonAutostart, activity, screenshotRetention, onAction, onStartup, onDaemonAutostart, onHelp, onViewActivity, onOpenActivity }: { daemon: Snapshot['daemon']; computerControl: Snapshot['computer_control_engine']; startup: boolean; daemonAutostart: boolean; activity: Activity[]; screenshotRetention: Snapshot['activity_screenshot_retention']; onAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>; onStartup: (value: boolean) => void; onDaemonAutostart: (value: boolean) => void; onHelp: () => void; onViewActivity: () => void; onOpenActivity: (entry: Activity) => void }) {
   const [update, setUpdate] = useState<UpdateReport | null>(null)
   const [updateBusy, setUpdateBusy] = useState<'check' | 'install' | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const [cuaManagement, setCuaManagement] = useState<CuaManagementStatus | null>(null)
-  const [cuaBusy, setCuaBusy] = useState<'status' | 'install' | 'check' | 'update' | null>(null)
+  const [cuaHealth, setCuaHealth] = useState<CuaHealthStatus | null>(null)
+  const [cuaBusy, setCuaBusy] = useState<'status' | 'health' | 'install' | 'check' | 'update' | null>(null)
   const [cuaError, setCuaError] = useState<string | null>(null)
 
   const cuaOperation = useCallback(async (operation: 'status' | 'install' | 'check' | 'update') => {
     setCuaBusy(operation)
     try {
       setCuaManagement(await call<CuaManagementStatus>(operation === 'status' ? 'computer_cua_status' : operation === 'install' ? 'computer_cua_install' : operation === 'check' ? 'computer_cua_check_update' : 'computer_cua_update'))
+      setCuaError(null)
+    } catch (error) { setCuaError(String(error).replace(/^Error:\s*/i, '')) }
+    finally { setCuaBusy(null) }
+  }, [])
+
+  const recheckCuaHealth = useCallback(async () => {
+    setCuaBusy('health')
+    try {
+      setCuaHealth(await call<CuaHealthStatus>('computer_cua_health'))
       setCuaError(null)
     } catch (error) { setCuaError(String(error).replace(/^Error:\s*/i, '')) }
     finally { setCuaBusy(null) }
@@ -872,6 +982,11 @@ function SettingsPage({ daemon, computerControl, startup, daemonAutostart, activ
   const activeBackend = computerControl?.active_backend === 'cua' ? 'CUA active'
     : computerControl?.active_backend === 'legacy_compat' ? 'Compatibility active'
       : computerControl?.active_backend === 'mixed' ? 'Mixed backends' : 'Idle'
+  const healthLabel = cuaHealth?.state === 'healthy' ? 'Healthy' : cuaHealth?.state === 'degraded' ? 'Degraded' : cuaHealth?.state === 'error' ? 'Check failed' : 'Not checked'
+  const healthDetail = cuaHealth?.reason
+    ?? (cuaHealth?.state === 'healthy'
+      ? 'The latest explicit accessibility check passed.'
+      : 'Optional diagnostic; it does not disable the runtime while the temporary Windows workaround is active.')
 
   return <section className="page-panel settings-page"><div className="page-title"><div><p>Local management</p><h1>Settings</h1></div></div>
     <div className="settings-group"><h2>Relay daemon</h2><div className="settings-card"><div className="setting-row"><span><strong>Daemon status</strong><small>{daemon.running ? `${daemon.state} · ${daemon.privilege ?? 'user'}` : 'Stopped'}</small></span><button className="compact-button" onClick={() => onAction('restart_daemon')}><RefreshCw /> Restart</button></div><div className="setting-row"><span><strong>{daemon.privilege === 'administrator' ? 'Administrator mode' : 'User mode'}</strong><small>{daemon.privilege === 'administrator' ? 'Remote actions inherit elevated rights.' : 'Recommended for normal operation.'}</small></span><button className={`compact-button privilege-action ${daemon.privilege === 'administrator' ? '' : 'admin-action'}`} onClick={() => onAction(daemon.privilege === 'administrator' ? 'restart_daemon_as_user' : 'restart_daemon_as_administrator')}>{daemon.privilege === 'administrator' ? 'Return to user mode' : 'Restart as Administrator…'}</button></div><label className="setting-row toggle-row"><span><strong>Start UI at sign-in</strong><small>Launch the tray after you sign in.</small></span><input type="checkbox" checked={startup} onChange={e => onStartup(e.target.checked)} /><i /></label><label className="setting-row toggle-row"><span><strong>Start daemon with UI</strong><small>Connect remote access when the tray starts.</small></span><input type="checkbox" checked={daemonAutostart} onChange={e => onDaemonAutostart(e.target.checked)} /><i /></label></div></div>
@@ -882,13 +997,14 @@ function SettingsPage({ daemon, computerControl, startup, daemonAutostart, activ
         <div className="engine-live"><span><strong>{activeSessions}</strong><small>Active session{activeSessions === 1 ? '' : 's'}</small></span><em className={activeSessions ? 'active' : ''}><i /> {activeBackend}</em></div>
         <label className="setting-row toggle-row"><span><strong>Animated agent cursor</strong><small>Labeled · smooth glide · click pulse. It does not move your physical mouse.</small></span><input type="checkbox" disabled={computerControl?.selected !== 'cua'} checked={computerControl?.selected === 'cua' && computerControl.cursor_enabled === true} onChange={e => onAction('set_cua_cursor_enabled', { enabled: e.target.checked })} /><i /></label>
         <div className="setting-row background-only"><span><strong>Window interaction</strong><small>CUA actions stay in the background and never bring an app forward.</small></span><em>Background only</em></div>
+        <div className="setting-row cua-health"><span><strong>Accessibility health</strong><small>{healthDetail}</small></span><div><em className={`health-${cuaHealth?.state ?? 'unchecked'}`}>{healthLabel}</em><button className="compact-button" disabled={cuaBusy !== null} onClick={() => void recheckCuaHealth()}>{cuaBusy === 'health' ? <LoaderCircle className="spin" /> : <RefreshCw />} Recheck</button></div></div>
       </div>}
       <div className="cua-maintenance"><span><strong>{cuaManagement?.installed ? `CUA Driver ${cuaManagement.current_version ?? ''}`.trim() : 'CUA Driver'}</strong><small>{cuaError ?? cuaManagement?.update?.error ?? cuaManagement?.compatibility_reason ?? (cuaManagement?.update?.update_available ? `${cuaManagement.update.latest_version} available` : cuaManagement?.installed ? 'Installed from the verified upstream release.' : 'Install the verified compatible driver explicitly.')}</small></span><div>{!cuaManagement?.installed ? <button disabled={cuaBusy !== null} onClick={() => void cuaOperation('install')}>{cuaBusy === 'install' ? <LoaderCircle className="spin" /> : <Download />} Install</button> : cuaManagement.update?.update_available && cuaManagement.update.compatible ? <button disabled={cuaBusy !== null} onClick={() => void cuaOperation('update')}>{cuaBusy === 'update' ? <LoaderCircle className="spin" /> : <Download />} Update</button> : <button disabled={cuaBusy !== null} onClick={() => void cuaOperation('check')}>{cuaBusy === 'check' || cuaBusy === 'status' ? <LoaderCircle className="spin" /> : <RefreshCw />} Check</button>}</div></div>
     </div><p className="group-help engine-help"><ShieldCheck /> CUA is the preferred structured engine. Hermes permissions, grants, audit, and emergency stop remain in control.</p></div>
     <div className="settings-group"><h2>CLI & diagnostics</h2><div className="settings-card quick-action-grid"><button onClick={() => onAction('open_terminal')}><TerminalSquare /><span>Open terminal</span></button><button onClick={() => onAction('open_cli_terminal')}><Bot /><span>Open Hermes CLI</span></button><button onClick={() => onAction('open_logs')}><FolderOpen /><span>View daemon log</span></button><button onClick={() => onAction('run_diagnostics')}><ActivityIcon /><span>Run diagnostics</span></button></div></div>
     <div className="settings-group"><h2>Updates</h2><div className={`settings-card update-card ${updateError ? 'error' : update?.ahead_of_latest ? 'ahead' : update?.up_to_date ? 'current' : ''}`}><div className="setting-row update-row"><span><strong>Hermes-Relay CLI UI</strong><small>{updateSummary}</small></span>{update && !update.up_to_date && !update.ahead_of_latest && !update.installed ? <button className="compact-button update-button" disabled={updateBusy !== null} onClick={installUpdate}>{updateBusy === 'install' ? <LoaderCircle className="spin" /> : <Download />} Install</button> : <button className="compact-button" disabled={updateBusy !== null} onClick={checkUpdate}>{updateBusy === 'check' ? <LoaderCircle className="spin" /> : <RefreshCw />} Check</button>}</div></div><p className="group-help update-help">Updates the management UI and CLI together, then restarts the tray automatically.</p></div>
     <button className="about-link" onClick={onHelp}><span className="setting-icon"><Info /></span><span><strong>Help & About</strong><small>Versions, documentation and troubleshooting.</small></span><ChevronRight /></button>
-    <div className="settings-group"><div className="settings-group-heading"><h2>Activity</h2><button onClick={onViewActivity}>View all <ChevronRight /></button></div><p className="group-help">Recent remote actions recorded on this PC.</p><div className="settings-card padded"><ActivityList entries={activity.slice(-3).reverse()} host={null} onOpen={onOpenActivity} /></div></div>
+    <div className="settings-group"><div className="settings-group-heading"><h2>Activity</h2><button onClick={onViewActivity}>View all <ChevronRight /></button></div><p className="group-help">Recent remote actions recorded on this PC.</p><div className="settings-card activity-retention-card"><div className="setting-row"><span><strong>Screenshot evidence</strong><small>{screenshotRetention.count} retained · {formatBytes(screenshotRetention.bytes)} · stored only on this PC</small></span><div className="retention-options" role="radiogroup" aria-label="Screenshot evidence retention">{([{ label: 'Off', enabled: false, days: 7 }, { label: '1d', enabled: true, days: 1 }, { label: '7d', enabled: true, days: 7 }, { label: '30d', enabled: true, days: 30 }] as const).map(option => <button key={option.label} role="radio" aria-checked={screenshotRetention.enabled === option.enabled && (!option.enabled || screenshotRetention.days === option.days)} className={screenshotRetention.enabled === option.enabled && (!option.enabled || screenshotRetention.days === option.days) ? 'active' : ''} onClick={() => onAction('set_activity_screenshot_retention', { enabled: option.enabled, days: option.days })}>{option.label}</button>)}</div></div></div><div className="settings-card padded"><ActivityList entries={activity.slice(-3).reverse()} host={null} onOpen={onOpenActivity} /></div></div>
   </section>
 }
 
