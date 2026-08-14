@@ -1866,11 +1866,11 @@ mod app {
             (126.0 * scale).round() as u32,
         );
         let _ = window.set_size(Size::Physical(size));
-        let _ = window.set_position(bottom_right_position(&monitor.work_area(), size, scale));
+        let _ = window.set_position(bottom_right_position(monitor.work_area(), size, scale));
         let Ok(payload) = serde_json::to_string(&notice) else {
             return;
         };
-        let _ = window.eval(&format!("window.dispatchEvent(new CustomEvent('hermes-connection-notice', {{ detail: {payload} }}))"));
+        let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('hermes-connection-notice', {{ detail: {payload} }}))"));
         let _ = window.show();
     }
 
@@ -1956,7 +1956,7 @@ mod app {
             .ok_or_else(|| "screenshot viewer is unavailable".to_string())?;
         let payload = serde_json::to_string(&serde_json::json!({ "evidenceId": evidence_id }))
             .map_err(|error| error.to_string())?;
-        window.eval(&format!("window.dispatchEvent(new CustomEvent('hermes-screenshot-evidence', {{ detail: {payload} }}))")).map_err(|error| error.to_string())?;
+    window.eval(format!("window.dispatchEvent(new CustomEvent('hermes-screenshot-evidence', {{ detail: {payload} }}))")).map_err(|error| error.to_string())?;
         let monitor = app
             .get_webview_window("main")
             .and_then(|main| main.current_monitor().ok().flatten())
