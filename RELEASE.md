@@ -128,6 +128,7 @@ optional Windows installer.
 | File | Purpose |
 |---|---|
 | `desktop/package.json` | canonical CLI version |
+| `desktop/.bun-version` | exact Bun compiler/runtime for standalone binaries |
 | `desktop/package-lock.json` | npm root/workspace package metadata |
 | `desktop/src/version.ts` | compiled CLI runtime version |
 | `desktop/tray/Cargo.toml` | native systray package version |
@@ -152,6 +153,8 @@ manually, run `npm run sync:version` before checking. `npm run verify` is the
 single Windows release-parity gate: version sync, type-check, tests, TypeScript
 build, compiled CLI smoke, and tray formatting, Clippy, check, and tests. CI runs
 the portable portions on every desktop change and the Windows tray gates separately.
+Release jobs read `desktop/.bun-version`; cross-built and Windows-built artifacts
+must not silently embed different Bun runtime versions.
 
 ## Branching policy
 

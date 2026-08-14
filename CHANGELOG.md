@@ -20,6 +20,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
 
+## [0.4.0-beta.3] - 2026-08-14
+
+### Fixed
+
+- **Windows tray polling can no longer accumulate unbounded helper processes.** Grant discovery now uses lightweight local state, management refreshes are single-flight and visibility-aware, and child probes have hard timeouts, bounded output, tree cleanup, caching, and backoff. A dedicated bounded `tray.log` records sanitized operational failures without mixing them into daemon logs.
+- **Concurrent Desktop lifecycle requests cannot start duplicate daemons.** Cross-process lifecycle and runtime ownership locks serialize startup and recovery while preserving stale-owner cleanup.
+
 ## [1.8.0] - 2026-08-14
 
 ### Added

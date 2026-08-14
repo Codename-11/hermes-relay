@@ -61,14 +61,23 @@ export function daemonStatusPath(): string {
   return join(homedir(), '.hermes', 'daemon-status.json')
 }
 
+let statusWriteChain: Promise<void> = Promise.resolve()
+
 export async function writeDaemonStatus(status: DaemonStatus): Promise<void> {
   const filePath = daemonStatusPath()
-  try {
-    await fs.mkdir(dirname(filePath), { recursive: true })
-    await fs.writeFile(filePath, JSON.stringify(status, null, 2) + '\n', { mode: 0o600 })
-  } catch {
-    // Best-effort — never let status bookkeeping take down the daemon.
-  }
+  const snapshot = JSON.stringify(status, null, 2) + '\n'
+  statusWriteChain = statusWriteChain.then(async () => {
+    const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+    try {
+      await fs.mkdir(dirname(filePath), { recursive: true })
+      await fs.writeFile(temporaryPath, snapshot, { mode: 0o600 })
+      await fs.rename(temporaryPath, filePath)
+    } catch {
+      // Best-effort — never let status bookkeeping take down the daemon.
+      await fs.unlink(temporaryPath).catch(() => undefined)
+    }
+  })
+  await statusWriteChain
 }
 
 export async function readDaemonStatus(): Promise<DaemonStatus | null> {
@@ -80,8 +89,13 @@ export async function readDaemonStatus(): Promise<DaemonStatus | null> {
   }
 }
 
-export async function clearDaemonStatus(): Promise<void> {
+export async function clearDaemonStatus(expectedPid?: number): Promise<void> {
+  await statusWriteChain
   try {
+    if (expectedPid !== undefined) {
+      const current = await readDaemonStatus()
+      if (current?.pid !== expectedPid) return
+    }
     await fs.unlink(daemonStatusPath())
   } catch {
     /* missing — fine */

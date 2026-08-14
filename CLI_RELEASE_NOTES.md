@@ -2,26 +2,22 @@
 
 **Release Date:** 2026-08-14
 
-This beta makes connection recovery and Activity evidence inspectable in the compact management UI, and keeps the preferred CUA control engine usable when its upstream whole-desktop accessibility probe times out.
+This patch prevents the Windows management tray from accumulating Hermes-Relay, registry, and ADB helper processes when a refresh is slow or fails, and adds bounded diagnostics for future recovery.
 
 **Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64; the management UI is Windows-only.
 
 ## What's changed
 
-### Added
-
-- **Inspectable Activity evidence.** Commands, files, device work, connection lifecycle, and computer control share a consistent event stepper with dedicated failure details.
-- **Optional screenshot retention.** Screenshot events can keep bounded local PNG evidence for Off, 1 day, 7 days, or 30 days and open it in a larger borderless viewer. Evidence stays outside the JSON activity log.
-
 ### Changed
 
-- **Connection state is live and actionable.** The UI distinguishes connected, reconnecting, and stopped states, shows retry timing, and offers Retry now without freezing the popup.
-- **Connection notices stay out of the way.** Compact connect, disconnect, and reconnect cards appear only while the main management UI is hidden.
+- **Grant discovery stays lightweight.** The approval window reads local bridge state instead of rebuilding the complete management snapshot, schedules each refresh only after the previous one finishes, and pauses idle polling while hidden.
+- **Management refreshes are visibility-aware and resilient.** Concurrent snapshot requests share one bounded result, optional static checks are cached, and repeated failures back off instead of creating more work.
 
 ### Fixed
 
-- **CUA readiness no longer depends on the flaky global accessibility scan.** Hermes verifies the canonical runtime, required tools, daemon, and safe permission mode before structured control; explicit accessibility health remains available for diagnosis and individual actions still fail closed.
-- **Connection errors retain useful context.** Activity records bounded retry and recovery evidence without flooding one event per backoff attempt.
+- **Windows helper processes are contained.** Tray-launched commands have hard deadlines, bounded output capture, descendant cleanup, and suppressed loader-error dialogs, preventing stalled probes from growing into a process storm.
+- **Daemon startup is serialized across launchers.** Cross-process lifecycle and runtime ownership locks prevent concurrent start or restart requests from leaving duplicate daemons behind.
+- **Tray failures are diagnosable without exposing command data.** A rotated, sanitized `tray.log` records bounded probe and lifecycle outcomes separately from `daemon.log`.
 
 ## Install
 
