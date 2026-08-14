@@ -97,12 +97,17 @@ hermes-relay computer-use status --json
   is intentionally ignored.
 - **Incompatible** means the executable, manifest, supported version, required
   tool set, or permission mode did not match the Hermes adapter contract.
-- **Degraded** means the live CUA health report was not healthy. On Windows,
-  confirm the driver is running in the interactive user's logon session rather
-  than Session 0, then run the upstream `cua-driver doctor` command.
+- **Accessibility health** is a separate, explicit diagnostic on Windows. Use
+  **Recheck** in the UI or run `hermes-relay computer-use cua health`. A
+  degraded result does not disable the runtime while the temporary workaround
+  for the upstream fixed-timeout issue is active; canonical runtime checks and
+  each structured action still fail closed. Confirm the driver is running in
+  the interactive user's logon session rather than Session 0 before deeper
+  diagnosis.
 
-CUA is preferred for new structured-control sessions. If it is not ready before
-a session begins, Hermes can select the Windows input compatibility backend;
+CUA is preferred for new structured-control sessions. If its executable,
+manifest, required tool set, daemon status, or safe permission mode is not
+ready before a session begins, Hermes can select the Windows input compatibility backend;
 it never changes backend in the middle of a control session. Re-check with
 `hermes-relay computer-use cua status`, repair explicitly with
 `computer-use cua install --yes`, or use `computer-use cua check-update` followed

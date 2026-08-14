@@ -270,6 +270,8 @@ not require an API endpoint or API bearer when dashboard chat is ready.
 >
 > **Decision (2026-06-29) — unified-session "Threads", not a separate surface:** the proactive agent↔phone conversation is **not** a separate app lane/tab/segment. It is a **source-tagged session inside the one Chat surface** — a **Thread** (`source=phone`). The three things distinguishing a Thread from a normal gateway chat are *session properties*, not a separate UI: (a) the agent can initiate a turn, (b) it rides the relay `proactive` transport and is relay-gated, (c) it's a standing/named DM. **Scrollback = the gateway session store** (same read path Chat uses); **live receive = the relay `proactive` push** (→ notification); **send = `proactive.reply`**. The local `ProactiveInboxStore` is demoted to a live-push cache + outbox (no parallel history). The Thread capability is surfaced in the **connection best-path/capability UI** (a relay-tier capability, like terminal/bridge/voice) and as a clean **Threads** entry (thread-spool icon, NOT a phone glyph) pinned atop the session drawer when active — never a connection-wizard step. Degrades cleanly: no relay plugin → no `source=phone` sessions → Chat is unchanged (standard-path-safe). This **supersedes the earlier "separate Agent lane / 4th nav segment" sketch** and folds in the "show chat source/platform attribution in Chat" goal in one stroke.
 >
+> **Outbound-first refinement (2026-08-14):** an outbound platform send does not itself create a gateway session; the `source=phone` session is created only when the phone first replies. Android groups the bounded proactive cache by connection + `chat_id` and renders a provisional Thread during that gap. A notification tap opens that exact provisional Thread, and the first reply uses the existing phone-platform path before promoting the view to the real gateway session. Once `/phone/threads` reports the mapping, the provisional row disappears. This cache is a bootstrap transcript, not a second long-term history store.
+>
 > **Why unified, not separate:** a separate "agent chat" tab is redundant — a Thread is just a chat session the agent can also start. One Chat surface (sessions tagged by source) matches the Discord/messaging-app model the product targets. **Two distinct senses of "gateway" to keep straight:** the *messaging gateway / platform layer* (`gateway/platforms/*` — phone/Discord/Slack as platforms; this is the Thread's `source`) vs. the *dashboard gateway transport* (`/api/ws` tui_gateway — how live chat bytes flow). A Thread is defined by its **platform/source**, not its transport; the two are orthogonal.
 
 **Original research (2026-04-07, retained as lineage — the `mobile:<device_id>` syntax and the ~16-file upstream-fork registration below are SUPERSEDED by the no-fork plugin path):**
@@ -3073,12 +3075,13 @@ state—while omitting accessibility text, screenshots, entered values, and raw
 driver responses.
 
 Hermes now owns an explicit Windows lifecycle surface without bundling the
-driver: `computer-use cua status|install|check-update|update`, with `--yes`
+driver: `computer-use cua status|health|install|check-update|update`, with `--yes`
 required for install/update. Mutations accept only supported upstream releases
 (`>=0.19.3 <0.20.0`), verify the `trycua/cua` product/version manifest and
 installer SHA-256 before running a temporary installer under a sanitized
 environment, then verify the canonical `packages/current` binary, manifest,
-version, path, permission mode, and health. There is no automatic install or
+version, path, and permission mode. Accessibility health is an explicit
+diagnostic. There is no automatic install or
 update.
 
 **Context.** The first Windows input backend uses PowerShell, `SetCursorPos`,
@@ -3103,7 +3106,7 @@ dispatch, application launch/termination, JavaScript execution, recording,
 replay, configuration, and driver updates require separate, explicit local
 authority. Full Access may bypass ordinary task prompts, but never authenticated
 targeting, sensitive-surface blocks, UAC/session boundaries, audit, emergency
-stop, or driver health checks.
+stop, runtime validation, or per-action failures.
 
 Every semantic element action requires a fresh pre-action window snapshot, an
 opaque element token bound to its snapshot generation, authenticated principal,
@@ -3123,9 +3126,17 @@ change, or daemon shutdown ends the corresponding driver session immediately.
 CUA runs in the interactive user's logon session, never Windows Session 0.
 Initial packaging remains optional and resolves the canonical installed package
 rather than an untrusted PATH entry. Readiness uses the driver's live manifest,
-schema, permission mode, and health report and fails closed on an absent,
-degraded, or incompatible backend. Telemetry and driver updates remain explicit
+schema, tool surface, daemon status, and permission mode and fails closed on an
+absent or incompatible backend. Telemetry and driver updates remain explicit
 operator choices.
+
+**Temporary Windows implementation note (2026-08-14).** Until
+`trycua/cua#3103` is fixed in the supported driver range, the whole-desktop
+`health_report` is not a session-start gate: its fixed UIA timeout can report a
+false degradation and leave the driver temporarily busy. Operators can re-run
+that diagnostic from the CLI or UI. Structured actions retain their existing
+target, grant, snapshot, timeout, and fail-closed checks. Remove this exception
+when the upstream probe is bounded and cannot poison later actions.
 
 **Consequences.** Hermes can gain background, element-aware control and clean
 per-agent animated cursors without replacing its Relay protocol or permission
@@ -3134,3 +3145,50 @@ until authenticated control-session identity, scoped grants, sensitive-surface
 enforcement, and lifecycle tests ship. Raw command execution remains an honest
 escape hatch: strong computer-control isolation is meaningful only when command
 execution is disabled or the host is already fully trusted.
+
+---
+
+## ADR 57 — Official Desktop Relay UI is a lazy, unified-package runtime plugin
+
+**Status:** Accepted (2026-08-14).
+
+**Context.** Official Hermes Desktop now discovers a regular agent plugin's
+`desktop/plugin.js` and loads it through `@hermes/plugin-sdk`. The SDK provides
+profile-aware `ctx.rest()` access to the same `plugin_api.py` namespace used by
+the web Dashboard, plus native pane, sidebar, status-bar, palette, close,
+reveal, drag, dock, i18n, query, and unload lifecycles. Registering a pane also
+adopts it into the live layout, which would violate Hermes-Relay's requirement
+that plugin load and application lifecycle events never open or focus Relay.
+
+**Decision.** Ship `plugin/desktop/plugin.js` beside `plugin.yaml` and the
+existing Dashboard half. Keep the Desktop half opt-in and use only public SDK
+imports. At registration time contribute three labeled open actions, but no
+pane and no network work. The first explicit action registers one dismissible
+management pane and calls the plugin-scoped `ctx.panes.reveal()` method.
+Subsequent actions reveal the same pane. The host owns close, focus, drag,
+docking, enable state, hot reload, and disposer execution.
+
+The pane reads and mutates the existing Relay Dashboard backend through
+`ctx.rest()` only. It maintains no server cache, starts no timer/socket/polling
+loop, sends no notification, and makes no request until the user opens a view.
+Every query key contains the active Desktop profile, while the SDK binds the
+request to that profile's authenticated backend namespace. Pairing, revocation,
+and remote-access actions stay user initiated; destructive or host-changing
+actions require an additional in-pane confirmation.
+
+**Security boundary.** Runtime Desktop plugins are trusted local ESM with full
+renderer authority; upstream provides error isolation, not a sandbox. Relay
+therefore ships fixed reviewed UI code only. It does not load generated ESM,
+Kotlin, Python, remote modules, or arbitrary action schemas, and it never stores
+tokens, keys, QR secrets, media paths, or duplicated Relay state. The existing
+Relay-gated declarative Android Plugin Studio remains a separate host-rendered,
+digest-approved capability model.
+
+**Consequences.** One plugin install now exposes the Relay-specific management
+role in both the web Dashboard and official Desktop without patching Hermes or
+replacing the standalone Relay CLI/tray. The SDK has no public programmatic
+pane-coordinate API and its agent `focus_pane` surface excludes contributed
+IDs, so movement remains native drag/dock and agent-driven reveal remains
+unsupported. Physical Desktop certification remains required for multi-window,
+named-profile, remote/SSH-mapped profile, close/reopen, drag/dock, hot-reload,
+and renderer-log behavior.

@@ -20,6 +20,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
 
+## [1.8.0] - 2026-08-14
+
+### Added
+
+- **Official Hermes Desktop can surface Relay through its supported runtime Plugin SDK.** The unified plugin package now includes an opt-in, profile-scoped Desktop pane for Relay status, paired devices, bridge activity, media, pairing, revocation, and remote-access management. Loading, startup, reconnects, profile changes, and updates never open it; only labeled sidebar, status-bar, or command-palette actions register and reveal the movable native pane.
+
+## [0.4.0-beta.2] - 2026-08-14
+
+### Added
+
+- **Desktop Activity now keeps inspectable local evidence.** Commands, files, devices, connection lifecycle, and computer control share a truthful event stepper with dedicated failure details; screenshot events can retain bounded local PNG evidence and open it in a larger borderless viewer. Settings controls retention as Off, 1 day, 7 days, or 30 days and shows local file usage.
+
+### Fixed
+
+- **Tunnel state stays responsive through interruption and retry.** The CLI UI distinguishes connected, reconnecting, and stopped states, exposes retry attempt/timing and a Retry now action, records connection failures and recovery in Activity, and shows compact connection cards only while the main UI is hidden.
+- **Windows CUA readiness no longer depends on the flaky whole-desktop health scan.** Hermes-Relay verifies the canonical runtime, manifest, required tools, daemon, and safe permission mode before starting structured sessions, while accessibility health remains an explicit CLI/UI diagnostic that can be rechecked without forcing the compatibility backend. This temporary workaround is scoped to the upstream fixed-timeout issue and keeps individual actions fail-closed.
+
 ## [0.4.0-beta.1] - 2026-08-14
 
 ### Added

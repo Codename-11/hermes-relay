@@ -1739,7 +1739,10 @@ fun ActiveCardRoutesSection(
     var routeEditorOriginal by remember(connection.id) {
         mutableStateOf<EndpointCandidate?>(null)
     }
-    val hasTailscaleRoute = endpoints.any { it.role.equals("tailscale", ignoreCase = true) }
+    val hasTailscaleRoute = hasConfiguredTailscaleRoute(
+        endpoints = endpoints,
+        primaryEndpointUrl = connection.primaryEndpointUrl,
+    )
     val tailscalePreferred = preferredRole?.equals("tailscale", ignoreCase = true) == true
     val routeNeedsAttention = activeEndpoint == null && liveState != RelayUiState.Connected
     val showTailscaleUnavailableHint =
@@ -2170,6 +2173,12 @@ fun ActiveCardRoutesSection(
         }
     }
 }
+
+internal fun hasConfiguredTailscaleRoute(
+    endpoints: List<EndpointCandidate>,
+    primaryEndpointUrl: String,
+): Boolean = endpoints.any { it.role.equals("tailscale", ignoreCase = true) } ||
+    Connection.inferRouteRole(primaryEndpointUrl) == "tailscale"
 
 /**
  * Numbered step row for the Manual pairing code fallback. Tightly

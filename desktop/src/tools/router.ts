@@ -30,11 +30,13 @@ import {
   auditDetails,
   categorizeTool,
   previewArgs,
+  persistAuditScreenshot,
   resultExitCode,
   summarizeResult
 } from '../lib/auditLog.js'
 import { VERSION } from '../version.js'
 import { desktopDeviceId } from '../deviceIdentity.js'
+import { readDesktopUseSettingsSync } from '../lib/desktopUseSettings.js'
 import {
   getComputerGrantSummary,
   getComputerUseRuntimeSummary,
@@ -471,7 +473,12 @@ export class DesktopToolRouter {
       // work was completable.
       this.sendResponse({ request_id, ok: true, result })
       // Local audit trail — fire-and-forget so logging never delays the reply.
-      void appendAudit({
+      const retention = readDesktopUseSettingsSync()
+      const canRetainScreenshot = tool.includes('screenshot') || tool === 'desktop_computer_action'
+      const screenshotEvidence = retention.activity_screenshot_retention_enabled && canRetainScreenshot
+        ? persistAuditScreenshot(result, request_id, retention.activity_screenshot_retention_days)
+        : Promise.resolve({})
+      void screenshotEvidence.then(screenshotEvidence => appendAudit({
         ts: Date.now(),
         kind: 'tool.completed',
         tool,
@@ -488,11 +495,12 @@ export class DesktopToolRouter {
         ...(controlSession.runId ? { run_id: controlSession.runId } : {}),
         ...(controlSession.targetDeviceId ? { target_device_id: controlSession.targetDeviceId } : {}),
         ...computerAuditMetadata(result),
+        ...screenshotEvidence,
         ...(!toolResultSucceeded(tool, result) && result && typeof result === 'object' && !Array.isArray(result) && typeof (result as Record<string, unknown>).code === 'string'
           ? { error: String((result as Record<string, unknown>).code).slice(0, 128) }
           : {}),
         ...auditDetails(args, result, { redactComputerContent: tool.startsWith('desktop_computer_') })
-      })
+      }))
     } catch (e) {
       clearTimeout(timeoutTimer)
       // Distinguish aborts (timeout or transport teardown) from genuine

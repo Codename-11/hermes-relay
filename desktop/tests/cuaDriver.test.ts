@@ -72,24 +72,42 @@ test('discovers only the canonical package/current executable and negotiates rea
     assert.equal(adapter.binaryVersion, '0.19.3')
     assert.equal(adapter.permissionMode, 'standard')
     assert.equal(runner.calls[0]?.executable, install.binary)
-    assert.deepEqual(runner.calls.map(call => call.args.join(' ')).slice(0, 5), [
-      '--version', 'manifest --pretty', 'list-tools', 'status', 'call health_report'
+    assert.deepEqual(runner.calls.map(call => call.args.join(' ')).slice(0, 4), [
+      '--version', 'manifest --pretty', 'list-tools', 'status'
     ])
+    assert.equal(runner.calls.some(call => call.args.join(' ') === 'call health_report'), false)
   } finally {
     await install.cleanup()
   }
 })
-test('fails closed for degraded health and unrestricted permission mode', async () => {
+test('keeps runtime ready when global health is degraded but still rejects unrestricted permission mode', async () => {
   const install = await fakeInstall()
   try {
-    await assert.rejects(
-      CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner: new FakeRunner(install.binary, 'degraded') }),
-      (error: unknown) => error instanceof CuaRuntimeError && error.code === 'degraded'
-    )
+    const adapter = await CuaDriverAdapter.connect({
+      platform: 'win32', homeDir: install.home, runner: new FakeRunner(install.binary, 'degraded')
+    })
+    assert.equal(adapter.binaryVersion, '0.19.3')
     await assert.rejects(
       CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner: new FakeRunner(install.binary, 'ok', '0.19.3', 'unrestricted') }),
       (error: unknown) => error instanceof CuaRuntimeError && error.code === 'incompatible'
     )
+  } finally {
+    await install.cleanup()
+  }
+})
+
+test('explicit health recheck reports degradation without changing runtime readiness', async () => {
+  const install = await fakeInstall()
+  try {
+    const runner = new FakeRunner(install.binary, 'degraded')
+    const health = await CuaDriverAdapter.healthStatus({ platform: 'win32', homeDir: install.home, runner })
+    assert.equal(health.state, 'degraded')
+    assert.equal(health.overall, 'degraded')
+    assert.equal(health.temporaryWindowsCompatibility, true)
+    assert.equal(runner.calls.filter(call => call.args.join(' ') === 'call health_report').length, 1)
+    const runtime = await CuaDriverAdapter.status({ platform: 'win32', homeDir: install.home, runner })
+    assert.equal(runtime.ready, true)
+    assert.equal(runtime.health, 'not_checked')
   } finally {
     await install.cleanup()
   }

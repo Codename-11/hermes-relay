@@ -296,6 +296,7 @@ hermes-relay computer-use engine cua      # prefer structured CUA for new sessio
 hermes-relay computer-use engine legacy   # explicit Windows-input compatibility
 hermes-relay computer-use cursor on       # virtual per-session cursor
 hermes-relay computer-use cua status
+hermes-relay computer-use cua health       # recheck accessibility health
 hermes-relay computer-use cua check-update
 hermes-relay computer-use cua install --yes
 hermes-relay computer-use cua update --yes
@@ -332,7 +333,15 @@ Show what the remote agent has run on **this** machine through the desktop tools
 hermes-relay audit               # last 50 desktop-tool calls
 hermes-relay audit --limit 20    # fewer
 hermes-relay audit --json        # raw entries for scripting
+hermes-relay audit screenshots --json
+hermes-relay audit screenshots on --days 7 --yes
+hermes-relay audit screenshots off --yes
 ```
+
+Screenshot evidence is local and separate from the JSONL log. Retention defaults
+to seven days and is capped at 20 PNG files and 10 MB per file. Choose 1, 7, or
+30 days, or turn it off; disabling retention removes existing screenshot
+evidence without deleting the remaining activity history.
 
 ```
 Desktop-tool activity (3 most recent)

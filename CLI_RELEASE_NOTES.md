@@ -2,7 +2,7 @@
 
 **Release Date:** 2026-08-14
 
-This first beta makes structured Windows computer control safer and more capable through an optional CUA Driver integration, while hardening in-place CLI and management UI updates.
+This beta makes connection recovery and Activity evidence inspectable in the compact management UI, and keeps the preferred CUA control engine usable when its upstream whole-desktop accessibility probe times out.
 
 **Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64; the management UI is Windows-only.
 
@@ -10,19 +10,18 @@ This first beta makes structured Windows computer control safer and more capable
 
 ### Added
 
-- **CUA Driver computer control.** Windows sessions prefer the verified CUA runtime for window-targeted background actions, fresh pre/post snapshots, one-use element tokens, and optional per-session animated cursors that do not move the physical pointer.
-- **Explicit engine management.** The CLI and management UI show CUA installation, compatibility, health, active backend, and session state, with guarded Install, Check, and Update actions.
-- **Bounded control activity.** Computer-control events show backend, dispatch, target, action, and verification phases without retaining screenshots, UI trees, entered values, or raw session identifiers.
+- **Inspectable Activity evidence.** Commands, files, device work, connection lifecycle, and computer control share a consistent event stepper with dedicated failure details.
+- **Optional screenshot retention.** Screenshot events can keep bounded local PNG evidence for Off, 1 day, 7 days, or 30 days and open it in a larger borderless viewer. Evidence stays outside the JSON activity log.
 
 ### Changed
 
-- **Windows Input is the compatibility backend.** Engine selection is fixed for each authenticated control session; CUA never silently falls back to foreground input after a session starts.
-- **CUA remains optional.** Hermes verifies the canonical upstream package and supported version range. The driver is not bundled or silently updated, and Hermes sessions force driver telemetry off.
+- **Connection state is live and actionable.** The UI distinguishes connected, reconnecting, and stopped states, shows retry timing, and offers Retry now without freezing the popup.
+- **Connection notices stay out of the way.** Compact connect, disconnect, and reconnect cards appear only while the main management UI is hidden.
 
 ### Fixed
 
-- **Bundle updates handle locked processes safely.** The installer waits for the invoking process, quiesces tray children, retries checked payload extraction, preserves custom install directories, and fails before release metadata changes if replacement cannot complete.
-- **CUA readiness uses the documented health schema.** A healthy `ok` result is accepted, installed-but-degraded UI Automation is explained accurately, and trusted Windows installer paths validate consistently.
+- **CUA readiness no longer depends on the flaky global accessibility scan.** Hermes verifies the canonical runtime, required tools, daemon, and safe permission mode before structured control; explicit accessibility health remains available for diagnosis and individual actions still fail closed.
+- **Connection errors retain useful context.** Activity records bounded retry and recovery evidence without flooding one event per backoff attempt.
 
 ## Install
 

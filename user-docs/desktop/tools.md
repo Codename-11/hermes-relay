@@ -238,6 +238,7 @@ hermes-relay computer-use status --json
 hermes-relay computer-use engine cua
 hermes-relay computer-use cursor on
 hermes-relay computer-use cua status
+hermes-relay computer-use cua health
 hermes-relay computer-use cua check-update
 hermes-relay computer-use cua install --yes
 hermes-relay computer-use cua update --yes
@@ -246,8 +247,9 @@ hermes-relay computer-use cua update --yes
 The management UI exposes the same choices under **Settings → Computer
 control**. Selecting `cua` succeeds only when Hermes finds the canonical runtime
 at `%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe` and verifies its
-supported version, manifest identity, allowlisted tools, non-unrestricted
-permission mode, and live health report. Hermes does not trust whichever `cua-driver.exe`
+supported version, manifest identity, allowlisted tools, and non-unrestricted
+permission mode. Accessibility health is an explicit diagnostic while the
+temporary Windows workaround for trycua/cua#3103 is active. Hermes does not trust whichever `cua-driver.exe`
 happens to appear first on `PATH`. If the runtime is missing, incompatible, or
 degraded, the UI explains why and a new control session can use Windows input
 compatibility. Backend selection is made once per authenticated control session;
@@ -276,7 +278,9 @@ the canonical upstream package, validates versioned GitHub release metadata and
 installer SHA-256, and refuses updates outside `>=0.19.3,<0.20.0`. These checks
 do not claim a Windows publisher signature. Hermes executes the verified
 temporary installer under a sanitized environment, then validates the canonical
-`packages/current` binary, driver manifest, permission mode, and health. Hermes forces CUA telemetry off for
+`packages/current` binary, driver manifest, and permission mode. The UI and
+`computer-use cua health` can recheck accessibility health without changing
+the selected backend. Hermes forces CUA telemetry off for
 its child invocations; any future telemetry opt-in belongs to the local
 operator. `hermes-relay update` continues to manage only the Hermes-Relay CLI
 and Windows UI.
@@ -356,7 +360,14 @@ If `connected: true` but the agent still says the tool is missing:
 
 `hermes-relay daemon` runs the WSS connection + tool router headless, so the agent can reach your machine while you're in another window or VS Code or off making coffee. Use `hermes-relay daemon start` to run it in the **background** (no console window, survives closing the terminal), `daemon status` to check it, and `daemon stop` to stop it. See [Subcommands → daemon](./subcommands.md#hermes-relay-daemon) for full lifecycle/log details.
 
-Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log. The management UI previews the latest three events and opens each event into bounded request, stdout, stderr, result, exit, timing, and truncation details. Sensitive request inputs are excluded.
+Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log. The management UI previews the latest three events and opens each event into a lifecycle stepper plus bounded request, stdout, stderr, result, exit, timing, and truncation details. Errors have a dedicated failure panel. Screenshot events may retain bounded local evidence for a larger viewer; Settings controls Off/1-day/7-day/30-day retention and clearing Activity removes it. Sensitive request inputs remain excluded from the JSON audit log.
+
+The daemon records one interruption event when automatic reconnect begins and a
+recovery event when it succeeds rather than adding one row per backoff attempt.
+The Overview shows retry attempt/timing and supports **Retry now** or an explicit
+disconnect. When the management UI is hidden, connection loss and restoration
+use the same compact local-card language as permission requests; no duplicate
+card appears while the UI is already open.
 
 `daemon start` covers "background, this session." On Windows, **Start UI at sign-in** registers the optional tray as a per-user login entry. **Start daemon with UI** separately opts into connecting remote access when the tray launches and defaults off for existing installs. Neither is a Windows service. For Linux/macOS or a machine-level lifetime, wrap foreground `hermes-relay daemon` with your service manager of choice.
 

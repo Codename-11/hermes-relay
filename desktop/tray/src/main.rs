@@ -5,6 +5,7 @@ compile_error!("hermes-relay-tray is a Windows-only optional systray");
 
 #[cfg(windows)]
 mod app {
+    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use std::{
@@ -225,6 +226,10 @@ mod app {
         privilege: Option<String>,
         username: Option<String>,
         updated_at: Option<u64>,
+        last_event: Option<String>,
+        reconnect_attempt: Option<u64>,
+        retry_at: Option<u64>,
+        last_error: Option<String>,
     }
 
     fn stopped() -> String {
@@ -314,6 +319,14 @@ mod app {
         result_truncated: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        screenshot_evidence_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        screenshot_mime_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        screenshot_width: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        screenshot_height: Option<u64>,
     }
 
     #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -332,6 +345,7 @@ mod app {
         active_url: Option<String>,
         daemon: DaemonStatus,
         activity: Vec<Activity>,
+        activity_screenshot_retention: ActivityScreenshotRetention,
         pending_grants: Vec<PendingGrantRequest>,
         startup_enabled: bool,
         daemon_autostart_enabled: bool,
@@ -340,6 +354,33 @@ mod app {
         ui_version: &'static str,
         cli_version: Option<String>,
         cli_path: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Deserialize, Serialize)]
+    struct ActivityScreenshotRetention {
+        #[serde(default)]
+        enabled: bool,
+        #[serde(default = "default_retention_days")]
+        days: u64,
+        #[serde(default)]
+        count: u64,
+        #[serde(default)]
+        bytes: u64,
+    }
+
+    fn default_retention_days() -> u64 {
+        7
+    }
+
+    impl Default for ActivityScreenshotRetention {
+        fn default() -> Self {
+            Self {
+                enabled: true,
+                days: 7,
+                count: 0,
+                bytes: 0,
+            }
+        }
     }
 
     #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -598,17 +639,36 @@ mod app {
         let Ok(path) = home_dir().map(|h| h.join(".hermes").join("desktop-audit.jsonl")) else {
             return Vec::new();
         };
-        let Ok(text) = fs::read_to_string(path) else {
-            return Vec::new();
-        };
-        text.lines()
-            .rev()
-            .take(30)
-            .filter_map(|line| serde_json::from_str(line).ok())
-            .collect::<Vec<_>>()
+        let text = [path.with_extension("jsonl.1"), path]
             .into_iter()
-            .rev()
-            .collect()
+            .filter_map(|file| fs::read_to_string(file).ok())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut activity = text
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect::<Vec<Activity>>();
+        let evidence_directory = home_dir()
+            .ok()
+            .map(|home| home.join(".hermes").join("activity-evidence"));
+        for entry in &mut activity {
+            let available = entry
+                .screenshot_evidence_id
+                .as_ref()
+                .zip(evidence_directory.as_ref())
+                .is_some_and(|(id, directory)| directory.join(format!("{id}.png")).is_file());
+            if !available {
+                entry.screenshot_evidence_id = None;
+                entry.screenshot_mime_type = None;
+                entry.screenshot_width = None;
+                entry.screenshot_height = None;
+            }
+        }
+        activity.sort_by_key(|entry| entry.ts);
+        if activity.len() > 200 {
+            activity.drain(..activity.len() - 200);
+        }
+        activity
     }
 
     fn append_management_event(
@@ -656,6 +716,90 @@ mod app {
             fs::remove_file(&backup)
                 .map_err(|error| format!("cannot remove rotated activity: {error}"))?;
         }
+        let evidence = directory.join("activity-evidence");
+        if evidence.exists() {
+            fs::remove_dir_all(&evidence)
+                .map_err(|error| format!("cannot clear screenshot evidence: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn append_management_error(tool: &str, summary: &str, error: &str) {
+        let Ok(directory) = home_dir().map(|home| home.join(".hermes")) else {
+            return;
+        };
+        if fs::create_dir_all(&directory).is_err() {
+            return;
+        }
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let event = serde_json::json!({
+            "ts": timestamp,
+            "kind": "management.completed",
+            "tool": tool,
+            "category": "system",
+            "ok": false,
+            "summary": summary,
+            "error": error.chars().take(512).collect::<String>(),
+        });
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(directory.join("desktop-audit.jsonl"))
+        {
+            let _ = writeln!(file, "{event}");
+        }
+    }
+
+    #[tauri::command]
+    fn get_activity_screenshot(evidence_id: String) -> Result<String, String> {
+        if evidence_id.len() != 32 || !evidence_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("invalid screenshot evidence identifier".to_string());
+        }
+        let path = home_dir()?
+            .join(".hermes")
+            .join("activity-evidence")
+            .join(format!("{}.png", evidence_id.to_ascii_lowercase()));
+        let bytes =
+            fs::read(path).map_err(|_| "screenshot evidence is no longer available".to_string())?;
+        if bytes.is_empty()
+            || bytes.len() > 10_000_000
+            || !bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
+        {
+            return Err("screenshot evidence is invalid".to_string());
+        }
+        Ok(format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(bytes)
+        ))
+    }
+
+    #[tauri::command]
+    fn set_activity_screenshot_retention(enabled: bool, days: u64) -> Result<(), String> {
+        if !matches!(days, 1 | 7 | 30) {
+            return Err("screenshot retention must be 1, 7, or 30 days".to_string());
+        }
+        let days = days.to_string();
+        run_cli_checked(&[
+            "audit",
+            "screenshots",
+            if enabled { "on" } else { "off" },
+            "--days",
+            &days,
+            "--yes",
+        ])?;
+        append_management_event(
+            "activity.retention",
+            if enabled {
+                "Screenshot evidence retention changed"
+            } else {
+                "Screenshot evidence retention disabled"
+            },
+            None,
+            None,
+        );
         Ok(())
     }
 
@@ -721,11 +865,16 @@ mod app {
             .unwrap_or_default();
         let (cli_version, cli_path) = cli_details();
         let computer_control_engine = cached_computer_control_engine();
+        let activity_screenshot_retention = run_json(&["audit", "screenshots", "--json"])
+            .ok()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
         Ok(Snapshot {
             hosts,
             active_url: selected,
             daemon,
             activity: read_activity(),
+            activity_screenshot_retention,
             pending_grants,
             startup_enabled: startup_enabled(),
             daemon_autostart_enabled: daemon_autostart_enabled(),
@@ -758,6 +907,15 @@ mod app {
         })
         .await
         .map_err(|error| format!("CUA status task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_health() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_json(&["computer-use", "cua", "health", "--json"])
+        })
+        .await
+        .map_err(|error| format!("CUA health task failed: {error}"))?
     }
 
     #[tauri::command]
@@ -1298,7 +1456,10 @@ mod app {
     #[tauri::command]
     async fn connect_daemon() -> Result<(), String> {
         tauri::async_runtime::spawn_blocking(|| {
-            run_cli_checked(&["daemon", "start"])?;
+            if let Err(error) = run_cli_checked(&["daemon", "start"]) {
+                append_management_error("daemon.start", "Relay daemon failed to connect", &error);
+                return Err(error);
+            }
             append_management_event("daemon.start", "Relay daemon connected", None, None);
             Ok(())
         })
@@ -1308,7 +1469,10 @@ mod app {
     #[tauri::command]
     async fn disconnect_daemon() -> Result<(), String> {
         tauri::async_runtime::spawn_blocking(|| {
-            run_cli_checked(&["daemon", "stop"])?;
+            if let Err(error) = run_cli_checked(&["daemon", "stop"]) {
+                append_management_error("daemon.stop", "Relay daemon failed to disconnect", &error);
+                return Err(error);
+            }
             append_management_event("daemon.stop", "Relay daemon disconnected", None, None);
             Ok(())
         })
@@ -1316,10 +1480,17 @@ mod app {
         .map_err(|error| format!("disconnect daemon task failed: {error}"))?
     }
     #[tauri::command]
-    fn restart_daemon() -> Result<(), String> {
-        run_cli_checked(&["daemon", "restart"])?;
-        append_management_event("daemon.restart", "Relay daemon restarted", None, None);
-        Ok(())
+    async fn restart_daemon() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            if let Err(error) = run_cli_checked(&["daemon", "restart"]) {
+                append_management_error("daemon.restart", "Relay daemon failed to restart", &error);
+                return Err(error);
+            }
+            append_management_event("daemon.restart", "Relay daemon restarted", None, None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("restart daemon task failed: {error}"))?
     }
 
     #[tauri::command]
@@ -1656,6 +1827,154 @@ mod app {
         present_grant_window_inner(&app, expanded, &tray_position)
     }
 
+    #[derive(Serialize)]
+    struct ConnectionNotice<'a> {
+        tone: &'a str,
+        title: &'a str,
+        detail: String,
+    }
+
+    fn daemon_status_from_file() -> Option<DaemonStatus> {
+        let path = home_dir().ok()?.join(".hermes").join("daemon-status.json");
+        serde_json::from_slice(&fs::read(path).ok()?).ok()
+    }
+
+    fn present_connection_notice(app: &AppHandle, notice: ConnectionNotice<'_>) {
+        if app
+            .get_webview_window("main")
+            .is_some_and(|window| window.is_visible().unwrap_or(false))
+        {
+            if let Some(window) = app.get_webview_window("notice") {
+                let _ = window.hide();
+            }
+            return;
+        }
+        let Some(window) = app.get_webview_window("notice") else {
+            return;
+        };
+        let Some(monitor) = window
+            .current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| window.primary_monitor().ok().flatten())
+        else {
+            return;
+        };
+        let scale = monitor.scale_factor();
+        let size = PhysicalSize::new(
+            (360.0 * scale).round() as u32,
+            (126.0 * scale).round() as u32,
+        );
+        let _ = window.set_size(Size::Physical(size));
+        let _ = window.set_position(bottom_right_position(monitor.work_area(), size, scale));
+        let Ok(payload) = serde_json::to_string(&notice) else {
+            return;
+        };
+        let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('hermes-connection-notice', {{ detail: {payload} }}))"));
+        let _ = window.show();
+    }
+
+    fn start_connection_watcher(app: AppHandle) {
+        thread::spawn(move || {
+            let mut previous = None::<String>;
+            loop {
+                let status = daemon_status_from_file();
+                let state = status
+                    .as_ref()
+                    .map(|value| value.state.clone())
+                    .unwrap_or_else(|| "stopped".to_string());
+                if let Some(before) = previous.as_deref() {
+                    if before != state {
+                        let notice = match state.as_str() {
+                            "connected" => Some(ConnectionNotice {
+                                tone: "connected",
+                                title: if before == "reconnecting" {
+                                    "Tunnel restored"
+                                } else {
+                                    "Tunnel connected"
+                                },
+                                detail: status
+                                    .as_ref()
+                                    .and_then(|value| value.url.clone())
+                                    .unwrap_or_else(|| "Remote access is ready".to_string()),
+                            }),
+                            "reconnecting" => Some(ConnectionNotice {
+                                tone: "warning",
+                                title: "Connection interrupted",
+                                detail: format!(
+                                    "Retrying automatically · attempt {}",
+                                    status
+                                        .as_ref()
+                                        .and_then(|value| value.reconnect_attempt)
+                                        .unwrap_or(1)
+                                ),
+                            }),
+                            "stopped"
+                                if before == "connected"
+                                    || before == "reconnecting"
+                                    || before == "starting" =>
+                            {
+                                Some(ConnectionNotice {
+                                    tone: "offline",
+                                    title: "Tunnel disconnected",
+                                    detail: status
+                                        .as_ref()
+                                        .and_then(|value| value.last_error.clone())
+                                        .unwrap_or_else(|| "Remote access is offline".to_string()),
+                                })
+                            }
+                            _ => None,
+                        };
+                        if let Some(notice) = notice {
+                            let handle = app.clone();
+                            let _ = app.run_on_main_thread(move || {
+                                present_connection_notice(&handle, notice)
+                            });
+                        }
+                    }
+                }
+                previous = Some(state);
+                thread::sleep(Duration::from_millis(500));
+            }
+        });
+    }
+
+    #[tauri::command]
+    fn open_management_from_notice(app: AppHandle, tray_position: State<'_, TrayPositionState>) {
+        if let Some(window) = app.get_webview_window("notice") {
+            let _ = window.hide();
+        }
+        let anchor = tray_position.0.lock().ok().and_then(|value| *value);
+        reveal_main_window(&app, anchor);
+    }
+
+    #[tauri::command]
+    fn present_activity_screenshot(app: AppHandle, evidence_id: String) -> Result<(), String> {
+        let _ = get_activity_screenshot(evidence_id.clone())?;
+        let window = app
+            .get_webview_window("evidence")
+            .ok_or_else(|| "screenshot viewer is unavailable".to_string())?;
+        let payload = serde_json::to_string(&serde_json::json!({ "evidenceId": evidence_id }))
+            .map_err(|error| error.to_string())?;
+        window.eval(format!("window.dispatchEvent(new CustomEvent('hermes-screenshot-evidence', {{ detail: {payload} }}))")).map_err(|error| error.to_string())?;
+        let monitor = app
+            .get_webview_window("main")
+            .and_then(|main| main.current_monitor().ok().flatten())
+            .or_else(|| window.current_monitor().ok().flatten())
+            .or_else(|| window.primary_monitor().ok().flatten());
+        if let (Some(monitor), Ok(size)) = (monitor, window.outer_size()) {
+            let work = monitor.work_area();
+            let x =
+                work.position.x + ((work.size.width as i64 - size.width as i64).max(0) / 2) as i32;
+            let y = work.position.y
+                + ((work.size.height as i64 - size.height as i64).max(0) / 2) as i32;
+            let _ = window.set_position(PhysicalPosition::new(x, y));
+        }
+        window.show().map_err(|error| error.to_string())?;
+        let _ = window.set_focus();
+        Ok(())
+    }
+
     fn start_grant_watcher(app: AppHandle, tray_position: TrayPositionState) {
         thread::spawn(move || {
             let mut active_id = None::<String>;
@@ -1721,6 +2040,7 @@ mod app {
                 pair_host,
                 test_host_route,
                 open_management_from_grant,
+                open_management_from_notice,
                 forget_host,
                 connect_daemon,
                 disconnect_daemon,
@@ -1737,10 +2057,14 @@ mod app {
                 set_computer_control_engine,
                 set_cua_cursor_enabled,
                 computer_cua_status,
+                computer_cua_health,
                 computer_cua_install,
                 computer_cua_check_update,
                 computer_cua_update,
                 clear_activity,
+                get_activity_screenshot,
+                set_activity_screenshot_retention,
+                present_activity_screenshot,
                 present_grant_window
             ])
             .setup(|app| {
@@ -1749,6 +2073,7 @@ mod app {
                 let tray_anchor = anchor.clone();
                 let menu_anchor = anchor.clone();
                 start_grant_watcher(app.handle().clone(), anchor);
+                start_connection_watcher(app.handle().clone());
                 start_activation_watcher(app.handle().clone());
                 let tray_actions = start_tray_action_worker(app.handle().clone());
                 let click_actions = tray_actions.clone();

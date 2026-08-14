@@ -173,6 +173,7 @@ import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.data.ProfilePresentationPolicy
+import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
@@ -232,6 +233,7 @@ import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
 import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.ProfileSessionRow
+import com.hermesandroid.relay.ui.components.ProvisionalThreadRow
 import com.hermesandroid.relay.ui.components.ProfileDisplayManagerDialog
 import com.hermesandroid.relay.ui.components.ProfileShelf
 import com.hermesandroid.relay.ui.components.ProfileSwitcherSheet
@@ -2066,6 +2068,22 @@ fun ChatScreen(
             val threadsCapabilityActive = threadsProactiveEnabled &&
                 threadsAuthState is com.hermesandroid.relay.auth.AuthState.Paired
             val hiddenSources by connectionViewModel.hiddenSources.collectAsState()
+            val proactiveInboxEntries by connectionViewModel.inboxMessages.collectAsState()
+            val phoneThreadChatIds by connectionViewModel.phoneThreadChatIds.collectAsState()
+            val provisionalThreadEntries = buildProvisionalThreadRows(
+                entries = proactiveInboxEntries,
+                activeConnectionId = activeConnection?.id,
+                realThreadChatIds = phoneThreadChatIds.values,
+            )
+            val provisionalThreads = provisionalThreadEntries.map { (chatId, entries) ->
+                val latest = entries.maxBy { it.receivedAt }
+                ProvisionalThreadRow(
+                    chatId = chatId,
+                    title = latest.title.ifBlank { "Hermes" },
+                    messageCount = entries.size,
+                    lastActivityAt = latest.receivedAt,
+                )
+            }
 
             SessionDrawerContent(
                 sessions = sessions,
@@ -2110,6 +2128,14 @@ fun ChatScreen(
                 threadsCapabilityActive = threadsCapabilityActive,
                 onNewThread = { name ->
                     chatViewModel.startNewThread(name)
+                    scope.launch { drawerState.close() }
+                },
+                provisionalThreads = provisionalThreads,
+                onSelectProvisionalThread = { chatId ->
+                    chatViewModel.openProactiveThread(
+                        chatId,
+                        provisionalThreadEntries[chatId].orEmpty(),
+                    )
                     scope.launch { drawerState.close() }
                 },
                 hiddenSources = hiddenSources,
@@ -4229,6 +4255,15 @@ fun ChatScreen(
         )
     }
 }
+
+internal fun buildProvisionalThreadRows(
+    entries: List<ProactiveInboxEntry>,
+    activeConnectionId: String?,
+    realThreadChatIds: Collection<String>,
+): Map<String, List<ProactiveInboxEntry>> = entries
+    .filter { it.connectionId == null || it.connectionId == activeConnectionId }
+    .groupBy { it.chatId ?: "phone" }
+    .filterKeys { it !in realThreadChatIds }
 
 // --- Helper functions ---
 

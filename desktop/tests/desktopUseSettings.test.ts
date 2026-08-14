@@ -9,6 +9,7 @@ import {
   readDesktopUseSettings,
   readDesktopUseSettingsSync,
   requestComputerGrantCancellation,
+  setActivityScreenshotRetention,
   setComputerControlSettings,
   setDesktopUseEnabled
 } from '../src/lib/desktopUseSettings.js'
@@ -42,7 +43,9 @@ test('computer control settings default fail-closed and survive desktop-use chan
     assert.deepEqual(await readDesktopUseSettings(settingsPath), {
       computer_use_enabled: false,
       computer_control_engine: 'cua',
-      cua_cursor_enabled: false
+      cua_cursor_enabled: false,
+      activity_screenshot_retention_enabled: true,
+      activity_screenshot_retention_days: 7
     })
     await setComputerControlSettings({
       computer_control_engine: 'cua',
@@ -53,6 +56,20 @@ test('computer control settings default fail-closed and survive desktop-use chan
     assert.equal(settings.computer_use_enabled, true)
     assert.equal(settings.computer_control_engine, 'cua')
     assert.equal(settings.cua_cursor_enabled, true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('screenshot evidence retention is explicit and survives other desktop setting changes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hermes-screenshot-retention-'))
+  const settingsPath = join(dir, 'desktop-settings.json')
+  try {
+    await setActivityScreenshotRetention(false, 30, settingsPath)
+    await setDesktopUseEnabled(true, settingsPath)
+    const settings = await readDesktopUseSettings(settingsPath)
+    assert.equal(settings.activity_screenshot_retention_enabled, false)
+    assert.equal(settings.activity_screenshot_retention_days, 30)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

@@ -45,6 +45,9 @@ export interface DaemonStatus {
   advertised_tools?: number
   voice_url?: string | null
   last_event?: string
+  reconnect_attempt?: number | null
+  retry_at?: number | null
+  last_error?: string | null
   username?: string
   privilege?: ProcessPrivilege
   computer_use_enabled?: boolean

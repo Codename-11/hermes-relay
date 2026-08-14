@@ -80,11 +80,15 @@ aborts, and non-zero process exits; and keeps request context collapsed until
 explicitly expanded. Events record handler duration and request ID where
 available. The compact Overview still shows only the three newest events.
 Settings also keeps activity compact: it previews the three newest events and
-opens a dedicated Activity page. Selecting an event opens bounded request,
-stdout, stderr, result, exit, timing, and truncation evidence; sensitive request
-inputs are excluded. Handler failures and aborts are **Issues**; non-zero process exits are
+opens a dedicated Activity page. Selecting an event opens a truthful lifecycle
+stepper plus bounded request, stdout, stderr, result, exit, timing, and
+truncation evidence; sensitive request inputs are excluded. Screenshot events
+can retain an opaque local PNG outside the JSON log and open it in a larger
+borderless viewer. **Settings → Activity → Screenshot evidence** controls this
+as Off, 1 day, 7 days (default), or 30 days, shows local file count/usage, and
+caps storage at 20 files and 10 MB per image. Handler failures and aborts are **Issues**; non-zero process exits are
 shown separately because probing commands may legitimately use them. **Clear**
-removes both current and rotated local audit history after confirmation.
+removes current/rotated audit history and retained screenshot evidence after confirmation.
 
 Clicking a card under **Hosts** opens that host's detail page; it does not change
 the active connection. The detail page is the per-host hub for its local display
@@ -459,6 +463,7 @@ Inspect the detected runtime and selected/effective engine with:
 ```powershell
 hermes-relay computer-use status --json
 hermes-relay computer-use cua status
+hermes-relay computer-use cua health       # explicit accessibility recheck
 hermes-relay computer-use cua check-update
 hermes-relay computer-use cua install --yes
 hermes-relay computer-use cua update --yes
@@ -470,8 +475,9 @@ hermes-relay computer-use cursor on
 The management UI exposes the same controls under **Settings → Computer
 control**. CUA is selected only when its canonical Windows package resolves from
 `%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe`, its supported
-version and manifest agree, its required tools are present, its permission mode
-is not unrestricted, and its live health report is healthy. Hermes ignores an unrelated
+version and manifest agree, its required tools are present, and its permission mode
+is not unrestricted. The live health report is an explicit diagnostic while the
+temporary Windows workaround for trycua/cua#3103 is active. Hermes ignores an unrelated
 or stale `cua-driver.exe` found earlier on `PATH`.
 
 Background dispatch is mandatory. If an application cannot accept a
@@ -490,8 +496,8 @@ CUA Driver is not bundled with the Hermes-Relay installer. The explicit
 GitHub release manifest and installer. Hermes verifies the manifest's
 repository/product/version and installer SHA-256 before execution under a
 sanitized child-process environment, then checks
-the canonical binary's path, version, own manifest, tool surface, permission
-mode, and health. This is release-metadata/checksum validation—not a Windows
+the canonical binary's path, version, own manifest, tool surface, and permission
+mode. Accessibility health can be rechecked separately. This is release-metadata/checksum validation—not a Windows
 publisher signature. A native update newer than the supported `>=0.19.3,
 <0.20.0` range is displayed but refused. There is no silent install/update,
 and every child invocation forces CUA telemetry off. `hermes-relay update`
