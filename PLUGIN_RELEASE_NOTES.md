@@ -1,8 +1,8 @@
 # Hermes-Relay-Server v__VERSION__
 
-**Release Date:** August 13, 2026
+**Release Date:** August 14, 2026
 
-This release adds an operator-owned secure ingress path, promotes Tailscale as the easiest supported remote route, and introduces Hermes Reach as a disabled-by-default experimental broker for outbound-only environments.
+This release adds an official, opt-in Relay pane for Hermes Desktop through the supported runtime Plugin SDK. It keeps Relay management profile-scoped and user-invoked without opening a pane during startup, reconnects, profile changes, or plugin updates.
 
 Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
@@ -10,19 +10,13 @@ Standard chat, session history, and Vanilla Hermes voice remain upstream-owned a
 
 ### Added
 
-- **Hermes Secure Link.** A pinned-TLS ingress can expose Relay, API, and Dashboard namespaces through one self-hosted endpoint while retaining each service's native authentication.
-- **Experimental Hermes Reach.** An optional self-hosted rendezvous broker forwards opaque inner Secure Link TLS records, with hashed credentials, replay protection, bounded streams, persistence, and revocation.
-- **Remote-access status.** Dashboard and pairing metadata distinguish reachability from transport protection and show supported services without exposing certificate pins.
+- **Official Hermes Desktop pane.** The unified plugin package registers a movable native pane for Relay status, paired devices, bridge activity, media, pairing, revocation, and remote-access management.
+- **Explicit entry points.** Labeled sidebar, status-bar, and command-palette actions register and reveal the pane lazily; repeated opens reuse the same surface.
+- **Profile-scoped state.** Cached Relay state follows the active Hermes profile and is disposed cleanly when the plugin unloads.
 
 ### Changed
 
-- **Tailscale is recommended for remote access.** Tailscale Serve remains the simplest supported path; direct TLS and Secure Link are self-hosted alternatives, while Reach stays advanced and experimental.
-- **Pairing carries reviewed transport trust.** QR payloads include the Secure Link endpoint and pin before the first network request; rotation requires explicit re-pairing.
-
-### Fixed
-
-- **Route credentials remain scoped and revocable.** Reach credentials are issued only through trusted Secure Link ingress, replaced atomically per Relay session, bounded by session expiry, and removed on revocation.
-- **Proxy namespaces preserve credential isolation.** API and Dashboard headers, cookies, redirects, methods, sizes, timeouts, and loopback authority are constrained independently.
+- **Plugin loading stays passive.** Loading, startup, reconnects, profile changes, and updates never reveal the pane or perform pane-owned network work.
 
 ## Install / update
 
