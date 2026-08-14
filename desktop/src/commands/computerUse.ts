@@ -125,7 +125,9 @@ async function statusPayload(): Promise<Record<string, unknown>> {
       last_action: lifecycle?.last_action ?? null,
       foreground_escalation_enabled: false,
       message: settings.computer_control_engine === 'cua' && !cuaReady
-        ? `CUA is unavailable before control starts; new sessions use explicit compatibility mode. ${cua?.reason ?? ''}`.trim()
+        ? cuaState === 'degraded'
+          ? `CUA Driver is installed, but UI Automation is degraded; new sessions use Windows Input compatibility mode. ${cua?.reason ?? ''}`.trim()
+          : `CUA Driver is unavailable before control starts; new sessions use Windows Input compatibility mode. ${cua?.reason ?? ''}`.trim()
         : cua?.reason ?? null
     }
   }

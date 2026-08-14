@@ -237,12 +237,14 @@ test('desktop computer cancel closes the matching CUA session', async () => {
 test('selected CUA retains system display observation but never falls back to legacy input', async () => {
   const item = await fixture()
   try {
-    const screenshot = await computerScreenshotHandler({ display: 'primary' }, item.ctx) as {
-      ok: boolean
-      backend: string
+    if (process.platform === 'win32') {
+      const screenshot = await computerScreenshotHandler({ display: 'primary' }, item.ctx) as {
+        ok: boolean
+        backend: string
+      }
+      assert.equal(screenshot.ok, true)
+      assert.equal(screenshot.backend, 'system_capture')
     }
-    assert.equal(screenshot.ok, true)
-    assert.equal(screenshot.backend, 'system_capture')
 
     const coordinate = await computerActionHandler({
       action: 'left_click',

@@ -413,7 +413,9 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
       foreground_escalation_enabled: false,
       cua,
       message: settings.computer_control_engine === 'cua' && !cua?.ready
-        ? `CUA is unavailable before control starts; new sessions use explicit compatibility mode. ${cua?.reason ?? ''}`.trim()
+        ? cua?.available
+          ? `CUA Driver is installed, but not ready; new sessions use Windows Input compatibility mode. ${cua.reason ?? ''}`.trim()
+          : `CUA Driver is unavailable before control starts; new sessions use Windows Input compatibility mode. ${cua?.reason ?? ''}`.trim()
         : null
     },
     permissions: {

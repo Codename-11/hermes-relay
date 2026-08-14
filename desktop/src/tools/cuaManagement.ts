@@ -71,6 +71,7 @@ export interface CuaManagementOptions {
   path?: string
   runner?: CuaProcessRunner
   fetch?: CuaManagementFetch
+  systemRoot?: string
 }
 
 interface TrustedRelease {
@@ -287,7 +288,8 @@ async function trustedRelease(version: string, fetchImpl: CuaManagementFetch): P
 async function applyTrustedRelease(
   release: TrustedRelease,
   runner: CuaProcessRunner,
-  fetchImpl: CuaManagementFetch
+  fetchImpl: CuaManagementFetch,
+  systemRootOverride?: string
 ): Promise<void> {
   const response = await fetchImpl(release.installerUrl)
   if (!response.ok) throw new Error(`CUA installer request failed (${response.status})`)
@@ -301,7 +303,7 @@ async function applyTrustedRelease(
   const path = join(directory, 'install.ps1')
   try {
     await writeFile(path, script, { mode: 0o600 })
-    const systemRoot = process.env.SystemRoot ?? process.env.WINDIR
+    const systemRoot = systemRootOverride ?? process.env.SystemRoot ?? process.env.WINDIR
     if (!systemRoot || !resolve(systemRoot).match(/^[A-Za-z]:\\/)) {
       throw new Error('Windows system PowerShell path is unavailable')
     }
@@ -337,7 +339,7 @@ async function mutateCua(
   const runner = options.runner ?? new SpawnCuaProcessRunner()
   const fetchImpl = options.fetch ?? (globalThis.fetch as unknown as CuaManagementFetch)
   const release = await trustedRelease(version, fetchImpl)
-  await applyTrustedRelease(release, runner, fetchImpl)
+  await applyTrustedRelease(release, runner, fetchImpl, options.systemRoot)
   const status = await getCuaManagementStatus({ ...options, runner })
   if (!status.installed || status.current_version !== version || !status.compatible) {
     throw new Error(

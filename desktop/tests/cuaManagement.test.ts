@@ -165,7 +165,7 @@ test('install verifies trusted release metadata/checksum and sanitizes installer
   process.env.OPENAI_API_KEY = 'must-not-leak'
   try {
     const status = await installCuaDriver({
-      platform: 'win32', homeDir: root, path: '', runner, fetch: fetchImpl
+      platform: 'win32', homeDir: root, path: '', runner, fetch: fetchImpl, systemRoot: 'C:\\Windows'
     })
     assert.equal(status.operation?.release_manifest_verified, true)
     assert.equal(status.operation?.installer_checksum_verified, true)
@@ -256,7 +256,7 @@ test('post-install degraded health fails the canonical runtime gate', async () =
   }, 'degraded')
   try {
     await assert.rejects(installCuaDriver({
-      platform: 'win32', homeDir: root, path: '', runner,
+      platform: 'win32', homeDir: root, path: '', runner, systemRoot: 'C:\\Windows',
       fetch: async url => ({
         ok: true,
         status: 200,
