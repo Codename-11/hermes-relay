@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 export const LEGACY_CONTROL_SESSION_ID = 'legacy-local-control-session'
 
 export interface ComputerControlAuthority {
-  /** Locally minted identity for one attached desktop router lifecycle. */
+  /** Server-attested identity for one attached desktop router lifecycle. */
   controlSessionId: string
   /** Canonical relay URL when known. Never supplied by remote tool arguments. */
   hostUrl?: string
@@ -58,7 +58,7 @@ const DEFAULT_SENSITIVE_PATTERNS = Object.freeze([
  * element handles before an execution backend (legacy or CUA) is invoked.
  */
 export class ComputerControlSecurityState {
-  private readonly seenRequestIds = new Map<string, number>()
+  private readonly seenRequestIds = new Map<string, { at: number; controlSessionId: string }>()
   private readonly snapshotBindings = new Map<string, SnapshotBinding>()
 
   constructor(
@@ -72,7 +72,7 @@ export class ComputerControlSecurityState {
   ): ComputerControlAuthority | null {
     const normalized = requestId.trim()
     if (!normalized || normalized.length > 256 || this.seenRequestIds.has(normalized)) return null
-    this.seenRequestIds.set(normalized, Date.now())
+    this.seenRequestIds.set(normalized, { at: Date.now(), controlSessionId: authority.controlSessionId })
     while (this.seenRequestIds.size > this.maxRememberedRequests) {
       const oldest = this.seenRequestIds.keys().next().value as string | undefined
       if (!oldest) break
@@ -108,6 +108,16 @@ export class ComputerControlSecurityState {
   revoke(): void {
     this.seenRequestIds.clear()
     this.snapshotBindings.clear()
+  }
+
+  /** Revoke only artifacts owned by one concurrent relay control session. */
+  revokeAuthority(controlSessionId: string): void {
+    for (const [requestId, binding] of this.seenRequestIds) {
+      if (binding.controlSessionId === controlSessionId) this.seenRequestIds.delete(requestId)
+    }
+    for (const [token, binding] of this.snapshotBindings) {
+      if (binding.authority.controlSessionId === controlSessionId) this.snapshotBindings.delete(token)
+    }
   }
 }
 

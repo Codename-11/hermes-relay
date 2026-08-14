@@ -76,6 +76,25 @@ test('snapshot tokens return their backend binding only to the exact target', ()
   }), null)
 })
 
+test('authority revocation removes only that concurrent session artifacts', () => {
+  const first = authority('router-first')
+  const second = authority('router-second')
+  const state = new ComputerControlSecurityState(first)
+  assert.ok(state.bindRequest('request-first', first))
+  assert.ok(state.bindRequest('request-second', second))
+  const firstToken = state.issueSnapshotToken({
+    authority: first, grantId: null, target: { pid: 1, windowId: 1 }, snapshotGeneration: 'g1'
+  })
+  const secondToken = state.issueSnapshotToken({
+    authority: second, grantId: null, target: { pid: 2, windowId: 2 }, snapshotGeneration: 'g2'
+  })
+  state.revokeAuthority(first.controlSessionId)
+  assert.ok(state.bindRequest('request-first', first))
+  assert.equal(state.bindRequest('request-second', second), null)
+  assert.equal(state.consumeSnapshotToken(firstToken, { authority: first, grantId: null, target: { pid: 1, windowId: 1 } }), null)
+  assert.ok(state.consumeSnapshotToken(secondToken, { authority: second, grantId: null, target: { pid: 2, windowId: 2 } }))
+})
+
 test('sensitive target policy fails closed without identity and blocks baseline surfaces', () => {
   assert.deepEqual(evaluateSensitiveTarget({}), { allowed: false, reason: 'missing_target_identity' })
   assert.equal(evaluateSensitiveTarget({ app: 'Bitwarden' }).allowed, false)

@@ -34,7 +34,7 @@ function normalizeSettings(value: unknown): DesktopUseSettings {
   const raw = value as Partial<DesktopUseSettings>
   return {
     computer_use_enabled: raw.computer_use_enabled === true,
-    computer_control_engine: raw.computer_control_engine === 'cua' ? 'cua' : 'legacy',
+    computer_control_engine: raw.computer_control_engine === 'legacy' ? 'legacy' : 'cua',
     cua_cursor_enabled: raw.cua_cursor_enabled === true,
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : undefined
   }
@@ -43,7 +43,7 @@ function normalizeSettings(value: unknown): DesktopUseSettings {
 function defaultSettings(): DesktopUseSettings {
   return {
     computer_use_enabled: false,
-    computer_control_engine: 'legacy',
+    computer_control_engine: 'cua',
     cua_cursor_enabled: false
   }
 }

@@ -14,6 +14,7 @@ import { execFileSync } from 'node:child_process'
 
 import type { ProcessPrivilege } from './processPrivilege.js'
 import type { HostAccessMode } from './hostAccessPolicy.js'
+import type { ComputerControlLifecycleStatus } from '../tools/cuaDriver.js'
 
 export type DaemonState = 'starting' | 'connected' | 'reconnecting' | 'stopped'
 
@@ -50,6 +51,7 @@ export interface DaemonStatus {
   access_mode?: HostAccessMode
   tools_enabled?: boolean
   computer_grant?: DaemonComputerGrantStatus
+  computer_control?: ComputerControlLifecycleStatus
 }
 
 export function daemonStatusPath(): string {

@@ -41,7 +41,7 @@ test('computer control settings default fail-closed and survive desktop-use chan
   try {
     assert.deepEqual(await readDesktopUseSettings(settingsPath), {
       computer_use_enabled: false,
-      computer_control_engine: 'legacy',
+      computer_control_engine: 'cua',
       cua_cursor_enabled: false
     })
     await setComputerControlSettings({

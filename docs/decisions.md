@@ -3060,6 +3060,27 @@ every child process it starts. The legacy engine remains the default and the
 fail-closed fallback while the live Windows acceptance and remaining scope,
 redaction, and grant-bridge hardening gates tracked in `TODO.md` stay open.
 
+**Second-phase refinement (2026-08-13).** CUA is the preferred/default setting
+for new structured-control sessions; the original Windows input path is named
+`legacy_compat` and remains available only as an explicit compatibility choice
+or a fail-closed pre-session fallback when CUA is unavailable. The backend is
+selected once per authenticated control session and cannot change mid-session.
+Window-scoped snapshots/actions use CUA, while the existing read-only full-
+display screenshot remains a separate `system_capture` path. Local audit and
+the UI activity timeline expose bounded high-level fields—backend, dispatch,
+control session, target app/window identifiers, action, phase, and verification
+state—while omitting accessibility text, screenshots, entered values, and raw
+driver responses.
+
+Hermes now owns an explicit Windows lifecycle surface without bundling the
+driver: `computer-use cua status|install|check-update|update`, with `--yes`
+required for install/update. Mutations accept only supported upstream releases
+(`>=0.19.3 <0.20.0`), verify the `trycua/cua` product/version manifest and
+installer SHA-256 before running a temporary installer under a sanitized
+environment, then verify the canonical `packages/current` binary, manifest,
+version, path, permission mode, and health. There is no automatic install or
+update.
+
 **Context.** The first Windows input backend uses PowerShell, `SetCursorPos`,
 `mouse_event`, and `SendKeys`. It can move the operator's physical pointer and
 depends on foreground focus. CUA Driver provides target-process/window UI

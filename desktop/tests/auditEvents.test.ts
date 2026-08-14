@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { auditDetails, categorizeTool, resultExitCode, summarizeResult } from '../src/lib/auditLog.js'
+import { toolResultSucceeded } from '../src/tools/router.js'
 
 test('audit events classify the activity surfaces used by the tray', () => {
   assert.equal(categorizeTool('desktop_powershell'), 'command')
@@ -30,4 +31,28 @@ test('audit events preserve process exit outcome separately from dispatch succes
   assert.equal(resultExitCode(result), 17)
   assert.equal(summarizeResult(result), 'exit 17')
   assert.equal(resultExitCode({ path: 'C:\\temp\\file.txt' }), undefined)
+})
+
+test('computer-use audit redacts screenshots, UI trees, labels, and entered values', () => {
+  const details = auditDetails(
+    { pid: 42, window_id: 7, value: 'top-secret-password' },
+    {
+      backend: 'cua_driver',
+      target: { pid: 42, windowId: 7, title: 'Password Manager' },
+      tree_markdown: 'Password: hunter2',
+      screenshot_base64: 'sensitive-pixels',
+      elements: [{ label: 'API token sk-live-secret' }]
+    },
+    { redactComputerContent: true }
+  )
+  const serialized = JSON.stringify(details)
+  assert.doesNotMatch(serialized, /hunter2|sensitive-pixels|sk-live-secret|top-secret-password|Password Manager/)
+  assert.match(details.result_detail ?? '', /"redacted": true/)
+  assert.match(details.result_detail ?? '', /"pid": 42/)
+})
+
+test('semantic computer-control rejection is audited as failed without changing transport semantics', () => {
+  assert.equal(toolResultSucceeded('desktop_computer_action', { ok: false, code: 'sensitive_target_blocked' }), false)
+  assert.equal(toolResultSucceeded('desktop_computer_action', { ok: true }), true)
+  assert.equal(toolResultSucceeded('desktop_read_file', { ok: false }), true)
 })

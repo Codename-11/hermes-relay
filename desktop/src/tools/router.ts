@@ -45,7 +45,7 @@ import {
   ComputerControlSecurityState,
   type ComputerControlAuthority
 } from './computerControlSecurity.js'
-import { closeAllCuaControlSessions } from './cuaDriver.js'
+import { closeAllCuaControlSessions, closeCuaControlSession } from './cuaDriver.js'
 
 /** The payload shape server → client for a single tool invocation. */
 export interface ToolCallPayload {
@@ -137,6 +137,30 @@ function isToolCallPayload(x: unknown): x is ToolCallPayload {
   )
 }
 
+interface ControlSessionEndPayload {
+  version: 1
+  id: string
+  target_device_id: string
+  reason?: string
+}
+
+function parseControlSessionEnd(value: unknown): ControlSessionEndPayload | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Record<string, unknown>
+  const field = (key: string): string | null => {
+    const value = raw[key]
+    if (typeof value !== 'string') return null
+    const normalized = value.trim()
+    return normalized && normalized.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(normalized) ? normalized : null
+  }
+  if (raw.version !== 1) return null
+  const id = field('id')
+  const targetDeviceId = field('target_device_id')
+  if (!id || !targetDeviceId) return null
+  const reason = raw.reason === undefined ? undefined : field('reason') ?? undefined
+  return { version: 1, id, target_device_id: targetDeviceId, ...(reason ? { reason } : {}) }
+}
+
 function parseControlAuthority(
   value: unknown,
   requestId: string,
@@ -182,6 +206,27 @@ function parseControlAuthority(
     runId,
     ...(hostUrl ? { hostUrl } : {})
   }
+}
+
+function computerAuditMetadata(result: unknown): Record<string, unknown> {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return {}
+  const source = result as Record<string, unknown>
+  const metadata: Record<string, unknown> = {}
+  // Window titles frequently contain document names, account names, or page
+  // content. Keep the app and numeric target for drilldown, but never persist
+  // the title in the local activity log.
+  for (const key of ['backend', 'dispatch', 'control_session_id', 'target_app', 'action', 'verification', 'phase']) {
+    if (typeof source[key] === 'string') metadata[key] = String(source[key]).slice(0, 256)
+  }
+  for (const key of ['target_pid', 'target_window_id']) {
+    if (typeof source[key] === 'number' && Number.isSafeInteger(source[key])) metadata[key] = source[key]
+  }
+  return metadata
+}
+
+export function toolResultSucceeded(tool: string, result: unknown): boolean {
+  if (!tool.startsWith('desktop_computer_')) return true
+  return !result || typeof result !== 'object' || Array.isArray(result) || (result as Record<string, unknown>).ok !== false
 }
 
 /** Default interactive detection — true iff stdin is a TTY AND we're not
@@ -258,6 +303,17 @@ export class DesktopToolRouter {
           return
         }
         void this.dispatch(payload)
+        return
+      }
+      if (type === 'desktop.control_session_end') {
+        const ended = parseControlSessionEnd(payload)
+        if (!ended || ended.target_device_id !== desktopDeviceId()) return
+        const authority = this.activeControlAuthorities.get(ended.id)
+        if (!authority || authority.targetDeviceId !== ended.target_device_id) return
+        this.activeControlAuthorities.delete(ended.id)
+        this.controlSecurity.revokeAuthority(ended.id)
+        revokeComputerControlSession(authority, ended.reason ?? 'relay control session ended')
+        void closeCuaControlSession(ended.id, ended.reason ?? 'relay control session ended')
         return
       }
       // Unknown desktop.* types — ignore; server may extend later.
@@ -420,7 +476,7 @@ export class DesktopToolRouter {
         kind: 'tool.completed',
         tool,
         category: categorizeTool(tool),
-        ok: true,
+        ok: toolResultSucceeded(tool, result),
         request_id,
         host_url: this.hostUrl,
         duration_ms: Date.now() - startedAt,
@@ -431,7 +487,11 @@ export class DesktopToolRouter {
         ...(controlSession.requesterDeviceId ? { requester_device_id: controlSession.requesterDeviceId } : {}),
         ...(controlSession.runId ? { run_id: controlSession.runId } : {}),
         ...(controlSession.targetDeviceId ? { target_device_id: controlSession.targetDeviceId } : {}),
-        ...auditDetails(args, result)
+        ...computerAuditMetadata(result),
+        ...(!toolResultSucceeded(tool, result) && result && typeof result === 'object' && !Array.isArray(result) && typeof (result as Record<string, unknown>).code === 'string'
+          ? { error: String((result as Record<string, unknown>).code).slice(0, 128) }
+          : {}),
+        ...auditDetails(args, result, { redactComputerContent: tool.startsWith('desktop_computer_') })
       })
     } catch (e) {
       clearTimeout(timeoutTimer)
@@ -464,7 +524,7 @@ export class DesktopToolRouter {
         ...(controlSession.requesterDeviceId ? { requester_device_id: controlSession.requesterDeviceId } : {}),
         ...(controlSession.runId ? { run_id: controlSession.runId } : {}),
         ...(controlSession.targetDeviceId ? { target_device_id: controlSession.targetDeviceId } : {}),
-        ...auditDetails(args),
+        ...auditDetails(args, undefined, { redactComputerContent: tool.startsWith('desktop_computer_') }),
         error: message
       })
     }

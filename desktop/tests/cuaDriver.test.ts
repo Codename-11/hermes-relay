@@ -7,6 +7,11 @@ import test from 'node:test'
 import {
   CuaDriverAdapter,
   CuaRuntimeError,
+  closeAllCuaControlSessions,
+  getCuaControlSession,
+  selectComputerControlBackend,
+  setCuaControlSessionFactoryForTests,
+  type CuaControlSession,
   type CuaProcessResult,
   type CuaProcessRunner
 } from '../src/tools/cuaDriver.js'
@@ -131,5 +136,48 @@ test('rejects invalid tokens and keys before invoking the driver', async () => {
     await session.close()
   } finally {
     await install.cleanup()
+  }
+})
+
+test('shared control sessions reject identity changes under the same authority id', async () => {
+  const fake = { close: async () => undefined } as unknown as CuaControlSession
+  setCuaControlSessionFactoryForTests(async () => fake)
+  try {
+    await getCuaControlSession({
+      controlSessionId: 'control-bound',
+      targetDeviceId: 'desktop-1',
+      relaySessionId: 'relay-1',
+      requesterDeviceId: 'agent-1',
+      runId: 'run-1'
+    })
+    await assert.rejects(getCuaControlSession({
+      controlSessionId: 'control-bound',
+      targetDeviceId: 'desktop-1',
+      relaySessionId: 'relay-1',
+      requesterDeviceId: 'agent-2',
+      runId: 'run-1'
+    }), /identity changed/)
+  } finally {
+    await closeAllCuaControlSessions('test cleanup')
+    setCuaControlSessionFactoryForTests(null)
+  }
+})
+
+test('control backend selection is immutable for the active session', async () => {
+  const fake = { close: async () => undefined } as unknown as CuaControlSession
+  setCuaControlSessionFactoryForTests(async () => fake)
+  try {
+    const primary = await selectComputerControlBackend('backend-cua', 'cua', true)
+    const attemptedDowngrade = await selectComputerControlBackend('backend-cua', 'legacy', false)
+    assert.equal(primary.backend, 'cua')
+    assert.deepEqual(attemptedDowngrade, primary)
+
+    const compatibility = await selectComputerControlBackend('backend-legacy', 'legacy', false)
+    const attemptedUpgrade = await selectComputerControlBackend('backend-legacy', 'cua', true)
+    assert.equal(compatibility.backend, 'legacy_compat')
+    assert.deepEqual(attemptedUpgrade, compatibility)
+  } finally {
+    await closeAllCuaControlSessions('test cleanup')
+    setCuaControlSessionFactoryForTests(null)
   }
 })

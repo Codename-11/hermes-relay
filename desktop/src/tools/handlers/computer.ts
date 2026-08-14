@@ -15,7 +15,14 @@ import {
   type ComputerGrantMode
 } from '../computerGrants.js'
 import { evaluateSensitiveTarget, hasAuthenticatedControlIdentity, type ComputerTarget } from '../computerControlSecurity.js'
-import { CuaDriverAdapter, closeCuaControlSession, getCuaControlSession } from '../cuaDriver.js'
+import {
+  CuaDriverAdapter,
+  closeCuaControlSession,
+  computerControlLifecycleStatus,
+  getCuaControlSession,
+  recordCuaActionEvent,
+  selectComputerControlBackend
+} from '../cuaDriver.js'
 import { approveComputerGrant } from '../computerActionApproval.js'
 import {
   runComputerInputAction,
@@ -355,7 +362,29 @@ async function cuaAction(args: Record<string, unknown>, ctx: ToolContext): Promi
   } else return failure('invalid_request', 'Unsupported structured CUA action.', {}, authority)
 
   const after = await check.session.snapshot({ pid: check.target.pid, windowId: check.target.windowId, includeScreenshot: false }, ctx.abortSignal)
-  return { ok: true, ...EXPERIMENTAL_META, backend: 'cua_driver', action, result, verification_snapshot: after }
+  recordCuaActionEvent({
+    action,
+    target_app: check.target.app,
+    target_pid: check.target.pid,
+    target_window_id: check.target.windowId,
+    verification: 'snapshot_captured'
+  })
+  return {
+    ok: true,
+    ...EXPERIMENTAL_META,
+    backend: 'cua',
+    dispatch: 'background',
+    control_session_id: authority.controlSessionId,
+    target_app: check.target.app,
+    target_title: check.target.title,
+    target_pid: check.target.pid,
+    target_window_id: check.target.windowId,
+    action,
+    verification: 'snapshot_captured',
+    phase: 'structured_primary',
+    result,
+    verification_snapshot: after
+  }
 }
 
 export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
@@ -365,6 +394,7 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
   const fullAccess = runtime.full_access === true
   const settings = readDesktopUseSettingsSync()
   const cua = settings.computer_control_engine === 'cua' ? await CuaDriverAdapter.status() : null
+  const lifecycle = computerControlLifecycleStatus()
   return {
     ok: true,
     ...EXPERIMENTAL_META,
@@ -372,11 +402,19 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
     displays: await getDisplays(),
     runtime,
     computer_control_engine: {
+      ...lifecycle,
       selected: settings.computer_control_engine,
-      effective: settings.computer_control_engine === 'cua' && cua?.ready ? 'cua' : 'legacy',
+      effective: lifecycle.active_backend === 'cua'
+        ? 'cua'
+        : lifecycle.active_backend === 'legacy_compat'
+          ? 'legacy'
+          : settings.computer_control_engine === 'cua' && cua?.ready ? 'cua' : 'legacy',
       cursor_enabled: settings.cua_cursor_enabled,
       foreground_escalation_enabled: false,
-      cua
+      cua,
+      message: settings.computer_control_engine === 'cua' && !cua?.ready
+        ? `CUA is unavailable before control starts; new sessions use explicit compatibility mode. ${cua?.reason ?? ''}`.trim()
+        : null
     },
     permissions: {
       screenshot: fullAccess ? 'full_access' : grant ? 'granted' : 'grant_required',
@@ -414,8 +452,13 @@ export const computerScreenshotHandler: ToolHandler = async (args, ctx) => {
   }
 
   const settings = readDesktopUseSettingsSync()
-  if (settings.computer_control_engine === 'cua' && (args.pid !== undefined || args.window_id !== undefined)) {
-    return cuaSnapshot(args, ctx)
+  const selection = ctx.controlSession
+    ? await selectComputerControlBackend(ctx.controlSession.controlSessionId, settings.computer_control_engine, settings.cua_cursor_enabled)
+    : null
+  if (selection?.backend === 'cua') {
+    // Window-scoped observation belongs to CUA. A caller may still request the
+    // existing read-only display capture; it is not an input-backend fallback.
+    if (args.pid !== undefined || args.window_id !== undefined) return cuaSnapshot(args, ctx)
   }
 
   if (args.region !== undefined && args.region !== null) {
@@ -443,6 +486,7 @@ export const computerScreenshotHandler: ToolHandler = async (args, ctx) => {
     ok: true,
     ...EXPERIMENTAL_META,
     mode: 'observe',
+    backend: 'system_capture',
     format: result.format,
     bytes_base64: result.bytes_base64,
     saved_path: result.saved_path,
@@ -472,11 +516,25 @@ export const computerActionHandler: ToolHandler = async (args, ctx) => {
     return failure('invalid_request', 'desktop_computer_action requires an action name.')
   }
   const settings = readDesktopUseSettingsSync()
-  if (settings.computer_control_engine === 'cua' && ['click_element', 'set_value', 'press_key', 'scroll_element'].includes(action)) {
+  const selection = ctx.controlSession
+    ? await selectComputerControlBackend(ctx.controlSession.controlSessionId, settings.computer_control_engine, settings.cua_cursor_enabled)
+    : null
+  if (selection?.backend === 'cua') {
+    if (!['click_element', 'set_value', 'press_key', 'scroll_element'].includes(action)) {
+      return failure(
+        'cua_structured_action_required',
+        'CUA is selected; legacy coordinate and foreground-routed input is disabled. Take a structured snapshot and use an element action.',
+        { action },
+        ctx.controlSession
+      )
+    }
     if (!hasComputerInputGrant(ctx.controlSession)) {
       return failure('grant_required', 'Structured host input requires an active assist/control grant.', { action }, ctx.controlSession)
     }
     return cuaAction(args, ctx)
+  }
+  if (['click_element', 'set_value', 'press_key', 'scroll_element'].includes(action)) {
+    return failure('cua_unavailable', 'Structured CUA actions are unavailable in the compatibility backend.', { action }, ctx.controlSession)
   }
   const displays = await getDisplays()
   const validation = validateComputerAction(args, displays)
@@ -504,12 +562,21 @@ export const computerActionHandler: ToolHandler = async (args, ctx) => {
     performed_at: new Date().toISOString(),
     duration_ms: Date.now() - started,
     input_backend: inputResult.backend,
+    backend: 'legacy_compat',
+    dispatch: 'foreground_compatibility',
+    phase: selection?.reason === 'cua_unavailable_before_session' ? 'pre_session_safe_fallback' : 'explicit_compatibility',
+    control_session_id: ctx.controlSession?.controlSessionId,
+    verification: normalized.returnScreenshot ? 'snapshot_captured' : 'not_requested',
     platform: inputResult.platform,
     grant: getComputerGrantSummary(ctx.controlSession)
   }
   if (normalized.returnScreenshot) {
     response.after_screenshot = await computerScreenshotHandler({ display: args.display ?? 'primary' }, ctx)
   }
+  recordCuaActionEvent({
+    action: normalized.action,
+    verification: normalized.returnScreenshot ? 'snapshot_captured' : 'not_requested'
+  })
   return response
 }
 

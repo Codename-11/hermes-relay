@@ -304,6 +304,100 @@ class DesktopMultiDeviceTests(unittest.IsolatedAsyncioTestCase):
         )
         await asyncio.wait_for(task, timeout=1)
 
+    async def test_new_requester_run_ends_prior_control_session(self) -> None:
+        handler, office, _laptop = await _register_two()
+
+        async def dispatch(run_id: str) -> dict[str, Any]:
+            task = asyncio.create_task(handler.handle_command(
+                "desktop_computer_snapshot", {}, device="desktop-1",
+                requester=DesktopRequesterContext(
+                    requester_device_id="paired-agent-1",
+                    chat_session_id="chat-1",
+                    run_id=run_id,
+                    profile="default",
+                ),
+            ))
+            await asyncio.sleep(0)
+            command = next(
+                item for item in reversed(office.sent)
+                if item["type"] == "desktop.command"
+            )
+            await handler.handle(office, {  # type: ignore[arg-type]
+                "channel": "desktop", "type": "desktop.response",
+                "payload": {"request_id": command["payload"]["request_id"], "ok": True, "result": {}},
+            })
+            await task
+            return command["payload"]
+
+        first = await dispatch("run-1")
+        second = await dispatch("run-2")
+        ended = next(item for item in office.sent if item["type"] == "desktop.control_session_end")
+        self.assertEqual(ended["payload"]["version"], 1)
+        self.assertEqual(ended["payload"]["id"], first["control_session"]["id"])
+        self.assertEqual(ended["payload"]["target_device_id"], "desktop-1")
+        self.assertEqual(ended["payload"]["reason"], "requester run changed")
+        self.assertNotEqual(first["control_session"]["id"], second["control_session"]["id"])
+
+    async def test_idle_control_session_emits_end_event(self) -> None:
+        with patch("plugin.relay.channels.desktop.CONTROL_SESSION_IDLE_SECONDS", 0.01):
+            handler, office, _laptop = await _register_two()
+            task = asyncio.create_task(handler.handle_command(
+                "desktop_computer_snapshot", {}, device="desktop-1",
+                requester=DesktopRequesterContext(
+                    requester_device_id="paired-agent-1", run_id="run-1"
+                ),
+            ))
+            await asyncio.sleep(0)
+            command = office.sent[-1]
+            await handler.handle(office, {  # type: ignore[arg-type]
+                "channel": "desktop", "type": "desktop.response",
+                "payload": {"request_id": command["payload"]["request_id"], "ok": True, "result": {}},
+            })
+            await task
+            await asyncio.sleep(0.03)
+            ended = next(item for item in office.sent if item["type"] == "desktop.control_session_end")
+            self.assertEqual(ended["payload"]["id"], command["payload"]["control_session"]["id"])
+            self.assertEqual(ended["payload"]["reason"], "control session idle timeout")
+
+    async def test_control_session_capacity_eviction_emits_end_event(self) -> None:
+        with patch("plugin.relay.channels.desktop.CONTROL_SESSIONS_MAX", 1):
+            handler, office, _laptop = await _register_two()
+
+            async def dispatch(requester_device_id: str) -> dict[str, Any]:
+                task = asyncio.create_task(handler.handle_command(
+                    "desktop_computer_snapshot", {}, device="desktop-1",
+                    requester=DesktopRequesterContext(
+                        requester_device_id=requester_device_id,
+                        run_id="run-1",
+                    ),
+                ))
+                await asyncio.sleep(0)
+                command = next(
+                    item for item in reversed(office.sent)
+                    if item["type"] == "desktop.command"
+                )
+                await handler.handle(office, {  # type: ignore[arg-type]
+                    "channel": "desktop", "type": "desktop.response",
+                    "payload": {
+                        "request_id": command["payload"]["request_id"],
+                        "ok": True,
+                        "result": {},
+                    },
+                })
+                await task
+                return command["payload"]
+
+            first = await dispatch("paired-agent-1")
+            await dispatch("paired-agent-2")
+            ended = next(
+                item for item in office.sent
+                if item["type"] == "desktop.control_session_end"
+            )
+            self.assertEqual(ended["payload"]["version"], 1)
+            self.assertEqual(ended["payload"]["id"], first["control_session"]["id"])
+            self.assertEqual(ended["payload"]["target_device_id"], "desktop-1")
+            self.assertEqual(ended["payload"]["reason"], "control session capacity eviction")
+
     async def test_untargeted_command_fails_closed_with_multiple_pcs(self) -> None:
         handler, _office, _laptop = await _register_two()
         with self.assertRaisesRegex(DesktopError, "pass device or device_id explicitly"):

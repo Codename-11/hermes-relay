@@ -101,9 +101,13 @@ hermes-relay computer-use status --json
   confirm the driver is running in the interactive user's logon session rather
   than Session 0, then run the upstream `cua-driver doctor` command.
 
-Hermes keeps Windows input as the effective fallback unless CUA is ready and
-explicitly selected. Re-check after installing, repairing, or updating the
-driver; Hermes never performs those driver lifecycle actions automatically.
+CUA is preferred for new structured-control sessions. If it is not ready before
+a session begins, Hermes can select the Windows input compatibility backend;
+it never changes backend in the middle of a control session. Re-check with
+`hermes-relay computer-use cua status`, repair explicitly with
+`computer-use cua install --yes`, or use `computer-use cua check-update` followed
+by `computer-use cua update --yes`. The UI exposes matching Install, Check, and
+Update actions. None run automatically.
 
 If a CUA action reports that background delivery is unavailable, Hermes does
 not silently foreground the target. Use another structured action or complete

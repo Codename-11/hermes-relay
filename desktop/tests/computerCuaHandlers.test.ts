@@ -154,7 +154,7 @@ test('CUA handlers issue a Hermes token, execute once, and verify with a fresh s
       snapshot_generation: 's00000001'
     }, item.ctx) as { ok: boolean; backend: string; verification_snapshot: { snapshot_id: string } }
     assert.equal(acted.ok, true)
-    assert.equal(acted.backend, 'cua_driver')
+    assert.equal(acted.backend, 'cua')
     assert.equal(acted.verification_snapshot.snapshot_id, 's00000002')
     assert.deepEqual(item.session.calls.map(call => call.name), [
       'listWindows', 'snapshot', 'listWindows', 'clickElement', 'snapshot'
@@ -203,7 +203,12 @@ test('CUA handlers reject unauthenticated and mismatched targets before input', 
     assert.equal(wrongGrant.code, 'grant_target_mismatch')
 
     item.session.appName = 'Windows Security'
-    requestComputerGrant({ mode: 'control', duration_seconds: 60 }, item.authority)
+    configureComputerUseRuntime({
+      url: 'wss://relay.example.test',
+      computerUseConsented: true,
+      consentSource: 'stored',
+      accessMode: 'full_access'
+    }, item.authority)
     const sensitive = await computerScreenshotHandler({ pid: 100, window_id: 200 }, item.ctx) as {
       ok: boolean
       code: string
@@ -224,6 +229,29 @@ test('desktop computer cancel closes the matching CUA session', async () => {
     assert.equal(result.ok, true)
     assert.equal(item.session.closed, true)
     assert.deepEqual(item.session.calls.at(-1), { name: 'close', args: 'operator stop' })
+  } finally {
+    await item.cleanup()
+  }
+})
+
+test('selected CUA retains system display observation but never falls back to legacy input', async () => {
+  const item = await fixture()
+  try {
+    const screenshot = await computerScreenshotHandler({ display: 'primary' }, item.ctx) as {
+      ok: boolean
+      backend: string
+    }
+    assert.equal(screenshot.ok, true)
+    assert.equal(screenshot.backend, 'system_capture')
+
+    const coordinate = await computerActionHandler({
+      action: 'left_click',
+      x: 100,
+      y: 200
+    }, item.ctx) as { ok: boolean; code: string }
+    assert.equal(coordinate.ok, false)
+    assert.equal(coordinate.code, 'cua_structured_action_required')
+    assert.equal(item.session.calls.some(call => call.name === 'clickElement'), false)
   } finally {
     await item.cleanup()
   }

@@ -68,7 +68,7 @@ import {
   setComputerGrantChangeListener,
   type ComputerGrant
 } from '../tools/computerGrants.js'
-import { closeCuaControlSession } from '../tools/cuaDriver.js'
+import { closeCuaControlSession, setComputerControlLifecycleListener } from '../tools/cuaDriver.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { configureCapabilityPolicies } from '../tools/capabilityRuntime.js'
 import { adbBackendAvailable } from '../tools/handlers/adb.js'
@@ -932,6 +932,9 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       void closeCuaControlSession(controlSessionId, 'computer grant ended')
     }
   })
+  const restoreControlLifecycleListener = setComputerControlLifecycleListener(computerControl => {
+    updateStatus({ computer_control: computerControl })
+  })
 
   let cancellationCheckRunning = false
   const grantControlInterval = setInterval(async () => {
@@ -1031,6 +1034,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     clearInterval(statusHeartbeat)
     clearInterval(grantControlInterval)
     restoreGrantListener()
+    restoreControlLifecycleListener()
     try {
       await clearDaemonStatus()
     } catch {

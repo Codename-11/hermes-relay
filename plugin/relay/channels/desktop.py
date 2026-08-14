@@ -59,7 +59,7 @@ _REDACT_KEYS = frozenset({"password", "token", "secret", "otp", "bearer", "api_k
 # Cap for the recent-commands ring buffer.
 RECENT_COMMANDS_MAX = 100
 CONTROL_SESSIONS_MAX = 256
-CONTROL_SESSION_IDLE_SECONDS = 3600.0
+CONTROL_SESSION_IDLE_SECONDS = 900.0
 
 
 class DesktopError(Exception):
@@ -74,6 +74,15 @@ class DesktopRequesterContext:
     chat_session_id: str | None = None
     run_id: str | None = None
     profile: str | None = None
+
+
+@dataclass
+class _ControlSessionRecord:
+    session_id: str
+    touched_at: float
+    target_ws: web.WebSocketResponse
+    target_device_id: str
+    expiry_task: asyncio.Task[None]
 
 
 def _redact_args(value: Any) -> Any:
@@ -205,13 +214,51 @@ class DesktopHandler:
         # Stable opaque ids for active computer-control runs. Callers provide
         # only trusted context fields; this handler always owns the id and
         # binds every emitted identity to the selected target + request id.
-        self._control_sessions: dict[tuple[str, str, str, str, str], tuple[str, float]] = {}
+        self._control_sessions: dict[tuple[str, str, str, str, str], _ControlSessionRecord] = {}
 
-    def _control_session(
+    async def _send_control_session_end(
+        self,
+        record: _ControlSessionRecord,
+        reason: str,
+    ) -> None:
+        if record.target_ws.closed:
+            return
+        await record.target_ws.send_str(json.dumps({
+            "channel": "desktop",
+            "type": "desktop.control_session_end",
+            "payload": {
+                "version": 1,
+                "id": record.session_id,
+                "target_device_id": record.target_device_id,
+                "reason": reason[:256],
+            },
+        }))
+
+    async def _expire_control_session(
+        self,
+        key: tuple[str, str, str, str, str],
+        session_id: str,
+    ) -> None:
+        try:
+            while True:
+                await asyncio.sleep(CONTROL_SESSION_IDLE_SECONDS)
+                record = self._control_sessions.get(key)
+                if record is None or record.session_id != session_id:
+                    return
+                if time.monotonic() - record.touched_at < CONTROL_SESSION_IDLE_SECONDS:
+                    continue
+                self._control_sessions.pop(key, None)
+                await self._send_control_session_end(record, "control session idle timeout")
+                return
+        except asyncio.CancelledError:
+            return
+
+    async def _control_session(
         self,
         *,
         request_id: str,
         target_device_id: str,
+        target_ws: web.WebSocketResponse,
         requester: DesktopRequesterContext | None,
     ) -> dict[str, Any] | None:
         context = requester or DesktopRequesterContext()
@@ -221,12 +268,6 @@ class DesktopHandler:
         if not context.requester_device_id or not context.run_id:
             return None
         now = time.monotonic()
-        expired = [
-            key for key, (_session_id, touched) in self._control_sessions.items()
-            if now - touched > CONTROL_SESSION_IDLE_SECONDS
-        ]
-        for key in expired:
-            self._control_sessions.pop(key, None)
         key = (
             context.requester_device_id,
             context.chat_session_id or "",
@@ -234,15 +275,34 @@ class DesktopHandler:
             context.profile or "",
             target_device_id or "legacy-desktop",
         )
+        # One requester/chat/profile/target may own only one active run. End
+        # the prior authority before minting a replacement for a new run.
+        transitions = [
+            (other_key, record)
+            for other_key, record in self._control_sessions.items()
+            if other_key[0] == key[0] and other_key[1] == key[1]
+            and other_key[3] == key[3] and other_key[4] == key[4]
+            and other_key[2] != key[2]
+        ]
+        for other_key, record in transitions:
+            self._control_sessions.pop(other_key, None)
+            record.expiry_task.cancel()
+            await self._send_control_session_end(record, "requester run changed")
         current = self._control_sessions.get(key)
         if current is None:
             if len(self._control_sessions) >= CONTROL_SESSIONS_MAX:
-                oldest = min(self._control_sessions, key=lambda item: self._control_sessions[item][1])
-                self._control_sessions.pop(oldest, None)
+                oldest = min(self._control_sessions, key=lambda item: self._control_sessions[item].touched_at)
+                evicted = self._control_sessions.pop(oldest)
+                evicted.expiry_task.cancel()
+                await self._send_control_session_end(evicted, "control session capacity eviction")
             session_id = f"control-{uuid.uuid4()}"
+            task = asyncio.create_task(self._expire_control_session(key, session_id))
+            self._control_sessions[key] = _ControlSessionRecord(
+                session_id, now, target_ws, key[4], task
+            )
         else:
-            session_id = current[0]
-        self._control_sessions[key] = (session_id, now)
+            session_id = current.session_id
+            current.touched_at = now
         return {
             "version": 1,
             "id": session_id,
@@ -498,9 +558,10 @@ class DesktopHandler:
             ),
         }
         if method.startswith("desktop_computer_"):
-            control_session = self._control_session(
+            control_session = await self._control_session(
                 request_id=request_id,
                 target_device_id=str(command_payload["target_device_id"] or "legacy-desktop"),
+                target_ws=ws,
                 requester=requester,
             )
             if control_session is not None:
@@ -814,11 +875,12 @@ class DesktopHandler:
                 or str(session.client_status.get("device_id", "") or "").strip()
             )
             if target_device_id:
-                self._control_sessions = {
-                    key: value
-                    for key, value in self._control_sessions.items()
-                    if key[4] != target_device_id
-                }
+                removed = [
+                    key for key in self._control_sessions if key[4] == target_device_id
+                ]
+                for key in removed:
+                    record = self._control_sessions.pop(key)
+                    record.expiry_task.cancel()
 
         # Tool-routing cleanup — only if this ws was the latched client.
         if self.client_ws is ws:
@@ -857,6 +919,8 @@ class DesktopHandler:
         self.client_ws = None
         self.advertised_tools = set()
         self._sessions.clear()
+        for record in self._control_sessions.values():
+            record.expiry_task.cancel()
         self._control_sessions.clear()
         await self._fail_pending("Relay server shutting down")
 

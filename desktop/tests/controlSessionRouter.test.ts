@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { desktopDeviceId } from '../src/deviceIdentity.js'
 import type { RelayTransport } from '../src/transport/RelayTransport.js'
+import { configureComputerUseRuntime, getComputerGrantSummary, requestComputerGrant } from '../src/tools/computerGrants.js'
 import {
   DesktopToolRouter,
   type ToolContext
@@ -120,5 +121,47 @@ test('router preserves legacy computer commands when the server omits identity',
 
   assert.match(received?.controlSession?.controlSessionId ?? '', /^router-/)
   assert.equal(received?.controlSession?.relaySessionId, undefined)
+  testHarness.router.detach()
+})
+
+test('relay control-session end revokes only the exact local target authority', async () => {
+  let received: ToolContext | undefined
+  const testHarness = harness(ctx => {
+    received = ctx
+    configureComputerUseRuntime({ computerUseConsented: true, accessMode: 'ask' }, ctx.controlSession)
+    requestComputerGrant({ mode: 'control', duration_seconds: 60 }, ctx.controlSession)
+  })
+  const requestId = 'request-ending'
+  testHarness.emit('desktop.command', {
+    request_id: requestId,
+    tool: 'desktop_computer_snapshot',
+    args: {},
+    control_session: {
+      version: 1,
+      id: 'control-ending',
+      request_id: requestId,
+      requester_device_id: 'paired-agent-1',
+      target_device_id: desktopDeviceId(),
+      run_id: 'run-ending'
+    }
+  })
+  await nextTurn()
+  assert.equal(getComputerGrantSummary(received?.controlSession).active, true)
+
+  testHarness.emit('desktop.control_session_end', {
+    version: 1,
+    id: 'control-ending',
+    target_device_id: 'another-desktop',
+    reason: 'wrong target'
+  })
+  assert.equal(getComputerGrantSummary(received?.controlSession).active, true)
+
+  testHarness.emit('desktop.control_session_end', {
+    version: 1,
+    id: 'control-ending',
+    target_device_id: desktopDeviceId(),
+    reason: 'run ended'
+  })
+  assert.equal(getComputerGrantSummary(received?.controlSession).active, false)
   testHarness.router.detach()
 })

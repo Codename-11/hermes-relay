@@ -228,8 +228,8 @@ On Windows you can choose:
 
 | Engine | Behavior |
 |--------|----------|
-| **Windows input** | Default compatibility engine. Uses the original Windows input path and can depend on foreground focus or move the physical pointer for some actions. |
-| **CUA Driver** | Optional structured engine. Targets a named PID and window, prefers UI Automation and background dispatch, and can show an animated virtual cursor without moving the physical pointer. |
+| **CUA Driver** | Preferred/default structured engine. Targets a named PID and window through UI Automation and background dispatch, and can show an animated virtual cursor without moving the physical pointer. |
+| **Windows input** | Explicit compatibility backend. Uses the original Windows input path and can depend on foreground focus or move the physical pointer for some actions. |
 
 Check the detected runtime and current selection from the CLI:
 
@@ -237,7 +237,10 @@ Check the detected runtime and current selection from the CLI:
 hermes-relay computer-use status --json
 hermes-relay computer-use engine cua
 hermes-relay computer-use cursor on
-hermes-relay computer-use foreground off
+hermes-relay computer-use cua status
+hermes-relay computer-use cua check-update
+hermes-relay computer-use cua install --yes
+hermes-relay computer-use cua update --yes
 ```
 
 The management UI exposes the same choices under **Settings → Computer
@@ -246,7 +249,9 @@ at `%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe` and verifies its
 supported version, manifest identity, allowlisted tools, non-unrestricted
 permission mode, and live health report. Hermes does not trust whichever `cua-driver.exe`
 happens to appear first on `PATH`. If the runtime is missing, incompatible, or
-degraded, the UI explains why and the effective engine remains Windows input.
+degraded, the UI explains why and a new control session can use Windows input
+compatibility. Backend selection is made once per authenticated control session;
+changing the preference never switches an active session underneath an action.
 
 CUA sessions follow Hermes control sessions. Hermes derives the driver session
 identity locally; an agent cannot choose or share a cursor ID. Each action uses
@@ -256,7 +261,7 @@ snapshot generation. The handler returns a post-action snapshot so the caller
 can verify whether the expected state actually changed. Grant expiry, cancellation, disconnect, policy change,
 emergency stop, or daemon shutdown revokes the associated local state.
 
-**Background is the default.** A target that cannot accept background input
+**Background is mandatory for CUA.** A target that cannot accept background input
 returns a failure instead of silently bringing itself forward. The foreground
 escalation control is reserved for a later explicit-authority path; this release
 always reports it off, even if an older preview saved the preference, and Full
@@ -264,12 +269,25 @@ Access cannot enable it. The animated agent cursor is optional. It is a visual o
 with a distinct session identity—not another Windows hardware pointer—and the
 operator's physical cursor remains untouched by CUA actions.
 
-CUA Driver is a separate optional dependency. Hermes-Relay does not bundle,
-auto-install, or auto-update it. Install or update it through the upstream CUA
-Driver distribution only after an explicit local choice. Hermes forces CUA
-telemetry off for its child invocations; any future telemetry opt-in belongs to
-the local operator. `hermes-relay update` continues to manage only the
-Hermes-Relay CLI and Windows UI.
+CUA Driver is a separate optional dependency. Hermes-Relay does not bundle or
+silently install/update it. `computer-use cua status|check-update` are
+read-only; `install|update` require explicit `--yes` confirmation. Hermes uses
+the canonical upstream package, validates versioned GitHub release metadata and
+installer SHA-256, and refuses updates outside `>=0.19.3,<0.20.0`. These checks
+do not claim a Windows publisher signature. Hermes executes the verified
+temporary installer under a sanitized environment, then validates the canonical
+`packages/current` binary, driver manifest, permission mode, and health. Hermes forces CUA telemetry off for
+its child invocations; any future telemetry opt-in belongs to the local
+operator. `hermes-relay update` continues to manage only the Hermes-Relay CLI
+and Windows UI.
+
+Window-scoped snapshots and element actions use the selected backend. A normal
+full-display screenshot remains on the separate read-only `system_capture` path;
+using it does not switch the input backend. The local audit and UI Activity
+timeline show bounded high-level evidence—backend, background dispatch, control
+session, target app/window identifiers, action, phase, and verification state.
+Accessibility text, screenshot bytes, entered values, and raw driver responses
+are redacted from the activity drilldown.
 
 ::: warning CUA does not sandbox raw commands
 CUA's PID/window and snapshot boundaries apply to structured computer-control

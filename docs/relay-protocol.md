@@ -388,6 +388,7 @@ Sources: `plugin/relay/channels/notifications.py`, `app/src/main/kotlin/.../noti
 | Type | Direction | Payload |
 |------|-----------|---------|
 | `desktop.command` | Server → Client | `{request_id, tool, args, control_session?}` |
+| `desktop.control_session_end` | Server → Client | `{version: 1, id, target_device_id, reason?}` |
 | `desktop.response` | Client → Server | `{request_id, ok: true, result}` or `{request_id, ok: false, error}` |
 | `desktop.status` | Client → Server | `{advertised_tools, device_id, host, platform, version, computer_use?}` |
 | `desktop.workspace` | Client → Server | Workspace context snapshot |
@@ -420,6 +421,15 @@ When a paired bearer is present, the relay derives `requester_device_id` from
 the authenticated plugin session instead. The model-facing tool wrapper drops
 reserved identity arguments, and the relay—not the caller—mints the opaque
 control-session ID and binds each selected target and request.
+
+The relay ends a control authority when the same authenticated requester/chat/
+profile starts a different run for that target, after 15 minutes of inactivity,
+on bounded capacity eviction, or when the target desktop disconnects. For the
+first three cases it emits `desktop.control_session_end`; the desktop accepts
+that event only from its attached relay channel, requires the target to match
+its stable local device ID and the opaque ID to match an active authority, then
+revokes that authority's grants and closes its exact CUA cursor/MCP session.
+Desktop disconnect and local cancellation independently revoke local state.
 
 Per-host Structured access withholds `desktop_terminal`,
 `desktop_powershell`, `desktop_spawn_detached`, and `desktop_job_start` from

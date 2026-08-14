@@ -269,6 +269,26 @@ mod app {
         #[serde(skip_serializing_if = "Option::is_none")]
         host_url: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        backend: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dispatch: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        control_session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_app: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_pid: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_window_id: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        verification: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         exit_code: Option<i64>,
@@ -335,6 +355,10 @@ mod app {
         cursor_enabled: bool,
         #[serde(default)]
         foreground_escalation_enabled: bool,
+        #[serde(default)]
+        active_sessions: Option<u64>,
+        active_backend: Option<String>,
+        last_action: Option<Value>,
         message: Option<String>,
     }
 
@@ -725,6 +749,46 @@ mod app {
                     "the installed CLI returned an invalid computer control status".to_string()
                 })
             })
+    }
+
+    #[tauri::command]
+    async fn computer_cua_status() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_json(&["computer-use", "cua", "status", "--json"])
+        })
+        .await
+        .map_err(|error| format!("CUA status task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_install() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            let result = run_json(&["computer-use", "cua", "install", "--yes", "--json"])?;
+            clear_computer_control_engine_cache();
+            Ok(result)
+        })
+        .await
+        .map_err(|error| format!("CUA install task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_check_update() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_json(&["computer-use", "cua", "check-update", "--json"])
+        })
+        .await
+        .map_err(|error| format!("CUA update check task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_update() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            let result = run_json(&["computer-use", "cua", "update", "--yes", "--json"])?;
+            clear_computer_control_engine_cache();
+            Ok(result)
+        })
+        .await
+        .map_err(|error| format!("CUA update task failed: {error}"))?
     }
 
     #[tauri::command]
@@ -1672,6 +1736,10 @@ mod app {
                 set_daemon_autostart,
                 set_computer_control_engine,
                 set_cua_cursor_enabled,
+                computer_cua_status,
+                computer_cua_install,
+                computer_cua_check_update,
+                computer_cua_update,
                 clear_activity,
                 present_grant_window
             ])

@@ -441,24 +441,30 @@ assist/control grant is active because approved input inherits that privilege.
 
 Default computer-use policy blocks password managers, credential prompts, banking/payment/crypto surfaces, OS security/admin settings, and private-key/token material. `~/.hermes/desktop-control.json` lets operators tighten or extend that baseline.
 
-#### Optional CUA Driver engine
+#### Preferred CUA Driver engine
 
-On Windows, Hermes-Relay can use a compatible local
-[CUA Driver](https://github.com/trycua/cua) runtime as an optional structured
+On Windows, Hermes-Relay prefers a compatible local
+[CUA Driver](https://github.com/trycua/cua) runtime for structured
 computer-control engine. It stays behind the same `desktop_computer_*` tools:
 the agent does not receive CUA's raw tool surface, configuration, updater,
 recording, replay, JavaScript, application-launch, or process-termination
 operations.
 
-The legacy Windows input engine remains the default and compatibility fallback.
+Windows input is the explicit compatibility backend. A backend is selected once
+when each authenticated control session starts and cannot change mid-session;
+changing the setting affects only new sessions. If preferred CUA is unavailable
+before a session starts, that session can use compatibility mode.
 Inspect the detected runtime and selected/effective engine with:
 
 ```powershell
 hermes-relay computer-use status --json
-hermes-relay computer-use engine cua       # only succeeds when CUA is ready
-hermes-relay computer-use engine legacy
+hermes-relay computer-use cua status
+hermes-relay computer-use cua check-update
+hermes-relay computer-use cua install --yes
+hermes-relay computer-use cua update --yes
+hermes-relay computer-use engine cua       # preferred; requires a ready runtime
+hermes-relay computer-use engine legacy    # explicit compatibility backend
 hermes-relay computer-use cursor on
-hermes-relay computer-use foreground off
 ```
 
 The management UI exposes the same controls under **Settings → Computer
@@ -468,7 +474,7 @@ version and manifest agree, its required tools are present, its permission mode
 is not unrestricted, and its live health report is healthy. Hermes ignores an unrelated
 or stale `cua-driver.exe` found earlier on `PATH`.
 
-Background dispatch is the default. If an application cannot accept a
+Background dispatch is mandatory. If an application cannot accept a
 background action, the action fails instead of silently stealing focus.
 **Allow foreground escalation** is reserved for a later explicitly approved
 path; this release always reports it off and dispatches CUA actions in the
@@ -479,12 +485,26 @@ tokens to its own control authority, target PID/window, grant, and fresh
 snapshot; an element token cannot be reused across windows or after it is
 consumed or expires.
 
-CUA Driver is not bundled with the Hermes-Relay installer. Install it using the
-upstream CUA Driver installer only after an explicit operator choice. Hermes
-does not auto-install or auto-update it, and every child invocation forces CUA
-telemetry off. Driver installation, updates, and any future telemetry opt-in
-remain separately owned by the local operator; Hermes-Relay's updater manages
-only the CLI and management UI.
+CUA Driver is not bundled with the Hermes-Relay installer. The explicit
+`computer-use cua install|update --yes` commands use the canonical upstream
+GitHub release manifest and installer. Hermes verifies the manifest's
+repository/product/version and installer SHA-256 before execution under a
+sanitized child-process environment, then checks
+the canonical binary's path, version, own manifest, tool surface, permission
+mode, and health. This is release-metadata/checksum validation—not a Windows
+publisher signature. A native update newer than the supported `>=0.19.3,
+<0.20.0` range is displayed but refused. There is no silent install/update,
+and every child invocation forces CUA telemetry off. `hermes-relay update`
+continues to manage only the CLI and management UI.
+
+Window-scoped snapshots and semantic actions use the selected control backend.
+The existing full-display screenshot remains a separate read-only
+`system_capture` path, so observation does not cause a mid-session backend
+switch. The local audit and UI Activity timeline record bounded high-level
+evidence such as backend, background dispatch, control session, target
+application/window identifiers, action, phase, and verification state.
+Accessibility text, screenshot bytes, entered values, and raw CUA responses are
+excluded from that drilldown.
 
 CUA improves structured screen/input isolation, but it is not a sandbox for
 general commands. If Commands, PowerShell, or terminal execution is allowed,

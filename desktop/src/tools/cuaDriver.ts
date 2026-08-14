@@ -76,6 +76,31 @@ export interface CuaElementTarget extends CuaWindowTarget {
 
 export type CuaToolResult = Record<string, unknown>
 
+export type ComputerControlBackend = 'cua' | 'legacy_compat'
+
+export interface ComputerControlBackendSelection {
+  backend: ComputerControlBackend
+  reason: 'cua_ready' | 'explicit_compatibility' | 'cua_unavailable_before_session'
+  selectedAt: string
+  cursorEnabled: boolean
+}
+
+export interface CuaActionEvent {
+  action: string
+  target_app?: string
+  target_pid?: number
+  target_window_id?: number
+  verification: 'snapshot_captured' | 'not_requested' | 'failed'
+  occurred_at: string
+}
+
+export interface ComputerControlLifecycleStatus {
+  active_sessions: number
+  cursor_enabled: boolean
+  active_backend: 'cua' | 'legacy_compat' | 'mixed' | 'idle'
+  last_action: CuaActionEvent | null
+}
+
 interface CuaManifest {
   schema_version?: unknown
   binary_version?: unknown
@@ -94,6 +119,25 @@ interface JsonRpcResponse {
   error?: { message?: unknown }
 }
 
+/**
+ * CUA is a separately maintained child process. Do not copy the relay daemon's
+ * environment into it: that environment can contain pairing tokens, provider
+ * credentials, and other secrets unrelated to desktop control.
+ */
+export function cuaDriverEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const allowed = [
+    'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT', 'PATH', 'TEMP', 'TMP',
+    'LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+    'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432', 'NUMBER_OF_PROCESSORS'
+  ]
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of allowed) {
+    const value = process.env[key]
+    if (value !== undefined) env[key] = value
+  }
+  return { ...env, ...extra, CUA_DRIVER_RS_TELEMETRY_ENABLED: '0' }
+}
+
 class CuaMcpClient {
   private readonly child: ChildProcessWithoutNullStreams
   private readonly pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }>()
@@ -105,14 +149,14 @@ class CuaMcpClient {
     this.child = spawn(binaryPath, ['mcp', '--socket', '\\\\.\\pipe\\cua-driver'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: '0' }
+      env: cuaDriverEnvironment()
     })
     this.child.stdout.on('data', (chunk: Buffer) => this.receive(chunk))
     this.child.on('error', error => this.failAll(new CuaRuntimeError(`CUA MCP transport failed: ${error.message}`, 'transport')))
     this.child.on('close', code => this.failAll(new CuaRuntimeError(`CUA MCP transport closed (${code ?? 'unknown'})`, 'transport')))
   }
 
-  static async connect(binaryPath: string): Promise<CuaMcpClient> {
+  static async connect(binaryPath: string, expectedVersion: string): Promise<CuaMcpClient> {
     const client = new CuaMcpClient(binaryPath)
     const initialized = await client.request('initialize', {
       protocolVersion: '2025-06-18',
@@ -122,6 +166,13 @@ class CuaMcpClient {
     if (initialized.protocolVersion !== '2025-06-18') {
       client.close()
       throw new CuaRuntimeError('CUA MCP protocol version is incompatible', 'incompatible')
+    }
+    if (initialized.serverInfo?.version !== expectedVersion) {
+      client.close()
+      throw new CuaRuntimeError(
+        `CUA MCP daemon version ${String(initialized.serverInfo?.version ?? 'unknown')} does not match the verified binary ${expectedVersion}`,
+        'incompatible'
+      )
     }
     client.notify('notifications/initialized', {})
     return client
@@ -134,8 +185,9 @@ class CuaMcpClient {
       content?: Array<{ type?: unknown; text?: unknown; data?: unknown; mimeType?: unknown }>
     }
     if (result.isError === true) {
-      const message = result.content?.find(item => item.type === 'text' && typeof item.text === 'string')?.text
-      throw new CuaRuntimeError(`CUA Driver ${tool} rejected the action${message ? `: ${String(message).slice(0, 500)}` : ''}`, 'transport')
+      // Driver errors can quote UI labels or entered values. Treat the broker
+      // result as sensitive and expose only the stable operation name.
+      throw new CuaRuntimeError(`CUA Driver ${tool} rejected the action`, 'transport')
     }
     if (result.structuredContent && typeof result.structuredContent === 'object' && !Array.isArray(result.structuredContent)) {
       const structured = { ...(result.structuredContent as CuaToolResult) }
@@ -241,7 +293,7 @@ export class SpawnCuaProcessRunner implements CuaProcessRunner {
       const child = spawn(executable, [...args], {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        env: options.env ?? { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: '0' }
+        env: options.env ?? cuaDriverEnvironment()
       })
       let stdout = ''
       let stderr = ''
@@ -326,7 +378,6 @@ function derivedSessionId(identity: CuaControlSessionIdentity): string {
     identity.controlSessionId,
     identity.targetDeviceId,
     identity.hostUrl ?? '',
-    identity.requestId ?? '',
     identity.relaySessionId ?? '',
     identity.requesterDeviceId ?? '',
     identity.chatSessionId ?? '',
@@ -336,6 +387,18 @@ function derivedSessionId(identity: CuaControlSessionIdentity): string {
     throw new CuaRuntimeError('CUA control session identity is incomplete', 'transport')
   }
   return `hermes-${createHash('sha256').update(fields.join('\u0000')).digest('hex').slice(0, 32)}`
+}
+
+function controlIdentityFingerprint(identity: CuaControlSessionIdentity): string {
+  return createHash('sha256').update([
+    identity.controlSessionId,
+    identity.targetDeviceId,
+    identity.hostUrl ?? '',
+    identity.relaySessionId ?? '',
+    identity.requesterDeviceId ?? '',
+    identity.chatSessionId ?? '',
+    identity.runId ?? ''
+  ].join('\u0000')).digest('hex')
 }
 
 async function canonicalBinary(options: CuaRuntimeOptions): Promise<string> {
@@ -390,11 +453,10 @@ export class CuaDriverAdapter {
     const run = async (args: readonly string[], stdin?: string): Promise<string> => {
       const result = await runner.run(binaryPath, args, {
         stdin,
-        env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: '0' }
+        env: cuaDriverEnvironment()
       })
       if (result.exitCode !== 0) {
-        const detail = result.stderr.trim().slice(0, 500) || `exit code ${result.exitCode}`
-        throw new CuaRuntimeError(`CUA Driver probe failed: ${detail}`, 'transport')
+        throw new CuaRuntimeError(`CUA Driver probe ${args[0] ?? 'command'} failed`, 'transport')
       }
       return result.stdout.trim()
     }
@@ -459,7 +521,7 @@ export class CuaDriverAdapter {
       throw new CuaRuntimeError('CUA control session is already active', 'transport')
     }
     if (signal?.aborted) throw new CuaRuntimeError('CUA control session was cancelled', 'transport')
-    const mcp = this.usePersistentMcp ? await CuaMcpClient.connect(this.binaryPath) : null
+    const mcp = this.usePersistentMcp ? await CuaMcpClient.connect(this.binaryPath, this.binaryVersion) : null
     const invoke = async (tool: string, args: Record<string, unknown>, invokeSignal?: AbortSignal): Promise<CuaToolResult> => {
       if (invokeSignal?.aborted) throw new CuaRuntimeError('CUA action was cancelled', 'transport')
       if (!ALLOWED_TOOLS.includes(tool)) throw new CuaRuntimeError('Attempted to invoke a non-allowlisted CUA Driver tool', 'transport')
@@ -468,11 +530,10 @@ export class CuaDriverAdapter {
         stdin: JSON.stringify(args),
         timeoutMs: DEFAULT_TIMEOUT_MS,
         signal: invokeSignal,
-        env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: '0' }
+        env: cuaDriverEnvironment()
       })
       if (result.exitCode !== 0) {
-        const detail = result.stderr.trim().slice(0, 500) || `exit code ${result.exitCode}`
-        throw new CuaRuntimeError(`CUA Driver ${tool} failed: ${detail}`, 'transport')
+        throw new CuaRuntimeError(`CUA Driver ${tool} failed`, 'transport')
       }
       const payload = parseJsonObject(result.stdout.trim(), `CUA Driver ${tool}`)
       if (payload.isError === true) throw new CuaRuntimeError(`CUA Driver ${tool} rejected the action`, 'transport')
@@ -619,6 +680,22 @@ export class CuaControlSession {
 
 let sharedAdapter: Promise<CuaDriverAdapter> | null = null
 const sharedSessions = new Map<string, Promise<CuaControlSession>>()
+const sharedSessionIdentities = new Map<string, string>()
+const backendSelections = new Map<string, ComputerControlBackendSelection>()
+let lastActionEvent: CuaActionEvent | null = null
+let lifecycleListener: ((status: ComputerControlLifecycleStatus) => void) | null = null
+
+export function setComputerControlLifecycleListener(
+  listener: ((status: ComputerControlLifecycleStatus) => void) | null
+): () => void {
+  lifecycleListener = listener
+  listener?.(computerControlLifecycleStatus())
+  return () => { if (lifecycleListener === listener) lifecycleListener = null }
+}
+
+function publishLifecycle(): void {
+  lifecycleListener?.(computerControlLifecycleStatus())
+}
 let testSessionFactory: ((identity: CuaControlSessionIdentity) => Promise<CuaControlSession>) | null = null
 
 /** Test-only dependency seam; production callers must never configure this. */
@@ -627,12 +704,73 @@ export function setCuaControlSessionFactoryForTests(
 ): void {
   testSessionFactory = factory
   sharedSessions.clear()
+  sharedSessionIdentities.clear()
+  backendSelections.clear()
   sharedAdapter = null
+}
+
+/** Select once per outer Hermes control session; an active session never changes backend. */
+export async function selectComputerControlBackend(
+  controlSessionId: string,
+  selected: 'legacy' | 'cua',
+  cursorEnabled: boolean
+): Promise<ComputerControlBackendSelection> {
+  const existing = backendSelections.get(controlSessionId)
+  if (existing) return existing
+  let selection: ComputerControlBackendSelection
+  if (selected === 'legacy') {
+    selection = {
+      backend: 'legacy_compat',
+      reason: 'explicit_compatibility',
+      selectedAt: new Date().toISOString(),
+      cursorEnabled: false
+    }
+  } else if (testSessionFactory) {
+    selection = { backend: 'cua', reason: 'cua_ready', selectedAt: new Date().toISOString(), cursorEnabled }
+  } else {
+    try {
+      sharedAdapter ??= CuaDriverAdapter.connect()
+      await sharedAdapter
+      selection = { backend: 'cua', reason: 'cua_ready', selectedAt: new Date().toISOString(), cursorEnabled }
+    } catch {
+      sharedAdapter = null
+      selection = {
+        backend: 'legacy_compat',
+        reason: 'cua_unavailable_before_session',
+        selectedAt: new Date().toISOString(),
+        cursorEnabled: false
+      }
+    }
+  }
+  backendSelections.set(controlSessionId, selection)
+  publishLifecycle()
+  return selection
+}
+
+export function recordCuaActionEvent(event: Omit<CuaActionEvent, 'occurred_at'>): void {
+  lastActionEvent = { ...event, occurred_at: new Date().toISOString() }
+  publishLifecycle()
+}
+
+export function computerControlLifecycleStatus(): ComputerControlLifecycleStatus {
+  const active = [...backendSelections.values()]
+  const backends = new Set(active.map(item => item.backend))
+  return {
+    active_sessions: active.length,
+    cursor_enabled: active.some(item => item.backend === 'cua' && item.cursorEnabled),
+    active_backend: active.length === 0 ? 'idle' : backends.size > 1 ? 'mixed' : active[0]!.backend,
+    last_action: lastActionEvent
+  }
 }
 
 /** Return the one bounded CUA session owned by an authenticated Hermes control session. */
 export async function getCuaControlSession(identity: CuaControlSessionIdentity): Promise<CuaControlSession> {
   const key = identity.controlSessionId
+  const fingerprint = controlIdentityFingerprint(identity)
+  const existingFingerprint = sharedSessionIdentities.get(key)
+  if (existingFingerprint && existingFingerprint !== fingerprint) {
+    throw new CuaRuntimeError('CUA control session identity changed after session creation', 'incompatible')
+  }
   let session = sharedSessions.get(key)
   if (!session) {
     if (testSessionFactory) {
@@ -640,10 +778,19 @@ export async function getCuaControlSession(identity: CuaControlSessionIdentity):
     } else {
       sharedAdapter ??= CuaDriverAdapter.connect()
       const settings = readDesktopUseSettingsSync()
-      session = sharedAdapter.then(adapter => adapter.openSession(identity, undefined, settings.cua_cursor_enabled))
+      const selection = backendSelections.get(key)
+      session = sharedAdapter.then(adapter => adapter.openSession(
+        identity,
+        undefined,
+        selection?.backend === 'cua' ? selection.cursorEnabled : settings.cua_cursor_enabled
+      ))
     }
     sharedSessions.set(key, session)
-    void session.catch(() => sharedSessions.delete(key))
+    sharedSessionIdentities.set(key, fingerprint)
+    void session.catch(() => {
+      sharedSessions.delete(key)
+      sharedSessionIdentities.delete(key)
+    })
   }
   return session
 }
@@ -652,12 +799,18 @@ export async function getCuaControlSession(identity: CuaControlSessionIdentity):
 export async function closeCuaControlSession(controlSessionId: string, reason?: string): Promise<void> {
   const session = sharedSessions.get(controlSessionId)
   sharedSessions.delete(controlSessionId)
+  sharedSessionIdentities.delete(controlSessionId)
+  backendSelections.delete(controlSessionId)
+  publishLifecycle()
   if (session) await session.then(value => value.close(reason)).catch(() => undefined)
 }
 
 export async function closeAllCuaControlSessions(reason?: string): Promise<void> {
   const sessions = [...sharedSessions.values()]
   sharedSessions.clear()
+  sharedSessionIdentities.clear()
+  backendSelections.clear()
+  publishLifecycle()
   await Promise.allSettled(sessions.map(session => session.then(value => value.close(reason))))
   sharedAdapter = null
 }

@@ -12,6 +12,12 @@ import { listPendingGrantRequests } from '../lib/grantBridge.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec, unknownSubcommand } from '../lib/usage.js'
 import { CuaDriverAdapter, type CuaRuntimeStatus } from '../tools/cuaDriver.js'
+import {
+  checkCuaUpdate,
+  getCuaManagementStatus,
+  installCuaDriver,
+  updateCuaDriver
+} from '../tools/cuaManagement.js'
 
 const COMPUTER_USE_USAGE: UsageSpec = {
   name: 'computer-use',
@@ -22,7 +28,8 @@ const COMPUTER_USE_USAGE: UsageSpec = {
     'computer-use disable',
     'computer-use cancel',
     'computer-use engine <legacy|cua>',
-    'computer-use cursor <on|off>'
+    'computer-use cursor <on|off>',
+    'computer-use cua <status|install|check-update|update> [--json] [--yes]'
   ],
   subcommands: [
     { verb: 'status', desc: 'Show preference, daemon state, active grant, and pending requests' },
@@ -30,15 +37,19 @@ const COMPUTER_USE_USAGE: UsageSpec = {
     { verb: 'disable', desc: 'Disable desktop use and request cancellation of any active grant' },
     { verb: 'cancel', desc: 'Cancel the active task-scoped desktop grant' },
     { verb: 'engine', desc: 'Choose legacy Windows input or a ready CUA Driver backend' },
-    { verb: 'cursor', desc: 'Show or hide the CUA virtual agent cursor' }
+    { verb: 'cursor', desc: 'Show or hide the CUA virtual agent cursor' },
+    { verb: 'cua', desc: 'Manage the canonical CUA Driver package explicitly' }
   ],
   flags: [
     { flag: '--json', desc: 'Emit machine-readable status' },
-    { flag: '--yes', desc: 'Confirm enablement non-interactively' }
+    { flag: '--yes', desc: 'Confirm enablement, CUA installation, or CUA update explicitly' }
   ],
   examples: [
     'hermes-relay computer-use status',
     'hermes-relay computer-use enable',
+    'hermes-relay computer-use cua status',
+    'hermes-relay computer-use cua check-update',
+    'hermes-relay computer-use cua install --yes',
     'hermes-relay computer-use cancel',
     'hermes-relay computer-use disable'
   ]
@@ -85,6 +96,7 @@ async function statusPayload(): Promise<Record<string, unknown>> {
           ? 'degraded'
           : 'error'
   const cuaReady = cuaState === 'ready'
+  const lifecycle = daemonAlive ? daemon?.computer_control : undefined
   return {
     enabled: settings.computer_use_enabled,
     daemon_alive: daemonAlive,
@@ -95,15 +107,26 @@ async function statusPayload(): Promise<Record<string, unknown>> {
     restart_required: daemonAlive && daemon?.computer_use_enabled !== settings.computer_use_enabled,
     computer_control_engine: {
       selected: settings.computer_control_engine,
-      effective: settings.computer_control_engine === 'cua' && cuaReady ? 'cua' : 'legacy',
+      effective: settings.computer_control_engine === 'cua'
+        ? lifecycle?.active_backend === 'cua'
+          ? 'cua'
+          : lifecycle?.active_backend === 'legacy_compat'
+            ? 'legacy'
+            : cuaReady ? 'cua' : 'legacy'
+        : 'legacy',
       available: cua?.available === true,
       state: cuaState,
       version: cua?.binaryVersion ?? null,
       health: cua?.health ?? null,
       path: cua?.binaryPath ?? null,
       cursor_enabled: settings.cua_cursor_enabled,
+      active_sessions: lifecycle?.active_sessions ?? 0,
+      active_backend: lifecycle?.active_backend ?? 'idle',
+      last_action: lifecycle?.last_action ?? null,
       foreground_escalation_enabled: false,
-      message: cua?.reason ?? null
+      message: settings.computer_control_engine === 'cua' && !cuaReady
+        ? `CUA is unavailable before control starts; new sessions use explicit compatibility mode. ${cua?.reason ?? ''}`.trim()
+        : cua?.reason ?? null
     }
   }
 }
@@ -116,6 +139,56 @@ export async function computerUseCommand(args: ParsedArgs): Promise<number> {
   }
 
   const subcommand = args.positional[0] ?? 'status'
+  if (subcommand === 'cua') {
+    const action = args.positional[1] ?? 'status'
+    const json = args.flags.json === true
+    try {
+      const payload = action === 'status'
+        ? await getCuaManagementStatus()
+        : action === 'check-update'
+          ? await checkCuaUpdate()
+          : action === 'install'
+            ? args.flags.yes === true
+              ? await installCuaDriver()
+              : null
+            : action === 'update'
+              ? args.flags.yes === true
+                ? await updateCuaDriver()
+                : null
+              : undefined
+      if (payload === undefined) {
+        process.stderr.write(t.err('cua action must be status, install, check-update, or update') + '\n')
+        return 1
+      }
+      if (payload === null) {
+        process.stderr.write(t.err(`CUA ${action} requires explicit confirmation with --yes`) + '\n')
+        return 1
+      }
+      if (json) {
+        process.stdout.write(JSON.stringify(payload, null, 2) + '\n')
+        return 0
+      }
+      const version = payload.current_version ?? 'not installed'
+      process.stdout.write(t.bold('CUA Driver') + `\n  version: ${version}\n`)
+      process.stdout.write(`  package: ${payload.canonical_path ?? 'not installed'}\n`)
+      process.stdout.write(`  compatibility: ${payload.compatible ? 'supported' : payload.compatibility_reason ?? 'not ready'}\n`)
+      if (payload.stale_path_shim) {
+        process.stdout.write(t.warnLine(`  PATH resolves a competing copy: ${payload.discovered_path}`) + '\n')
+        process.stdout.write(t.muted('  Hermes uses the canonical package/current install instead.') + '\n')
+      }
+      if (payload.update) {
+        if (payload.update.error) process.stdout.write(t.warnLine(`  update check: ${payload.update.error}`) + '\n')
+        else if (payload.update.update_available) {
+          process.stdout.write(`  update: ${payload.update.latest_version}${payload.update.compatible ? ' available' : ' available but unsupported'}\n`)
+        } else process.stdout.write('  update: up to date\n')
+      }
+      if (payload.operation) process.stdout.write(t.okLine(`CUA ${payload.operation.kind} completed`) + '\n')
+      return 0
+    } catch (error) {
+      process.stderr.write(t.err(error instanceof Error ? error.message : String(error)) + '\n')
+      return 1
+    }
+  }
   if (subcommand === 'status') {
     const payload = await statusPayload()
     if (args.flags.json) {
