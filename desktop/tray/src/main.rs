@@ -1956,7 +1956,7 @@ mod app {
             .ok_or_else(|| "screenshot viewer is unavailable".to_string())?;
         let payload = serde_json::to_string(&serde_json::json!({ "evidenceId": evidence_id }))
             .map_err(|error| error.to_string())?;
-    window.eval(format!("window.dispatchEvent(new CustomEvent('hermes-screenshot-evidence', {{ detail: {payload} }}))")).map_err(|error| error.to_string())?;
+        window.eval(format!("window.dispatchEvent(new CustomEvent('hermes-screenshot-evidence', {{ detail: {payload} }}))")).map_err(|error| error.to_string())?;
         let monitor = app
             .get_webview_window("main")
             .and_then(|main| main.current_monitor().ok().flatten())
