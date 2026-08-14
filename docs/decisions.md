@@ -3136,3 +3136,50 @@ until authenticated control-session identity, scoped grants, sensitive-surface
 enforcement, and lifecycle tests ship. Raw command execution remains an honest
 escape hatch: strong computer-control isolation is meaningful only when command
 execution is disabled or the host is already fully trusted.
+
+---
+
+## ADR 57 — Official Desktop Relay UI is a lazy, unified-package runtime plugin
+
+**Status:** Accepted (2026-08-14).
+
+**Context.** Official Hermes Desktop now discovers a regular agent plugin's
+`desktop/plugin.js` and loads it through `@hermes/plugin-sdk`. The SDK provides
+profile-aware `ctx.rest()` access to the same `plugin_api.py` namespace used by
+the web Dashboard, plus native pane, sidebar, status-bar, palette, close,
+reveal, drag, dock, i18n, query, and unload lifecycles. Registering a pane also
+adopts it into the live layout, which would violate Hermes-Relay's requirement
+that plugin load and application lifecycle events never open or focus Relay.
+
+**Decision.** Ship `plugin/desktop/plugin.js` beside `plugin.yaml` and the
+existing Dashboard half. Keep the Desktop half opt-in and use only public SDK
+imports. At registration time contribute three labeled open actions, but no
+pane and no network work. The first explicit action registers one dismissible
+management pane and calls the plugin-scoped `ctx.panes.reveal()` method.
+Subsequent actions reveal the same pane. The host owns close, focus, drag,
+docking, enable state, hot reload, and disposer execution.
+
+The pane reads and mutates the existing Relay Dashboard backend through
+`ctx.rest()` only. It maintains no server cache, starts no timer/socket/polling
+loop, sends no notification, and makes no request until the user opens a view.
+Every query key contains the active Desktop profile, while the SDK binds the
+request to that profile's authenticated backend namespace. Pairing, revocation,
+and remote-access actions stay user initiated; destructive or host-changing
+actions require an additional in-pane confirmation.
+
+**Security boundary.** Runtime Desktop plugins are trusted local ESM with full
+renderer authority; upstream provides error isolation, not a sandbox. Relay
+therefore ships fixed reviewed UI code only. It does not load generated ESM,
+Kotlin, Python, remote modules, or arbitrary action schemas, and it never stores
+tokens, keys, QR secrets, media paths, or duplicated Relay state. The existing
+Relay-gated declarative Android Plugin Studio remains a separate host-rendered,
+digest-approved capability model.
+
+**Consequences.** One plugin install now exposes the Relay-specific management
+role in both the web Dashboard and official Desktop without patching Hermes or
+replacing the standalone Relay CLI/tray. The SDK has no public programmatic
+pane-coordinate API and its agent `focus_pane` surface excludes contributed
+IDs, so movement remains native drag/dock and agent-driven reveal remains
+unsupported. Physical Desktop certification remains required for multi-window,
+named-profile, remote/SSH-mapped profile, close/reopen, drag/dock, hot-reload,
+and renderer-log behavior.

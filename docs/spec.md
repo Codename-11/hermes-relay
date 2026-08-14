@@ -1046,6 +1046,7 @@ Current Android dependency versions. Source of truth is `gradle/libs.versions.to
 | **Plugin system** | `register_tool()` via `ctx` for `android_*` and `desktop_*` tools |
 | **Relay plugin** | `hermes pair`, `hermes relay start`, `hermes relay doctor`, `hermes relay compat`, dashboard `/relay` plugin tab |
 | **Dashboard plugin** | Lives at `plugin/dashboard/`; see §10.1 below |
+| **Official Desktop plugin** | Unified-package `plugin/desktop/plugin.js`; official `@hermes/plugin-sdk` only; see §10.2 below |
 
 ### 10.1 Dashboard plugin
 
@@ -1072,6 +1073,34 @@ Hermes-Relay ships a hermes-agent Dashboard Plugin that surfaces relay-specific 
 **Auth model.** The dashboard plugin's FastAPI router mounts under `/api/plugins/hermes-relay/*` inside the gateway process (itself bound to localhost). It forwards to the relay at `http://127.0.0.1:{HERMES_RELAY_PORT}` (default 8767). Both hops are loopback-only — no bearer is minted and no new credentials are introduced. Media paths are sanitized to basename-only in `MediaRegistry.list_all()` so even a future decision to expose these routes externally wouldn't leak filesystem layout.
 
 **Frontend.** Source under `plugin/dashboard/src/` (JSX + esbuild), committed pre-built IIFE at `plugin/dashboard/dist/index.js` (~16 KB minified). Uses the dashboard's `window.__HERMES_PLUGIN_SDK__` global for React + shadcn primitives + `fetchJSON()` — no external HTTP library, no bundled React. See ADR 19 in [`docs/decisions.md`](decisions.md) for the architectural rationale.
+
+### 10.2 Official Desktop plugin
+
+The same installable `hermes-relay` plugin folder includes
+`plugin/desktop/plugin.js`, discovered through the upstream unified-package path
+`$HERMES_HOME/plugins/hermes-relay/desktop/plugin.js`. It imports only
+`@hermes/plugin-sdk`, React, and the React JSX runtime. Backend access uses the
+SDK's profile-aware `ctx.rest()` door, so Desktop and the web Dashboard share
+the existing `/api/plugins/hermes-relay/*` backend without copying state or
+introducing a second control plane.
+
+The Desktop half is opt-in. Enabling or loading it registers only labeled
+sidebar, status-bar, and command-palette entry points. The management pane is
+registered lazily after one of those explicit actions, then restored and
+focused with `ctx.panes.reveal()`. Startup, reconnect, profile change, hot
+reload, update, navigation restoration, and background events never reveal or
+focus it. Closing uses the official dismissible-pane lifecycle; moving and
+docking use the host's native drag targets. The current SDK does not expose
+programmatic move coordinates or agent-driven focus for contributed pane IDs,
+so Hermes-Relay does not emulate either with private layout or Electron hooks.
+
+The pane provides four manually refreshed views: Relay management and pairing,
+bridge activity, sanitized media metadata, and remote access. Mutations require
+explicit labeled actions; session revocation and remote-access changes add an
+in-pane confirmation. The plugin has no timers, notifications, background
+polling, arbitrary renderer code generation, telemetry, or direct external
+networking. Query keys include the active profile and `ctx.rest()` supplies the
+matching authenticated backend scope.
 
 ---
 
