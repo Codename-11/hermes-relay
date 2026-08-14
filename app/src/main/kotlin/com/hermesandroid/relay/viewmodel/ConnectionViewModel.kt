@@ -1571,6 +1571,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listAllProfileSessions(limit)
 
+    suspend fun deleteSession(profileName: String, sessionId: String): Boolean =
+        profileController.deleteSession(profileName, sessionId)
+
+    suspend fun renameSession(profileName: String, sessionId: String, title: String): Boolean =
+        profileController.renameSession(profileName, sessionId, title)
+
+    suspend fun setSessionPinned(profileName: String, sessionId: String, pinned: Boolean): Boolean =
+        profileController.setSessionPinned(profileName, sessionId, pinned)
+
+    suspend fun setSessionArchived(profileName: String, sessionId: String, archived: Boolean): Boolean =
+        profileController.setSessionArchived(profileName, sessionId, archived)
+
     suspend fun loadProfileScopedMessages(
         sessionId: String,
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,

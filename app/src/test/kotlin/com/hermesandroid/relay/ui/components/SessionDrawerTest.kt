@@ -9,6 +9,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -127,6 +128,7 @@ class SessionDrawerTest {
 
     @Test
     fun `all profiles toggle renders duplicate ids together in the primary list`() {
+        var pinned: Triple<String, String, Boolean>? = null
         compose.setContent {
             MaterialTheme {
                 SessionDrawerContent(
@@ -140,6 +142,9 @@ class SessionDrawerTest {
                     ),
                     onRefreshAllProfiles = {},
                     onSelectProfileSession = { _, _ -> },
+                    onSetProfileSessionPinned = { profile, sessionId, value ->
+                        pinned = Triple(profile, sessionId, value)
+                    },
                     onNewChat = {},
                     onSelectSession = {},
                     onDeleteSession = {},
@@ -152,6 +157,11 @@ class SessionDrawerTest {
 
         compose.onNodeWithText("Alpha session").assertIsDisplayed()
         compose.onNodeWithText("Beta session").assertIsDisplayed()
+        compose.onAllNodesWithContentDescription("Session actions")[0]
+            .assertIsDisplayed()
+            .performClick()
+        compose.onNodeWithText("Pin session").performClick()
+        compose.runOnIdle { assertEquals(Triple("alpha", "same", true), pinned) }
     }
 
     @Test

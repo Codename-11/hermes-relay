@@ -118,6 +118,40 @@ class MessageBubbleInteractionTest {
     }
 
     @Test
+    fun reactionsStayOutsideBubbleAndOpenAsFloatingTapbacks() {
+        val reactions = mutableListOf<String?>()
+        val message = ChatMessage(
+            id = "assistant-reactions",
+            role = MessageRole.ASSISTANT,
+            content = "React to this response.",
+            timestamp = 1_700_000_000_000L,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = message,
+                    onReact = { reactions += it },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("React with 👍").assertDoesNotExist()
+        compose.onNodeWithText("Remove reaction").assertDoesNotExist()
+
+        compose.onNodeWithContentDescription("assistant message: ${message.content}")
+            .performTouchInput { longClick() }
+
+        compose.onNodeWithContentDescription("React with 👍")
+            .assertIsDisplayed()
+            .assertHasClickAction()
+            .performClick()
+
+        compose.runOnIdle { assertEquals(listOf("👍"), reactions) }
+        compose.onNodeWithContentDescription("React with 👍").assertDoesNotExist()
+    }
+
+    @Test
     fun quotedReplyRendersStructuredReferenceAndKeepsMarkupOutOfActions() {
         var quotedContent: String? = null
         val message = ChatMessage(

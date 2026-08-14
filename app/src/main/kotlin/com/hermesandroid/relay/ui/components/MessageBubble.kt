@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -90,6 +91,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 
 internal const val CHAT_PET_IDENTITY_OBSTACLE_PREFIX = "chat-message-identity:"
+private val MESSAGE_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "👎")
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -460,6 +462,33 @@ fun MessageBubble(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
             ) {
+                if (onReact != null) {
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
+                    ) {
+                        MESSAGE_REACTIONS.forEach { emoji ->
+                            IconButton(
+                                onClick = {
+                                    showMessageActions = false
+                                    onReact(emoji)
+                                },
+                            ) {
+                                Text(
+                                    text = emoji,
+                                    fontSize = 24.sp,
+                                    modifier = Modifier.semantics {
+                                        contentDescription = "React with $emoji"
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    HorizontalDivider()
+                }
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.msg_bubble_copy)) },
                     onClick = {
@@ -515,6 +544,15 @@ fun MessageBubble(
                         },
                     )
                 }
+                if (onReact != null) {
+                    DropdownMenuItem(
+                        text = { Text("Remove reaction") },
+                        onClick = {
+                            showMessageActions = false
+                            onReact(null)
+                        },
+                    )
+                }
             }
         }
         Surface(
@@ -558,7 +596,7 @@ fun MessageBubble(
                         // same tactile confirm every chat app fires.
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         if (
-                            onQuoteMessage != null || showEditAction || showSpeakAction ||
+                            onQuoteMessage != null || onReact != null || showEditAction || showSpeakAction ||
                             showStopSpeakingAction
                         ) {
                             showMessageActions = true
@@ -645,25 +683,6 @@ fun MessageBubble(
                         SelectionContainer { messageTextContent() }
                     }
                 }
-                if (onReact != null) {
-                    listOf("👍", "❤️", "😂").forEach { emoji ->
-                        DropdownMenuItem(
-                            text = { Text("React $emoji") },
-                            onClick = {
-                                showMessageActions = false
-                                onReact(emoji)
-                            },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("Remove reaction") },
-                        onClick = {
-                            showMessageActions = false
-                            onReact(null)
-                        },
-                    )
-                }
-
                 if (onSessionReference != null && sessionReferences.isNotEmpty()) {
                     sessionReferences.forEach { reference ->
                         TextButton(

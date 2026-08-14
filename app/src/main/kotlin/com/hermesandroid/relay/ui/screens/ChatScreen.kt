@@ -300,14 +300,12 @@ internal fun resolveSessionActivityStates(
 internal fun resolveChatHeaderSubtitle(
     isStreaming: Boolean,
     statusText: String,
-    projectName: String?,
     personalityName: String?,
     modelName: String?,
 ): String = if (isStreaming) {
     statusText
 } else {
     listOfNotNull(
-        projectName?.takeIf { it.isNotBlank() },
         personalityName?.takeIf { it.isNotBlank() },
         modelName?.takeIf { it.isNotBlank() },
     ).joinToString(" \u00B7 ").ifBlank { statusText }
@@ -834,7 +832,6 @@ fun ChatScreen(
     val selectedProviderOverride by chatViewModel.selectedProviderOverride.collectAsState()
     val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
     val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
-    val gatewayProjectName by chatViewModel.gatewayProjectName.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
     val currentSession = remember(sessions, currentSessionId) {
         sessions.firstOrNull { it.sessionId == currentSessionId }
@@ -2215,6 +2212,54 @@ fun ChatScreen(
                         }
                     }
                 },
+                onDeleteProfileSession = { profileName, sessionId ->
+                    scope.launch {
+                        if (connectionViewModel.deleteSession(profileName, sessionId)) {
+                            allProfileSessions = allProfileSessions.filterNot {
+                                it.profile == profileName && it.session.sessionId == sessionId
+                            }
+                        }
+                    }
+                },
+                onRenameProfileSession = { profileName, sessionId, title ->
+                    scope.launch {
+                        if (connectionViewModel.renameSession(profileName, sessionId, title)) {
+                            allProfileSessions = allProfileSessions.map { row ->
+                                if (row.profile == profileName && row.session.sessionId == sessionId) {
+                                    row.copy(session = row.session.copy(title = title))
+                                } else {
+                                    row
+                                }
+                            }
+                        }
+                    }
+                },
+                onSetProfileSessionPinned = { profileName, sessionId, pinned ->
+                    scope.launch {
+                        if (connectionViewModel.setSessionPinned(profileName, sessionId, pinned)) {
+                            allProfileSessions = allProfileSessions.map { row ->
+                                if (row.profile == profileName && row.session.sessionId == sessionId) {
+                                    row.copy(session = row.session.copy(pinned = pinned))
+                                } else {
+                                    row
+                                }
+                            }
+                        }
+                    }
+                },
+                onSetProfileSessionArchived = { profileName, sessionId, archived ->
+                    scope.launch {
+                        if (connectionViewModel.setSessionArchived(profileName, sessionId, archived)) {
+                            allProfileSessions = allProfileSessions.map { row ->
+                                if (row.profile == profileName && row.session.sessionId == sessionId) {
+                                    row.copy(session = row.session.copy(archived = archived))
+                                } else {
+                                    row
+                                }
+                            }
+                        }
+                    }
+                },
             )
         }
     ) {
@@ -2320,7 +2365,6 @@ fun ChatScreen(
                         resolveChatHeaderSubtitle(
                             isStreaming = isStreaming,
                             statusText = statusText,
-                            projectName = gatewayProjectName,
                             personalityName = nonDefaultPersonality,
                             modelName = modelName,
                         )

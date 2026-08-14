@@ -206,11 +206,15 @@ fun SessionDrawerContent(
     onProfileColorChange: ((String, String?) -> Unit)? = null,
     onRefreshAllProfiles: (() -> Unit)? = null,
     onSelectProfileSession: ((String, String) -> Unit)? = null,
+    onDeleteProfileSession: ((String, String) -> Unit)? = null,
+    onRenameProfileSession: ((String, String, String) -> Unit)? = null,
+    onSetProfileSessionPinned: ((String, String, Boolean) -> Unit)? = null,
+    onSetProfileSessionArchived: ((String, String, Boolean) -> Unit)? = null,
 ) {
-    var renameDialogSession by remember { mutableStateOf<ChatSession?>(null) }
+    var renameDialogTarget by remember { mutableStateOf<Pair<ProfileSessionRow, Boolean>?>(null) }
     var newThreadDialog by remember { mutableStateOf(false) }
     var sourceFilterOpen by remember { mutableStateOf(false) }
-    var deleteDialogSession by remember { mutableStateOf<ChatSession?>(null) }
+    var deleteDialogTarget by remember { mutableStateOf<Pair<ProfileSessionRow, Boolean>?>(null) }
     var query by remember { mutableStateOf("") }
     var searchExpanded by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
@@ -647,7 +651,7 @@ fun SessionDrawerContent(
                             showUpdated = viewOptions.showUpdated,
                             showTokens = viewOptions.showTokens,
                             showCost = viewOptions.showCost,
-                            actionsEnabled = !showAllProfiles && !provisional,
+                            actionsEnabled = !provisional,
                             isActive = !showAllProfiles && session.sessionId == currentSessionId,
                             activityState = activityState,
                             animationEnabled = animationEnabled,
@@ -666,14 +670,30 @@ fun SessionDrawerContent(
                                 }
                             },
                             onTogglePinned = {
-                                onSetSessionPinned(session.sessionId, !session.pinned)
+                                if (showAllProfiles) {
+                                    onSetProfileSessionPinned?.invoke(
+                                        row.profile,
+                                        session.sessionId,
+                                        !session.pinned,
+                                    )
+                                } else {
+                                    onSetSessionPinned(session.sessionId, !session.pinned)
+                                }
                             },
                             onToggleArchived = {
-                                onSetSessionArchived(session.sessionId, !session.archived)
+                                if (showAllProfiles) {
+                                    onSetProfileSessionArchived?.invoke(
+                                        row.profile,
+                                        session.sessionId,
+                                        !session.archived,
+                                    )
+                                } else {
+                                    onSetSessionArchived(session.sessionId, !session.archived)
+                                }
                             },
-                            onRename = { renameDialogSession = session },
+                            onRename = { renameDialogTarget = row to showAllProfiles },
                             onCopySessionId = { onCopySessionId?.invoke(session.sessionId) },
-                            onDelete = { deleteDialogSession = session },
+                            onDelete = { deleteDialogTarget = row to showAllProfiles },
                         )
                     }
                 }
@@ -729,10 +749,11 @@ fun SessionDrawerContent(
     }
 
     // Rename dialog
-    renameDialogSession?.let { session ->
-        var newTitle by remember(session) { mutableStateOf(session.title ?: "") }
+    renameDialogTarget?.let { (row, allProfiles) ->
+        val session = row.session
+        var newTitle by remember(row) { mutableStateOf(session.title ?: "") }
         AlertDialog(
-            onDismissRequest = { renameDialogSession = null },
+            onDismissRequest = { renameDialogTarget = null },
             title = { Text(stringResource(R.string.drawer_rename_session)) },
             text = {
                 OutlinedTextField(
@@ -746,15 +767,19 @@ fun SessionDrawerContent(
             confirmButton = {
                 TextButton(onClick = {
                     if (newTitle.isNotBlank()) {
-                        onRenameSession(session.sessionId, newTitle)
+                        if (allProfiles) {
+                            onRenameProfileSession?.invoke(row.profile, session.sessionId, newTitle)
+                        } else {
+                            onRenameSession(session.sessionId, newTitle)
+                        }
                     }
-                    renameDialogSession = null
+                    renameDialogTarget = null
                 }) {
                     Text(stringResource(R.string.drawer_rename))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { renameDialogSession = null }) {
+                TextButton(onClick = { renameDialogTarget = null }) {
                     Text(stringResource(R.string.drawer_cancel))
                 }
             }
@@ -762,23 +787,28 @@ fun SessionDrawerContent(
     }
 
     // Delete confirmation dialog
-    deleteDialogSession?.let { session ->
+    deleteDialogTarget?.let { (row, allProfiles) ->
+        val session = row.session
         AlertDialog(
-            onDismissRequest = { deleteDialogSession = null },
+            onDismissRequest = { deleteDialogTarget = null },
             title = { Text(stringResource(R.string.drawer_delete_session_title)) },
             text = {
                 Text(stringResource(R.string.drawer_delete_session_prefix) + (session.title ?: stringResource(R.string.drawer_untitled)) + stringResource(R.string.drawer_delete_session_suffix))
             },
             confirmButton = {
                 TextButton(onClick = {
-                    onDeleteSession(session.sessionId)
-                    deleteDialogSession = null
+                    if (allProfiles) {
+                        onDeleteProfileSession?.invoke(row.profile, session.sessionId)
+                    } else {
+                        onDeleteSession(session.sessionId)
+                    }
+                    deleteDialogTarget = null
                 }) {
                     Text(stringResource(R.string.drawer_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { deleteDialogSession = null }) {
+                TextButton(onClick = { deleteDialogTarget = null }) {
                     Text(stringResource(R.string.drawer_cancel))
                 }
             }
@@ -1084,7 +1114,6 @@ private fun SessionItem(
     archived: Boolean,
     archiveSupported: Boolean,
     onClick: () -> Unit,
-    actionsEnabled: Boolean = true,
     onTogglePinned: () -> Unit,
     onToggleArchived: () -> Unit,
     onRename: () -> Unit,
