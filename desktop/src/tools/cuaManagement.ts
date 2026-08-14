@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { access, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { delimiter, join, relative, resolve, sep } from 'node:path'
+import { delimiter, join, relative, resolve, sep, win32 } from 'node:path'
 
 import {
   CuaDriverAdapter,
@@ -303,11 +303,11 @@ async function applyTrustedRelease(
   const path = join(directory, 'install.ps1')
   try {
     await writeFile(path, script, { mode: 0o600 })
-    const systemRoot = systemRootOverride ?? process.env.SystemRoot ?? process.env.WINDIR
-    if (!systemRoot || !resolve(systemRoot).match(/^[A-Za-z]:\\/)) {
+    const configuredSystemRoot = systemRootOverride ?? process.env.SystemRoot ?? process.env.WINDIR
+    if (!configuredSystemRoot || !configuredSystemRoot.match(/^[A-Za-z]:[\\/]/)) {
       throw new Error('Windows system PowerShell path is unavailable')
     }
-    const powershell = join(resolve(systemRoot), 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    const powershell = win32.join(win32.resolve(configuredSystemRoot), 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     const result = await runner.run(powershell, [
       '-NoProfile',
       '-NonInteractive',
