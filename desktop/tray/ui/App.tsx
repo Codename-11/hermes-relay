@@ -17,6 +17,7 @@ type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'pair-host' | 'ho
 type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: Capability; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient; remote: string } | { type: 'repair' | 'forget'; host: Host } | { type: 'clear-activity' } | null
 type RouteTestResult = { label: string; url: string; reachable: boolean; elapsed_ms: number; encrypted: boolean; security: string; error?: string | null }
 type RouteTestReport = { best?: RouteTestResult | null; routes?: RouteTestResult[] }
+type PendingGrantContext = { grant: PendingGrantRequest | null; active_url?: string | null }
 
 const windowLabel = '__TAURI_INTERNALS__' in window ? getCurrentWindow().label : 'main'
 const isGrantWindow = windowLabel === 'grant'
@@ -49,6 +50,7 @@ const demo: Snapshot = {
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!('__TAURI_INTERNALS__' in window)) {
     if (command === 'get_snapshot') return demo as T
+    if (command === 'get_pending_grant_context') return { grant: demo.pending_grants[0] ?? null, active_url: demo.active_url } as T
     if (command === 'list_authorized_clients') return [
       { token_prefix: 'f83a21c4', device_name: 'WORKSTATION', last_seen: Math.floor(Date.now() / 1000), transport_hint: 'desktop', is_current: true, grants: { chat: null, tools: null } },
       { token_prefix: '9d210b7e', device_name: 'Pixel 10 Pro', last_seen: Math.floor(Date.now() / 1000) - 420, transport_hint: 'android', grants: { chat: null } }
@@ -327,7 +329,7 @@ function ManagementApp() {
   const refreshInFlight = useRef(false)
 
   const refresh = useCallback(async () => {
-    if (refreshInFlight.current) return
+    if (refreshInFlight.current) return true
     refreshInFlight.current = true
     try {
       const next = await call<Snapshot>('get_snapshot')
@@ -349,16 +351,59 @@ function ManagementApp() {
       setSnapshot(next)
       setSelectedUrl(current => current && next.hosts.some(h => h.url === current) ? current : next.active_url ?? next.hosts[0]?.url ?? null)
       setError(null)
-    } catch (e) { setError(String(e)) }
+      return true
+    } catch (e) { setError(String(e)); return false }
     finally { refreshInFlight.current = false }
   }, [])
 
   const daemonRetrying = Boolean(snapshot?.daemon.running && snapshot.daemon.state === 'reconnecting')
 
   useEffect(() => {
-    refresh()
-    const timer = window.setInterval(refresh, connectionTransition ? 350 : daemonRetrying ? 1000 : 5000)
-    return () => window.clearInterval(timer)
+    let disposed = false
+    let enabled = false
+    let running = false
+    let failures = 0
+    let timer: number | null = null
+    const stop = () => {
+      enabled = false
+      if (timer !== null) window.clearTimeout(timer)
+      timer = null
+    }
+    const schedule = (delay: number) => {
+      if (disposed || !enabled) return
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(poll, delay)
+    }
+    const poll = async () => {
+      if (disposed || !enabled || running) return
+      running = true
+      timer = null
+      const ok = await refresh()
+      failures = ok ? 0 : Math.min(failures + 1, 4)
+      running = false
+      const baseDelay = connectionTransition ? 350 : daemonRetrying ? 1000 : 5000
+      schedule(ok ? baseDelay : Math.min(30_000, baseDelay * (2 ** failures)))
+    }
+    const start = () => {
+      if (disposed) return
+      enabled = true
+      if (timer === null && !running) void poll()
+    }
+    const visibilityChanged = () => {
+      if (document.visibilityState === 'visible') start()
+      else stop()
+    }
+    window.addEventListener('hermes-show', start)
+    window.addEventListener('hermes-hide', stop)
+    document.addEventListener('visibilitychange', visibilityChanged)
+    void getCurrentWindow().isVisible().then(visible => { if (visible) start() })
+    return () => {
+      disposed = true
+      stop()
+      window.removeEventListener('hermes-show', start)
+      window.removeEventListener('hermes-hide', stop)
+      document.removeEventListener('visibilitychange', visibilityChanged)
+    }
   }, [refresh, connectionTransition, daemonRetrying])
 
   useEffect(() => {
@@ -497,6 +542,10 @@ function ManagementApp() {
     }, 145)
   }, [])
 
+  const requestHide = useCallback(() => {
+    window.dispatchEvent(new Event('hermes-hide'))
+  }, [])
+
   useEffect(() => {
     const show = () => setWindowVisible(true)
     const visibilityChanged = () => {
@@ -530,7 +579,7 @@ function ManagementApp() {
       <div className="brand"><img src={logo} alt="" /><span>Hermes-Relay CLI UI</span></div>
       <div className="window-controls">
         <button aria-label="Help and About" title="Help and About" onClick={() => setPage('help')}><CircleHelp /></button>
-        <button aria-label="Hide window" onClick={hideWindow}><X /></button>
+        <button aria-label="Hide window" onClick={requestHide}><X /></button>
       </div>
     </header>
 
@@ -640,7 +689,7 @@ function ManagementApp() {
 }
 
 function GrantWindow() {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
+  const [activeUrl, setActiveUrl] = useState<string | null>(null)
   const [grant, setGrant] = useState<PendingGrantRequest | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [visible, setVisible] = useState(false)
@@ -649,9 +698,9 @@ function GrantWindow() {
 
   const refreshGrant = useCallback(async () => {
     try {
-      const next = await call<Snapshot>('get_snapshot')
-      const incoming = next.pending_grants[0] ?? null
-      setSnapshot(next)
+      const next = await call<PendingGrantContext>('get_pending_grant_context')
+      const incoming = next.grant
+      setActiveUrl(next.active_url ?? null)
       if (!incoming) {
         if (activeId.current) {
           activeId.current = null
@@ -673,9 +722,56 @@ function GrantWindow() {
   }, [])
 
   useEffect(() => {
-    void refreshGrant()
-    const timer = window.setInterval(refreshGrant, 1000)
-    return () => window.clearInterval(timer)
+    let stopped = false
+    let running = false
+    let rerunRequested = false
+    let timer: number | null = null
+
+    const schedule = (delay: number) => {
+      if (stopped) return
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(poll, delay)
+    }
+    const poll = async () => {
+      if (stopped) return
+      if (running) {
+        rerunRequested = true
+        return
+      }
+      running = true
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+      try { await refreshGrant() }
+      finally {
+        running = false
+        if (stopped) return
+        if (rerunRequested) {
+          rerunRequested = false
+          schedule(0)
+        } else if (activeId.current || document.visibilityState === 'visible') {
+          schedule(activeId.current ? 1000 : 5000)
+        }
+      }
+    }
+    const wake = () => {
+      if (document.visibilityState === 'visible') void poll()
+      else if (!activeId.current && timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+    }
+
+    document.addEventListener('visibilitychange', wake)
+    window.addEventListener('focus', wake)
+    void poll()
+    return () => {
+      stopped = true
+      if (timer !== null) window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', wake)
+      window.removeEventListener('focus', wake)
+    }
   }, [refreshGrant])
 
   async function toggleExpanded() {
@@ -699,9 +795,8 @@ function GrantWindow() {
     }
   }
 
-  if (!grant || !snapshot) return <div className="grant-shell" />
-  const hostName = snapshot.hosts.find(item => item.url === (snapshot.daemon.configured_url ?? snapshot.daemon.url))?.name
-    ?? (snapshot.daemon.url ? displayHost(snapshot.daemon.url) : 'Connected host')
+  if (!grant) return <div className="grant-shell" />
+  const hostName = activeUrl ? displayHost(activeUrl) : 'Connected host'
   const scope = formatGrantScope(grant.scope)
   const action = grantAction(grant.scope)
   const minutes = Math.max(1, Math.round(grant.duration_seconds / 60))
@@ -1001,7 +1096,7 @@ function SettingsPage({ daemon, computerControl, startup, daemonAutostart, activ
       </div>}
       <div className="cua-maintenance"><span><strong>{cuaManagement?.installed ? `CUA Driver ${cuaManagement.current_version ?? ''}`.trim() : 'CUA Driver'}</strong><small>{cuaError ?? cuaManagement?.update?.error ?? cuaManagement?.compatibility_reason ?? (cuaManagement?.update?.update_available ? `${cuaManagement.update.latest_version} available` : cuaManagement?.installed ? 'Installed from the verified upstream release.' : 'Install the verified compatible driver explicitly.')}</small></span><div>{!cuaManagement?.installed ? <button disabled={cuaBusy !== null} onClick={() => void cuaOperation('install')}>{cuaBusy === 'install' ? <LoaderCircle className="spin" /> : <Download />} Install</button> : cuaManagement.update?.update_available && cuaManagement.update.compatible ? <button disabled={cuaBusy !== null} onClick={() => void cuaOperation('update')}>{cuaBusy === 'update' ? <LoaderCircle className="spin" /> : <Download />} Update</button> : <button disabled={cuaBusy !== null} onClick={() => void cuaOperation('check')}>{cuaBusy === 'check' || cuaBusy === 'status' ? <LoaderCircle className="spin" /> : <RefreshCw />} Check</button>}</div></div>
     </div><p className="group-help engine-help"><ShieldCheck /> CUA is the preferred structured engine. Hermes permissions, grants, audit, and emergency stop remain in control.</p></div>
-    <div className="settings-group"><h2>CLI & diagnostics</h2><div className="settings-card quick-action-grid"><button onClick={() => onAction('open_terminal')}><TerminalSquare /><span>Open terminal</span></button><button onClick={() => onAction('open_cli_terminal')}><Bot /><span>Open Hermes CLI</span></button><button onClick={() => onAction('open_logs')}><FolderOpen /><span>View daemon log</span></button><button onClick={() => onAction('run_diagnostics')}><ActivityIcon /><span>Run diagnostics</span></button></div></div>
+    <div className="settings-group"><h2>CLI & diagnostics</h2><div className="settings-card quick-action-grid"><button onClick={() => onAction('open_terminal')}><TerminalSquare /><span>Open terminal</span></button><button onClick={() => onAction('open_cli_terminal')}><Bot /><span>Open Hermes CLI</span></button><button onClick={() => onAction('open_logs')}><FolderOpen /><span>View daemon log</span></button><button onClick={() => onAction('open_tray_logs')}><FolderOpen /><span>View UI log</span></button><button onClick={() => onAction('run_diagnostics')}><ActivityIcon /><span>Run diagnostics</span></button></div></div>
     <div className="settings-group"><h2>Updates</h2><div className={`settings-card update-card ${updateError ? 'error' : update?.ahead_of_latest ? 'ahead' : update?.up_to_date ? 'current' : ''}`}><div className="setting-row update-row"><span><strong>Hermes-Relay CLI UI</strong><small>{updateSummary}</small></span>{update && !update.up_to_date && !update.ahead_of_latest && !update.installed ? <button className="compact-button update-button" disabled={updateBusy !== null} onClick={installUpdate}>{updateBusy === 'install' ? <LoaderCircle className="spin" /> : <Download />} Install</button> : <button className="compact-button" disabled={updateBusy !== null} onClick={checkUpdate}>{updateBusy === 'check' ? <LoaderCircle className="spin" /> : <RefreshCw />} Check</button>}</div></div><p className="group-help update-help">Updates the management UI and CLI together, then restarts the tray automatically.</p></div>
     <button className="about-link" onClick={onHelp}><span className="setting-icon"><Info /></span><span><strong>Help & About</strong><small>Versions, documentation and troubleshooting.</small></span><ChevronRight /></button>
     <div className="settings-group"><div className="settings-group-heading"><h2>Activity</h2><button onClick={onViewActivity}>View all <ChevronRight /></button></div><p className="group-help">Recent remote actions recorded on this PC.</p><div className="settings-card activity-retention-card"><div className="setting-row"><span><strong>Screenshot evidence</strong><small>{screenshotRetention.count} retained · {formatBytes(screenshotRetention.bytes)} · stored only on this PC</small></span><div className="retention-options" role="radiogroup" aria-label="Screenshot evidence retention">{([{ label: 'Off', enabled: false, days: 7 }, { label: '1d', enabled: true, days: 1 }, { label: '7d', enabled: true, days: 7 }, { label: '30d', enabled: true, days: 30 }] as const).map(option => <button key={option.label} role="radio" aria-checked={screenshotRetention.enabled === option.enabled && (!option.enabled || screenshotRetention.days === option.days)} className={screenshotRetention.enabled === option.enabled && (!option.enabled || screenshotRetention.days === option.days) ? 'active' : ''} onClick={() => onAction('set_activity_screenshot_retention', { enabled: option.enabled, days: option.days })}>{option.label}</button>)}</div></div></div><div className="settings-card padded"><ActivityList entries={activity.slice(-3).reverse()} host={null} onOpen={onOpenActivity} /></div></div>

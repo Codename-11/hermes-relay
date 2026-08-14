@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import type { DaemonStatus } from '../src/lib/daemonStatus.js'
 import {
+  __acquireProcessLockForTests as acquireProcessLock,
   __buildDaemonChildArgsForTests as buildDaemonChildArgs,
   __buildElevationLaunchPlanForTests as buildElevationLaunchPlan,
   __daemonStatusIsReadyForTests as daemonStatusIsReady,
@@ -42,6 +43,59 @@ test('detached startup ignores stale status and succeeds only for the child pid'
 
   assert.equal(result.outcome, 'ready')
   assert.equal(result.outcome === 'ready' ? result.status.pid : null, 42)
+})
+
+test('concurrent daemon starts elect exactly one cross-process lock owner', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hermes-daemon-lock-'))
+  t.after(() => fs.rm(dir, { recursive: true, force: true }))
+  const lockPath = path.join(dir, 'daemon-lifecycle.lock')
+
+  const attempts = await Promise.allSettled([
+    acquireProcessLock(lockPath, { timeoutMs: 0, purpose: 'concurrent start A' }),
+    acquireProcessLock(lockPath, { timeoutMs: 0, purpose: 'concurrent start B' })
+  ])
+  const winners = attempts.filter(
+    (attempt): attempt is PromiseFulfilledResult<Awaited<ReturnType<typeof acquireProcessLock>>> =>
+      attempt.status === 'fulfilled'
+  )
+  const losers = attempts.filter(attempt => attempt.status === 'rejected')
+
+  assert.equal(winners.length, 1)
+  assert.equal(losers.length, 1)
+  assert.match(String((losers[0] as PromiseRejectedResult).reason), /timed out.*lock/s)
+  await winners[0]!.value.release()
+})
+
+test('daemon lock recovers a dead owner and release cannot remove a replacement owner', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hermes-daemon-stale-lock-'))
+  t.after(() => fs.rm(dir, { recursive: true, force: true }))
+  const lockPath = path.join(dir, 'daemon-instance.lock')
+  await fs.mkdir(lockPath)
+  await fs.writeFile(path.join(lockPath, 'owner.json'), JSON.stringify({
+    pid: 999_999,
+    process_name: 'dead-hermes-relay.exe',
+    token: 'dead-owner',
+    created_at: 1,
+    purpose: 'daemon runtime'
+  }))
+
+  const lock = await acquireProcessLock(lockPath, {
+    timeoutMs: 100,
+    purpose: 'daemon runtime replacement',
+    ownerAlive: () => false
+  })
+  const replacement = {
+    ...lock.owner,
+    token: 'newer-owner'
+  }
+  await fs.writeFile(path.join(lockPath, 'owner.json'), JSON.stringify(replacement))
+  await lock.release()
+
+  assert.equal((await fs.stat(lockPath)).isDirectory(), true)
+  assert.equal(
+    JSON.parse(await fs.readFile(path.join(lockPath, 'owner.json'), 'utf8')).token,
+    'newer-owner'
+  )
 })
 
 test('detached startup reports log evidence before generic child-exit failure', async () => {

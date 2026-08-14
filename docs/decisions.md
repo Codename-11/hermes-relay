@@ -2131,6 +2131,20 @@ starting connectivity does not itself require or imply a tool grant.
   session or remote server identity.
 - The tray is a small Rust/Tauri process; NSIS packages it with the same compiled
   CLI released separately.
+- **2026-08-14 process-containment amendment.** Treat every external executable
+  launch as a bounded resource. Periodic UI refreshes must be single-flight and
+  coalesced across windows, must not start another refresh while one is pending,
+  and must apply a timeout, termination, and retry backoff to every child.
+  Grant-card discovery reads the local bridge directly rather than polling the
+  complete management snapshot. Static probes such as the CLI version, registry
+  settings, and optional ADB availability are cached or refreshed only when the
+  owning setting changes. The tray must remain useful when a probe fails and
+  must never amplify that failure into an unbounded subprocess queue.
+- Tray lifecycle, refresh, and child-process diagnostics are recorded in the
+  bounded local `~/.hermes/tray.log`; daemon authentication, transport, and tool-
+  router lifecycle remain in `~/.hermes/daemon.log`. Operational logs exclude
+  credentials and sensitive command arguments. Management failures are reported
+  as failures rather than silently dropped or appended as successful activity.
 - Rich full-window desktop chat and management remain upstream desktop-product
   concerns, not a Hermes-Relay surface.
 - The CLI package version remains canonical for both binaries and the installer.
@@ -2942,8 +2956,11 @@ Settings, with scope determining ownership:
 - **Open terminal** starts a normal terminal with `hermes-relay` available.
   **Open Hermes CLI** starts the paired remote Hermes TUI in a real terminal;
   neither action embeds a terminal emulator in the tray.
-- **View daemon log** opens the local daemon log. **Run diagnostics** delegates
-  to the CLI diagnostic contract rather than creating a second health model.
+- **View daemon log** opens the daemon connection/tool-router log. Tray startup,
+  refresh, and child-process failures use the separate local tray log so a UI
+  failure remains observable even when no daemon is running. **Run diagnostics**
+  delegates to the CLI diagnostic contract rather than creating a second health
+  model and reports both log locations when relevant.
 - Help & About reports UI, CLI, and connected Relay versions and links to the
   documentation, troubleshooting guide, and release notes through the default
   browser. Log and diagnostic shortcuts remain available there as well.

@@ -49,6 +49,56 @@ hermes-relay ui status
 
 For a CLI-only installation, add the UI with `hermes-relay ui install`.
 
+## Many `Bun` or `hermes-relay.exe` processes / Windows error `0xc0000142`
+
+Quit **Hermes-Relay CLI UI** first, then open a fresh PowerShell and stop the
+normal background daemon:
+
+```powershell
+hermes-relay daemon stop
+```
+
+If the CLI cannot start, identify Hermes-Relay-owned processes by their exact
+installed executable path. Review the rows before stopping anything:
+
+```powershell
+$relayBin = [IO.Path]::GetFullPath("$env:USERPROFILE\.hermes\bin\")
+$relayProcesses = Get-CimInstance Win32_Process | Where-Object {
+  $_.ExecutablePath -and
+  [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith($relayBin, [StringComparison]::OrdinalIgnoreCase) -and
+  $_.Name -in @('hermes-relay.exe', 'hermes-relay-tray.exe')
+}
+$relayProcesses | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine
+
+# Run only after confirming every row belongs to the installed Hermes-Relay bundle:
+$relayProcesses | ForEach-Object { Stop-Process -Id $_.ProcessId }
+```
+
+Do not stop every process named `Bun`. Bun is a shared runtime name, so a broad
+name-based cleanup can terminate unrelated development tools. Do not broadly
+terminate `adb.exe` or `reg.exe` either; exit the tray and let its owned probes
+end, then target only processes whose executable path and command line you have
+reviewed.
+
+The affected tray build refreshed its complete management snapshot from a
+hidden grant window every second. Each refresh launched several short-lived CLI,
+registry, and ADB probes. A slow or stuck probe allowed refreshes to overlap,
+building an unbounded process queue until Windows began rejecting new process
+initialization. Updated builds coalesce refreshes, use a lightweight local grant
+read, cache static probes, and apply child timeouts and retry backoff.
+
+After cleanup, inspect these separate logs:
+
+- `~/.hermes/tray.log` — tray snapshot, subprocess timeout, launch, exit, and
+  panic failures.
+- `~/.hermes/daemon.log` — the one long-running daemon's authentication,
+  transport, reconnect, and desktop-tool router lifecycle.
+
+If unrelated Windows programs still fail with `0xc0000142`, restart Windows
+before relaunching the tray. A process storm and memory exhaustion can explain
+the application failures, but a Windows stop or reboot cannot be attributed to
+this defect conclusively without the corresponding Windows crash dump.
+
 ## The daemon is User but I need Administrator access
 
 Normal-user operation is the safe default. Open UI Settings and choose **Restart as Administrator...**, then approve the Windows UAC prompt. The UI remains a normal user process; only the daemon and its approved tool/input actions are elevated.
@@ -59,7 +109,7 @@ When elevated access is no longer needed, choose **Return to user mode**. The tr
 
 ## I need the CLI, logs, or a diagnostic report
 
-Open UI Settings and use **Open terminal** for a normal command prompt with `hermes-relay` available, or **Open Hermes CLI** to start the paired Hermes TUI directly. **View daemon log** opens the local daemon log, while **Run diagnostics** uses the CLI diagnostic path so the UI and `hermes-relay doctor` report the same local install state.
+Open UI Settings and use **Open terminal** for a normal command prompt with `hermes-relay` available, or **Open Hermes CLI** to start the paired Hermes TUI directly. **View daemon log** opens `~/.hermes/daemon.log`; tray startup and child-process failures are recorded separately in `~/.hermes/tray.log`. **Run diagnostics** uses the CLI diagnostic path so the UI and `hermes-relay doctor` report the same local install state.
 
 The **Help & About** page links to the [desktop documentation](https://hermes-relay.dev/docs/desktop/), [troubleshooting guide](https://hermes-relay.dev/docs/desktop/troubleshooting/), and [release notes](https://github.com/Codename-11/hermes-relay/releases?q=desktop) in your default browser and also provides the log and diagnostic shortcuts.
 
