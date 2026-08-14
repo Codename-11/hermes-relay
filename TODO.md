@@ -6,6 +6,27 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Certify the official Desktop Relay plugin
+
+The unified `plugin/desktop/plugin.js` implementation is covered by source-level
+SDK contract, packaging, explicit-open, no-auto-open, close, unload, and profile
+cache-isolation tests. A physical official Hermes Desktop session is still
+required before calling the UX live-certified:
+
+- Test default and named local profiles, ordinary authenticated remote mode,
+  and SSH mode with differently named local/remote profile mapping.
+- In two full app windows, prove enabling, registration, explicit open,
+  requests, close/reopen, hot reload, and disable/unload remain window-local.
+- Prove startup, reconnect, profile change, layout restore/reset, update, and
+  background events never open or focus Relay.
+- Drag and dock the pane across native zones, close it, reopen it from all three
+  labeled actions, and verify no private-hook fallback is needed.
+- Exercise Relay running/unreachable, zero/one/multiple devices, pairing,
+  revocation, bridge activity, media, remote access, and renderer error logging
+  without exposing credentials, pairing payloads, filesystem paths, or tokens.
+
+---
+
 ## Structured desktop hardware capabilities
 
 Structured access and per-host USB policy now ship with typed, serial-bound ADB

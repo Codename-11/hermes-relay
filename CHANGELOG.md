@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Official Hermes Desktop can surface Relay through its supported runtime Plugin SDK.** The unified plugin package now includes an opt-in, profile-scoped Desktop pane for Relay status, paired devices, bridge activity, media, pairing, revocation, and remote-access management. Loading, startup, reconnects, profile changes, and updates never open it; only labeled sidebar, status-bar, or command-palette actions register and reveal the movable native pane.
 - **Android can edit current Hermes profiles through the standard Gateway.** The Profile Inspector capability-gates `profiles.describe` and `profiles.configure`, keeps Relay-only memory editing and older-Hermes fallback intact, and reports partial section saves without discarding failed drafts.
 - **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
 - Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.
