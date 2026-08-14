@@ -38,7 +38,7 @@ class StatefulFakeCua implements CuaProcessRunner {
     if (command === 'list-tools') return ok(tools.map(tool => `${tool}: fake`).join('\n'))
     if (command === 'status') return ok('permission mode: bounded')
     if (command === 'call health_report') {
-      return ok(JSON.stringify({ schema_version: '1', driver_version: '0.19.3', overall: 'healthy' }))
+      return ok(JSON.stringify({ schema_version: '1', driver_version: '0.19.3', overall: 'ok' }))
     }
     if (command === 'call get_window_state') {
       return ok(JSON.stringify({

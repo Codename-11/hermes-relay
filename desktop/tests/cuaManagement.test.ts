@@ -34,7 +34,7 @@ class ProbeRunner implements CuaProcessRunner {
     readonly version = '0.19.3',
     readonly latest = version,
     readonly onRun?: (executable: string, args: readonly string[], env?: NodeJS.ProcessEnv) => Promise<void> | void,
-    readonly health: string = 'healthy'
+    readonly health: string = 'ok'
   ) {}
 
   async run(executable: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv } = {}): Promise<CuaProcessResult> {

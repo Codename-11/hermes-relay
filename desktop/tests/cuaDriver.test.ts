@@ -26,7 +26,7 @@ class FakeRunner implements CuaProcessRunner {
 
   constructor(
     private readonly binaryPath: string,
-    private readonly health = 'healthy',
+    private readonly health = 'ok',
     private readonly version = '0.19.3',
     private readonly permissionMode = 'standard'
   ) {}
@@ -87,7 +87,7 @@ test('fails closed for degraded health and unrestricted permission mode', async 
       (error: unknown) => error instanceof CuaRuntimeError && error.code === 'degraded'
     )
     await assert.rejects(
-      CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner: new FakeRunner(install.binary, 'healthy', '0.19.3', 'unrestricted') }),
+      CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner: new FakeRunner(install.binary, 'ok', '0.19.3', 'unrestricted') }),
       (error: unknown) => error instanceof CuaRuntimeError && error.code === 'incompatible'
     )
   } finally {

@@ -43,7 +43,7 @@ export interface CuaRuntimeStatus {
   binaryPath?: string
   binaryVersion?: string
   permissionMode?: 'standard' | 'bounded'
-  health?: 'healthy'
+  health?: 'ok'
   reason?: string
 }
 
@@ -485,7 +485,7 @@ export class CuaDriverAdapter {
     }
     const permissionMode = permissionMatch[1]!.toLowerCase() as 'standard' | 'bounded'
     const health = parseJsonObject(await run(['call', 'health_report'], '{}'), 'CUA Driver health report') as CuaHealthReport
-    if (health.schema_version !== '1' || health.driver_version !== versionTuple.join('.') || health.overall !== 'healthy') {
+    if (health.schema_version !== '1' || health.driver_version !== versionTuple.join('.') || health.overall !== 'ok') {
       throw new CuaRuntimeError(`CUA Driver health is ${String(health.overall ?? 'unknown')}`, 'degraded')
     }
     return new CuaDriverAdapter(
@@ -507,7 +507,7 @@ export class CuaDriverAdapter {
         binaryPath: adapter.binaryPath,
         binaryVersion: adapter.binaryVersion,
         permissionMode: adapter.permissionMode,
-        health: 'healthy'
+        health: 'ok'
       }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
