@@ -1,6 +1,6 @@
 [package]
 name = "hermes-relay-tray"
-version = "0.4.0-beta.2"
+version = "0.4.0-beta.3"
 description = "Compact Windows management UI for Hermes-Relay CLI"
 authors = ["Axiom Labs"]
 edition = "2021"
