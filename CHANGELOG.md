@@ -20,6 +20,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
 
+## [0.4.0-beta.1] - 2026-08-14
+
+### Added
+
+- **CUA Driver is the preferred Windows structured-control engine.** New local settings prefer a verified CUA runtime for window-targeted background actions, fresh snapshot tokens, and optional per-session animated agent cursors without moving the physical pointer; Windows Input is the explicit compatibility backend and backend choice is fixed for each control session. Full-display observation remains on the read-only system capture path. CLI and UI can explicitly install, check, or update the canonical CUA package after verifying the upstream release manifest and installer checksum; nothing is bundled or updated automatically, driver telemetry stays off for Hermes sessions, and activity records contain only bounded, redacted control metadata.
+
+### Fixed
+
+- **Windows bundle updates fail closed when installed processes retain a binary lock.** Setup waits for the invoking CLI, quiesces the tray and its short-lived CLI children, checks every payload extraction before writing release metadata, preserves custom install directories, and returns a failure instead of reporting a mixed-version installation.
+- **CUA readiness follows the published driver contract.** Hermes accepts the documented `ok` health state, distinguishes an installed-but-degraded runtime from a missing installation, and constructs trusted Windows installer paths consistently across verification environments.
+
 ## [1.7.0] - 2026-08-13
 
 ### Added

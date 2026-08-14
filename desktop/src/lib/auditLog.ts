@@ -25,6 +25,20 @@ export interface AuditEntry {
   request_id?: string
   /** Relay identity that issued the action, when known. */
   host_url?: string
+  relay_session_id?: string
+  requester_device_id?: string
+  run_id?: string
+  target_device_id?: string
+  backend?: 'cua' | 'legacy_compat' | 'system_capture'
+  dispatch?: 'background' | 'foreground_compatibility'
+  control_session_id?: string
+  target_app?: string
+  target_title?: string
+  target_pid?: number
+  target_window_id?: number
+  action?: string
+  verification?: 'snapshot_captured' | 'not_requested' | 'failed'
+  phase?: 'structured_primary' | 'explicit_compatibility' | 'pre_session_safe_fallback'
   /** Handler wall time, excluding relay transport latency. */
   duration_ms?: number
   /** Process exit code when the handler returns one. Non-zero is attention-worthy. */
@@ -127,7 +141,8 @@ function boundedText(value: string): { text: string; truncated: boolean } {
  * bodies, environment values, or unbounded process output. */
 export function auditDetails(
   args: Record<string, unknown>,
-  result?: unknown
+  result?: unknown,
+  options: { redactComputerContent?: boolean } = {}
 ): Pick<AuditEntry, 'request_detail' | 'stdout' | 'stderr' | 'result_detail' | 'request_truncated' | 'stdout_truncated' | 'stderr_truncated' | 'result_truncated'> {
   const safeRequest: Record<string, unknown> = {}
   for (const key of [
@@ -140,6 +155,29 @@ export function auditDetails(
   const details: Pick<AuditEntry, 'request_detail' | 'stdout' | 'stderr' | 'result_detail' | 'request_truncated' | 'stdout_truncated' | 'stderr_truncated' | 'result_truncated'> = {
     request_detail: request.text,
     request_truncated: request.truncated || undefined
+  }
+  if (options.redactComputerContent) {
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+      const record = result as Record<string, unknown>
+      const target = record.target && typeof record.target === 'object' && !Array.isArray(record.target)
+        ? record.target as Record<string, unknown>
+        : {}
+      const safeResult = {
+        backend: record.backend,
+        action: record.action,
+        status: record.status,
+        code: record.code,
+        target: {
+          pid: target.pid,
+          windowId: target.windowId
+        },
+        redacted: true
+      }
+      const value = boundedText(JSON.stringify(safeResult, null, 2))
+      details.result_detail = value.text
+      details.result_truncated = value.truncated || undefined
+    }
+    return details
   }
   if (!result || typeof result !== 'object') {
     if (result !== undefined) {

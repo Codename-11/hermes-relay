@@ -292,9 +292,24 @@ hermes-relay computer-use enable          # confirm and persist enablement
 hermes-relay computer-use enable --yes    # explicit non-interactive confirmation
 hermes-relay computer-use cancel          # cancel the active task-scoped grant
 hermes-relay computer-use disable         # disable and request active-grant cancellation
+hermes-relay computer-use engine cua      # prefer structured CUA for new sessions
+hermes-relay computer-use engine legacy   # explicit Windows-input compatibility
+hermes-relay computer-use cursor on       # virtual per-session cursor
+hermes-relay computer-use cua status
+hermes-relay computer-use cua check-update
+hermes-relay computer-use cua install --yes
+hermes-relay computer-use cua update --yes
 ```
 
 Enablement is stored in `~/.hermes/desktop-settings.json`. Restart the daemon after changing it; the Windows tray does that automatically while preserving whether the daemon is running as User or Administrator. `--experimental-computer-use` is a one-process enable override, and `--no-computer-use` always suppresses advertisement for that invocation.
+
+CUA is the preferred/default structured backend; Windows input is an explicit
+compatibility choice. Backend selection is fixed when a control session starts,
+so an engine setting change affects only new sessions. CUA lifecycle mutations
+require `--yes` and never run automatically. Hermes verifies the upstream
+release manifest and installer checksum, runs the installer with a sanitized
+environment, and accepts only `>=0.19.3 <0.20.0` under the canonical
+`%USERPROFILE%\.cua-driver\packages\current` package.
 
 ## `hermes-relay grants`
 

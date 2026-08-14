@@ -102,6 +102,29 @@ fn management_window_owns_the_expected_narrow_surfaces() {
         "Experimental",
         "open_management_from_grant",
         "Open in UI",
+        "computer_control_engine",
+        "Computer control",
+        "CUA Driver",
+        "Not installed",
+        "Incompatible",
+        "Degraded",
+        "Ready",
+        "Animated agent cursor",
+        "Background only",
+        "Preferred structured engine",
+        "Compatibility",
+        "Active session",
+        "Computer control timeline",
+        "Post-action snapshot captured",
+        "Authenticated control session",
+        "computer_cua_status",
+        "computer_cua_install",
+        "computer_cua_check_update",
+        "computer_cua_update",
+        "verified compatible driver",
+        "set_computer_control_engine",
+        "set_cua_cursor_enabled",
+        "visual overlays—not additional Windows hardware pointers",
     ] {
         assert!(
             source.contains(required) || security.contains(required),
@@ -160,6 +183,18 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("spawn_blocking(build_snapshot)"));
     assert!(native.contains("async fn check_desktop_update"));
     assert!(native.contains("async fn install_desktop_update"));
+    for command in [
+        "async fn computer_cua_status",
+        "async fn computer_cua_install",
+        "async fn computer_cua_check_update",
+        "async fn computer_cua_update",
+    ] {
+        assert!(
+            native.contains(command),
+            "blocking CUA management command: {command}"
+        );
+    }
+    assert!(native.matches("spawn_blocking(||").count() >= 6);
     assert!(native.contains("fn set_host_capability"));
     assert!(native.contains("fn hardware_availability"));
     assert!(native.contains("HERMES_RELAY_CODE"));

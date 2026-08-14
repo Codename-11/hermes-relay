@@ -15,7 +15,7 @@ mod app {
         os::windows::process::CommandExt,
         path::{Path, PathBuf},
         process::{Command, Output, Stdio},
-        sync::{mpsc, Arc, Mutex},
+        sync::{mpsc, Arc, Mutex, OnceLock},
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
@@ -269,6 +269,26 @@ mod app {
         #[serde(skip_serializing_if = "Option::is_none")]
         host_url: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        backend: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dispatch: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        control_session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_app: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_pid: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_window_id: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        verification: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         exit_code: Option<i64>,
@@ -316,9 +336,66 @@ mod app {
         startup_enabled: bool,
         daemon_autostart_enabled: bool,
         hardware_availability: HardwareAvailability,
+        computer_control_engine: Option<ComputerControlEngine>,
         ui_version: &'static str,
         cli_version: Option<String>,
         cli_path: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Deserialize, Serialize)]
+    struct ComputerControlEngine {
+        selected: String,
+        effective: String,
+        available: bool,
+        state: String,
+        version: Option<String>,
+        health: Option<String>,
+        path: Option<String>,
+        #[serde(default)]
+        cursor_enabled: bool,
+        #[serde(default)]
+        foreground_escalation_enabled: bool,
+        #[serde(default)]
+        active_sessions: Option<u64>,
+        active_backend: Option<String>,
+        last_action: Option<Value>,
+        message: Option<String>,
+    }
+
+    type ComputerControlEngineCache = Option<(SystemTime, Option<ComputerControlEngine>)>;
+
+    static COMPUTER_CONTROL_ENGINE_CACHE: OnceLock<Mutex<ComputerControlEngineCache>> =
+        OnceLock::new();
+
+    fn probe_computer_control_engine() -> Option<ComputerControlEngine> {
+        run_json(&["computer-use", "status", "--json"])
+            .ok()
+            .and_then(|value| value.get("computer_control_engine").cloned())
+            .and_then(|value| serde_json::from_value::<ComputerControlEngine>(value).ok())
+    }
+
+    fn cached_computer_control_engine() -> Option<ComputerControlEngine> {
+        let cache = COMPUTER_CONTROL_ENGINE_CACHE.get_or_init(|| Mutex::new(None));
+        if let Ok(guard) = cache.lock() {
+            if let Some((checked_at, status)) = guard.as_ref() {
+                if checked_at.elapsed().unwrap_or_default() < Duration::from_secs(30) {
+                    return status.clone();
+                }
+            }
+        }
+        let status = probe_computer_control_engine();
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((SystemTime::now(), status.clone()));
+        }
+        status
+    }
+
+    fn clear_computer_control_engine_cache() {
+        if let Some(cache) = COMPUTER_CONTROL_ENGINE_CACHE.get() {
+            if let Ok(mut guard) = cache.lock() {
+                *guard = None;
+            }
+        }
     }
 
     #[derive(Debug, Serialize)]
@@ -643,6 +720,7 @@ mod app {
             .and_then(|value| serde_json::from_value::<Vec<PendingGrantRequest>>(value).ok())
             .unwrap_or_default();
         let (cli_version, cli_path) = cli_details();
+        let computer_control_engine = cached_computer_control_engine();
         Ok(Snapshot {
             hosts,
             active_url: selected,
@@ -652,10 +730,96 @@ mod app {
             startup_enabled: startup_enabled(),
             daemon_autostart_enabled: daemon_autostart_enabled(),
             hardware_availability: hardware_availability(),
+            computer_control_engine,
             ui_version: env!("CARGO_PKG_VERSION"),
             cli_version,
             cli_path,
         })
+    }
+
+    fn computer_control_engine_status() -> Result<ComputerControlEngine, String> {
+        run_json(&["computer-use", "status", "--json"])?
+            .get("computer_control_engine")
+            .cloned()
+            .ok_or_else(|| {
+                "the installed CLI does not report a computer control engine".to_string()
+            })
+            .and_then(|value| {
+                serde_json::from_value(value).map_err(|_| {
+                    "the installed CLI returned an invalid computer control status".to_string()
+                })
+            })
+    }
+
+    #[tauri::command]
+    async fn computer_cua_status() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_json(&["computer-use", "cua", "status", "--json"])
+        })
+        .await
+        .map_err(|error| format!("CUA status task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_install() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            let result = run_json(&["computer-use", "cua", "install", "--yes", "--json"])?;
+            clear_computer_control_engine_cache();
+            Ok(result)
+        })
+        .await
+        .map_err(|error| format!("CUA install task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_check_update() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_json(&["computer-use", "cua", "check-update", "--json"])
+        })
+        .await
+        .map_err(|error| format!("CUA update check task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_update() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            let result = run_json(&["computer-use", "cua", "update", "--yes", "--json"])?;
+            clear_computer_control_engine_cache();
+            Ok(result)
+        })
+        .await
+        .map_err(|error| format!("CUA update task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn set_computer_control_engine(engine: String) -> Result<(), String> {
+        if engine != "legacy" && engine != "cua" {
+            return Err("invalid computer control engine".to_string());
+        }
+        if engine == "cua" {
+            let status = computer_control_engine_status()?;
+            if !status.available || status.state != "ready" {
+                return Err("CUA Driver is not ready; engine selection was not changed".to_string());
+            }
+        }
+        let was_running = daemon_is_running();
+        run_cli_checked(&["computer-use", "engine", engine.as_str()])?;
+        clear_computer_control_engine_cache();
+        restart_daemon_if_running(was_running)
+    }
+
+    #[tauri::command]
+    fn set_cua_cursor_enabled(enabled: bool) -> Result<(), String> {
+        let status = computer_control_engine_status()?;
+        if status.selected != "cua" || status.state != "ready" {
+            return Err(
+                "CUA Driver must be selected and ready before changing its cursor".to_string(),
+            );
+        }
+        let was_running = daemon_is_running();
+        run_cli_checked(&["computer-use", "cursor", if enabled { "on" } else { "off" }])?;
+        clear_computer_control_engine_cache();
+        restart_daemon_if_running(was_running)
     }
 
     #[tauri::command]
@@ -706,14 +870,21 @@ mod app {
             .parent()
             .map(|directory| directory.join("hermes-relay.exe"))
             .ok_or_else(|| "cannot resolve the installed CLI path".to_string())?;
+        let install_dir = tray_exe
+            .parent()
+            .ok_or_else(|| "cannot resolve the desktop install directory".to_string())?;
         let helper_script = "$ErrorActionPreference='Stop'; "
             .to_string()
             + "$targetPid=[int]$env:HERMES_UPDATE_PID; "
             + "Wait-Process -Id $targetPid -ErrorAction SilentlyContinue; "
-            + "$result=Start-Process -FilePath $env:HERMES_UPDATE_INSTALLER -ArgumentList '/S' -Wait -PassThru; "
-            + "if ($result.ExitCode -eq 0) { "
+            + "$exitCode=1; try { "
+            + "$installerArgs=@('/S',('/D=' + $env:HERMES_UPDATE_INSTALL_DIR)); "
+            + "$result=Start-Process -FilePath $env:HERMES_UPDATE_INSTALLER -ArgumentList $installerArgs -Wait -PassThru; "
+            + "$exitCode=$result.ExitCode; if ($exitCode -eq 0) { "
             + "if ($env:HERMES_UPDATE_RESTART_DAEMON -eq '1') { & $env:HERMES_UPDATE_CLI daemon start | Out-Null }; "
-            + "Start-Process -FilePath $env:HERMES_UPDATE_TRAY }";
+            + "Start-Process -FilePath $env:HERMES_UPDATE_TRAY } "
+            + "} finally { Remove-Item -LiteralPath $env:HERMES_UPDATE_INSTALLER -Force -ErrorAction SilentlyContinue }; "
+            + "exit $exitCode";
         Command::new("powershell.exe")
             .args([
                 "-NoProfile",
@@ -725,6 +896,7 @@ mod app {
             ])
             .env("HERMES_UPDATE_PID", std::process::id().to_string())
             .env("HERMES_UPDATE_INSTALLER", installer)
+            .env("HERMES_UPDATE_INSTALL_DIR", install_dir)
             .env("HERMES_UPDATE_TRAY", tray_exe)
             .env("HERMES_UPDATE_CLI", cli_exe)
             .env(
@@ -1562,6 +1734,12 @@ mod app {
                 open_external_url,
                 set_startup,
                 set_daemon_autostart,
+                set_computer_control_engine,
+                set_cua_cursor_enabled,
+                computer_cua_status,
+                computer_cua_install,
+                computer_cua_check_update,
+                computer_cua_update,
                 clear_activity,
                 present_grant_window
             ])
