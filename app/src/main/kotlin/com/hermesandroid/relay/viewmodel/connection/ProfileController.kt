@@ -583,6 +583,24 @@ class ProfileController(
         }
     }
 
+    /** Persist or clear a local cosmetic accent for a named profile. */
+    fun setProfileColor(profileName: String, colorHex: String?) {
+        val connectionId = activeConnectionId.value ?: return
+        val key = profileName.trim()
+        if (key.isBlank() || key.equals("default", ignoreCase = true)) return
+        scope.launch {
+            profilePresentationWriteMutex.withLock {
+                val updated = profilePresentationStore
+                    .presentationFlow(connectionId)
+                    .first()
+                    .colors
+                    .toMutableMap()
+                    .apply { if (colorHex == null) remove(key) else put(key, colorHex) }
+                profilePresentationStore.setColors(connectionId, updated)
+            }
+        }
+    }
+
     fun resetProfilePresentation() {
         val connectionId = activeConnectionId.value ?: return
         scope.launch {

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Android session browsing matches Hermes Desktop's recent organization model.** The primary session drawer can toggle between the active profile and all profiles, group by recency, project, status, or profile, order by supported session metrics, and narrow rows by status, project, profile, or pull-request state without collapsing duplicate IDs across profile stores. Named profiles receive stable identity-color badges with locally persisted color overrides.
 - **Android can edit current Hermes profiles through the standard Gateway.** The Profile Inspector capability-gates `profiles.describe` and `profiles.configure`, keeps Relay-only memory editing and older-Hermes fallback intact, and reports partial section saves without discarding failed drafts.
 - **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
 - Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.

@@ -1624,6 +1624,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setProfileHidden(profileName: String?, hidden: Boolean) =
         profileController.setProfileHidden(profileName, hidden)
 
+    fun setProfileColor(profileName: String, colorHex: String?) =
+        profileController.setProfileColor(profileName, colorHex)
+
     fun resetProfilePresentation() = profileController.resetProfilePresentation()
 
     /**

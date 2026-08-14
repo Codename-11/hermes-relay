@@ -8,10 +8,14 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.ui.theme.ProfileAccentSwatches
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Assert.assertEquals
@@ -119,5 +123,92 @@ class SessionDrawerTest {
         }
 
         compose.onNodeWithText("Now latest").assertIsDisplayed()
+    }
+
+    @Test
+    fun `all profiles toggle renders duplicate ids together in the primary list`() {
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = listOf(ChatSession("same", "Current", null)),
+                    currentSessionId = null,
+                    activeProfileName = "alpha",
+                    allProfilesSupported = true,
+                    allProfileSessions = listOf(
+                        ProfileSessionRow("alpha", ChatSession("same", "Alpha session", null)),
+                        ProfileSessionRow("beta", ChatSession("same", "Beta session", null)),
+                    ),
+                    onRefreshAllProfiles = {},
+                    onSelectProfileSession = { _, _ -> },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("All profiles").performClick()
+
+        compose.onNodeWithText("Alpha session").assertIsDisplayed()
+        compose.onNodeWithText("Beta session").assertIsDisplayed()
+    }
+
+    @Test
+    fun `customize sessions exposes desktop backed view variants`() {
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = listOf(ChatSession("one", "One", null)),
+                    currentSessionId = null,
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Customize sessions").performClick()
+
+        compose.onNodeWithText("Group by").assertIsDisplayed()
+        compose.onNodeWithText("Order by").assertIsDisplayed()
+        compose.onNodeWithText("Show on rows").assertIsDisplayed()
+    }
+
+    @Test
+    fun `all profiles customization can override a profile identity color`() {
+        var changed: Pair<String, String?>? = null
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    allProfilesSupported = true,
+                    allProfileSessions = listOf(
+                        ProfileSessionRow("alpha", ChatSession("a", "Alpha session", null)),
+                        ProfileSessionRow("beta", ChatSession("b", "Beta session", null)),
+                    ),
+                    onProfileColorChange = { profile, color -> changed = profile to color },
+                    onRefreshAllProfiles = {},
+                    onSelectProfileSession = { _, _ -> },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("All profiles").performClick()
+        compose.onNodeWithText("Customize sessions").performClick()
+        compose.onNodeWithText("Profile colors").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription(
+            "Set alpha profile color to ${ProfileAccentSwatches.first()}",
+        ).performScrollTo().performClick()
+
+        compose.runOnIdle {
+            assertEquals("alpha" to ProfileAccentSwatches.first(), changed)
+        }
     }
 }

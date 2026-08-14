@@ -2090,6 +2090,7 @@ fun ChatScreen(
                 currentSessionId = currentSessionId,
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
+                activeProfileName = effectiveProfile?.name ?: "default",
                 isLoading = isLoadingSessions,
                 isOpen = drawerState.isOpen,
                 activityStates = sessionActivityStates,
@@ -2142,8 +2143,11 @@ fun ChatScreen(
                 onToggleSourceHidden = { source, hidden ->
                     connectionViewModel.setSourceHidden(source, hidden)
                 },
+                allProfilesSupported = !activeConnection?.resolvedDashboardUrl.isNullOrBlank(),
                 allProfileSessions = allProfileSessions,
                 allProfileSessionsLoading = allProfileSessionsLoading,
+                profileColors = profilePresentation.colors,
+                onProfileColorChange = connectionViewModel::setProfileColor,
                 onRefreshAllProfiles = {
                     if (!allProfileSessionsLoading) scope.launch {
                         allProfileSessionsLoading = true
@@ -2160,6 +2164,11 @@ fun ChatScreen(
                                             title = item.title ?: item.preview,
                                             model = item.model,
                                             messageCount = item.messageCount ?: 0,
+                                            inputTokens = item.inputTokens ?: 0,
+                                            outputTokens = item.outputTokens ?: 0,
+                                            actualCostUsd = item.actualCostUsd,
+                                            estimatedCostUsd = item.estimatedCostUsd,
+                                            isActive = item.isActive,
                                             startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
                                             lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
                                             source = item.source,
@@ -2192,7 +2201,13 @@ fun ChatScreen(
                     if (target != null || profileName.equals("default", ignoreCase = true)) {
                         connectionViewModel.selectProfile(target)
                         chatViewModel.activateGatewayProfile(target)
-                        chatViewModel.switchSession(sessionId)
+                        chatViewModel.switchProfileContext(
+                            contextKey = AgentDisplay.profileContextKey(
+                                connectionId = activeConnection?.id,
+                                profileName = target?.name,
+                            ),
+                            sessionId = sessionId,
+                        )
                         scope.launch { drawerState.close() }
                     } else {
                         scope.launch {

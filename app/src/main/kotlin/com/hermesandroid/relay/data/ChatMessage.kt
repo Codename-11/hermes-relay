@@ -412,6 +412,11 @@ data class ChatSession(
     val title: String?,
     val model: String?,
     val messageCount: Int = 0,
+    val inputTokens: Int = 0,
+    val outputTokens: Int = 0,
+    val actualCostUsd: Double? = null,
+    val estimatedCostUsd: Double? = null,
+    val isActive: Boolean = false,
     val updatedAt: Long = 0L,
     val startedAt: Long = 0L,
     val lastActivityAt: Long = 0L,
@@ -436,6 +441,12 @@ data class ChatSession(
     val pullRequestState: String? = null,
     val pullRequestDraft: Boolean = false,
 ) {
+    val totalTokens: Int
+        get() = inputTokens + outputTokens
+
+    val costUsd: Double
+        get() = actualCostUsd ?: estimatedCostUsd ?: 0.0
+
     val activityTimestamp: Long
         get() = firstPositive(lastActivityAt, updatedAt, startedAt)
 

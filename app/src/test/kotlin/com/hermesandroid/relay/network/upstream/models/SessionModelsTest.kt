@@ -74,7 +74,10 @@ class SessionModelsTest {
                 "message_count": 5,
                 "tool_call_count": 2,
                 "input_tokens": 100,
-                "output_tokens": 200
+                "output_tokens": 200,
+                "actual_cost_usd": 1.25,
+                "estimated_cost_usd": 1.50,
+                "is_active": true
             }
         """.trimIndent()
 
@@ -85,6 +88,11 @@ class SessionModelsTest {
         assertEquals(1700000900.0, item.resolvedLastActivity!!, 0.001)
         assertEquals(5, item.messageCount)
         assertEquals(2, item.toolCallCount)
+        assertEquals(100, item.inputTokens)
+        assertEquals(200, item.outputTokens)
+        assertEquals(1.25, item.actualCostUsd!!, 0.001)
+        assertEquals(1.50, item.estimatedCostUsd!!, 0.001)
+        assertTrue(item.isActive)
     }
 
     @Test

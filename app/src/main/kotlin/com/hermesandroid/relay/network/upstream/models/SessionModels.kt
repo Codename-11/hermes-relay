@@ -214,6 +214,9 @@ data class SessionItem(
     @SerialName("tool_call_count") val toolCallCount: Int? = null,
     @SerialName("input_tokens") val inputTokens: Int? = null,
     @SerialName("output_tokens") val outputTokens: Int? = null,
+    @SerialName("actual_cost_usd") val actualCostUsd: Double? = null,
+    @SerialName("estimated_cost_usd") val estimatedCostUsd: Double? = null,
+    @SerialName("is_active") val isActive: Boolean = false,
     @SerialName("has_model_config")
     @Serializable(with = FlexibleBooleanSerializer::class)
     val hasModelConfig: Boolean = false,
