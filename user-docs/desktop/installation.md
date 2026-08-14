@@ -60,6 +60,43 @@ hermes-relay ui          # same as: hermes-relay ui open
 hermes-relay ui status
 ```
 
+### Preferred CUA Driver
+
+CUA Driver is an optional Windows computer-control engine and is **not** bundled
+with either Hermes-Relay installer surface. Hermes resolves only the canonical
+upstream package at
+`%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe`; it does not use an
+arbitrary PATH shim.
+
+Hermes exposes the verified upstream lifecycle only after an explicit local
+choice. Read-only status and update checks never install anything:
+
+```powershell
+hermes-relay computer-use cua status
+hermes-relay computer-use cua check-update
+hermes-relay computer-use cua install --yes
+hermes-relay computer-use cua update --yes
+```
+
+Install is pinned to the minimum compatible release. Update first asks the
+installed driver's native update service which release is current, then refuses
+to apply it if it falls outside Hermes-Relay's supported range (`>=0.19.3,
+<0.20.0`). Hermes downloads the versioned GitHub release manifest and installer,
+checks the manifest repository/product/version and the installer's SHA-256, and
+then verifies the canonical binary path, version, driver manifest, required
+tools, permission mode, and health report. These are release-metadata and
+checksum integrity checks, not a Windows publisher signature.
+
+The UI provides the same explicit **Install**, **Check**, and **Update** actions
+under **Settings → Computer control**. When the report says CUA is ready it is
+the preferred structured engine; `hermes-relay computer-use engine legacy`
+selects the original Windows input path as an explicit compatibility backend.
+Engine changes apply only to new control sessions. Hermes does not
+silently install or update CUA Driver, and `hermes-relay update` manages only
+the Hermes-Relay CLI/UI bundle. Hermes also disables CUA telemetry for every
+driver process it starts; telemetry is not silently enabled as part of pairing,
+Full Access, or engine selection.
+
 ### SmartScreen warning on first launch
 
 The binaries are unsigned during the experimental phase. Windows may show "Windows protected your PC" for the installer or first launch. Click **More info → Run anyway**. For a CLI-only install, you can also pre-allow the executable from PowerShell:

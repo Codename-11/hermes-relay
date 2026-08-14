@@ -84,6 +84,37 @@ hermes-relay computer-use cancel
 
 Switching the host to **Restricted** or using emergency stop also requests cancellation. Without a local approval response, a headless request times out and input remains blocked.
 
+## CUA Driver is unavailable, incompatible, or degraded
+
+Inspect the machine-local engine report:
+
+```powershell
+hermes-relay computer-use status --json
+```
+
+- **Not installed** means the canonical package was not found at
+  `%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe`. A PATH-only shim
+  is intentionally ignored.
+- **Incompatible** means the executable, manifest, supported version, required
+  tool set, or permission mode did not match the Hermes adapter contract.
+- **Degraded** means the live CUA health report was not healthy. On Windows,
+  confirm the driver is running in the interactive user's logon session rather
+  than Session 0, then run the upstream `cua-driver doctor` command.
+
+CUA is preferred for new structured-control sessions. If it is not ready before
+a session begins, Hermes can select the Windows input compatibility backend;
+it never changes backend in the middle of a control session. Re-check with
+`hermes-relay computer-use cua status`, repair explicitly with
+`computer-use cua install --yes`, or use `computer-use cua check-update` followed
+by `computer-use cua update --yes`. The UI exposes matching Install, Check, and
+Update actions. None run automatically.
+
+If a CUA action reports that background delivery is unavailable, Hermes does
+not silently foreground the target. Use another structured action or complete
+that step manually. **Allow foreground escalation** is reserved in this release:
+runtime status remains off even if an older preview saved the preference, and
+Full Access does not turn it on.
+
 ## `auth timed out after 15000ms`
 
 The relay subprocess takes 15–30 seconds on first attach because Hermes initializes the full agent. Bump the timeout for slow first connects:

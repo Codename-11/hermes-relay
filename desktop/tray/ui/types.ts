@@ -25,6 +25,43 @@ export interface DaemonStatus {
   updated_at?: number | null
 }
 
+export interface ComputerControlEngine {
+  selected: 'legacy' | 'cua'
+  effective: 'legacy' | 'cua' | 'unavailable'
+  available: boolean
+  state: 'not_installed' | 'incompatible' | 'degraded' | 'ready' | 'error'
+  version?: string | null
+  health?: string | null
+  path?: string | null
+  cursor_enabled?: boolean
+  foreground_escalation_enabled: boolean
+  active_sessions?: number
+  active_backend?: 'cua' | 'legacy_compat' | 'mixed' | 'idle' | null
+  last_action?: {
+    action?: string | null
+    target_app?: string | null
+    target_title?: string | null
+    target_pid?: number | null
+    target_window_id?: number | null
+    verification?: string | null
+    occurred_at?: number | string | null
+  } | null
+  message?: string | null
+}
+
+export interface CuaManagementStatus {
+  installed: boolean
+  canonical_path?: string | null
+  discovered_path?: string | null
+  stale_path_shim: boolean
+  current_version?: string | null
+  compatible: boolean
+  compatibility_reason?: string | null
+  supported_range: { minimum: string; maximum_exclusive: string }
+  update?: { latest_version?: string; update_available: boolean; compatible: boolean; error?: string; release_notes_url?: string }
+  operation?: { kind: 'install' | 'update'; state: 'completed'; version: string }
+}
+
 export interface Activity {
   ts: number
   kind?: 'tool.completed' | 'management.completed'
@@ -34,6 +71,16 @@ export interface Activity {
   aborted?: boolean
   request_id?: string
   host_url?: string
+  backend?: string
+  dispatch?: string
+  control_session_id?: string
+  target_app?: string
+  target_title?: string
+  target_pid?: number
+  target_window_id?: number
+  action?: string
+  verification?: string
+  phase?: string
   duration_ms?: number
   exit_code?: number
   summary?: string
@@ -61,6 +108,7 @@ export interface Snapshot {
   cli_version?: string | null
   cli_path?: string | null
   hardware_availability: { usb: boolean; adb: boolean; microphone: boolean; camera: boolean }
+  computer_control_engine?: ComputerControlEngine | null
 }
 
 export interface PendingGrantRequest {

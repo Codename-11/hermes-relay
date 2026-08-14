@@ -31,6 +31,8 @@ test('installer launch is delayed until the running CLI can exit', () => {
   assert.equal(plan.options.env?.HERMES_RELAY_SETUP_PATH, 'C:\\Temp\\hermes setup.exe')
   assert.equal(plan.options.env?.HERMES_RELAY_SETUP_SILENT, '1')
   assert.equal(plan.options.env?.HERMES_RELAY_SETUP_INSTALL_DIR, 'C:\\Hermes custom')
+  assert.equal(plan.options.env?.HERMES_RELAY_SETUP_CALLER_PID, String(process.pid))
+  assert.match(plan.args.join(' '), /Wait-Process -Id \$callerPid/)
   assert.match(plan.args.join(' '), /Start-Sleep/)
   assert.match(plan.args.join(' '), /\/D=/)
   assert.match(plan.args.join(' '), /Remove-Item -LiteralPath \$installer/)
@@ -44,7 +46,7 @@ test('PowerShell launches an installer whose path contains spaces via environmen
   const fakeInstaller = join(scratch, 'fake setup.exe')
   await copyFile(join(process.env.WINDIR ?? 'C:\\Windows', 'System32', 'whoami.exe'), fakeInstaller)
   try {
-    const plan = windowsInstallerLaunchPlan(fakeInstaller, { silent: false, delayMs: 0 })
+    const plan = windowsInstallerLaunchPlan(fakeInstaller, { silent: false, delayMs: 0, callerPid: 0 })
     const result = spawnSync(plan.program, plan.args, { ...plan.options, detached: false, stdio: 'pipe' })
     assert.equal(result.status, 0, result.stderr?.toString())
   } finally {
@@ -76,6 +78,25 @@ test('NSIS bundle cleans cooperative-update and local-development backups', asyn
   }
 })
 
+test('NSIS bundle quiesces tray children and retries failed payload extraction once', async () => {
+  const script = await readFile(new URL('../tray/installer/hermes-relay.nsi', import.meta.url), 'utf8')
+  const core = script.slice(script.indexOf('Section "Hermes-Relay CLI and management UI"'), script.indexOf('Section "Start tray when I sign in"'))
+  const trayStop = core.indexOf('/IM hermes-relay-tray.exe /T /F')
+  const cliDrain = core.indexOf('/IM hermes-relay.exe /T /F')
+  const firstInstall = core.indexOf('File /oname=hermes-relay.exe "${CLI_EXE}"')
+  const retry = core.indexOf('install_attempt_failed:')
+
+  assert.ok(trayStop >= 0, 'installer should terminate the tray process tree')
+  assert.ok(cliDrain < firstInstall, 'installed processes must be drained before replacement')
+  assert.ok(retry > firstInstall, 'installer should retry the first failed extraction attempt')
+  assert.match(core, /StrCpy \$InstallAttempt "1"[\s\S]*Goto install_attempt/)
+  assert.match(core, /ClearErrors[\s\S]*File \/oname=hermes-relay\.exe[\s\S]*File \/oname=hermes-relay-tray\.exe[\s\S]*IfErrors install_attempt_failed/)
+  assert.match(core, /SetErrorLevel 1\s+Quit/)
+  assert.match(core, /MessageBox MB_ICONSTOP .* \/SD IDOK/)
+  assert.match(core, /taskkill\.exe" \/IM hermes-relay-tray\.exe \/T \/F/)
+  assert.match(core, /taskkill\.exe" \/IM hermes-relay\.exe \/T \/F/)
+})
+
 test('local tray installation embeds production assets instead of loading devUrl', async () => {
   const script = await readFile(new URL('../scripts/dev-install-tray.mjs', import.meta.url), 'utf8')
   assert.match(script, /'--features', 'custom-protocol'/)
@@ -85,6 +106,14 @@ test('CLI opens the GUI process without forcing a hidden Windows startup state',
   const source = await readFile(new URL('../src/commands/ui.ts', import.meta.url), 'utf8')
   assert.match(source, /spawn\(path, \['--show'\]/)
   assert.doesNotMatch(source, /windowsHide:\s*true/)
+})
+
+test('tray update helper preserves the current install directory and cleans its installer', async () => {
+  const source = await readFile(new URL('../tray/src/main.rs', import.meta.url), 'utf8')
+  assert.match(source, /\.env\("HERMES_UPDATE_INSTALL_DIR", install_dir\)/)
+  assert.match(source, /\$installerArgs=@\('\/S',\('\/D=' \+ \$env:HERMES_UPDATE_INSTALL_DIR\)\)/)
+  assert.match(source, /Remove-Item -LiteralPath \$env:HERMES_UPDATE_INSTALLER -Force/)
+  assert.match(source, /exit \$exitCode/)
 })
 
 test('POSIX installer only advertises artifacts produced by the release workflow', async () => {

@@ -8,12 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **CUA Driver is the preferred Windows structured-control engine.** New local settings prefer a verified CUA runtime for window-targeted background actions, fresh snapshot tokens, and optional per-session animated agent cursors without moving the physical pointer; Windows input is now the explicit compatibility backend and backend choice is fixed for each control session. Full-display observation remains on the read-only system capture path. CLI and UI can explicitly install, check, or update the canonical CUA package after verifying the upstream release manifest and installer checksum; nothing is bundled or updated automatically, driver telemetry stays off, and the local activity timeline records only bounded, redacted control metadata.
 - **Android can edit current Hermes profiles through the standard Gateway.** The Profile Inspector capability-gates `profiles.describe` and `profiles.configure`, keeps Relay-only memory editing and older-Hermes fallback intact, and reports partial section saves without discarding failed drafts.
 - **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
 - Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.
 
 ### Fixed
 
+- **Windows bundle updates fail closed when installed processes retain a binary lock.** Setup now waits for the invoking CLI, quiesces the tray and its short-lived CLI children, checks every payload extraction before writing release metadata, preserves custom install directories, and returns a failure instead of reporting a mixed-version installation.
 - **Android preserves authoritative Gateway outcomes.** Protected-file cards cannot offer forbidden persistent scopes, compression no-ops show the server result, bounded resume failures do not create context-free replacement sessions, and edit/regenerate retains durable row identities across consecutive rewinds.
 - **Android routes and uploads against live upstream truth.** Multiplex API fallback trusts `served_profiles` instead of installed profiles, and generic documents carry the Gateway-issued `@file:` reference into ordinary and queued prompts.
 - **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.

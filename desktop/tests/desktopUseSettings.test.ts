@@ -9,6 +9,7 @@ import {
   readDesktopUseSettings,
   readDesktopUseSettingsSync,
   requestComputerGrantCancellation,
+  setComputerControlSettings,
   setDesktopUseEnabled
 } from '../src/lib/desktopUseSettings.js'
 import { shouldAdvertiseComputerUse } from '../src/tools/handlerSet.js'
@@ -29,6 +30,29 @@ test('desktop-use preference defaults off and persists explicit changes', async 
     await setDesktopUseEnabled(true, settingsPath)
     assert.equal((await readDesktopUseSettings(settingsPath)).computer_use_enabled, true)
     assert.equal(readDesktopUseSettingsSync(settingsPath).computer_use_enabled, true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('computer control settings default fail-closed and survive desktop-use changes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hermes-computer-control-'))
+  const settingsPath = join(dir, 'desktop-settings.json')
+  try {
+    assert.deepEqual(await readDesktopUseSettings(settingsPath), {
+      computer_use_enabled: false,
+      computer_control_engine: 'cua',
+      cua_cursor_enabled: false
+    })
+    await setComputerControlSettings({
+      computer_control_engine: 'cua',
+      cua_cursor_enabled: true
+    }, settingsPath)
+    await setDesktopUseEnabled(true, settingsPath)
+    const settings = await readDesktopUseSettings(settingsPath)
+    assert.equal(settings.computer_use_enabled, true)
+    assert.equal(settings.computer_control_engine, 'cua')
+    assert.equal(settings.cua_cursor_enabled, true)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

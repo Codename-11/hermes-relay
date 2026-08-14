@@ -1273,8 +1273,40 @@ async def handle_desktop_dispatch(request: web.Request) -> web.Response:
     device = args.pop("device", None) or args.pop("device_id", None)
     if not isinstance(device, str):
         device = None
+    # These headers are emitted by the in-process Hermes tool wrapper and are
+    # not part of the model-facing schema. The route is loopback-only; the
+    # Relay still mints the opaque id and binds target/request fields itself.
+    from .channels.desktop import DesktopRequesterContext
+
+    def _context_header(name: str) -> str | None:
+        value = request.headers.get(name, "").strip()
+        if not value:
+            return None
+        return "".join(ch for ch in value if ch.isprintable())[:256] or None
+
+    chat_session_id = _context_header("X-Hermes-Relay-Chat-Session")
+    requester_device_id: str | None = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        # A supplied bearer must validate; never downgrade a bad credential to
+        # loopback trust. This yields the real paired requester device.
+        _server, authenticated_session = _require_bearer_session(request)
+        requester_device_id = authenticated_session.device_id or None
+    elif chat_session_id:
+        # Standard plugin calls are loopback-only. Bind their principal to the
+        # executor-owned Hermes session rather than inventing a host identity.
+        # Same-user localhost processes are inside this existing trust boundary.
+        requester_device_id = f"hermes-agent:{chat_session_id}"
+    requester = DesktopRequesterContext(
+        requester_device_id=requester_device_id,
+        chat_session_id=chat_session_id,
+        run_id=_context_header("X-Hermes-Relay-Run-Id"),
+        profile=_context_header("X-Hermes-Relay-Profile"),
+    )
     try:
-        result = await server.desktop.handle_command(tool_name, args, device=device)
+        result = await server.desktop.handle_command(
+            tool_name, args, device=device, requester=requester
+        )
         return web.json_response(result)
     except Exception as exc:  # DesktopError or asyncio.TimeoutError
         msg = str(exc) or exc.__class__.__name__

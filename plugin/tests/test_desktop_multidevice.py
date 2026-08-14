@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
-from plugin.relay.channels.desktop import DesktopError, DesktopHandler
+from plugin.relay.channels.desktop import (
+    DesktopError,
+    DesktopHandler,
+    DesktopRequesterContext,
+)
 from plugin.relay.server import handle_desktop_dispatch
 from plugin.tools import desktop_tool
 
@@ -35,7 +39,11 @@ def _status(host: str) -> dict[str, Any]:
         "type": "desktop.status",
         "payload": {
             "host": host,
-            "advertised_tools": ["desktop_powershell", "desktop_read_file"],
+            "advertised_tools": [
+                "desktop_powershell",
+                "desktop_read_file",
+                "desktop_computer_snapshot",
+            ],
         },
     }
 
@@ -119,6 +127,30 @@ class DesktopMultiDeviceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(post.call_args.kwargs["json"]["device"], "desktop-1")
         self.assertEqual(post.call_args.kwargs["json"]["script"], "'ok'")
 
+    async def test_tool_dispatch_uses_executor_context_and_drops_model_identity(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {"ok": True, "result": {}}
+        with patch.object(desktop_tool.requests, "post", return_value=response) as post:
+            desktop_tool._HANDLERS["desktop_computer_action"](
+                {
+                    "action": "click",
+                    "x": 10,
+                    "y": 20,
+                    "control_session": {"id": "model-forged"},
+                    "control_context": {"run_id": "model-forged"},
+                },
+                session_id="chat-authenticated",
+                task_id="run-authenticated",
+                profile="default",
+            )
+        body = post.call_args.kwargs["json"]
+        headers = post.call_args.kwargs["headers"]
+        self.assertNotIn("control_session", body)
+        self.assertNotIn("control_context", body)
+        self.assertEqual(headers["X-Hermes-Relay-Chat-Session"], "chat-authenticated")
+        self.assertEqual(headers["X-Hermes-Relay-Run-Id"], "run-authenticated")
+        self.assertEqual(headers["X-Hermes-Relay-Profile"], "default")
+
     async def test_http_dispatch_strips_selector_before_client_forwarding(self) -> None:
         desktop = Mock()
         desktop.handle_command = AsyncMock(return_value={"ok": True, "result": {}})
@@ -126,6 +158,7 @@ class DesktopMultiDeviceTests(unittest.IsolatedAsyncioTestCase):
             remote="127.0.0.1",
             app={"server": Mock(desktop=desktop)},
             match_info={"tool_name": "desktop_powershell"},
+            headers={},
         )
         request.json = AsyncMock(
             return_value={"script": "'ok'", "device": "desktop-1"}
@@ -138,7 +171,232 @@ class DesktopMultiDeviceTests(unittest.IsolatedAsyncioTestCase):
             "desktop_powershell",
             {"script": "'ok'"},
             device="desktop-1",
+            requester=DesktopRequesterContext(),
         )
+
+    async def test_http_dispatch_binds_loopback_executor_context(self) -> None:
+        desktop = Mock()
+        desktop.handle_command = AsyncMock(return_value={"ok": True, "result": {}})
+        request = Mock(
+            remote="127.0.0.1",
+            app={"server": Mock(desktop=desktop)},
+            match_info={"tool_name": "desktop_computer_snapshot"},
+            headers={
+                "X-Hermes-Relay-Chat-Session": "chat-1",
+                "X-Hermes-Relay-Run-Id": "run-1",
+                "X-Hermes-Relay-Profile": "default",
+            },
+        )
+        request.json = AsyncMock(return_value={"device": "desktop-1"})
+
+        response = await handle_desktop_dispatch(request)
+
+        self.assertEqual(response.status, 200)
+        desktop.handle_command.assert_awaited_once_with(
+            "desktop_computer_snapshot",
+            {},
+            device="desktop-1",
+            requester=DesktopRequesterContext(
+                requester_device_id="hermes-agent:chat-1",
+                chat_session_id="chat-1",
+                run_id="run-1",
+                profile="default",
+            ),
+        )
+
+    async def test_http_dispatch_prefers_authenticated_paired_requester(self) -> None:
+        desktop = Mock()
+        desktop.handle_command = AsyncMock(return_value={"ok": True, "result": {}})
+        server = Mock(desktop=desktop)
+        request = Mock(
+            remote="127.0.0.1",
+            app={"server": server},
+            match_info={"tool_name": "desktop_computer_snapshot"},
+            headers={
+                "Authorization": "Bearer authenticated-token",
+                "X-Hermes-Relay-Chat-Session": "chat-1",
+                "X-Hermes-Relay-Run-Id": "run-1",
+            },
+        )
+        request.json = AsyncMock(return_value={"device": "desktop-1"})
+        paired_session = Mock(device_id="paired-phone-1")
+
+        with patch(
+            "plugin.relay.server._require_bearer_session",
+            return_value=(server, paired_session),
+        ):
+            response = await handle_desktop_dispatch(request)
+
+        self.assertEqual(response.status, 200)
+        requester = desktop.handle_command.await_args.kwargs["requester"]
+        self.assertEqual(requester.requester_device_id, "paired-phone-1")
+        self.assertEqual(requester.chat_session_id, "chat-1")
+        self.assertEqual(requester.run_id, "run-1")
+
+    async def test_computer_control_session_is_server_owned_stable_and_request_bound(self) -> None:
+        handler, office, _laptop = await _register_two()
+        requester = DesktopRequesterContext(
+            requester_device_id="paired-agent-1",
+            chat_session_id="chat-1",
+            run_id="run-1",
+            profile="default",
+        )
+
+        async def dispatch_once() -> dict[str, Any]:
+            task = asyncio.create_task(
+                handler.handle_command(
+                    "desktop_computer_snapshot",
+                    {},
+                    device="desktop-1",
+                    requester=requester,
+                )
+            )
+            await asyncio.sleep(0)
+            payload = office.sent[-1]["payload"]
+            await handler.handle(
+                office,  # type: ignore[arg-type]
+                {
+                    "channel": "desktop",
+                    "type": "desktop.response",
+                    "payload": {"request_id": payload["request_id"], "ok": True, "result": {}},
+                },
+            )
+            await asyncio.wait_for(task, timeout=1)
+            return payload
+
+        first = await dispatch_once()
+        second = await dispatch_once()
+        first_control = first["control_session"]
+        second_control = second["control_session"]
+        self.assertEqual(first_control["version"], 1)
+        self.assertRegex(first_control["id"], r"^control-[0-9a-f-]+$")
+        self.assertEqual(first_control["id"], second_control["id"])
+        self.assertNotEqual(first_control["request_id"], second_control["request_id"])
+        self.assertEqual(first_control["request_id"], first["request_id"])
+        self.assertEqual(first_control["requester_device_id"], "paired-agent-1")
+        self.assertEqual(first_control["target_device_id"], "desktop-1")
+        self.assertEqual(first_control["chat_session_id"], "chat-1")
+        self.assertEqual(first_control["run_id"], "run-1")
+        self.assertEqual(len(handler._control_sessions), 1)
+        await handler.detach_ws(office, "test disconnect")  # type: ignore[arg-type]
+        self.assertEqual(handler._control_sessions, {})
+
+    async def test_computer_command_omits_identity_without_authoritative_run(self) -> None:
+        handler, office, _laptop = await _register_two()
+        task = asyncio.create_task(
+            handler.handle_command(
+                "desktop_computer_snapshot",
+                {},
+                device="desktop-1",
+                requester=DesktopRequesterContext(requester_device_id="paired-agent-1"),
+            )
+        )
+        await asyncio.sleep(0)
+        payload = office.sent[-1]["payload"]
+        self.assertNotIn("control_session", payload)
+        await handler.handle(
+            office,  # type: ignore[arg-type]
+            {
+                "channel": "desktop",
+                "type": "desktop.response",
+                "payload": {"request_id": payload["request_id"], "ok": True, "result": {}},
+            },
+        )
+        await asyncio.wait_for(task, timeout=1)
+
+    async def test_new_requester_run_ends_prior_control_session(self) -> None:
+        handler, office, _laptop = await _register_two()
+
+        async def dispatch(run_id: str) -> dict[str, Any]:
+            task = asyncio.create_task(handler.handle_command(
+                "desktop_computer_snapshot", {}, device="desktop-1",
+                requester=DesktopRequesterContext(
+                    requester_device_id="paired-agent-1",
+                    chat_session_id="chat-1",
+                    run_id=run_id,
+                    profile="default",
+                ),
+            ))
+            await asyncio.sleep(0)
+            command = next(
+                item for item in reversed(office.sent)
+                if item["type"] == "desktop.command"
+            )
+            await handler.handle(office, {  # type: ignore[arg-type]
+                "channel": "desktop", "type": "desktop.response",
+                "payload": {"request_id": command["payload"]["request_id"], "ok": True, "result": {}},
+            })
+            await task
+            return command["payload"]
+
+        first = await dispatch("run-1")
+        second = await dispatch("run-2")
+        ended = next(item for item in office.sent if item["type"] == "desktop.control_session_end")
+        self.assertEqual(ended["payload"]["version"], 1)
+        self.assertEqual(ended["payload"]["id"], first["control_session"]["id"])
+        self.assertEqual(ended["payload"]["target_device_id"], "desktop-1")
+        self.assertEqual(ended["payload"]["reason"], "requester run changed")
+        self.assertNotEqual(first["control_session"]["id"], second["control_session"]["id"])
+
+    async def test_idle_control_session_emits_end_event(self) -> None:
+        with patch("plugin.relay.channels.desktop.CONTROL_SESSION_IDLE_SECONDS", 0.01):
+            handler, office, _laptop = await _register_two()
+            task = asyncio.create_task(handler.handle_command(
+                "desktop_computer_snapshot", {}, device="desktop-1",
+                requester=DesktopRequesterContext(
+                    requester_device_id="paired-agent-1", run_id="run-1"
+                ),
+            ))
+            await asyncio.sleep(0)
+            command = office.sent[-1]
+            await handler.handle(office, {  # type: ignore[arg-type]
+                "channel": "desktop", "type": "desktop.response",
+                "payload": {"request_id": command["payload"]["request_id"], "ok": True, "result": {}},
+            })
+            await task
+            await asyncio.sleep(0.03)
+            ended = next(item for item in office.sent if item["type"] == "desktop.control_session_end")
+            self.assertEqual(ended["payload"]["id"], command["payload"]["control_session"]["id"])
+            self.assertEqual(ended["payload"]["reason"], "control session idle timeout")
+
+    async def test_control_session_capacity_eviction_emits_end_event(self) -> None:
+        with patch("plugin.relay.channels.desktop.CONTROL_SESSIONS_MAX", 1):
+            handler, office, _laptop = await _register_two()
+
+            async def dispatch(requester_device_id: str) -> dict[str, Any]:
+                task = asyncio.create_task(handler.handle_command(
+                    "desktop_computer_snapshot", {}, device="desktop-1",
+                    requester=DesktopRequesterContext(
+                        requester_device_id=requester_device_id,
+                        run_id="run-1",
+                    ),
+                ))
+                await asyncio.sleep(0)
+                command = next(
+                    item for item in reversed(office.sent)
+                    if item["type"] == "desktop.command"
+                )
+                await handler.handle(office, {  # type: ignore[arg-type]
+                    "channel": "desktop", "type": "desktop.response",
+                    "payload": {
+                        "request_id": command["payload"]["request_id"],
+                        "ok": True,
+                        "result": {},
+                    },
+                })
+                await task
+                return command["payload"]
+
+            first = await dispatch("paired-agent-1")
+            await dispatch("paired-agent-2")
+            ended = next(
+                item for item in office.sent
+                if item["type"] == "desktop.control_session_end"
+            )
+            self.assertEqual(ended["payload"]["version"], 1)
+            self.assertEqual(ended["payload"]["id"], first["control_session"]["id"])
+            self.assertEqual(ended["payload"]["target_device_id"], "desktop-1")
+            self.assertEqual(ended["payload"]["reason"], "control session capacity eviction")
 
     async def test_untargeted_command_fails_closed_with_multiple_pcs(self) -> None:
         handler, _office, _laptop = await _register_two()

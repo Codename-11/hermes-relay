@@ -6,10 +6,10 @@ import {
   CircleHelp, Clock3, Download, ExternalLink, Eye, FileText, FolderOpen, Home, Info, Laptop, Link2,
   Copy, LoaderCircle, LogOut, Monitor, MousePointer2, Power, Radio, RefreshCw, Server,
   Settings, ShieldCheck, TerminalSquare, Trash2, Unplug, UserRoundX, X, Usb,
-  LockKeyhole, SlidersHorizontal, Mic, Video
+  LockKeyhole, SlidersHorizontal, Mic, Video, MousePointerClick
 } from 'lucide-react'
 import logo from '../icons/icon-256.png'
-import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
+import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, CuaManagementStatus, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
 import { describeTransportSecurity } from '../../src/transportSecurity'
 import { displayLabel as displayRouteLabel, inferEndpointRole } from '../../src/endpoint'
 
@@ -30,6 +30,10 @@ const demo: Snapshot = {
   cli_version: '0.4.0-alpha.4',
   cli_path: 'C:\\Program Files\\Hermes-Relay CLI\\hermes-relay.exe',
   hardware_availability: { usb: true, adb: true, microphone: false, camera: false },
+  computer_control_engine: {
+    selected: 'legacy', effective: 'legacy', available: false, state: 'not_installed',
+    foreground_escalation_enabled: false, message: 'CUA Driver is not installed. Legacy input remains active.'
+  },
   pending_grants: [],
   activity: [
     { ts: Date.now() - 110_000, tool: 'desktop_powershell', ok: true, summary: 'exit 0', request_detail: '{\n  "script": "Get-Process | Select-Object -First 5"\n}', stdout: 'Handles  NPM(K)  PM(K)  WS(K)  CPU(s)  Id  ProcessName\n-------  ------  -----  -----  ------  --  -----------\n    412      31  74248  98312    4.18  812 powershell' },
@@ -48,6 +52,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     if (command === 'check_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: true, latest_version: '0.4.0-alpha.2', installed: false, needs_restart: false } as T
     if (command === 'install_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: false, installed: true, needs_restart: true } as T
     if (command === 'test_host_route') return { best: { label: 'LAN', url: 'ws://172.16.24.250:8767', reachable: true, elapsed_ms: 36, encrypted: false, security: 'Unencrypted relay connection' }, routes: [] } as T
+    if (command === 'computer_cua_status') return { installed: false, stale_path_shim: false, compatible: false, compatibility_reason: 'CUA Driver is not installed', supported_range: { minimum: '0.19.3', maximum_exclusive: '0.20.0' } } as T
     return undefined as T
   }
   return invoke<T>(command, args)
@@ -119,6 +124,20 @@ function activityName(tool: string): string {
     'daemon.restart': 'Restarted daemon', 'startup.change': 'Changed startup setting'
   }
   return names[tool] ?? tool.replace(/^desktop[._]/, '').replaceAll('_', ' ').replaceAll('.', ' ').replace(/\b\w/g, value => value.toUpperCase())
+}
+
+function isComputerControl(entry: Activity): boolean {
+  return entry.backend === 'cua' || entry.backend === 'legacy_compat' || entry.tool.startsWith('desktop_computer_')
+}
+
+function controlActionLabel(entry: Activity): string {
+  return (entry.action ?? activityName(entry.tool)).replaceAll('_', ' ').replace(/\b\w/g, value => value.toUpperCase())
+}
+
+function controlVerificationLabel(value?: string): string {
+  return value === 'snapshot_captured' ? 'Post-action snapshot captured'
+    : value === 'failed' ? 'Verification failed'
+      : value ? value.replaceAll('_', ' ') : 'Not reported'
 }
 
 function age(ts?: number): string {
@@ -489,7 +508,7 @@ function ManagementApp() {
       {page === 'hosts' && <HostsPage hosts={snapshot.hosts} selected={host} onOpen={url => { setDetailUrl(url); setSelectedUrl(url); setPage('host-detail') }} onPair={() => openPair()} />}
       {page === 'pair-host' && <PairHostPage initialUrl={pairInitialUrl} busy={busy === 'pair_host'} onBack={() => setPage('hosts')} onPair={pairHost} />}
       {page === 'host-detail' && <HostDetailPage host={snapshot.hosts.find(item => item.url === detailUrl) ?? null} clients={clients} busy={busy !== null} onBack={() => setPage('hosts')} onConnect={connectHost} onRename={(remote, name) => action('rename_host', { remote, name })} onAccess={() => { setPolicyBack('host-detail'); setPage('access') }} onCapabilities={() => { setPolicyBack('host-detail'); setPage('capabilities') }} onRevoke={(remote, client) => setPending({ type: 'revoke', client, remote })} onRepair={host => setPending({ type: 'repair', host })} onForget={host => setPending({ type: 'forget', host })} />}
-      {page === 'settings' && <SettingsPage daemon={snapshot.daemon} startup={snapshot.startup_enabled} daemonAutostart={snapshot.daemon_autostart_enabled ?? false} activity={snapshot.activity} onAction={action} onStartup={value => action('set_startup', { enabled: value })} onDaemonAutostart={value => action('set_daemon_autostart', { enabled: value })} onHelp={() => setPage('help')} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} onOpenActivity={entry => { setSelectedActivity(entry); setActivityDetailBack('settings'); setPage('activity-detail') }} />}
+      {page === 'settings' && <SettingsPage daemon={snapshot.daemon} computerControl={snapshot.computer_control_engine ?? null} startup={snapshot.startup_enabled} daemonAutostart={snapshot.daemon_autostart_enabled ?? false} activity={snapshot.activity} onAction={action} onStartup={value => action('set_startup', { enabled: value })} onDaemonAutostart={value => action('set_daemon_autostart', { enabled: value })} onHelp={() => setPage('help')} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} onOpenActivity={entry => { setSelectedActivity(entry); setActivityDetailBack('settings'); setPage('activity-detail') }} />}
       {page === 'help' && <HelpPage snapshot={snapshot} host={host} onBack={() => { setSelectedUrl(snapshot.active_url ?? null); setPage('settings') }} onAction={action} />}
       {page === 'activity' && <ActivityPage entries={snapshot.activity} host={host} onBack={() => setPage(activityBack)} onClear={() => setPending({ type: 'clear-activity' })} onOpen={entry => { setSelectedActivity(entry); setActivityDetailBack('activity'); setPage('activity-detail') }} />}
       {page === 'activity-detail' && <ActivityDetailPage entry={selectedActivity} host={host} onBack={() => setPage(activityDetailBack)} />}
@@ -623,12 +642,14 @@ function ActivityList({ entries, host, onOpen }: { entries: Activity[]; host: Ho
     const warning = isNonZeroExit(entry)
     const key = entry.request_id ?? `${entry.ts}-${i}`
     const Icon = category === 'command' ? TerminalSquare : category === 'files' ? FileText : category === 'screen' ? Eye : category === 'input' ? MousePointer2 : category === 'devices' ? Usb : category === 'system' ? LogOut : ActivityIcon
-    const detail = entry.error ?? entry.summary ?? (entry.aborted ? 'Request aborted' : 'Completed')
+    const computerControl = isComputerControl(entry)
+    const target = entry.target_app ?? entry.target_title
+    const detail = entry.error ?? (computerControl ? `${entry.backend === 'cua' ? 'CUA' : 'Compatibility'} · ${entry.dispatch ?? 'background'}${target ? ` · ${target}` : ''}` : entry.summary) ?? (entry.aborted ? 'Request aborted' : 'Completed')
     const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
     return <article className="activity-item" key={key}>
       <button className="activity-row" disabled={!onOpen} onClick={() => onOpen?.(entry)}>
         <span className={`activity-icon ${attention || warning ? 'amber' : category === 'system' ? 'green' : 'violet'}`}><Icon /></span>
-        <span className="activity-copy"><strong>{activityName(entry.tool)}</strong><small className={attention ? 'attention' : warning ? 'warning' : ''}>{detail} · {eventHost}</small></span>
+        <span className="activity-copy"><strong>{computerControl ? controlActionLabel(entry) : activityName(entry.tool)}</strong><small className={attention ? 'attention' : warning ? 'warning' : ''}>{detail} · {eventHost}</small></span>
         <span className="activity-tail"><time>{formatTime(entry.ts)}</time>{onOpen && <ChevronRight />}</span>
       </button>
     </article>
@@ -668,6 +689,7 @@ function ActivityDetailPage({ entry, host, onBack }: { entry: Activity | null; h
   const warning = isNonZeroExit(entry)
   const status = entry.aborted ? 'Aborted' : !entry.ok ? 'Failed' : warning ? `Exit ${activityExitCode(entry)}` : 'Completed'
   const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
+  const computerControl = isComputerControl(entry)
   const blocks = [
     ['Request', entry.request_detail ?? entry.args_preview, entry.request_truncated],
     ['Standard output', entry.stdout, entry.stdout_truncated],
@@ -677,8 +699,14 @@ function ActivityDetailPage({ entry, host, onBack }: { entry: Activity | null; h
   ] as const
   return <section className="page-panel activity-detail-page">
     <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Activity</button>
-    <div className="activity-detail-title"><span className={`activity-icon ${attention || warning ? 'amber' : 'violet'}`}><TerminalSquare /></span><span><p>{activityCategory(entry)}</p><h1>{activityName(entry.tool)}</h1><small>{eventHost}</small></span></div>
+    <div className="activity-detail-title"><span className={`activity-icon ${attention || warning ? 'amber' : 'violet'}`}>{computerControl ? <MousePointerClick /> : <TerminalSquare />}</span><span><p>{computerControl ? 'Computer control' : activityCategory(entry)}</p><h1>{computerControl ? controlActionLabel(entry) : activityName(entry.tool)}</h1><small>{eventHost}</small></span></div>
     <dl className="activity-detail-meta"><div><dt>Status</dt><dd className={attention ? 'attention' : warning ? 'warning' : 'success'}>{status}</dd></div><div><dt>When</dt><dd>{formatDateTime(entry.ts)}</dd></div><div><dt>Duration</dt><dd>{formatDuration(entry.duration_ms)}</dd></div></dl>
+    {computerControl && <section className="control-timeline" aria-label="Computer control timeline">
+      <div className="done"><i /><span><strong>Authorized session</strong><small>{entry.control_session_id ? 'Authenticated control session' : 'Authenticated by Hermes'}</small></span></div>
+      <div className={entry.ok ? 'done' : 'failed'}><i /><span><strong>{controlActionLabel(entry)}</strong><small>{entry.backend === 'cua' ? 'CUA structured engine' : 'Windows input · Compatibility'} · {entry.dispatch ?? 'background'}</small></span></div>
+      <div className={entry.verification === 'failed' ? 'failed' : entry.verification ? 'done' : ''}><i /><span><strong>Verification</strong><small>{controlVerificationLabel(entry.verification)}</small></span></div>
+    </section>}
+    {computerControl && (entry.target_app || entry.target_title || entry.target_pid || entry.target_window_id) && <dl className="control-target"><div><dt>Application</dt><dd>{entry.target_app ?? 'Not reported'}</dd></div><div><dt>Window</dt><dd title={entry.target_title}>{entry.target_title ?? 'Not reported'}</dd></div><div><dt>Target</dt><dd>{entry.target_pid ? `PID ${entry.target_pid}` : 'PID —'} · {entry.target_window_id ? `Window ${entry.target_window_id}` : 'Window —'}</dd></div></dl>}
     <div className="activity-output-list">{blocks.filter(([, value]) => value).map(([label, value, truncated]) => <section key={label}><header><strong>{label}</strong>{truncated && <em>Truncated</em>}</header><pre>{value}</pre></section>)}</div>
     {entry.request_id && <div className="activity-request-id">Request ID {entry.request_id}</div>}
   </section>
@@ -783,10 +811,22 @@ function HostDetailPage({ host, clients, busy, onBack, onConnect, onRename, onAc
   </section>
 }
 
-function SettingsPage({ daemon, startup, daemonAutostart, activity, onAction, onStartup, onDaemonAutostart, onHelp, onViewActivity, onOpenActivity }: { daemon: Snapshot['daemon']; startup: boolean; daemonAutostart: boolean; activity: Activity[]; onAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>; onStartup: (value: boolean) => void; onDaemonAutostart: (value: boolean) => void; onHelp: () => void; onViewActivity: () => void; onOpenActivity: (entry: Activity) => void }) {
+function SettingsPage({ daemon, computerControl, startup, daemonAutostart, activity, onAction, onStartup, onDaemonAutostart, onHelp, onViewActivity, onOpenActivity }: { daemon: Snapshot['daemon']; computerControl: Snapshot['computer_control_engine']; startup: boolean; daemonAutostart: boolean; activity: Activity[]; onAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>; onStartup: (value: boolean) => void; onDaemonAutostart: (value: boolean) => void; onHelp: () => void; onViewActivity: () => void; onOpenActivity: (entry: Activity) => void }) {
   const [update, setUpdate] = useState<UpdateReport | null>(null)
   const [updateBusy, setUpdateBusy] = useState<'check' | 'install' | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
+  const [cuaManagement, setCuaManagement] = useState<CuaManagementStatus | null>(null)
+  const [cuaBusy, setCuaBusy] = useState<'status' | 'install' | 'check' | 'update' | null>(null)
+  const [cuaError, setCuaError] = useState<string | null>(null)
+
+  const cuaOperation = useCallback(async (operation: 'status' | 'install' | 'check' | 'update') => {
+    setCuaBusy(operation)
+    try {
+      setCuaManagement(await call<CuaManagementStatus>(operation === 'status' ? 'computer_cua_status' : operation === 'install' ? 'computer_cua_install' : operation === 'check' ? 'computer_cua_check_update' : 'computer_cua_update'))
+      setCuaError(null)
+    } catch (error) { setCuaError(String(error).replace(/^Error:\s*/i, '')) }
+    finally { setCuaBusy(null) }
+  }, [])
 
   const checkUpdate = useCallback(async () => {
     setUpdateBusy('check')
@@ -803,6 +843,7 @@ function SettingsPage({ daemon, startup, daemonAutostart, activity, onAction, on
   }, [])
 
   useEffect(() => { void checkUpdate() }, [checkUpdate])
+  useEffect(() => { void cuaOperation('status') }, [cuaOperation])
 
   const updateSummary = updateError
     ? updateError
@@ -816,8 +857,34 @@ function SettingsPage({ daemon, startup, daemonAutostart, activity, onAction, on
           ? `${update.current} → ${update.latest_version} available`
           : 'Check the desktop release channel.'
 
+  const cuaReady = computerControl?.available === true && computerControl.state === 'ready'
+  const engineState = computerControl?.state ?? 'not_installed'
+  const engineLabel = engineState === 'not_installed' ? 'Not installed' : engineState === 'incompatible' ? 'Incompatible' : engineState === 'degraded' ? 'Degraded' : engineState === 'ready' ? 'Ready' : 'Unavailable'
+  const engineDetail = computerControl?.message
+    ?? (engineState === 'not_installed' ? 'CUA Driver is not installed. Windows input remains available for compatibility.'
+      : engineState === 'incompatible' ? 'The installed CUA Driver version is not compatible with this CLI.'
+        : engineState === 'degraded' ? 'CUA Driver reported a health problem. Windows compatibility input remains active.'
+          : engineState === 'ready' ? `CUA Driver ${computerControl?.version ?? ''} is compatible and healthy.`.trim()
+            : 'CUA Driver status could not be verified. Hermes uses the safe fallback.')
+  const effectiveEngine = computerControl?.effective === 'cua' ? 'CUA Driver' : 'Windows input'
+  const engineRole = computerControl?.effective === 'cua' ? 'Preferred structured engine' : 'Compatibility'
+  const activeSessions = computerControl?.active_sessions ?? 0
+  const activeBackend = computerControl?.active_backend === 'cua' ? 'CUA active'
+    : computerControl?.active_backend === 'legacy_compat' ? 'Compatibility active'
+      : computerControl?.active_backend === 'mixed' ? 'Mixed backends' : 'Idle'
+
   return <section className="page-panel settings-page"><div className="page-title"><div><p>Local management</p><h1>Settings</h1></div></div>
     <div className="settings-group"><h2>Relay daemon</h2><div className="settings-card"><div className="setting-row"><span><strong>Daemon status</strong><small>{daemon.running ? `${daemon.state} · ${daemon.privilege ?? 'user'}` : 'Stopped'}</small></span><button className="compact-button" onClick={() => onAction('restart_daemon')}><RefreshCw /> Restart</button></div><div className="setting-row"><span><strong>{daemon.privilege === 'administrator' ? 'Administrator mode' : 'User mode'}</strong><small>{daemon.privilege === 'administrator' ? 'Remote actions inherit elevated rights.' : 'Recommended for normal operation.'}</small></span><button className={`compact-button privilege-action ${daemon.privilege === 'administrator' ? '' : 'admin-action'}`} onClick={() => onAction(daemon.privilege === 'administrator' ? 'restart_daemon_as_user' : 'restart_daemon_as_administrator')}>{daemon.privilege === 'administrator' ? 'Return to user mode' : 'Restart as Administrator…'}</button></div><label className="setting-row toggle-row"><span><strong>Start UI at sign-in</strong><small>Launch the tray after you sign in.</small></span><input type="checkbox" checked={startup} onChange={e => onStartup(e.target.checked)} /><i /></label><label className="setting-row toggle-row"><span><strong>Start daemon with UI</strong><small>Connect remote access when the tray starts.</small></span><input type="checkbox" checked={daemonAutostart} onChange={e => onDaemonAutostart(e.target.checked)} /><i /></label></div></div>
+    <div className="settings-group"><h2>Computer control</h2><div className={`settings-card engine-card engine-${engineState}`}>
+      <div className="engine-status"><span className="setting-icon"><MousePointerClick /></span><span><strong>{effectiveEngine}</strong><small>{engineRole} · {engineDetail}</small></span><em>{engineLabel}</em></div>
+      {cuaReady && <div className="engine-options">
+        <div className="engine-choice"><span><strong>Control engine</strong><small>CUA is preferred; Windows input is the compatibility fallback.</small></span><div role="radiogroup" aria-label="Computer control engine"><button role="radio" aria-checked={computerControl?.selected === 'cua'} className={computerControl?.selected === 'cua' ? 'active' : ''} onClick={() => onAction('set_computer_control_engine', { engine: 'cua' })}>CUA</button><button role="radio" aria-checked={computerControl?.selected !== 'cua'} className={computerControl?.selected !== 'cua' ? 'active' : ''} onClick={() => onAction('set_computer_control_engine', { engine: 'legacy' })}>Compatibility</button></div></div>
+        <div className="engine-live"><span><strong>{activeSessions}</strong><small>Active session{activeSessions === 1 ? '' : 's'}</small></span><em className={activeSessions ? 'active' : ''}><i /> {activeBackend}</em></div>
+        <label className="setting-row toggle-row"><span><strong>Animated agent cursor</strong><small>Labeled · smooth glide · click pulse. It does not move your physical mouse.</small></span><input type="checkbox" disabled={computerControl?.selected !== 'cua'} checked={computerControl?.selected === 'cua' && computerControl.cursor_enabled === true} onChange={e => onAction('set_cua_cursor_enabled', { enabled: e.target.checked })} /><i /></label>
+        <div className="setting-row background-only"><span><strong>Window interaction</strong><small>CUA actions stay in the background and never bring an app forward.</small></span><em>Background only</em></div>
+      </div>}
+      <div className="cua-maintenance"><span><strong>{cuaManagement?.installed ? `CUA Driver ${cuaManagement.current_version ?? ''}`.trim() : 'CUA Driver'}</strong><small>{cuaError ?? cuaManagement?.update?.error ?? cuaManagement?.compatibility_reason ?? (cuaManagement?.update?.update_available ? `${cuaManagement.update.latest_version} available` : cuaManagement?.installed ? 'Installed from the verified upstream release.' : 'Install the verified compatible driver explicitly.')}</small></span><div>{!cuaManagement?.installed ? <button disabled={cuaBusy !== null} onClick={() => void cuaOperation('install')}>{cuaBusy === 'install' ? <LoaderCircle className="spin" /> : <Download />} Install</button> : cuaManagement.update?.update_available && cuaManagement.update.compatible ? <button disabled={cuaBusy !== null} onClick={() => void cuaOperation('update')}>{cuaBusy === 'update' ? <LoaderCircle className="spin" /> : <Download />} Update</button> : <button disabled={cuaBusy !== null} onClick={() => void cuaOperation('check')}>{cuaBusy === 'check' || cuaBusy === 'status' ? <LoaderCircle className="spin" /> : <RefreshCw />} Check</button>}</div></div>
+    </div><p className="group-help engine-help"><ShieldCheck /> CUA is the preferred structured engine. Hermes permissions, grants, audit, and emergency stop remain in control.</p></div>
     <div className="settings-group"><h2>CLI & diagnostics</h2><div className="settings-card quick-action-grid"><button onClick={() => onAction('open_terminal')}><TerminalSquare /><span>Open terminal</span></button><button onClick={() => onAction('open_cli_terminal')}><Bot /><span>Open Hermes CLI</span></button><button onClick={() => onAction('open_logs')}><FolderOpen /><span>View daemon log</span></button><button onClick={() => onAction('run_diagnostics')}><ActivityIcon /><span>Run diagnostics</span></button></div></div>
     <div className="settings-group"><h2>Updates</h2><div className={`settings-card update-card ${updateError ? 'error' : update?.ahead_of_latest ? 'ahead' : update?.up_to_date ? 'current' : ''}`}><div className="setting-row update-row"><span><strong>Hermes-Relay CLI UI</strong><small>{updateSummary}</small></span>{update && !update.up_to_date && !update.ahead_of_latest && !update.installed ? <button className="compact-button update-button" disabled={updateBusy !== null} onClick={installUpdate}>{updateBusy === 'install' ? <LoaderCircle className="spin" /> : <Download />} Install</button> : <button className="compact-button" disabled={updateBusy !== null} onClick={checkUpdate}>{updateBusy === 'check' ? <LoaderCircle className="spin" /> : <RefreshCw />} Check</button>}</div></div><p className="group-help update-help">Updates the management UI and CLI together, then restarts the tray automatically.</p></div>
     <button className="about-link" onClick={onHelp}><span className="setting-icon"><Info /></span><span><strong>Help & About</strong><small>Versions, documentation and troubleshooting.</small></span><ChevronRight /></button>
@@ -834,6 +901,7 @@ function HelpPage({ snapshot, host, onBack, onAction }: { snapshot: Snapshot; ho
   return <section className="page-panel help-page"><button className="back-button" onClick={onBack}><ArrowLeft /> Back to Settings</button><div className="about-hero"><img src={logo} alt="" /><span><p>Desktop companion</p><h1>Hermes-Relay CLI UI</h1><small>Compact control for this PC</small></span></div>
     <div className="settings-group"><h2>About</h2><div className="settings-card about-facts"><dl><div><dt>UI version</dt><dd>{snapshot.ui_version ?? 'Unknown'}</dd></div><div><dt>CLI version</dt><dd>{snapshot.cli_version ?? 'Unknown'}</dd></div><div><dt>CLI path</dt><dd title={snapshot.cli_path ?? undefined}>{snapshot.cli_path ?? 'Not reported'}</dd></div><div><dt>Relay server</dt><dd>{host?.server_version ?? 'Not connected'}</dd></div></dl></div></div>
     <div className="settings-group"><h2>Get help</h2><div className="settings-card management-links">{links.map(([label, url]) => <button key={url} onClick={() => onAction('open_external_url', { url })}><span><strong>{label}</strong></span><ExternalLink /></button>)}</div></div>
+    <div className="settings-group"><h2>Computer control</h2><div className="settings-card help-note"><ShieldCheck /><span><strong>CUA Driver is an optional control engine</strong><small>When compatible and healthy, it can use app-aware background control and separate animated agent cursors. These are visual overlays—not additional Windows hardware pointers. Foreground switching is not available; control remains background only. Full Access never bypasses targeting, sensitive-surface rules, audit, or emergency stop.</small></span></div></div>
     <button className="diagnostic-action" onClick={() => onAction('run_diagnostics')}><ActivityIcon /><span><strong>Run diagnostics</strong><small>Check the daemon, installation and active relay.</small></span><ChevronRight /></button>
   </section>
 }

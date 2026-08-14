@@ -19,6 +19,7 @@ VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "LegalCopyright" "MIT License"
 
 Var ExistingStartup
+Var InstallAttempt
 
 Function .onInit
   ReadRegStr $ExistingStartup HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "HermesRelayTray"
@@ -42,20 +43,47 @@ FunctionEnd
 
 Section "Hermes-Relay CLI and management UI" SEC_CORE
   SectionIn RO
-  IfFileExists "$INSTDIR\hermes-relay.exe" 0 tray_stop
+  ; Stop the tray first so its snapshot polling cannot launch another CLI
+  ; process while setup is trying to replace hermes-relay.exe. The following
+  ; /T also terminates a poll already in flight before payload extraction.
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM hermes-relay-tray.exe /T /F'
+  IfFileExists "$INSTDIR\hermes-relay.exe" 0 processes_quiesced
   nsExec::ExecToLog '"$INSTDIR\hermes-relay.exe" daemon stop'
-tray_stop:
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM hermes-relay-tray.exe /F'
-  Sleep 250
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM hermes-relay.exe /T /F'
+processes_quiesced:
+  ; Drain the daemon and any short-lived tray/management CLI children that
+  ; raced with shutdown. An explicit bundle update is the lifecycle boundary
+  ; for installed Hermes-Relay processes.
+  Sleep 350
   Delete "$INSTDIR\hermes-relay.new.exe"
   Delete "$INSTDIR\hermes-relay.old.exe"
   Delete "$INSTDIR\hermes-relay.exe.bak"
   Delete "$INSTDIR\hermes-relay-tray.exe.bak"
+  StrCpy $InstallAttempt "0"
+install_attempt:
   SetOutPath "$INSTDIR"
+  ClearErrors
   File /oname=hermes-relay.exe "${CLI_EXE}"
   File /oname=hermes-relay-tray.exe "${TRAY_EXE}"
   File /oname=hermes-relay-path.ps1 "${PATH_HELPER}"
   File /oname=hermes-relay-ui.cmd "${UI_SHIM}"
+  IfErrors install_attempt_failed
+
+  ; ClearErrors/IfErrors covers both CLI and tray writes, so setup cannot
+  ; publish registry metadata after a locked or partial replacement.
+  Goto cli_verified
+install_attempt_failed:
+  StrCmp $InstallAttempt "0" 0 cli_verification_failed
+  StrCpy $InstallAttempt "1"
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM hermes-relay-tray.exe /T /F'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM hermes-relay.exe /T /F'
+  Sleep 350
+  Goto install_attempt
+cli_verification_failed:
+  MessageBox MB_ICONSTOP "Hermes-Relay CLI UI ${VERSION} could not replace the running installation. Close Hermes-Relay processes and run setup again." /SD IDOK
+  SetErrorLevel 1
+  Quit
+cli_verified:
   WriteUninstaller "$INSTDIR\uninstall-hermes-relay.exe"
 
   WriteRegStr HKCU "Software\HermesRelay" "InstallDir" "$INSTDIR"

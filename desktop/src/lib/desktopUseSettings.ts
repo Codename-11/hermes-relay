@@ -7,6 +7,8 @@ import { grantBridgeDir } from './grantBridge.js'
 
 export interface DesktopUseSettings {
   computer_use_enabled: boolean
+  computer_control_engine: 'legacy' | 'cua'
+  cua_cursor_enabled: boolean
   updated_at?: string
 }
 
@@ -27,12 +29,22 @@ export function computerGrantCancellationPath(): string {
 
 function normalizeSettings(value: unknown): DesktopUseSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { computer_use_enabled: false }
+    return defaultSettings()
   }
   const raw = value as Partial<DesktopUseSettings>
   return {
     computer_use_enabled: raw.computer_use_enabled === true,
+    computer_control_engine: raw.computer_control_engine === 'legacy' ? 'legacy' : 'cua',
+    cua_cursor_enabled: raw.cua_cursor_enabled === true,
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : undefined
+  }
+}
+
+function defaultSettings(): DesktopUseSettings {
+  return {
+    computer_use_enabled: false,
+    computer_control_engine: 'cua',
+    cua_cursor_enabled: false
   }
 }
 
@@ -42,7 +54,7 @@ export function readDesktopUseSettingsSync(
   try {
     return normalizeSettings(JSON.parse(readFileSync(filePath, 'utf8')))
   } catch {
-    return { computer_use_enabled: false }
+    return defaultSettings()
   }
 }
 
@@ -52,7 +64,7 @@ export async function readDesktopUseSettings(
   try {
     return normalizeSettings(JSON.parse(await readFile(filePath, 'utf8')))
   } catch {
-    return { computer_use_enabled: false }
+    return defaultSettings()
   }
 }
 
@@ -68,7 +80,22 @@ export async function setDesktopUseEnabled(
   filePath = desktopUseSettingsPath()
 ): Promise<DesktopUseSettings> {
   const settings: DesktopUseSettings = {
+    ...await readDesktopUseSettings(filePath),
     computer_use_enabled: enabled,
+    updated_at: new Date().toISOString()
+  }
+  await writeJsonAtomic(filePath, settings)
+  return settings
+}
+
+export async function setComputerControlSettings(
+  update: Partial<Pick<DesktopUseSettings,
+    'computer_control_engine' | 'cua_cursor_enabled'>>,
+  filePath = desktopUseSettingsPath()
+): Promise<DesktopUseSettings> {
+  const settings: DesktopUseSettings = {
+    ...await readDesktopUseSettings(filePath),
+    ...update,
     updated_at: new Date().toISOString()
   }
   await writeJsonAtomic(filePath, settings)

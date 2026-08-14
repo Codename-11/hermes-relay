@@ -22,7 +22,7 @@ Two jobs over the same WSS ``desktop`` envelope stream:
    client auth re-advertises if the relay restarts.
 
 Wire envelopes (frozen — do not rename fields):
-  * ``desktop.command``       — server → client: ``{request_id, tool, args}``
+  * ``desktop.command``       — server → client: ``{request_id, tool, args, control_session?}``
   * ``desktop.response``      — client → server: ``{request_id, status, result}``
   * ``desktop.status``        — client → server: ``{advertised_tools, host?, platform?, cwd?, ...}``
   * ``desktop.workspace``     — client → server: opaque dict (``cwd`` / ``git_root`` / ``git_branch`` / ...)
@@ -58,10 +58,31 @@ _REDACT_KEYS = frozenset({"password", "token", "secret", "otp", "bearer", "api_k
 
 # Cap for the recent-commands ring buffer.
 RECENT_COMMANDS_MAX = 100
+CONTROL_SESSIONS_MAX = 256
+CONTROL_SESSION_IDLE_SECONDS = 900.0
 
 
 class DesktopError(Exception):
     """Raised when a desktop command cannot be dispatched or times out."""
+
+
+@dataclass(frozen=True)
+class DesktopRequesterContext:
+    """Trusted caller context supplied by the loopback HTTP boundary."""
+
+    requester_device_id: str | None = None
+    chat_session_id: str | None = None
+    run_id: str | None = None
+    profile: str | None = None
+
+
+@dataclass
+class _ControlSessionRecord:
+    session_id: str
+    touched_at: float
+    target_ws: web.WebSocketResponse
+    target_device_id: str
+    expiry_task: asyncio.Task[None]
 
 
 def _redact_args(value: Any) -> Any:
@@ -190,6 +211,108 @@ class DesktopHandler:
         # registry. Cleared per-ws in :meth:`detach_ws` so disconnected
         # clients don't leak session structs.
         self._sessions: dict[web.WebSocketResponse, DesktopSession] = {}
+        # Stable opaque ids for active computer-control runs. Callers provide
+        # only trusted context fields; this handler always owns the id and
+        # binds every emitted identity to the selected target + request id.
+        self._control_sessions: dict[tuple[str, str, str, str, str], _ControlSessionRecord] = {}
+
+    async def _send_control_session_end(
+        self,
+        record: _ControlSessionRecord,
+        reason: str,
+    ) -> None:
+        if record.target_ws.closed:
+            return
+        await record.target_ws.send_str(json.dumps({
+            "channel": "desktop",
+            "type": "desktop.control_session_end",
+            "payload": {
+                "version": 1,
+                "id": record.session_id,
+                "target_device_id": record.target_device_id,
+                "reason": reason[:256],
+            },
+        }))
+
+    async def _expire_control_session(
+        self,
+        key: tuple[str, str, str, str, str],
+        session_id: str,
+    ) -> None:
+        try:
+            while True:
+                await asyncio.sleep(CONTROL_SESSION_IDLE_SECONDS)
+                record = self._control_sessions.get(key)
+                if record is None or record.session_id != session_id:
+                    return
+                if time.monotonic() - record.touched_at < CONTROL_SESSION_IDLE_SECONDS:
+                    continue
+                self._control_sessions.pop(key, None)
+                await self._send_control_session_end(record, "control session idle timeout")
+                return
+        except asyncio.CancelledError:
+            return
+
+    async def _control_session(
+        self,
+        *,
+        request_id: str,
+        target_device_id: str,
+        target_ws: web.WebSocketResponse,
+        requester: DesktopRequesterContext | None,
+    ) -> dict[str, Any] | None:
+        context = requester or DesktopRequesterContext()
+        # A server-owned UUID is not useful authority by itself. Require an
+        # executor-authenticated requester and run before advertising the
+        # identity; older/unauthenticated callers stay in compatibility mode.
+        if not context.requester_device_id or not context.run_id:
+            return None
+        now = time.monotonic()
+        key = (
+            context.requester_device_id,
+            context.chat_session_id or "",
+            context.run_id or "",
+            context.profile or "",
+            target_device_id or "legacy-desktop",
+        )
+        # One requester/chat/profile/target may own only one active run. End
+        # the prior authority before minting a replacement for a new run.
+        transitions = [
+            (other_key, record)
+            for other_key, record in self._control_sessions.items()
+            if other_key[0] == key[0] and other_key[1] == key[1]
+            and other_key[3] == key[3] and other_key[4] == key[4]
+            and other_key[2] != key[2]
+        ]
+        for other_key, record in transitions:
+            self._control_sessions.pop(other_key, None)
+            record.expiry_task.cancel()
+            await self._send_control_session_end(record, "requester run changed")
+        current = self._control_sessions.get(key)
+        if current is None:
+            if len(self._control_sessions) >= CONTROL_SESSIONS_MAX:
+                oldest = min(self._control_sessions, key=lambda item: self._control_sessions[item].touched_at)
+                evicted = self._control_sessions.pop(oldest)
+                evicted.expiry_task.cancel()
+                await self._send_control_session_end(evicted, "control session capacity eviction")
+            session_id = f"control-{uuid.uuid4()}"
+            task = asyncio.create_task(self._expire_control_session(key, session_id))
+            self._control_sessions[key] = _ControlSessionRecord(
+                session_id, now, target_ws, key[4], task
+            )
+        else:
+            session_id = current.session_id
+            current.touched_at = now
+        return {
+            "version": 1,
+            "id": session_id,
+            "request_id": request_id,
+            "requester_device_id": key[0],
+            "target_device_id": key[4],
+            **({"chat_session_id": context.chat_session_id} if context.chat_session_id else {}),
+            **({"run_id": context.run_id} if context.run_id else {}),
+            **({"profile": context.profile} if context.profile else {}),
+        }
 
     # ── Envelope dispatch ────────────────────────────────────────────────
 
@@ -389,6 +512,7 @@ class DesktopHandler:
         method: str,
         args: dict[str, Any] | None = None,
         device: str | None = None,
+        requester: DesktopRequesterContext | None = None,
     ) -> dict[str, Any]:
         """Dispatch a ``desktop_*`` tool call to the connected client.
 
@@ -433,6 +557,15 @@ class DesktopHandler:
                 else None
             ),
         }
+        if method.startswith("desktop_computer_"):
+            control_session = await self._control_session(
+                request_id=request_id,
+                target_device_id=str(command_payload["target_device_id"] or "legacy-desktop"),
+                target_ws=ws,
+                requester=requester,
+            )
+            if control_session is not None:
+                command_payload["control_session"] = control_session
         logger.info(
             "desktop >>> %s args=%s",
             method,
@@ -736,6 +869,18 @@ class DesktopHandler:
                 "desktop: session detached (had workspace from %s)",
                 session.workspace_context.get("hostname", "?"),
             )
+        if session is not None:
+            target_device_id = (
+                session.device_id
+                or str(session.client_status.get("device_id", "") or "").strip()
+            )
+            if target_device_id:
+                removed = [
+                    key for key in self._control_sessions if key[4] == target_device_id
+                ]
+                for key in removed:
+                    record = self._control_sessions.pop(key)
+                    record.expiry_task.cancel()
 
         # Tool-routing cleanup — only if this ws was the latched client.
         if self.client_ws is ws:
@@ -774,6 +919,9 @@ class DesktopHandler:
         self.client_ws = None
         self.advertised_tools = set()
         self._sessions.clear()
+        for record in self._control_sessions.values():
+            record.expiry_task.cancel()
+        self._control_sessions.clear()
         await self._fail_pending("Relay server shutting down")
 
 
