@@ -80,7 +80,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.3.x'
+          bun-version-file: 'desktop/.bun-version'
 
       - name: Install deps
         run: npm ci
@@ -153,6 +153,40 @@ jobs:
             desktop/dist/bin/hermes-relay-darwin-arm64
           retention-days: 7
 
+  smoke-windows-cli-release-asset:
+    name: Smoke exact Windows CLI release asset
+    runs-on: windows-latest
+    needs:
+      - validate-release
+      - build-cli-binaries
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-binaries
+          path: release-assets
+
+      - name: Repeated launch and process cleanup gate
+        shell: pwsh
+        env:
+          EXPECTED_DESKTOP_VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path 'release-assets/hermes-relay-win-x64.exe').Path
+          1..20 | ForEach-Object {
+            $output = & $exe --version
+            if ($LASTEXITCODE -ne 0) { throw "Windows CLI smoke failed with exit $LASTEXITCODE" }
+            if ($output -ne "hermes-relay $env:EXPECTED_DESKTOP_VERSION") {
+              throw "Unexpected Windows CLI version output: $output"
+            }
+          }
+          Start-Sleep -Milliseconds 500
+          $leftovers = Get-CimInstance Win32_Process | Where-Object {
+            $_.ExecutablePath -eq $exe
+          }
+          if ($leftovers) {
+            throw "Windows CLI smoke left $(@($leftovers).Count) process(es) behind"
+          }
+
   build-windows-tray-installer:
     name: Build Windows tray installer
     runs-on: windows-latest
@@ -175,7 +209,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.3.x'
+          bun-version-file: 'desktop/.bun-version'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -375,6 +409,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build-cli-binaries
+      - smoke-windows-cli-release-asset
       - build-windows-tray-installer
     steps:
       # Needed so CLI_RELEASE_NOTES.md is available to render into the release body

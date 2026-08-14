@@ -156,6 +156,7 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(ui.contains("isNoticeWindow ? <ConnectionNoticeWindow />"));
     assert!(ui.contains("isEvidenceWindow ? <EvidenceWindow />"));
     assert!(ui.contains("present_grant_window"));
+    assert!(ui.contains("get_pending_grant_context"));
     assert!(ui.contains("Remote access request"));
     assert!(native.contains("start_grant_watcher"));
     assert!(native.contains("get_webview_window(\"grant\")"));
@@ -188,7 +189,7 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("mpsc::channel::<TrayAction>()"));
     assert!(native.contains("app.run_on_main_thread"));
     assert!(native.contains("async fn get_snapshot"));
-    assert!(native.contains("spawn_blocking(build_snapshot)"));
+    assert!(native.contains("spawn_blocking(build_snapshot_coalesced)"));
     assert!(native.contains("async fn check_desktop_update"));
     assert!(native.contains("async fn install_desktop_update"));
     for command in [
@@ -232,6 +233,44 @@ fn grants_use_the_dedicated_card_and_host_changes_reconcile_daemon_truth() {
     assert!(native.contains("responsive_logical_window_size(work_area, scale)"));
     assert!(!native.contains("GetMonitorInfoW"));
     assert!(!native.contains("TRAY_SLOT_LOGICAL_WIDTH"));
+}
+
+#[test]
+fn grant_window_uses_narrow_single_flight_visibility_aware_polling() {
+    let ui = include_str!("../ui/App.tsx");
+    let grant_window = ui
+        .split("function GrantWindow()")
+        .nth(1)
+        .and_then(|source| source.split("function ActivityList(").next())
+        .expect("GrantWindow source");
+
+    assert!(grant_window.contains("call<PendingGrantContext>('get_pending_grant_context')"));
+    assert!(grant_window.contains("const incoming = next.grant"));
+    assert!(grant_window.contains("activeUrl ? displayHost(activeUrl)"));
+    assert!(!grant_window.contains("get_snapshot"));
+    assert!(!grant_window.contains("setInterval"));
+    assert!(grant_window.contains("if (running)"));
+    assert!(grant_window.contains("schedule(activeId.current ? 1000 : 5000)"));
+    assert!(grant_window.contains("document.visibilityState === 'visible'"));
+    assert!(grant_window.contains("document.addEventListener('visibilitychange', wake)"));
+    assert!(grant_window.contains("window.addEventListener('focus', wake)"));
+}
+
+#[test]
+fn tray_subprocesses_are_bounded_cached_and_do_not_inherit_the_bun_relauncher() {
+    let native = include_str!("../src/main.rs");
+    let runner = include_str!("../src/bounded_process.rs");
+
+    assert!(native.contains("bounded_process::run(command, options)"));
+    assert!(native.contains("env(\"NODE_USE_SYSTEM_CA\", \"1\")"));
+    assert!(native.contains("build_snapshot_coalesced"));
+    assert!(native.contains("HARDWARE_AVAILABILITY_CACHE"));
+    assert!(native.contains("CLI_DETAILS_CACHE"));
+    assert!(!native.contains(".output()"));
+    assert!(!native.contains(".status()"));
+    assert!(runner.contains("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"));
+    assert!(runner.contains("max_capture_bytes"));
+    assert!(runner.contains("timed_out"));
 }
 
 #[test]

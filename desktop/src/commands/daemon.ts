@@ -31,6 +31,7 @@
 
 import { spawn } from 'node:child_process'
 import { closeSync, openSync, promises as fs } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
@@ -87,6 +88,156 @@ const VOICE_DISCOVERY_FILE = 'desktop-voice.json'
 const STATUS_HEARTBEAT_MS = 30_000
 const DETACHED_START_TIMEOUT_MS = 20_000
 const DETACHED_START_POLL_MS = 100
+const LIFECYCLE_LOCK_TIMEOUT_MS = 25_000
+const INSTANCE_LOCK_TIMEOUT_MS = 2_000
+const LOCK_POLL_MS = 50
+const INCOMPLETE_LOCK_GRACE_MS = 1_000
+
+interface ProcessLockOwner {
+  pid: number
+  process_name: string
+  token: string
+  created_at: number
+  purpose: string
+}
+
+interface ProcessLock {
+  owner: ProcessLockOwner
+  release: () => Promise<void>
+}
+
+interface ProcessLockOptions {
+  timeoutMs: number
+  purpose: string
+  now?: () => number
+  sleep?: (ms: number) => Promise<void>
+  ownerAlive?: (owner: ProcessLockOwner) => boolean
+}
+
+function daemonLockPath(kind: 'lifecycle' | 'instance'): string {
+  return path.join(os.homedir(), '.hermes', `daemon-${kind}.lock`)
+}
+
+async function readProcessLockOwner(lockPath: string): Promise<ProcessLockOwner | null> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(path.join(lockPath, 'owner.json'), 'utf8')) as Partial<ProcessLockOwner>
+    if (
+      typeof parsed.pid !== 'number' ||
+      typeof parsed.process_name !== 'string' ||
+      typeof parsed.token !== 'string' ||
+      typeof parsed.created_at !== 'number' ||
+      typeof parsed.purpose !== 'string'
+    ) return null
+    return parsed as ProcessLockOwner
+  } catch {
+    return null
+  }
+}
+
+function processLockOwnerAlive(owner: ProcessLockOwner): boolean {
+  // PID liveness is deliberately authoritative here. Unlike status/stop, a
+  // conservative false positive only causes a bounded lock timeout; a false
+  // negative could let a second daemon start. It also avoids spawning tasklist
+  // or ps from the startup hot path (and executable-name truncation on Unix).
+  return isPidAlive(owner.pid)
+}
+
+async function releaseProcessLock(lockPath: string, token: string): Promise<void> {
+  const owner = await readProcessLockOwner(lockPath)
+  if (owner?.token !== token) return
+  try {
+    // Remove the ownership record before the directory. mkdir remains blocked
+    // until rmdir succeeds, so a newer owner cannot appear between the token
+    // check and release.
+    await fs.unlink(path.join(lockPath, 'owner.json'))
+    await fs.rmdir(lockPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+
+/** Atomic directory lock shared by compiled Bun binaries and Node-based dev
+ * invocations. Stale recovery quarantines an observed directory before it is
+ * removed, while token-checked release never recursively removes the path. */
+async function acquireProcessLock(lockPath: string, options: ProcessLockOptions): Promise<ProcessLock> {
+  const now = options.now ?? Date.now
+  const sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
+  const ownerAlive = options.ownerAlive ?? processLockOwnerAlive
+  const deadline = now() + options.timeoutMs
+  const owner: ProcessLockOwner = {
+    pid: process.pid,
+    process_name: path.basename(process.execPath),
+    token: randomUUID(),
+    created_at: now(),
+    purpose: options.purpose
+  }
+  await fs.mkdir(path.dirname(lockPath), { recursive: true })
+
+  while (true) {
+    try {
+      await fs.mkdir(lockPath)
+      try {
+        await fs.writeFile(
+          path.join(lockPath, 'owner.json'),
+          JSON.stringify(owner) + '\n',
+          { encoding: 'utf8', flag: 'wx', mode: 0o600 }
+        )
+      } catch (error) {
+        await fs.rm(lockPath, { recursive: true, force: true }).catch(() => undefined)
+        throw error
+      }
+      return { owner, release: () => releaseProcessLock(lockPath, owner.token) }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+
+    const observed = await readProcessLockOwner(lockPath)
+    let stale = observed !== null && !ownerAlive(observed)
+    if (!observed) {
+      try {
+        const stat = await fs.stat(lockPath)
+        stale = now() - stat.mtimeMs >= INCOMPLETE_LOCK_GRACE_MS
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+        throw error
+      }
+    }
+    if (stale) {
+      const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`
+      try {
+        await fs.rename(lockPath, quarantinePath)
+        await fs.rm(quarantinePath, { recursive: true, force: true })
+        continue
+      } catch (error) {
+        if (['ENOENT', 'EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) continue
+        throw error
+      }
+    }
+    if (now() >= deadline) {
+      const detail = observed
+        ? `owner pid ${observed.pid} (${observed.purpose})`
+        : 'owner metadata is still being created'
+      throw new Error(`timed out after ${options.timeoutMs}ms waiting for ${options.purpose} lock; ${detail}`)
+    }
+    await sleep(Math.min(LOCK_POLL_MS, Math.max(1, deadline - now())))
+  }
+}
+
+async function withDaemonLifecycleLock<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+  const lock = await acquireProcessLock(daemonLockPath('lifecycle'), {
+    timeoutMs: LIFECYCLE_LOCK_TIMEOUT_MS,
+    purpose: `daemon ${operation}`
+  })
+  try {
+    return await fn()
+  } finally {
+    try {
+      await lock.release()
+    } catch (error) {
+      process.stderr.write(`daemon: lifecycle_lock_release_failed: ${rpcErrorMessage(error)}\n`)
+    }
+  }
+}
 
 const DAEMON_USAGE: UsageSpec = {
   name: 'daemon',
@@ -480,7 +631,7 @@ async function runElevatedDaemonLifecycle(
 
 /** `daemon start` / `--detach` — spawn the foreground daemon as a detached
  * background process (no console window on Windows), logging to a file. */
-async function startDetachedDaemon(args: ParsedArgs): Promise<number> {
+async function startDetachedDaemonLocked(args: ParsedArgs): Promise<number> {
   const t = makeTheme({ noColor: !!args.flags['no-color'] })
 
   const existing = await readDaemonStatus()
@@ -576,8 +727,17 @@ async function startDetachedDaemon(args: ParsedArgs): Promise<number> {
   return 0
 }
 
+async function startDetachedDaemon(args: ParsedArgs): Promise<number> {
+  try {
+    return await withDaemonLifecycleLock('start', () => startDetachedDaemonLocked(args))
+  } catch (error) {
+    process.stderr.write(`daemon: lifecycle_lock_failed: ${rpcErrorMessage(error)}\n`)
+    return 1
+  }
+}
+
 /** `daemon stop` — terminate the running background daemon by its status pid. */
-async function stopDaemon(args: ParsedArgs): Promise<number> {
+async function stopDaemonLocked(args: ParsedArgs): Promise<number> {
   const t = makeTheme({ noColor: !!args.flags['no-color'] })
   const status = await readDaemonStatus()
   if (!status) {
@@ -602,7 +762,16 @@ async function stopDaemon(args: ParsedArgs): Promise<number> {
   return 0
 }
 
-async function restartDaemon(args: ParsedArgs): Promise<number> {
+async function stopDaemon(args: ParsedArgs): Promise<number> {
+  try {
+    return await withDaemonLifecycleLock('stop', () => stopDaemonLocked(args))
+  } catch (error) {
+    process.stderr.write(`daemon: lifecycle_lock_failed: ${rpcErrorMessage(error)}\n`)
+    return 1
+  }
+}
+
+async function restartDaemonLocked(args: ParsedArgs): Promise<number> {
   const t = makeTheme({ noColor: !!args.flags['no-color'] })
   const existing = await readDaemonStatus()
   if (existing && isDaemonProcessAlive(existing)) {
@@ -625,7 +794,16 @@ async function restartDaemon(args: ParsedArgs): Promise<number> {
     }
   }
   await clearDaemonStatus()
-  return startDetachedDaemon(args)
+  return startDetachedDaemonLocked(args)
+}
+
+async function restartDaemon(args: ParsedArgs): Promise<number> {
+  try {
+    return await withDaemonLifecycleLock('restart', () => restartDaemonLocked(args))
+  } catch (error) {
+    process.stderr.write(`daemon: lifecycle_lock_failed: ${rpcErrorMessage(error)}\n`)
+    return 1
+  }
 }
 
 async function restartDaemonAsUser(args: ParsedArgs): Promise<number> {
@@ -719,6 +897,26 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const human = humanFlag || (!args.flags['log-json'] && !!process.stderr.isTTY)
   const log = makeLogger(human)
 
+  let instanceLock: ProcessLock
+  try {
+    instanceLock = await acquireProcessLock(daemonLockPath('instance'), {
+      timeoutMs: INSTANCE_LOCK_TIMEOUT_MS,
+      purpose: 'daemon runtime'
+    })
+    log.info({
+      event: 'instance_lock_acquired',
+      lock_path: daemonLockPath('instance'),
+      pid: process.pid
+    })
+  } catch (error) {
+    log.error({
+      event: 'instance_lock_failed',
+      message: rpcErrorMessage(error),
+      lock_path: daemonLockPath('instance')
+    })
+    return 1
+  }
+
   // URL resolution mirrors chat/shell — explicit --remote / HERMES_RELAY_URL
   // win, otherwise fall back to a stored session. resolveFirstRunUrl with
   // nonInteractive:true auto-picks when exactly one session exists, throws a
@@ -737,6 +935,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
           (e instanceof Error ? e.message : String(e)) +
           ' Pass --remote <url>, set HERMES_RELAY_URL, or pair first with `hermes-relay pair`.'
       })
+      await instanceLock.release()
       return 1
     }
   }
@@ -789,6 +988,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       url,
       message: 'no session token. Run `hermes-relay pair --remote <url>` once, then start the daemon.'
     })
+    await instanceLock.release()
     return 1
   }
 
@@ -891,6 +1091,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     } catch {
       /* ignore */
     }
+    await instanceLock.release()
     return 1
   }
 
@@ -1048,7 +1249,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     restoreGrantListener()
     restoreControlLifecycleListener()
     try {
-      await clearDaemonStatus()
+      await clearDaemonStatus(process.pid)
     } catch {
       /* ignore */
     }
@@ -1072,6 +1273,11 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     } catch {
       /* ignore */
     }
+    try {
+      await instanceLock.release()
+    } catch (error) {
+      log.warn({ event: 'instance_lock_release_failed', message: rpcErrorMessage(error) })
+    }
   }
   setupGracefulExit({ cleanups: [cleanup] })
 
@@ -1093,6 +1299,7 @@ export {
   daemonStatusIsReady as __daemonStatusIsReadyForTests,
   buildDaemonChildArgs as __buildDaemonChildArgsForTests,
   buildElevationLaunchPlan as __buildElevationLaunchPlanForTests,
+  acquireProcessLock as __acquireProcessLockForTests,
   quoteWindowsArgument as __quoteWindowsArgumentForTests,
   makeLogger as __makeLoggerForTests,
   readDetachedStartupFailure as __readDetachedStartupFailureForTests,

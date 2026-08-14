@@ -4,7 +4,11 @@
 compile_error!("hermes-relay-tray is a Windows-only optional systray");
 
 #[cfg(windows)]
+mod bounded_process;
+
+#[cfg(windows)]
 mod app {
+    use super::bounded_process::{self, ProcessOutcome, RunOptions};
     use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
@@ -15,10 +19,10 @@ mod app {
         io::Write,
         os::windows::process::CommandExt,
         path::{Path, PathBuf},
-        process::{Command, Output, Stdio},
+        process::{Command, Stdio},
         sync::{mpsc, Arc, Mutex, OnceLock},
         thread,
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
     use tauri::{
         image::Image,
@@ -33,6 +37,10 @@ mod app {
             Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, POINT},
             System::{
                 Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
+                Diagnostics::Debug::{
+                    SetErrorMode, SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX,
+                    SEM_NOOPENFILEERRORBOX,
+                },
                 Threading::{CreateMutexW, CREATE_NO_WINDOW},
                 Variant::VARIANT,
             },
@@ -59,6 +67,11 @@ mod app {
     const MAIN_LOGICAL_HEIGHT: f64 = 620.0;
     const MAIN_MIN_LOGICAL_WIDTH: f64 = 340.0;
     const MAIN_MIN_LOGICAL_HEIGHT: f64 = 460.0;
+    const TRAY_LOG_MAX_BYTES: u64 = 512 * 1024;
+    const PROCESS_CAPTURE_LIMIT: usize = 1024 * 1024;
+    const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+    const ACTION_TIMEOUT: Duration = Duration::from_secs(45);
+    const LONG_ACTION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
     const OFFICIAL_URLS: &[&str] = &[
         "https://hermes-relay.dev/docs/",
         "https://hermes-relay.dev/docs/desktop/",
@@ -66,6 +79,52 @@ mod app {
         "https://github.com/Codename-11/hermes-relay",
         "https://github.com/Codename-11/hermes-relay/releases",
     ];
+
+    static TRAY_LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    static TRAY_LOG_LAST_EVENT: OnceLock<Mutex<BTreeMap<String, Instant>>> = OnceLock::new();
+
+    fn append_tray_log(event: &str, probe: Option<&str>, detail: Option<&str>) {
+        let key = format!("{event}:{}", probe.unwrap_or_default());
+        let recent = TRAY_LOG_LAST_EVENT.get_or_init(|| Mutex::new(BTreeMap::new()));
+        if let Ok(mut guard) = recent.lock() {
+            if guard
+                .get(&key)
+                .is_some_and(|seen| seen.elapsed() < Duration::from_secs(30))
+            {
+                return;
+            }
+            guard.insert(key, Instant::now());
+        }
+        let Ok(directory) = home_dir().map(|home| home.join(".hermes")) else {
+            return;
+        };
+        let _guard = match TRAY_LOG_LOCK.get_or_init(|| Mutex::new(())).lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        if fs::create_dir_all(&directory).is_err() {
+            return;
+        }
+        let path = directory.join("tray.log");
+        if fs::metadata(&path).is_ok_and(|metadata| metadata.len() >= TRAY_LOG_MAX_BYTES) {
+            let backup = directory.join("tray.log.1");
+            let _ = fs::remove_file(&backup);
+            let _ = fs::rename(&path, backup);
+        }
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let event = serde_json::json!({
+            "ts": timestamp_ms,
+            "event": event,
+            "probe": probe,
+            "detail": detail.map(|value| value.chars().take(512).collect::<String>()),
+        });
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{event}");
+        }
+    }
 
     #[derive(Clone, Copy, Debug)]
     struct TrayAnchor {
@@ -340,6 +399,12 @@ mod app {
     }
 
     #[derive(Debug, Serialize)]
+    struct PendingGrantContext {
+        grant: Option<PendingGrantRequest>,
+        active_url: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize)]
     struct Snapshot {
         hosts: Vec<Host>,
         active_url: Option<String>,
@@ -407,6 +472,15 @@ mod app {
 
     static COMPUTER_CONTROL_ENGINE_CACHE: OnceLock<Mutex<ComputerControlEngineCache>> =
         OnceLock::new();
+    type SnapshotCache = Option<(Instant, Snapshot)>;
+    static SNAPSHOT_CACHE: OnceLock<Mutex<SnapshotCache>> = OnceLock::new();
+    type HardwareAvailabilityCache = Option<(Instant, HardwareAvailability)>;
+    static HARDWARE_AVAILABILITY_CACHE: OnceLock<Mutex<HardwareAvailabilityCache>> =
+        OnceLock::new();
+    static CLI_DETAILS_CACHE: OnceLock<(Option<String>, Option<String>)> = OnceLock::new();
+    type BooleanProbeCache = Option<(Instant, bool)>;
+    static STARTUP_ENABLED_CACHE: OnceLock<Mutex<BooleanProbeCache>> = OnceLock::new();
+    static DAEMON_AUTOSTART_CACHE: OnceLock<Mutex<BooleanProbeCache>> = OnceLock::new();
 
     fn probe_computer_control_engine() -> Option<ComputerControlEngine> {
         run_json(&["computer-use", "status", "--json"])
@@ -439,7 +513,7 @@ mod app {
         }
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Clone, Serialize)]
     struct HardwareAvailability {
         usb: bool,
         adb: bool,
@@ -464,9 +538,14 @@ mod app {
             .unwrap_or(home_dir()?.join(".hermes").join("grant-bridge")))
     }
 
-    fn first_pending_grant_id() -> Option<String> {
-        let mut requests = fs::read_dir(grant_bridge_dir().ok()?)
-            .ok()?
+    fn pending_grants_from_bridge() -> Vec<PendingGrantRequest> {
+        let Ok(directory) = grant_bridge_dir() else {
+            return Vec::new();
+        };
+        let Ok(entries) = fs::read_dir(directory) else {
+            return Vec::new();
+        };
+        let mut requests = entries
             .filter_map(Result::ok)
             .filter_map(|entry| {
                 let name = entry.file_name().to_string_lossy().into_owned();
@@ -480,7 +559,13 @@ mod app {
             })
             .collect::<Vec<_>>();
         requests.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-        requests.first().map(|request| request.id.clone())
+        requests
+    }
+
+    fn first_pending_grant_id() -> Option<String> {
+        pending_grants_from_bridge()
+            .first()
+            .map(|request| request.id.clone())
     }
 
     fn cli_candidates(explicit: Option<&Path>, current_exe: &Path, home: &Path) -> Vec<PathBuf> {
@@ -519,58 +604,137 @@ mod app {
         )
     }
 
-    fn run_cli(args: &[&str]) -> Result<Output, String> {
-        Command::new(resolve_cli()?)
-            .args(args)
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .output()
-            .map_err(|e| format!("failed to run hermes-relay {}: {e}", args.join(" ")))
+    fn run_bounded(
+        command: &mut Command,
+        probe: &str,
+        timeout: Duration,
+        direct_child_only: bool,
+    ) -> Result<ProcessOutcome, String> {
+        let mut options = RunOptions::new(timeout, PROCESS_CAPTURE_LIMIT);
+        if direct_child_only {
+            options = options.direct_child_only();
+        }
+        let outcome = bounded_process::run(command, options).map_err(|error| {
+            let detail = format!(
+                "stage={:?} duration_ms={}",
+                error.stage,
+                error.duration.as_millis()
+            );
+            append_tray_log("process_error", Some(probe), Some(&detail));
+            format!("{probe} failed to start or wait: {error}")
+        })?;
+        if outcome.timed_out {
+            let detail = format!("duration_ms={}", outcome.duration.as_millis());
+            append_tray_log("process_timeout", Some(probe), Some(&detail));
+            return Err(format!(
+                "{probe} timed out after {} seconds",
+                timeout.as_secs()
+            ));
+        }
+        if outcome.stdout.truncated || outcome.stderr.truncated {
+            let detail = format!(
+                "duration_ms={} stdout_bytes={} stderr_bytes={}",
+                outcome.duration.as_millis(),
+                outcome.stdout.total_bytes,
+                outcome.stderr.total_bytes
+            );
+            append_tray_log("process_output_truncated", Some(probe), Some(&detail));
+            return Err(format!(
+                "{probe} produced more output than the safety limit"
+            ));
+        }
+        if !outcome.status.success() {
+            let detail = format!(
+                "duration_ms={} exit_code={:?}",
+                outcome.duration.as_millis(),
+                outcome.status.code()
+            );
+            append_tray_log("process_exit_failure", Some(probe), Some(&detail));
+        }
+        Ok(outcome)
+    }
+
+    fn run_cli_with_timeout(args: &[&str], timeout: Duration) -> Result<ProcessOutcome, String> {
+        let direct_child_only = matches!(args, ["daemon", "start" | "restart", ..]);
+        let mut command = Command::new(resolve_cli()?);
+        command.args(args).env("NODE_USE_SYSTEM_CA", "1");
+        let probe = format!("cli.{}", args.first().copied().unwrap_or("unknown"));
+        run_bounded(&mut command, &probe, timeout, direct_child_only)
+    }
+
+    fn run_cli(args: &[&str]) -> Result<ProcessOutcome, String> {
+        run_cli_with_timeout(args, ACTION_TIMEOUT)
     }
 
     fn run_cli_checked(args: &[&str]) -> Result<String, String> {
         let output = run_cli(args)?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout.bytes)
+            .trim()
+            .to_string();
         if output.status.success() {
             return Ok(stdout);
         }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr.bytes)
+            .trim()
+            .to_string();
         Err(if stderr.is_empty() { stdout } else { stderr })
     }
 
     fn run_cli_checked_with_env(args: &[&str], key: &str, value: &str) -> Result<String, String> {
-        let output = Command::new(resolve_cli()?)
+        let mut command = Command::new(resolve_cli()?);
+        command
             .args(args)
-            .env(key, value)
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .output()
-            .map_err(|e| format!("failed to run hermes-relay {}: {e}", args.join(" ")))?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            .env("NODE_USE_SYSTEM_CA", "1")
+            .env(key, value);
+        let probe = format!("cli.{}", args.first().copied().unwrap_or("unknown"));
+        let output = run_bounded(&mut command, &probe, ACTION_TIMEOUT, false)?;
+        let stdout = String::from_utf8_lossy(&output.stdout.bytes)
+            .trim()
+            .to_string();
         if output.status.success() {
             return Ok(stdout);
         }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr.bytes)
+            .trim()
+            .to_string();
         Err(if stderr.is_empty() { stdout } else { stderr })
     }
 
-    fn run_json(args: &[&str]) -> Result<Value, String> {
-        let output = run_cli_checked(args)?;
-        serde_json::from_str(&output)
+    fn run_json_with_timeout(args: &[&str], timeout: Duration) -> Result<Value, String> {
+        let output = run_cli_with_timeout(args, timeout)?;
+        let stdout = String::from_utf8_lossy(&output.stdout.bytes)
+            .trim()
+            .to_string();
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr.bytes)
+                .trim()
+                .to_string();
+            return Err(if stderr.is_empty() { stdout } else { stderr });
+        }
+        serde_json::from_str(&stdout)
             .map_err(|e| format!("invalid JSON from hermes-relay {}: {e}", args.join(" ")))
     }
 
+    fn run_json(args: &[&str]) -> Result<Value, String> {
+        run_json_with_timeout(args, PROBE_TIMEOUT)
+    }
+
     fn cli_details() -> (Option<String>, Option<String>) {
-        let Ok(path) = resolve_cli() else {
-            return (None, None);
-        };
-        let version = Command::new(&path)
-            .arg("--version")
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| clean_cli_version(&String::from_utf8_lossy(&output.stdout)))
-            .filter(|value| !value.is_empty());
-        (version, Some(path.display().to_string()))
+        CLI_DETAILS_CACHE
+            .get_or_init(|| {
+                let Ok(path) = resolve_cli() else {
+                    return (None, None);
+                };
+                let mut command = Command::new(&path);
+                command.arg("--version").env("NODE_USE_SYSTEM_CA", "1");
+                let version = run_bounded(&mut command, "cli.version", PROBE_TIMEOUT, false)
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .map(|output| clean_cli_version(&String::from_utf8_lossy(&output.stdout.bytes)))
+                    .filter(|value| !value.is_empty());
+                (version, Some(path.display().to_string()))
+            })
+            .clone()
     }
 
     fn clean_cli_version(output: &str) -> String {
@@ -803,37 +967,85 @@ mod app {
         Ok(())
     }
 
+    fn cached_boolean_probe(
+        cache: &'static OnceLock<Mutex<BooleanProbeCache>>,
+        probe: impl FnOnce() -> bool,
+    ) -> bool {
+        let cache = cache.get_or_init(|| Mutex::new(None));
+        if let Ok(guard) = cache.lock() {
+            if let Some((checked_at, value)) = guard.as_ref() {
+                if checked_at.elapsed() < Duration::from_secs(60) {
+                    return *value;
+                }
+            }
+        }
+        let value = probe();
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), value));
+        }
+        value
+    }
+
+    fn update_boolean_probe_cache(cache: &'static OnceLock<Mutex<BooleanProbeCache>>, value: bool) {
+        let cache = cache.get_or_init(|| Mutex::new(None));
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), value));
+        }
+    }
+
     fn startup_enabled() -> bool {
-        Command::new("reg.exe")
-            .args(["query", RUN_KEY, "/v", RUN_VALUE])
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .status()
-            .is_ok_and(|s| s.success())
+        cached_boolean_probe(&STARTUP_ENABLED_CACHE, || {
+            let mut command = Command::new("reg.exe");
+            command.args(["query", RUN_KEY, "/v", RUN_VALUE]);
+            run_bounded(&mut command, "registry.startup.query", PROBE_TIMEOUT, false)
+                .is_ok_and(|outcome| outcome.status.success())
+        })
     }
 
     fn daemon_autostart_enabled() -> bool {
-        Command::new("reg.exe")
-            .args(["query", SETTINGS_KEY, "/v", DAEMON_AUTOSTART_VALUE])
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .status()
-            .is_ok_and(|status| status.success())
+        cached_boolean_probe(&DAEMON_AUTOSTART_CACHE, || {
+            let mut command = Command::new("reg.exe");
+            command.args(["query", SETTINGS_KEY, "/v", DAEMON_AUTOSTART_VALUE]);
+            run_bounded(
+                &mut command,
+                "registry.daemon_autostart.query",
+                PROBE_TIMEOUT,
+                false,
+            )
+            .is_ok_and(|outcome| outcome.status.success())
+        })
     }
 
-    fn hardware_availability() -> HardwareAvailability {
+    fn probe_hardware_availability() -> HardwareAvailability {
         let adb = env::var_os("HERMES_RELAY_ADB_PATH")
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "adb".into());
-        let adb = Command::new(adb)
-            .arg("version")
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .status()
-            .is_ok_and(|status| status.success());
+        let mut command = Command::new(adb);
+        command.arg("version");
+        let adb = run_bounded(&mut command, "adb.version", PROBE_TIMEOUT, false)
+            .is_ok_and(|outcome| outcome.status.success());
         HardwareAvailability {
             usb: true,
             adb,
             microphone: false,
             camera: false,
         }
+    }
+
+    fn hardware_availability() -> HardwareAvailability {
+        let cache = HARDWARE_AVAILABILITY_CACHE.get_or_init(|| Mutex::new(None));
+        if let Ok(guard) = cache.lock() {
+            if let Some((checked_at, availability)) = guard.as_ref() {
+                if checked_at.elapsed() < Duration::from_secs(60) {
+                    return availability.clone();
+                }
+            }
+        }
+        let availability = probe_hardware_availability();
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), availability.clone()));
+        }
+        availability
     }
 
     fn build_snapshot() -> Result<Snapshot, String> {
@@ -845,7 +1057,7 @@ mod app {
                     .cloned()
                     .unwrap_or(Value::Array(Vec::new())),
             )
-            .unwrap_or_default(),
+            .map_err(|_| "the installed CLI returned an invalid host list".to_string())?,
             Err(_) => hosts_from_status(selected.as_deref())?,
         };
         for host in &mut hosts {
@@ -855,14 +1067,10 @@ mod app {
                 host.access_mode = "ask-every-time".to_string();
             }
         }
-        let daemon = run_json(&["daemon", "status", "--json"])
-            .ok()
-            .and_then(|value| serde_json::from_value::<DaemonStatus>(value).ok())
-            .unwrap_or_default();
-        let pending_grants = run_json(&["grants", "--json"])
-            .ok()
-            .and_then(|value| serde_json::from_value::<Vec<PendingGrantRequest>>(value).ok())
-            .unwrap_or_default();
+        let daemon =
+            serde_json::from_value::<DaemonStatus>(run_json(&["daemon", "status", "--json"])?)
+                .map_err(|_| "the installed CLI returned an invalid daemon status".to_string())?;
+        let pending_grants = pending_grants_from_bridge();
         let (cli_version, cli_path) = cli_details();
         let computer_control_engine = cached_computer_control_engine();
         let activity_screenshot_retention = run_json(&["audit", "screenshots", "--json"])
@@ -884,6 +1092,23 @@ mod app {
             cli_version,
             cli_path,
         })
+    }
+
+    fn build_snapshot_coalesced() -> Result<Snapshot, String> {
+        let cache = SNAPSHOT_CACHE.get_or_init(|| Mutex::new(None));
+        let mut guard = cache
+            .lock()
+            .map_err(|_| "snapshot cache is unavailable".to_string())?;
+        if let Some((built_at, snapshot)) = guard.as_ref() {
+            if built_at.elapsed() < Duration::from_millis(750) {
+                return Ok(snapshot.clone());
+            }
+        }
+        let snapshot = build_snapshot().inspect_err(|_| {
+            append_tray_log("snapshot_failed", None, None);
+        })?;
+        *guard = Some((Instant::now(), snapshot.clone()));
+        Ok(snapshot)
     }
 
     fn computer_control_engine_status() -> Result<ComputerControlEngine, String> {
@@ -921,7 +1146,10 @@ mod app {
     #[tauri::command]
     async fn computer_cua_install() -> Result<Value, String> {
         tauri::async_runtime::spawn_blocking(|| {
-            let result = run_json(&["computer-use", "cua", "install", "--yes", "--json"])?;
+            let result = run_json_with_timeout(
+                &["computer-use", "cua", "install", "--yes", "--json"],
+                LONG_ACTION_TIMEOUT,
+            )?;
             clear_computer_control_engine_cache();
             Ok(result)
         })
@@ -932,7 +1160,10 @@ mod app {
     #[tauri::command]
     async fn computer_cua_check_update() -> Result<Value, String> {
         tauri::async_runtime::spawn_blocking(|| {
-            run_json(&["computer-use", "cua", "check-update", "--json"])
+            run_json_with_timeout(
+                &["computer-use", "cua", "check-update", "--json"],
+                ACTION_TIMEOUT,
+            )
         })
         .await
         .map_err(|error| format!("CUA update check task failed: {error}"))?
@@ -941,7 +1172,10 @@ mod app {
     #[tauri::command]
     async fn computer_cua_update() -> Result<Value, String> {
         tauri::async_runtime::spawn_blocking(|| {
-            let result = run_json(&["computer-use", "cua", "update", "--yes", "--json"])?;
+            let result = run_json_with_timeout(
+                &["computer-use", "cua", "update", "--yes", "--json"],
+                LONG_ACTION_TIMEOUT,
+            )?;
             clear_computer_control_engine_cache();
             Ok(result)
         })
@@ -982,15 +1216,26 @@ mod app {
 
     #[tauri::command]
     async fn get_snapshot() -> Result<Snapshot, String> {
-        tauri::async_runtime::spawn_blocking(build_snapshot)
+        tauri::async_runtime::spawn_blocking(build_snapshot_coalesced)
             .await
             .map_err(|error| format!("snapshot task failed: {error}"))?
     }
 
     #[tauri::command]
+    fn get_pending_grant_context() -> PendingGrantContext {
+        PendingGrantContext {
+            grant: pending_grants_from_bridge().into_iter().next(),
+            active_url: active_url(),
+        }
+    }
+
+    #[tauri::command]
     async fn check_desktop_update() -> Result<Value, String> {
         tauri::async_runtime::spawn_blocking(|| {
-            run_json(&["update", "--installer", "--check", "--json"])
+            run_json_with_timeout(
+                &["update", "--installer", "--check", "--json"],
+                ACTION_TIMEOUT,
+            )
         })
         .await
         .map_err(|error| format!("desktop update check task failed: {error}"))?
@@ -1005,13 +1250,16 @@ mod app {
                 .is_some_and(|status| status.running);
             // The tray owns exit/restart orchestration. Ask the CLI only to
             // download and verify so setup is launched exactly once.
-            let report = run_json(&[
-                "update",
-                "--installer",
-                "--download-only",
-                "--yes",
-                "--json",
-            ])?;
+            let report = run_json_with_timeout(
+                &[
+                    "update",
+                    "--installer",
+                    "--download-only",
+                    "--yes",
+                    "--json",
+                ],
+                LONG_ACTION_TIMEOUT,
+            )?;
             Ok::<_, String>((report, restart_daemon))
         })
         .await
@@ -1218,8 +1466,49 @@ mod app {
         {
             return Err("invalid grant request id".to_string());
         }
-        let verb = if approved { "approve" } else { "reject" };
-        run_cli_checked(&["grants", verb, &id])?;
+        let directory = grant_bridge_dir()?;
+        fs::create_dir_all(&directory)
+            .map_err(|error| format!("cannot open grant bridge: {error}"))?;
+        let request_path = directory.join(format!("request-{id}.json"));
+        let request = fs::read(&request_path)
+            .map_err(|_| format!("pending grant request not found: {id}"))?;
+        let request = serde_json::from_slice::<PendingGrantRequest>(&request)
+            .map_err(|_| "pending grant request is invalid".to_string())?;
+        if request.id != id {
+            return Err("pending grant request identity does not match its file".to_string());
+        }
+        let resolved_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let response = serde_json::to_vec_pretty(&serde_json::json!({
+            "approved": approved,
+            "reason": if approved { "" } else { "Rejected from Hermes-Relay CLI UI" },
+            "resolved_at_ms": resolved_at_ms,
+        }))
+        .map_err(|error| format!("cannot serialize grant decision: {error}"))?;
+        let temporary_path = directory.join(format!(
+            ".response-{id}-{}-{resolved_at_ms}.tmp",
+            std::process::id()
+        ));
+        let mut temporary = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+            .map_err(|error| format!("cannot stage grant decision: {error}"))?;
+        temporary
+            .write_all(&response)
+            .and_then(|_| temporary.write_all(b"\n"))
+            .and_then(|_| temporary.sync_all())
+            .map_err(|error| format!("cannot persist grant decision: {error}"))?;
+        drop(temporary);
+        let response_path = directory.join(format!("response-{id}.json"));
+        if let Err(error) = fs::rename(&temporary_path, &response_path) {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(format!("cannot publish grant decision: {error}"));
+        }
+        fs::remove_file(&request_path)
+            .map_err(|error| format!("cannot retire resolved grant request: {error}"))?;
         append_management_event(
             "grant.resolve",
             if approved {
@@ -1292,7 +1581,10 @@ mod app {
     #[tauri::command]
     async fn test_host_route(remote: String) -> Result<Value, String> {
         tauri::async_runtime::spawn_blocking(move || {
-            run_json(&["hosts", "test", "--remote", remote.trim(), "--json"])
+            run_json_with_timeout(
+                &["hosts", "test", "--remote", remote.trim(), "--json"],
+                ACTION_TIMEOUT,
+            )
         })
         .await
         .map_err(|error| format!("Secure Link test task failed: {error}"))?
@@ -1389,22 +1681,30 @@ mod app {
         spawn_cli_terminal(&[])
     }
 
-    #[tauri::command]
-    fn open_logs() -> Result<(), String> {
-        let path = home_dir()?.join(".hermes").join("daemon.log");
+    fn open_log_file(name: &str) -> Result<(), String> {
+        let path = home_dir()?.join(".hermes").join(name);
         if !path.exists() {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|error| format!("cannot create daemon log directory: {error}"))?;
+                    .map_err(|error| format!("cannot create log directory: {error}"))?;
             }
-            fs::write(&path, b"")
-                .map_err(|error| format!("cannot create daemon log file: {error}"))?;
+            fs::write(&path, b"").map_err(|error| format!("cannot create log file: {error}"))?;
         }
         Command::new("notepad.exe")
             .arg(path)
             .spawn()
             .map(|_| ())
-            .map_err(|error| format!("failed to open daemon logs: {error}"))
+            .map_err(|error| format!("failed to open log: {error}"))
+    }
+
+    #[tauri::command]
+    fn open_logs() -> Result<(), String> {
+        open_log_file("daemon.log")
+    }
+
+    #[tauri::command]
+    fn open_tray_logs() -> Result<(), String> {
+        open_log_file("tray.log")
     }
 
     #[tauri::command]
@@ -1506,11 +1806,14 @@ mod app {
         } else {
             command.args(["delete", RUN_KEY, "/v", RUN_VALUE, "/f"]);
         }
-        let output = command
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .output()
-            .map_err(|e| format!("failed to update sign-in setting: {e}"))?;
+        let output = run_bounded(
+            &mut command,
+            "registry.startup.update",
+            PROBE_TIMEOUT,
+            false,
+        )?;
         if output.status.success() {
+            update_boolean_probe_cache(&STARTUP_ENABLED_CACHE, enabled);
             append_management_event(
                 "startup.change",
                 if enabled {
@@ -1523,7 +1826,9 @@ mod app {
             );
             Ok(())
         } else {
-            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+            Err(String::from_utf8_lossy(&output.stderr.bytes)
+                .trim()
+                .to_string())
         }
     }
 
@@ -1548,11 +1853,14 @@ mod app {
         } else {
             command.args(["delete", SETTINGS_KEY, "/v", DAEMON_AUTOSTART_VALUE, "/f"]);
         }
-        let output = command
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .output()
-            .map_err(|error| format!("failed to update daemon autostart setting: {error}"))?;
+        let output = run_bounded(
+            &mut command,
+            "registry.daemon_autostart.update",
+            PROBE_TIMEOUT,
+            false,
+        )?;
         if output.status.success() {
+            update_boolean_probe_cache(&DAEMON_AUTOSTART_CACHE, enabled);
             append_management_event(
                 "daemon.autostart",
                 if enabled {
@@ -1565,7 +1873,9 @@ mod app {
             );
             Ok(())
         } else {
-            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let error = String::from_utf8_lossy(&output.stderr.bytes)
+                .trim()
+                .to_string();
             Err(if error.is_empty() {
                 "failed to update daemon autostart setting".to_string()
             } else {
@@ -1726,6 +2036,7 @@ mod app {
     }
 
     fn request_main_hide(window: &tauri::WebviewWindow) {
+        let _ = window.eval("window.dispatchEvent(new Event('hermes-hide'))");
         let _ = window.hide();
     }
 
@@ -1774,10 +2085,14 @@ mod app {
                         });
                     }
                     TrayAction::RestartDaemon => {
-                        let _ = run_cli_checked(&["daemon", "restart"]);
+                        if run_cli_checked(&["daemon", "restart"]).is_err() {
+                            append_tray_log("tray_action_failed", Some("daemon.restart"), None);
+                        }
                     }
                     TrayAction::StopDaemon => {
-                        let _ = run_cli_checked(&["daemon", "stop"]);
+                        if run_cli_checked(&["daemon", "stop"]).is_err() {
+                            append_tray_log("tray_action_failed", Some("daemon.stop"), None);
+                        }
                     }
                 }
             }
@@ -2011,6 +2326,12 @@ mod app {
     }
 
     pub fn run() {
+        std::panic::set_hook(Box::new(|_| {
+            append_tray_log("tray_panic", None, None);
+        }));
+        unsafe {
+            SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+        }
         // Establish one physical coordinate space before Tauri creates any
         // windows. Without this, Windows virtualizes tray/cursor coordinates on
         // scaled monitors and the popup can anchor to the wrong screen edge.
@@ -2028,6 +2349,7 @@ mod app {
         let app = tauri::Builder::default()
             .invoke_handler(tauri::generate_handler![
                 get_snapshot,
+                get_pending_grant_context,
                 check_desktop_update,
                 install_desktop_update,
                 select_host,
@@ -2050,6 +2372,7 @@ mod app {
                 open_terminal,
                 open_cli_terminal,
                 open_logs,
+                open_tray_logs,
                 run_diagnostics,
                 open_external_url,
                 set_startup,

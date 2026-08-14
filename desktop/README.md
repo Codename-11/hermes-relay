@@ -50,7 +50,9 @@ for existing installs until explicitly enabled. Settings also exposes **Open
 terminal**, **Open Hermes CLI**, **View daemon log**, and **Run diagnostics**,
 and manages Desktop release updates. **Help &
 About** reports the UI, CLI, and connected Relay versions and links to the docs,
-troubleshooting, release notes, logs, and diagnostics. The installer download is
+troubleshooting, release notes, logs, and diagnostics. Tray lifecycle and child-
+process failures are written to `~/.hermes/tray.log`; daemon connection and tool-
+router events remain in `~/.hermes/daemon.log`. The installer download is
 verified against the release
 `SHA256SUMS.txt`, preserves the startup preference, restores a previously
 running daemon, and relaunches the tray after the silent replacement.
@@ -712,6 +714,21 @@ Precedence for credentials: `--token` → `HERMES_RELAY_TOKEN` → `--code` → 
 
 ## Troubleshooting
 
+- **Many `Bun` / `hermes-relay.exe` processes, or Windows error `0xc0000142` from `reg.exe`, `adb.exe`, or `hermes-relay.exe`** — quit **Hermes-Relay CLI UI** first, then run `hermes-relay daemon stop` from a fresh PowerShell. If the CLI cannot start, inspect exact executable paths before stopping only Hermes-Relay-owned processes:
+
+  ```powershell
+  $relayBin = [IO.Path]::GetFullPath("$env:USERPROFILE\.hermes\bin\")
+  $relayProcesses = Get-CimInstance Win32_Process | Where-Object {
+    $_.ExecutablePath -and
+    [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith($relayBin, [StringComparison]::OrdinalIgnoreCase) -and
+    $_.Name -in @('hermes-relay.exe', 'hermes-relay-tray.exe')
+  }
+  $relayProcesses | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine
+  # Review the rows above before stopping them:
+  $relayProcesses | ForEach-Object { Stop-Process -Id $_.ProcessId }
+  ```
+
+  Do not broadly stop every process named `Bun`: unrelated development tools may use the same runtime name. After recovery, inspect `~/.hermes/tray.log` for snapshot, subprocess timeout, launch, and exit failures. Use `~/.hermes/daemon.log` for the single long-running daemon's authentication, transport, and tool-router lifecycle. If unrelated Windows programs still fail to initialize, restart Windows before relaunching the tray.
 - **`auth timed out after 15000ms`** — the relay subprocess takes 15–30 s on first attach because it initializes the full agent. Bump the timeout: `HERMES_RELAY_AUTH_TIMEOUT_MS=30000 hermes-relay …`.
 - **`relay rejected credentials: auth failed`** — your stored token expired or was revoked. Re-pair: `hermes-relay pair --remote ws://…`.
 - **`RelayTransport: global WebSocket not available`** — your Node is too old. Need >=21.
