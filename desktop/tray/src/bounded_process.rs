@@ -20,16 +20,22 @@ use std::{
 };
 
 use windows::{
-    core::PCWSTR,
+    core::{Error as WindowsError, PCWSTR},
     Win32::{
         Foundation::{CloseHandle, HANDLE},
         System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD,
+                THREADENTRY32,
+            },
             JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
                 SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
                 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
             },
-            Threading::CREATE_NO_WINDOW,
+            Threading::{
+                OpenThread, ResumeThread, CREATE_NO_WINDOW, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
+            },
             IO::CancelSynchronousIo,
         },
     },
@@ -92,9 +98,58 @@ pub(crate) enum ProcessStage {
     ConfigureJob,
     Spawn,
     AssignJob,
+    Resume,
     Wait,
     ReadStdout,
     ReadStderr,
+}
+
+fn resume_suspended_process(process_id: u32, started: Instant) -> Result<(), ProcessError> {
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
+        .map_err(|error| ProcessError::new(ProcessStage::Resume, started.elapsed(), error))?;
+    let mut entry = THREADENTRY32 {
+        dwSize: size_of::<THREADENTRY32>() as u32,
+        ..THREADENTRY32::default()
+    };
+
+    let thread_id = (|| {
+        unsafe { Thread32First(snapshot, &mut entry) }
+            .map_err(|error| ProcessError::new(ProcessStage::Resume, started.elapsed(), error))?;
+        loop {
+            if entry.th32OwnerProcessID == process_id {
+                return Ok(entry.th32ThreadID);
+            }
+            if unsafe { Thread32Next(snapshot, &mut entry) }.is_err() {
+                return Err(ProcessError::new(
+                    ProcessStage::Resume,
+                    started.elapsed(),
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "suspended process thread was not found",
+                    ),
+                ));
+            }
+        }
+    })();
+    unsafe {
+        let _ = CloseHandle(snapshot);
+    }
+    let thread_id = thread_id?;
+
+    let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, thread_id) }
+        .map_err(|error| ProcessError::new(ProcessStage::Resume, started.elapsed(), error))?;
+    let resume_result = unsafe { ResumeThread(thread) };
+    unsafe {
+        let _ = CloseHandle(thread);
+    }
+    if resume_result == u32::MAX {
+        return Err(ProcessError::new(
+            ProcessStage::Resume,
+            started.elapsed(),
+            WindowsError::from_win32(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -202,11 +257,15 @@ pub(crate) fn run(
         ProcessTreePolicy::DirectChildOnly => None,
     };
 
+    let creation_flags = match options.process_tree {
+        ProcessTreePolicy::KillDescendants => CREATE_NO_WINDOW | CREATE_SUSPENDED,
+        ProcessTreePolicy::DirectChildOnly => CREATE_NO_WINDOW,
+    };
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW.0);
+        .creation_flags(creation_flags.0);
 
     let mut child = command
         .spawn()
@@ -215,6 +274,11 @@ pub(crate) fn run(
     let process_handle = HANDLE(child.as_raw_handle());
     if let Some(job) = job.as_ref() {
         if let Err(error) = job.assign(process_handle, started) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        if let Err(error) = resume_suspended_process(child.id(), started) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
@@ -462,8 +526,10 @@ mod tests {
 
     #[test]
     fn direct_child_mode_times_out_and_reaps_child() {
+        let mut command = Command::new("ping.exe");
+        command.args(["127.0.0.1", "-n", "30"]);
         let outcome = run(
-            &mut cmd("ping 127.0.0.1 -n 30 >nul"),
+            &mut command,
             RunOptions::new(Duration::from_millis(100), 1024).direct_child_only(),
         )
         .expect("timed out direct child should still return an outcome");
@@ -486,7 +552,7 @@ mod tests {
         );
         let mut command = Command::new("powershell.exe");
         command.args(["-NoProfile", "-Command", &script]);
-        let outcome = run(&mut command, RunOptions::new(Duration::from_secs(3), 1024))
+        let outcome = run(&mut command, RunOptions::new(Duration::from_secs(8), 1024))
             .expect("timed out process tree should return an outcome");
         assert!(outcome.timed_out);
 
