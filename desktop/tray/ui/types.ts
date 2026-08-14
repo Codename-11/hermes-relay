@@ -23,6 +23,10 @@ export interface DaemonStatus {
   privilege?: string | null
   username?: string | null
   updated_at?: number | null
+  last_event?: string | null
+  reconnect_attempt?: number | null
+  retry_at?: number | null
+  last_error?: string | null
 }
 
 export interface ComputerControlEngine {
@@ -62,9 +66,17 @@ export interface CuaManagementStatus {
   operation?: { kind: 'install' | 'update'; state: 'completed'; version: string }
 }
 
+export interface CuaHealthStatus {
+  state: 'healthy' | 'degraded' | 'error'
+  checkedAt: string
+  overall?: string
+  reason?: string
+  temporaryWindowsCompatibility: true
+}
+
 export interface Activity {
   ts: number
-  kind?: 'tool.completed' | 'management.completed'
+  kind?: 'tool.completed' | 'management.completed' | 'connection.state'
   tool: string
   category?: 'command' | 'files' | 'screen' | 'input' | 'devices' | 'system' | 'other'
   ok: boolean
@@ -94,6 +106,10 @@ export interface Activity {
   stderr_truncated?: boolean
   result_truncated?: boolean
   error?: string
+  screenshot_evidence_id?: string
+  screenshot_mime_type?: 'image/png'
+  screenshot_width?: number
+  screenshot_height?: number
 }
 
 export interface Snapshot {
@@ -101,6 +117,7 @@ export interface Snapshot {
   active_url?: string | null
   daemon: DaemonStatus
   activity: Activity[]
+  activity_screenshot_retention: { enabled: boolean; days: number; count: number; bytes: number }
   pending_grants: PendingGrantRequest[]
   startup_enabled: boolean
   daemon_autostart_enabled?: boolean

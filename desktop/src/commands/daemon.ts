@@ -50,6 +50,7 @@ import {
   type DaemonStatus
 } from '../lib/daemonStatus.js'
 import { rpcErrorMessage, asRpcResult } from '../lib/rpc.js'
+import { appendAudit } from '../lib/auditLog.js'
 import { effectiveHostAccessMode, effectiveHostCapabilityPolicies, getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
@@ -854,17 +855,26 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
         ? (info as { attempt?: number; delayMs?: number })
         : {}
     log.warn({ event: 'reconnecting', attempt: attempt ?? null, delay_ms: delayMs ?? null })
-    updateStatus({ state: 'reconnecting', last_event: 'reconnecting' })
+    const retryAt = nowSec() + Math.ceil((delayMs ?? 0) / 1000)
+    updateStatus({ state: 'reconnecting', last_event: 'reconnecting', reconnect_attempt: attempt ?? null, retry_at: retryAt, last_error: 'Relay connection interrupted' })
+    if ((attempt ?? 1) === 1) {
+      void appendAudit({
+        ts: Date.now(), kind: 'connection.state', tool: 'daemon.reconnecting', category: 'system', ok: false,
+        host_url: configuredUrl, summary: 'Automatic reconnect started', error: 'Relay connection interrupted'
+      })
+    }
   })
   relay.on('reconnected', () => {
     log.info({ event: 'reconnected' })
-    updateStatus({ state: 'connected', last_event: 'reconnected' })
+    updateStatus({ state: 'connected', last_event: 'reconnected', reconnect_attempt: null, retry_at: null, last_error: null })
+    void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.reconnected', category: 'system', ok: true, host_url: configuredUrl, summary: 'Relay tunnel restored' })
   })
   relay.on('exit', (code: unknown) => {
     // Transport gave up (auth.fail, reconnect gate returned false, or
     // reconnect attempts exhausted). Daemon exits non-zero so the
     // service manager decides whether to restart.
     log.error({ event: 'transport_exited', code: typeof code === 'number' ? code : null })
+    void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.disconnected', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay transport stopped', error: 'Automatic reconnect stopped' })
     // Defer exit so the log line flushes before the process dies.
     setImmediate(() => process.exit(1))
   })
@@ -874,6 +884,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const outcome = await relay.whenAuthResolved()
   if (!outcome.ok) {
     log.error({ event: 'auth_failed', reason: outcome.reason })
+    updateStatus({ state: 'stopped', last_event: 'auth_failed', last_error: outcome.reason, reconnect_attempt: null, retry_at: null })
+    void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.auth_failed', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay authentication failed', error: outcome.reason })
     try {
       relay.kill()
     } catch {
@@ -887,7 +899,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     server_version: relay.serverVersion ?? null,
     transport: relay.authMeta?.transportHint ?? null
   })
-  updateStatus({ state: 'connected', server_version: relay.serverVersion ?? null, last_event: 'authed' })
+  updateStatus({ state: 'connected', server_version: relay.serverVersion ?? null, last_event: 'authed', reconnect_attempt: null, retry_at: null, last_error: null })
 
   // Signal downstream handlers that we're running headless. The router
   // also checks this env var in its detectInteractive() fallback, so any

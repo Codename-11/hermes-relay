@@ -1245,6 +1245,10 @@ When the answer becomes clearer, this section becomes either an ADR in `docs/dec
   manifest identity and installer SHA-256; add Windows publisher verification
   when upstream signs the installer. Keep raw CUA tools, configuration,
   recording, replay, and JavaScript outside the remote agent surface.
+  Remove the temporary Windows readiness/health split once
+  [trycua/cua#3103](https://github.com/trycua/cua/issues/3103) ships in the
+  supported CUA range; restore a mandatory health gate only if the upstream
+  probe is bounded and cannot leave UI Automation falsely busy.
 - **MediaProjection consent flow** — wired in MainActivity (2026-04-12), needs end-to-end test on a real device
 - **WorkManager upgrade for auto-disable timer** — currently a coroutine `Job + delay()` in `AutoDisableWorker.kt`; documented at top of file. Upgrade when androidx.work joins the classpath
 - **Wave 3 voice-bridge multi-turn confirmation** — currently a 5s TTS countdown with cancel; conversational confirmation is the follow-up
