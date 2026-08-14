@@ -1,30 +1,28 @@
 # Hermes-Relay CLI v__VERSION__
 
-**Release Date:** 2026-08-13
+**Release Date:** 2026-08-14
 
-This alpha makes the compact **Hermes-Relay CLI UI** responsive during connection changes, expands host and capability management, and presents live route security and diagnostics without turning the tray into a full desktop client.
+This first beta makes structured Windows computer control safer and more capable through an optional CUA Driver integration, while hardening in-place CLI and management UI updates.
 
-**Experimental phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64; the management tray is Windows-only.
+**Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64; the management UI is Windows-only.
 
 ## What's changed
 
 ### Added
 
-- **Host management hub.** Each paired Hermes host has local identity, pairing facts, access and capability controls, authorized-client revocation, re-pairing, and guarded removal.
-- **Evidence-first activity.** Overview shows the latest three events and detailed views retain bounded command, output, exit, duration, and truncation evidence.
-- **Live route details.** The Agent-to-PC path shows route type, encryption state, endpoint, packet motion, and a connection test with reachability and latency.
+- **CUA Driver computer control.** Windows sessions prefer the verified CUA runtime for window-targeted background actions, fresh pre/post snapshots, one-use element tokens, and optional per-session animated cursors that do not move the physical pointer.
+- **Explicit engine management.** The CLI and management UI show CUA installation, compatibility, health, active backend, and session state, with guarded Install, Check, and Update actions.
+- **Bounded control activity.** Computer-control events show backend, dispatch, target, action, and verification phases without retaining screenshots, UI trees, entered values, or raw session identifiers.
 
 ### Changed
 
-- **Connection lifecycle stays responsive.** Connect, disconnect, and snapshot work run outside the UI thread with immediate transition feedback and single-flight live polling.
-- **Access presets are explicit.** Restricted, Ask Every Time, Standard, Full Access, and Custom map visibly onto individual command, file, screen/input, and hardware capabilities.
-- **Tailscale is the recommended remote route.** Direct TLS and Hermes Secure Link remain supported; Hermes Reach is marked experimental and stays below supported routes.
+- **Windows Input is the compatibility backend.** Engine selection is fixed for each authenticated control session; CUA never silently falls back to foreground input after a session starts.
+- **CUA remains optional.** Hermes verifies the canonical upstream package and supported version range. The driver is not bundled or silently updated, and Hermes sessions force driver telemetry off.
 
 ### Fixed
 
-- **Legacy LAN and Tailscale routes no longer appear as Custom VPN.** Route testing infers generic saved roles from the endpoint and reports the correct network path.
-- **PowerShell output remains complete.** Scalar, pipeline, JSON, native output, errors, exit status, and truncation metadata return reliably through desktop RPC.
-- **Tray placement follows the real notification area.** Responsive geometry uses the tray monitor and DPI and remains anchored above the icon.
+- **Bundle updates handle locked processes safely.** The installer waits for the invoking process, quiesces tray children, retries checked payload extraction, preserves custom install directories, and fails before release metadata changes if replacement cannot complete.
+- **CUA readiness uses the documented health schema.** A healthy `ok` result is accepted, installed-but-degraded UI Automation is explained accurately, and trusted Windows installer paths validate consistently.
 
 ## Install
 
