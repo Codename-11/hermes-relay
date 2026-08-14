@@ -34,6 +34,8 @@ data class ProactiveInboxEntry(
      * field).
      */
     val chatId: String? = null,
+    /** Owning saved connection. Null only for entries written by older builds. */
+    val connectionId: String? = null,
 )
 
 private val Context.proactiveInboxStore: DataStore<Preferences> by
@@ -49,10 +51,10 @@ private const val MAX_ENTRIES = 100
  * newest-first, deduped by id (so a re-delivered message doesn't double up), and
  * capped at [MAX_ENTRIES]. Survives app restart.
  *
- * Demoted (2026-06-29): the agent conversation now lives as a Thread in Chat (the
- * gateway session is the durable history), so the in-app inbox view is retired.
- * This store is only fed for messages NOT shown in an open Thread; it currently
- * has no viewer and is fully retireable — see TODO.
+ * Demoted (2026-06-29): once a phone gateway session exists, it is the durable
+ * history. Outbound agent messages arrive before that session exists, so this
+ * bounded store also backs the provisional Thread until the user's first reply
+ * promotes it to a real `source=phone` session.
  */
 class ProactiveInboxRepository(private val context: Context) {
 

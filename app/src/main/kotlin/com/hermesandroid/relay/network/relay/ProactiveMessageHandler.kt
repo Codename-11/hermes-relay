@@ -61,8 +61,8 @@ class ProactiveMessageHandler(
     /**
      * Show an inbound message inline in the Chat **Thread** it belongs to, when
      * that Thread is currently open. Returns true if it was shown there — in
-     * which case the message is NOT also notified or added to the inbox (you're
-     * already looking at the conversation). The unified-Threads counterpart of
+     * which case the message is persisted but not also notified (you're already
+     * looking at the conversation). The unified-Threads counterpart of
      * [toSession]; wired after construction.
      */
     var injectIntoThread: ((ProactiveMessage) -> Boolean)? = null,
@@ -94,13 +94,15 @@ class ProactiveMessageHandler(
     /** Route a parsed message: into the open Thread if it belongs there, else
      *  the durable inbox log + the surface its hint selects. */
     private fun dispatch(msg: ProactiveMessage) {
-        // Unified Threads: if this message belongs to the Thread currently open
-        // in Chat, render it inline there and STOP — no notification, no inbox
-        // entry (you're already looking at the conversation).
-        if (injectIntoThread?.invoke(msg) == true) return
-        // Otherwise the inbox is the durable log of agent-initiated messages and
-        // the surfacing hint selects the additional surface.
+        // Persist first even when the currently open Thread consumes the live
+        // message. Agent-initiated outbound sends do not create a gateway
+        // session until the phone replies, so this cache is the provisional
+        // Thread transcript during that gap.
         toInbox?.invoke(msg)
+        // Unified Threads: if this message belongs to the Thread currently open
+        // in Chat, render it inline there and stop before raising a notification.
+        if (injectIntoThread?.invoke(msg) == true) return
+        // The surfacing hint selects the additional surface.
         when (msg.surfacing?.lowercase()) {
             "inbox" -> { /* inbox only — already recorded above */ }
             "session" -> {

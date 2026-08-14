@@ -104,6 +104,15 @@ data class ProfileSessionRow(
     val session: ChatSession,
 )
 
+data class ProvisionalThreadRow(
+    val chatId: String,
+    val title: String,
+    val messageCount: Int,
+    val lastActivityAt: Long,
+)
+
+private const val PROVISIONAL_THREAD_PREFIX = "proactive:"
+
 internal fun sessionWorkLabels(session: ChatSession): List<String> = buildList {
     val repo = (session.gitRepoRoot ?: session.workingDirectory)
         ?.trimEnd('/', '\\')
@@ -169,6 +178,8 @@ fun SessionDrawerContent(
      * filter view. The first message the user types opens the conversation.
      */
     onNewThread: ((String) -> Unit)? = null,
+    provisionalThreads: List<ProvisionalThreadRow> = emptyList(),
+    onSelectProvisionalThread: ((String) -> Unit)? = null,
     /** Gateway sources currently hidden from the drawer (default: cron+webhook). */
     hiddenSources: Set<String> = emptySet(),
     /** Toggle a source's visibility (persisted). Null hides the source filter. */
@@ -191,7 +202,20 @@ fun SessionDrawerContent(
     // Threads affordance shows when the capability is active OR there's already at least one
     // agent Thread (source=phone) in the list. If the filter is on Threads but they've
     // vanished, fall back to All so the drawer never gets stuck on an empty hidden filter.
-    val showThreads = threadsCapabilityActive || sessions.any { isThreadSource(it.source) }
+    val provisionalSessions = provisionalThreads.map { thread ->
+        ChatSession(
+            sessionId = "$PROVISIONAL_THREAD_PREFIX${thread.chatId}",
+            title = thread.title,
+            model = null,
+            messageCount = thread.messageCount,
+            updatedAt = thread.lastActivityAt,
+            startedAt = thread.lastActivityAt,
+            lastActivityAt = thread.lastActivityAt,
+            source = "phone",
+        )
+    }
+    val allSessions = sessions + provisionalSessions
+    val showThreads = threadsCapabilityActive || allSessions.any { isThreadSource(it.source) }
     val activeFilter = resolveSessionDrawerFilter(filter, showThreads, archiveSupported)
     // External gateway sources present (discord/telegram/cron/…) for the source
     // filter dropdown. Own chats (tui/api_server) + phone Threads aren't listed.
@@ -200,7 +224,7 @@ fun SessionDrawerContent(
         .distinct()
         .filter { sourceBadge(it) != null }
         .sorted()
-    val visibleSessions = sessions
+    val visibleSessions = allSessions
         .asSequence()
         .filter { session ->
             when (activeFilter) {
@@ -529,7 +553,7 @@ fun SessionDrawerContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = if (sessions.isEmpty()) stringResource(R.string.drawer_no_sessions) else stringResource(R.string.drawer_no_matching_sessions),
+                    text = if (allSessions.isEmpty()) stringResource(R.string.drawer_no_sessions) else stringResource(R.string.drawer_no_matching_sessions),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -553,7 +577,16 @@ fun SessionDrawerContent(
                         pinned = session.pinned,
                         archived = session.archived,
                         archiveSupported = archiveSupported,
-                        onClick = { onSelectSession(session.sessionId) },
+                        onClick = {
+                            if (session.sessionId.startsWith(PROVISIONAL_THREAD_PREFIX)) {
+                                onSelectProvisionalThread?.invoke(
+                                    session.sessionId.removePrefix(PROVISIONAL_THREAD_PREFIX),
+                                )
+                            } else {
+                                onSelectSession(session.sessionId)
+                            }
+                        },
+                        actionsEnabled = !session.sessionId.startsWith(PROVISIONAL_THREAD_PREFIX),
                         onTogglePinned = {
                             onSetSessionPinned(session.sessionId, !session.pinned)
                         },
@@ -748,6 +781,7 @@ private fun SessionItem(
     archived: Boolean,
     archiveSupported: Boolean,
     onClick: () -> Unit,
+    actionsEnabled: Boolean = true,
     onTogglePinned: () -> Unit,
     onToggleArchived: () -> Unit,
     onRename: () -> Unit,
@@ -888,7 +922,7 @@ private fun SessionItem(
             }
         }
 
-        Box {
+        if (actionsEnabled) Box {
             IconButton(
                 onClick = { menuOpen = true },
                 modifier = Modifier.size(36.dp),

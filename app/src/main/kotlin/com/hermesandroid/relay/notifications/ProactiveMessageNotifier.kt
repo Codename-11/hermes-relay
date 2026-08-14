@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.net.Uri
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -47,10 +48,13 @@ object ProactiveMessageNotifier {
     /**
      * Tap route — opens Chat, where the message lives as a Thread. Must match
      * `Screen.Chat.route()` in RelayApp. Routed via the EXTRA_NAV_ROUTE deep-link
-     * path (MainActivity → NavRouteRequest → RelayApp collector). Opening the
-     * exact Thread by chat_id is a follow-up (see TODO).
+     * path (MainActivity → NavRouteRequest → RelayApp collector), carrying the
+     * `chat_id` so RelayApp opens the exact real or provisional Thread.
      */
-    private const val TAP_ROUTE = "chat"
+    private fun tapRoute(chatId: String?): String =
+        chatId?.takeIf { it.isNotBlank() }
+            ?.let { "chat?proactiveChatId=${Uri.encode(it)}" }
+            ?: "chat"
 
     /**
      * Post (or replace) a proactive-message notification.
@@ -80,7 +84,7 @@ object ProactiveMessageNotifier {
 
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(MainActivity.EXTRA_NAV_ROUTE, TAP_ROUTE)
+            putExtra(MainActivity.EXTRA_NAV_ROUTE, tapRoute(chatId))
         }
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         // Distinct requestCode per slot so each notification gets its own

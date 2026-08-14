@@ -33,6 +33,7 @@ import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.SessionActivityState
@@ -2932,6 +2933,12 @@ class ChatViewModel : ViewModel() {
     fun injectThreadMessage(msg: ProactiveMessage): Boolean {
         val handler = chatHandler ?: return false
         val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
+        pendingThread?.let { pending ->
+            if (msgChatId == null || msgChatId == pending.chatId) {
+                handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
+                return true
+            }
+        }
         // A freshly-created thread whose real session we're still switching to:
         // show the agent's first reply in the draft view now (the switch
         // reconciles it from history). Covers the gap before currentSessionId is
@@ -3550,6 +3557,8 @@ class ChatViewModel : ViewModel() {
 
     fun createNewChat() {
         val handler = chatHandler ?: return
+        pendingThread = null
+        creatingThread = null
 
         // Gateway turns continue as detached siblings; SSE remains exclusive.
         releaseTurnForNavigation(handler)
@@ -3667,6 +3676,43 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
+     * Open an agent-initiated Thread before the gateway has a `source=phone`
+     * session for it. Outbound platform sends do not create gateway sessions;
+     * the first phone reply does. Until then the durable proactive inbox is the
+     * provisional transcript. The existing pending-thread send path promotes
+     * this draft to the real gateway session after the user's first reply.
+     */
+    fun openProactiveThread(chatId: String, entries: List<ProactiveInboxEntry>) {
+        val handler = chatHandler ?: return
+        val normalizedChatId = chatId.ifBlank { "phone" }
+        val ordered = entries
+            .filter { (it.chatId ?: "phone") == normalizedChatId }
+            .sortedBy { it.receivedAt }
+        if (ordered.isEmpty()) return
+
+        releaseTurnForNavigation(handler)
+        cancelAnswerRecovery(settleUi = false)
+        historyLoadGeneration.incrementAndGet()
+        pendingThread = PendingThread(
+            chatId = normalizedChatId,
+            name = ordered.last().title.ifBlank { "Hermes" },
+        )
+        creatingThread = null
+        gatewayClient?.clearSession()
+        handler.setSessionId(null)
+        selectBackgroundProcessSession(null)
+        handler.clearMessages()
+        ordered.forEach { entry ->
+            handler.addAgentThreadMessage(entry.text, entry.id, entry.title)
+        }
+        _contextUsage.value = null
+        _contextWindow.value = null
+        dismissPendingAskNotification()
+        _pendingAsk.value = null
+        onSessionChanged?.invoke(null)
+    }
+
+    /**
      * After a "+ New Thread" first send, poll the session list until the gateway
      * has created the new `source=phone` session, then switch to it (loading its
      * history) and apply the user's chosen name. The new session is found by
@@ -3711,6 +3757,8 @@ class ChatViewModel : ViewModel() {
     fun switchSession(sessionId: String) {
         val handler = chatHandler ?: return
         if (streamingEndpoint != "gateway" && apiClient == null) return
+        pendingThread = null
+        creatingThread = null
 
         // Keep a Gateway sibling alive and detach its callbacks. SSE remains a
         // single exclusive stream and is interrupted on navigation.

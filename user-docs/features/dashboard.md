@@ -1,6 +1,8 @@
-# Dashboard Plugin
+# Dashboard and official Desktop plugins
 
-A hermes-agent dashboard plugin that surfaces relay-specific state in the gateway's web UI. Paired devices, bridge command history, push delivery (future), and active inbound-media tokens — all in one "Relay" tab, no SSH required.
+Hermes-Relay surfaces its Relay-specific state in the web Dashboard and, when
+explicitly enabled, in official Hermes Desktop. Both use the same existing
+profile-scoped backend; neither creates a second Relay service or state store.
 
 ## What It Is
 
@@ -19,6 +21,19 @@ The plugin is a thin observer — it never modifies state, never writes to your 
 **On your phone:**
 
 Nothing. The dashboard plugin renders in your browser against the Hermes server — the phone is the subject of observation, not a participant.
+
+**For official Hermes Desktop:** use a build with the runtime Plugin SDK and
+unified-package discovery. The regular Hermes-Relay plugin install already
+places `desktop/plugin.js` beside the Dashboard half. Open **Settings →
+Plugins**, enable **Hermes Relay**, then use the labeled **Relay** sidebar or
+status-bar item, or **Hermes Relay: Open** in the command palette.
+
+Enabling or loading the Desktop plugin does not open its pane. App startup,
+reconnect, profile changes, navigation restoration, updates, and background
+events also leave it closed. After an explicit open, close and move/dock work
+through the native Desktop pane controls. Desktop currently offers no supported
+agent command for focusing contributed panes and no programmatic move-coordinate
+API; Hermes-Relay does not use private hooks to imitate those features.
 
 ## Accessing the Dashboard
 

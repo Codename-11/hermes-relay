@@ -336,17 +336,20 @@ sealed class Screen(
     // NavHost, and the NavigationBarItem click must navigate via [route]()
     // so no unresolved `{openAgentSheet}` leaks into the destination.
     data object Chat : Screen(
-        "chat?openAgentSheet={openAgentSheet}&sessionId={sessionId}&profile={profile}",
+        "chat?openAgentSheet={openAgentSheet}&sessionId={sessionId}&profile={profile}" +
+            "&proactiveChatId={proactiveChatId}",
         "Chat",
         Icons.AutoMirrored.Filled.Chat,
     ) {
         const val ARG_OPEN_AGENT_SHEET: String = "openAgentSheet"
         const val ARG_SESSION_ID: String = "sessionId"
         const val ARG_PROFILE: String = "profile"
+        const val ARG_PROACTIVE_CHAT_ID: String = "proactiveChatId"
         fun route(
             openAgentSheet: Boolean = false,
             sessionId: String? = null,
             profile: String? = null,
+            proactiveChatId: String? = null,
         ): String {
             val params = buildList {
                 if (openAgentSheet) add("$ARG_OPEN_AGENT_SHEET=true")
@@ -355,6 +358,9 @@ sealed class Screen(
                 }
                 profile?.takeIf { it.isNotBlank() }?.let {
                     add("$ARG_PROFILE=${android.net.Uri.encode(it)}")
+                }
+                proactiveChatId?.takeIf { it.isNotBlank() }?.let {
+                    add("$ARG_PROACTIVE_CHAT_ID=${android.net.Uri.encode(it)}")
                 }
             }
             return if (params.isEmpty()) "chat" else "chat?${params.joinToString("&")}"
@@ -1685,6 +1691,11 @@ fun RelayApp() {
                             nullable = true
                             defaultValue = null
                         },
+                        navArgument(Screen.Chat.ARG_PROACTIVE_CHAT_ID) {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
                     ),
                 ) { backStackEntry ->
                     // Responsive bubble width based on screen width. The "Blend"
@@ -1715,6 +1726,35 @@ fun RelayApp() {
                     val requestedProfileRoute = backStackEntry.arguments
                         ?.getString(Screen.Chat.ARG_PROFILE)
                         ?.takeIf { it.isNotBlank() }
+                    val requestedProactiveChatId = backStackEntry.arguments
+                        ?.getString(Screen.Chat.ARG_PROACTIVE_CHAT_ID)
+                        ?.takeIf { it.isNotBlank() }
+                    val proactiveInboxEntries by connectionViewModel.inboxMessages.collectAsState()
+                    val phoneThreadChatIds by connectionViewModel.phoneThreadChatIds.collectAsState()
+                    LaunchedEffect(
+                        requestedProactiveChatId,
+                        proactiveInboxEntries,
+                        phoneThreadChatIds,
+                    ) {
+                        val chatId = requestedProactiveChatId ?: return@LaunchedEffect
+                        val realSessionId = phoneThreadChatIds.entries
+                            .firstOrNull { it.value == chatId }
+                            ?.key
+                        if (realSessionId != null) {
+                            chatViewModel.switchSession(realSessionId)
+                        } else {
+                            val entries = proactiveInboxEntries.filter {
+                                (it.connectionId == null || it.connectionId == activeConnectionId) &&
+                                    (it.chatId ?: "phone") == chatId
+                            }
+                            if (entries.isEmpty()) return@LaunchedEffect
+                            chatViewModel.openProactiveThread(chatId, entries)
+                        }
+                        backStackEntry.arguments?.putString(
+                            Screen.Chat.ARG_PROACTIVE_CHAT_ID,
+                            null,
+                        )
+                    }
                     LaunchedEffect(
                         requestedSessionId,
                         requestedProfileRoute,
