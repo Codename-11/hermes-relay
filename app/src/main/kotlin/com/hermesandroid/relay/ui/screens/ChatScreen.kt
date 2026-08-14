@@ -3197,9 +3197,12 @@ fun ChatScreen(
                                         isGatewayTransport &&
                                         messageReactionsSupported &&
                                         !message.isStreaming &&
-                                        message.uiKey in newestReactableMessageKeys
+                                        (
+                                            message.rowId != null ||
+                                                message.uiKey in newestReactableMessageKeys
+                                        )
                                     ) {
-                                        { emoji -> chatViewModel.reactToNewest(message.role, emoji) }
+                                        { emoji -> chatViewModel.reactToMessage(message, emoji) }
                                     } else {
                                         null
                                     },

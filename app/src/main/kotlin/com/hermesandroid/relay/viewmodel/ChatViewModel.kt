@@ -31,6 +31,7 @@ import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.applyMessageReaction
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProactiveInboxEntry
@@ -93,6 +94,7 @@ import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.network.upstream.formatPhoneActionResult
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.parseMessageReactions
 import com.hermesandroid.relay.network.upstream.SESSION_MESSAGE_PAGE_SIZE
 import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -136,6 +138,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import okhttp3.sse.EventSource
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -2323,15 +2326,33 @@ class ChatViewModel : ViewModel() {
     private val _transientNotice = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val transientNotice: SharedFlow<String> = _transientNotice.asSharedFlow()
 
-    fun reactToNewest(role: MessageRole, emoji: String?) {
+    fun reactToMessage(message: ChatMessage, emoji: String?) {
         val gateway = gatewayClient ?: return
+        val role = message.role
         if (role != MessageRole.USER && role != MessageRole.ASSISTANT) return
+        val handler = chatHandler ?: return
+        val snapshot = messages.value.firstOrNull { it.uiKey == message.uiKey }?.reactions
+            ?: message.reactions
+        handler.mutateMessage(message.uiKey) { current ->
+            current.copy(reactions = applyMessageReaction(current.reactions, emoji))
+        }
         viewModelScope.launch {
-            gateway.reactToNewest(role.name.lowercase(), emoji).fold(
-                onSuccess = {
+            gateway.reactToMessage(message.rowId, role.name.lowercase(), emoji).fold(
+                onSuccess = { result ->
+                    val persisted = parseMessageReactions(result["reactions"])
+                    val rowId = (result["row_id"] as? JsonPrimitive)?.longOrNull
+                    handler.mutateMessage(message.uiKey) { current ->
+                        current.copy(
+                            rowId = rowId ?: current.rowId,
+                            reactions = persisted,
+                        )
+                    }
                     _transientNotice.tryEmit(if (emoji == null) "Reaction removed." else "Reaction added.")
                 },
                 onFailure = { error ->
+                    handler.mutateMessage(message.uiKey) { current ->
+                        current.copy(reactions = snapshot)
+                    }
                     if ((error as? GatewayRpcException)?.code == -32601) {
                         _messageReactionsSupported.value = false
                         _transientNotice.tryEmit("Message reactions aren't supported by this gateway.")

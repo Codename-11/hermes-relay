@@ -1521,6 +1521,7 @@ class ChatHandler {
                 prior.copy(
                     id = messageId,
                     rowId = item.rowId,
+                    reactions = item.reactions,
                     role = role,
                     content = cleanedContent,
                     attachments = carriedAttachments,
@@ -1552,6 +1553,7 @@ class ChatHandler {
                 ChatMessage(
                     id = messageId,
                     rowId = item.rowId,
+                    reactions = item.reactions,
                     role = role,
                     content = cleanedContent,
                     attachments = carriedAttachments,

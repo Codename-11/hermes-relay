@@ -12,6 +12,18 @@ import org.junit.Test
  */
 class ChatMessageTest {
 
+    @Test
+    fun messageReaction_replacesAndRetractsTheUsersTapback() {
+        val agent = MessageReaction("🔥", "agent", 1.0)
+        val heart = applyMessageReaction(listOf(agent), "❤️", at = 2.0)
+        assertEquals(listOf(agent, MessageReaction("❤️", "user", 2.0)), heart)
+
+        val replaced = applyMessageReaction(heart, "😂", at = 3.0)
+        assertEquals(listOf(agent, MessageReaction("😂", "user", 3.0)), replaced)
+
+        assertEquals(listOf(agent), applyMessageReaction(replaced, "😂", at = 4.0))
+    }
+
     // --- ChatMessage creation with defaults ---
 
     @Test

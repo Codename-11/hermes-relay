@@ -1986,7 +1986,7 @@ class GatewayChatClientTest {
         harness.awaitRpc("session.resume")
         harness.awaitRpc("prompt.submit")
 
-        val result = runBlocking { client.reactToNewest("assistant", "👍") }
+        val result = runBlocking { client.reactToMessage(null, "assistant", "👍") }
 
         assertTrue(result.isSuccess)
         val params = harness.awaitRpc("message.react")
@@ -1995,6 +1995,20 @@ class GatewayChatClientTest {
         assertEquals("👍", (params["emoji"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("user", (params["author"] as? JsonPrimitive)?.contentOrNull)
         assertFalse("row_id" in params)
+    }
+
+    @Test
+    fun `message reaction targets durable row when history provides it`() {
+        client.sendTurn("stored-1", "hi", null, Recorder().callbacks) {}
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        val result = runBlocking { client.reactToMessage(42L, "assistant", "❤️") }
+
+        assertTrue(result.isSuccess)
+        val params = harness.awaitRpc("message.react")
+        assertEquals(42L, (params["row_id"] as? JsonPrimitive)?.longOrNull)
+        assertFalse("newest_role" in params)
     }
 
     @Test

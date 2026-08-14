@@ -148,6 +148,12 @@ data class ChatMessage(
      */
     val rowId: Long? = null,
     /**
+     * Durable iOS-style tapbacks attached to this server message. Hermes keeps
+     * one reaction per author in the message's display metadata; the UI also
+     * updates this list optimistically while a reaction write is in flight.
+     */
+    val reactions: List<MessageReaction> = emptyList(),
+    /**
      * Mixture-of-Agents advisor responses surfaced during the live turn.
      * Unavailable advisors retain only neutral state, never their raw failure
      * body. A sanitized bounded copy may enter the local in-flight checkpoint,
@@ -155,6 +161,29 @@ data class ChatMessage(
      */
     val moaReferences: List<MoaReference> = emptyList(),
 )
+
+data class MessageReaction(
+    val emoji: String,
+    val author: String,
+    /** Epoch seconds, matching the Gateway/Desktop contract. */
+    val at: Double,
+)
+
+/** Apply Hermes' one-reaction-per-author, re-tap-to-retract semantics. */
+internal fun applyMessageReaction(
+    reactions: List<MessageReaction>,
+    emoji: String?,
+    author: String = "user",
+    at: Double = System.currentTimeMillis() / 1000.0,
+): List<MessageReaction> {
+    val previous = reactions.firstOrNull { it.author == author }
+    val withoutAuthor = reactions.filterNot { it.author == author }
+    return if (emoji.isNullOrBlank() || previous?.emoji == emoji) {
+        withoutAuthor
+    } else {
+        withoutAuthor + MessageReaction(emoji = emoji, author = author, at = at)
+    }
+}
 
 data class MoaReference(
     val index: Int,

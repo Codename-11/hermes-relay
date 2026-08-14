@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.network.upstream.models
 
+import com.hermesandroid.relay.data.MessageReaction
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
@@ -15,6 +16,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -374,6 +376,10 @@ data class MessageItem(
         get() = reasoning?.takeIf { it.isNotBlank() }
             ?: reasoningContent?.takeIf { it.isNotBlank() }
 
+    /** Persisted tapbacks stored by Hermes in display_metadata.reactions. */
+    val reactions: List<MessageReaction>
+        get() = parseMessageReactions(displayMetadata?.get("reactions"))
+
     /** Extract content as plain text string. Handles both string and array-of-parts formats. */
     val contentText: String?
         get() = when (content) {
@@ -400,6 +406,21 @@ data class MessageItem(
             else -> emptyList()
         }
 }
+
+fun parseMessageReactions(element: JsonElement?): List<MessageReaction> =
+    (element as? JsonArray).orEmpty().mapNotNull { raw ->
+        val reaction = raw as? JsonObject ?: return@mapNotNull null
+        val emoji = (reaction["emoji"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+            ?: return@mapNotNull null
+        val author = (reaction["author"] as? JsonPrimitive)?.content
+            ?.takeIf { it == "user" || it == "agent" }
+            ?: return@mapNotNull null
+        MessageReaction(
+            emoji = emoji,
+            author = author,
+            at = (reaction["at"] as? JsonPrimitive)?.doubleOrNull ?: 0.0,
+        )
+    }
 
 // --- SSE streaming events from /api/sessions/{id}/chat/stream ---
 //

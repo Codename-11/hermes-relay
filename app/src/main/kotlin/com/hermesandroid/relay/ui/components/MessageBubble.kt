@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -91,7 +92,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 
 internal const val CHAT_PET_IDENTITY_OBSTACLE_PREFIX = "chat-message-identity:"
-private val MESSAGE_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "👎")
+private val MESSAGE_REACTIONS = listOf("❤️", "👍", "👎", "😂", "‼️", "❓")
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -457,6 +458,7 @@ fun MessageBubble(
         val showEditAction = onEditMessage != null && isUser
         val showSpeakAction = shouldShowSpeakResponseAction(message, onSpeakMessage != null)
         val showStopSpeakingAction = shouldShowStopSpeakingAction(message, onStopSpeaking != null)
+        val selectedUserReaction = message.reactions.firstOrNull { it.author == "user" }?.emoji
         if (onQuoteMessage != null || onReact != null || showEditAction || showSpeakAction || showStopSpeakingAction) {
             DropdownMenu(
                 expanded = showMessageActions,
@@ -476,6 +478,14 @@ fun MessageBubble(
                                     showMessageActions = false
                                     onReact(emoji)
                                 },
+                                modifier = Modifier.background(
+                                    color = if (selectedUserReaction == emoji) {
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    } else {
+                                        Color.Transparent
+                                    },
+                                    shape = CircleShape,
+                                ),
                             ) {
                                 Text(
                                     text = emoji,
@@ -544,7 +554,7 @@ fun MessageBubble(
                         },
                     )
                 }
-                if (onReact != null) {
+                if (onReact != null && selectedUserReaction != null) {
                     DropdownMenuItem(
                         text = { Text("Remove reaction") },
                         onClick = {
@@ -857,6 +867,12 @@ fun MessageBubble(
                 }
             }
         }
+        if (message.reactions.isNotEmpty()) {
+            MessageReactionBadge(
+                reactions = message.reactions.map { it.emoji },
+                onOpen = onReact?.let { { showMessageActions = true } },
+            )
+        }
         val inlineActions: @Composable () -> Unit = {
             MessageInlineActions(
                 showQuote = onQuoteMessage != null,
@@ -907,6 +923,41 @@ fun MessageBubble(
         } // end if (showBubble)
     } // end content Column
     } // end CompositionLocalProvider(LocalMediaBlurMode)
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MessageReactionBadge(
+    reactions: List<String>,
+    onOpen: (() -> Unit)?,
+) {
+    val description = "Reactions: ${reactions.joinToString(" ")}"
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        tonalElevation = 2.dp,
+        shadowElevation = 2.dp,
+        modifier = Modifier
+            .offset(y = (-7).dp)
+            .then(
+                if (onOpen != null) {
+                    Modifier.combinedClickable(onClick = onOpen, onLongClick = onOpen)
+                } else {
+                    Modifier
+                },
+            )
+            .semantics { contentDescription = description },
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+        ) {
+            reactions.forEach { emoji ->
+                Text(text = emoji, fontSize = 14.sp, lineHeight = 16.sp)
+            }
+        }
+    }
 }
 
 @Composable
