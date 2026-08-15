@@ -1,5 +1,21 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-14 — Android 1.9.0 session identity and conversation controls
+
+Hermes-Relay Android 1.9.0 is published from the immutable
+`android-v1.9.0` tag. Multi-profile session browsing now keeps the aggregate
+drawer scope selected while transcript hydration, resume, sending, and header
+identity follow the session's owning profile. New Chat from All Profiles uses
+the default profile, and the session list starts ungrouped while retaining
+project grouping and the other desktop-style views as explicit options.
+
+Message reactions now resolve durable rows for both user and assistant
+messages. Vanilla Hermes voice remains on the authenticated Gateway instead of
+requiring the optional API fallback. Session rows can expose profile, project,
+branch, and pull-request context without crowding the chat header, secondary
+drawer actions remain available in All Profiles, and outside taps dismiss the
+drawer.
+
 ## 2026-08-09 — Gateway activity recovery and chat speech
 
 Successful Android Gateway turns now reconcile against their profile-owned,
