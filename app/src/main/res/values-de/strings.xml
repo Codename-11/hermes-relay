@@ -4044,6 +4044,35 @@
     <string name="dashboard_whatsapp_saved">WhatsApp aktiviert; Hermes hat einen Gateway-Neustart gestartet.</string>
     <string name="drawer_all_profiles">Alle Profile</string>
     <string name="drawer_no_profile_sessions">Keine passenden Profilsitzungen.</string>
+    <string name="drawer_customize_sessions">Sitzungen anpassen</string>
+    <string name="drawer_group_by">Gruppieren nach</string>
+    <string name="drawer_order_by">Sortieren nach</string>
+    <string name="drawer_show_metadata">In Zeilen anzeigen</string>
+    <string name="drawer_show_details">Details anzeigen</string>
+    <string name="drawer_filters">Filter</string>
+    <string name="drawer_project_home">Startseite</string>
+    <string name="drawer_expand_project">%1$s erweitern</string>
+    <string name="drawer_collapse_project">%1$s reduzieren</string>
+    <plurals name="drawer_project_session_count">
+        <item quantity="one">%1$d Sitzung</item>
+        <item quantity="other">%1$d Sitzungen</item>
+    </plurals>
+    <plurals name="drawer_profile_count">
+        <item quantity="one">%1$d Profil</item>
+        <item quantity="other">%1$d Profile</item>
+    </plurals>
+    <string name="drawer_filter_status">Status</string>
+    <string name="drawer_filter_profile">Profil</string>
+    <string name="drawer_filter_project">Projekt</string>
+    <string name="drawer_filter_pull_request">Pull Request</string>
+    <string name="drawer_option_updated">Aktualisiert</string>
+    <string name="drawer_option_profile">Profil</string>
+    <string name="drawer_option_tokens">Tokens</string>
+    <string name="drawer_option_cost">Kosten</string>
+    <string name="drawer_reset_filters">Zurücksetzen</string>
+    <string name="drawer_profile_colors">Profilfarben</string>
+    <string name="drawer_profile_color_auto">Automatisch</string>
+    <string name="drawer_profile_color_set">Profilfarbe von %1$s auf %2$s setzen</string>
     <string name="drawer_close">Schließen</string>
     <string name="profile_inspector_gateway_settings">Gateway-Profileinstellungen</string>
     <string name="profile_inspector_gateway_settings_hint">Wird für dieses ausgewählte Profil direkt über Hermes gespeichert.</string>

@@ -241,6 +241,35 @@ class ProfileControllerLockTest {
         }
     }
 
+    @Test
+    fun explicitProfileSessionMutations_useOwningProfileWithoutChangingSelection() {
+        dashboardUrl = "https://dashboard.example"
+        coEvery { dashboardClient.deleteSession("session-2", profile = "coder") } returns
+            Result.success(buildJsonObject { })
+        coEvery { dashboardClient.renameSession("session-2", "Updated", profile = "coder") } returns
+            Result.success(buildJsonObject { })
+        coEvery { dashboardClient.setSessionPinned("session-2", true, profile = "coder") } returns
+            Result.success(buildJsonObject { })
+        coEvery { dashboardClient.setSessionArchived("session-2", true, profile = "coder") } returns
+            Result.success(buildJsonObject { })
+
+        assertTrue(runBlocking { controller.deleteSession("coder", "session-2") })
+        assertTrue(runBlocking { controller.renameSession("coder", "session-2", "Updated") })
+        assertTrue(runBlocking { controller.setSessionPinned("coder", "session-2", true) })
+        assertTrue(runBlocking { controller.setSessionArchived("coder", "session-2", true) })
+
+        coVerify(exactly = 1) { dashboardClient.deleteSession("session-2", profile = "coder") }
+        coVerify(exactly = 1) {
+            dashboardClient.renameSession("session-2", "Updated", profile = "coder")
+        }
+        coVerify(exactly = 1) {
+            dashboardClient.setSessionPinned("session-2", true, profile = "coder")
+        }
+        coVerify(exactly = 1) {
+            dashboardClient.setSessionArchived("session-2", true, profile = "coder")
+        }
+    }
+
     // --- selectProfile gating while locked ----------------------------------
 
     @Test

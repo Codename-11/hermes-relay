@@ -300,14 +300,12 @@ internal fun resolveSessionActivityStates(
 internal fun resolveChatHeaderSubtitle(
     isStreaming: Boolean,
     statusText: String,
-    projectName: String?,
     personalityName: String?,
     modelName: String?,
 ): String = if (isStreaming) {
     statusText
 } else {
     listOfNotNull(
-        projectName?.takeIf { it.isNotBlank() },
         personalityName?.takeIf { it.isNotBlank() },
         modelName?.takeIf { it.isNotBlank() },
     ).joinToString(" \u00B7 ").ifBlank { statusText }
@@ -823,6 +821,27 @@ fun ChatScreen(
     // has been made (the /api/config fallback is more useful than the bare
     // connection label).
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
+    var allProfileSessionsLoading by remember { mutableStateOf(false) }
+    val openedSessionProfileName by chatViewModel.openedSessionProfileName.collectAsState()
+    val conversationProfile = openedSessionProfileName?.let { owner ->
+        agentProfiles.firstOrNull { it.name.equals(owner, ignoreCase = true) }
+            ?: allProfileSessions.firstOrNull {
+                it.profile.equals(owner, ignoreCase = true) &&
+                    it.session.sessionId == currentSessionId
+            }?.session?.let { session ->
+                com.hermesandroid.relay.data.Profile(
+                    name = owner,
+                    model = session.model.orEmpty(),
+                    description = owner,
+                )
+            }
+            ?: com.hermesandroid.relay.data.Profile(
+                name = owner,
+                model = "",
+                description = owner,
+            )
+    } ?: effectiveProfile
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
@@ -834,7 +853,6 @@ fun ChatScreen(
     val selectedProviderOverride by chatViewModel.selectedProviderOverride.collectAsState()
     val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
     val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
-    val gatewayProjectName by chatViewModel.gatewayProjectName.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
     val currentSession = remember(sessions, currentSessionId) {
         sessions.firstOrNull { it.sessionId == currentSessionId }
@@ -846,8 +864,8 @@ fun ChatScreen(
         gatewayModel = gatewayCurrentModel,
         gatewayProvider = gatewayCurrentProvider,
         persistedSessionModel = currentSession?.model,
-        profileDefaultModel = effectiveProfile?.model,
-        serverDefaultModel = serverModelName,
+        profileDefaultModel = conversationProfile?.model,
+        serverDefaultModel = serverModelName.takeIf { openedSessionProfileName == null },
     )
     val sessionPickerProvider = sessionModelState.pickerProvider
         ?: sessionModelState.pickerModel?.let { model ->
@@ -1138,8 +1156,6 @@ fun ChatScreen(
     }
     val listState = rememberLazyListState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
-    var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
-    var allProfileSessionsLoading by remember { mutableStateOf(false) }
     PetInteractionLayer(
         owner = "chat-interaction-layer",
         active = shouldHideChatPet(
@@ -1997,7 +2013,7 @@ fun ChatScreen(
     // four keys, which missed updates in some cases (most notably a
     // profile switch while the ConnectionInfoSheet was open, where the
     // ambient sheet scope appeared to swallow the key comparison).
-    val agentDisplayName by remember(
+    val globalSelectedAgentDisplayName by remember(
         effectiveProfile,
         selectedPersonality,
         defaultPersonality,
@@ -2005,13 +2021,31 @@ fun ChatScreen(
         activeConnection?.label,
     ) {
         derivedStateOf {
-            val profile = effectiveProfile
+            AgentDisplay.agentName(
+                profile = effectiveProfile,
+                selectedPersonality = selectedPersonality,
+                defaultPersonality = defaultPersonality,
+                connectionLabel = activeConnection?.label,
+                localDisplayAlias = profileDisplayAlias,
+            )
+        }
+    }
+    val agentDisplayName by remember(
+        conversationProfile,
+        selectedPersonality,
+        defaultPersonality,
+        profileDisplayAlias,
+        openedSessionProfileName,
+        activeConnection?.label,
+    ) {
+        derivedStateOf {
+            val profile = conversationProfile
             AgentDisplay.agentName(
                 profile = profile,
                 selectedPersonality = selectedPersonality,
                 defaultPersonality = defaultPersonality,
                 connectionLabel = activeConnection?.label,
-                localDisplayAlias = profileDisplayAlias,
+                localDisplayAlias = profileDisplayAlias.takeIf { openedSessionProfileName == null },
             )
         }
     }
@@ -2040,13 +2074,13 @@ fun ChatScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        // Disable the drawer's edge-swipe while voice mode is up so the
-        // overlay reads as a true modal — the swipe gesture lives on the
-        // drawer itself, so the overlay's pointer scrim alone can't block it.
-        gesturesEnabled = !voiceUiState.voiceMode,
+        // Material routes scrim taps through the drawer's gesture handler.
+        // Keep it enabled so tapping outside always dismisses the drawer; the
+        // voice overlay already owns input while voice mode is visible.
+        gesturesEnabled = true,
         drawerContent = {
             val drawerTitle = if (effectiveProfile != null) {
-                stringResource(R.string.chat_profile_sessions, agentDisplayName)
+                stringResource(R.string.chat_profile_sessions, globalSelectedAgentDisplayName)
             } else {
                 stringResource(R.string.chat_server_default_sessions)
             }
@@ -2090,6 +2124,7 @@ fun ChatScreen(
                 currentSessionId = currentSessionId,
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
+                activeProfileName = effectiveProfile?.name ?: "default",
                 isLoading = isLoadingSessions,
                 isOpen = drawerState.isOpen,
                 activityStates = sessionActivityStates,
@@ -2099,6 +2134,24 @@ fun ChatScreen(
                 onRefresh = { chatViewModel.refreshSessions() },
                 onNewChat = {
                     chatViewModel.createNewChat()
+                    scope.launch { drawerState.close() }
+                },
+                onNewDefaultChat = {
+                    val defaultProfile = agentProfiles.firstOrNull {
+                        it.name.equals("default", ignoreCase = true)
+                    } ?: com.hermesandroid.relay.data.Profile(
+                        name = "default",
+                        model = "",
+                        description = "Default",
+                    )
+                    chatViewModel.createProfileChat(
+                        profileName = "default",
+                        profile = defaultProfile,
+                        contextKey = AgentDisplay.profileContextKey(
+                            connectionId = activeConnection?.id,
+                            profileName = "default",
+                        ),
+                    )
                     scope.launch { drawerState.close() }
                 },
                 onSelectSession = { sessionId ->
@@ -2142,8 +2195,11 @@ fun ChatScreen(
                 onToggleSourceHidden = { source, hidden ->
                     connectionViewModel.setSourceHidden(source, hidden)
                 },
+                allProfilesSupported = !activeConnection?.resolvedDashboardUrl.isNullOrBlank(),
                 allProfileSessions = allProfileSessions,
                 allProfileSessionsLoading = allProfileSessionsLoading,
+                profileColors = profilePresentation.colors,
+                onProfileColorChange = connectionViewModel::setProfileColor,
                 onRefreshAllProfiles = {
                     if (!allProfileSessionsLoading) scope.launch {
                         allProfileSessionsLoading = true
@@ -2160,6 +2216,11 @@ fun ChatScreen(
                                             title = item.title ?: item.preview,
                                             model = item.model,
                                             messageCount = item.messageCount ?: 0,
+                                            inputTokens = item.inputTokens ?: 0,
+                                            outputTokens = item.outputTokens ?: 0,
+                                            actualCostUsd = item.actualCostUsd,
+                                            estimatedCostUsd = item.estimatedCostUsd,
+                                            isActive = item.isActive,
                                             startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
                                             lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
                                             source = item.source,
@@ -2190,13 +2251,81 @@ fun ChatScreen(
                         it.name.equals(profileName, ignoreCase = true)
                     }
                     if (target != null || profileName.equals("default", ignoreCase = true)) {
-                        connectionViewModel.selectProfile(target)
-                        chatViewModel.activateGatewayProfile(target)
-                        chatViewModel.switchSession(sessionId)
+                        val ownerProfile = target ?: allProfileSessions.firstOrNull {
+                            it.profile.equals(profileName, ignoreCase = true) &&
+                                it.session.sessionId == sessionId
+                        }?.session?.let { session ->
+                            com.hermesandroid.relay.data.Profile(
+                                name = profileName,
+                                model = session.model.orEmpty(),
+                                description = profileName,
+                            )
+                        } ?: com.hermesandroid.relay.data.Profile(
+                            name = profileName,
+                            model = "",
+                            description = profileName,
+                        )
+                        chatViewModel.openProfileSession(
+                            profileName = profileName,
+                            profile = ownerProfile,
+                            contextKey = AgentDisplay.profileContextKey(
+                                connectionId = activeConnection?.id,
+                                profileName = profileName,
+                            ),
+                            sessionId = sessionId,
+                        )
                         scope.launch { drawerState.close() }
                     } else {
                         scope.launch {
                             snackbarHostState.showSnackbar("Profile $profileName is not available.")
+                        }
+                    }
+                },
+                onDeleteProfileSession = { profileName, sessionId ->
+                    scope.launch {
+                        if (connectionViewModel.deleteSession(profileName, sessionId)) {
+                            allProfileSessions = allProfileSessions.filterNot {
+                                it.profile == profileName && it.session.sessionId == sessionId
+                            }
+                        }
+                    }
+                },
+                onRenameProfileSession = { profileName, sessionId, title ->
+                    scope.launch {
+                        if (connectionViewModel.renameSession(profileName, sessionId, title)) {
+                            allProfileSessions = allProfileSessions.map { row ->
+                                if (row.profile == profileName && row.session.sessionId == sessionId) {
+                                    row.copy(session = row.session.copy(title = title))
+                                } else {
+                                    row
+                                }
+                            }
+                        }
+                    }
+                },
+                onSetProfileSessionPinned = { profileName, sessionId, pinned ->
+                    scope.launch {
+                        if (connectionViewModel.setSessionPinned(profileName, sessionId, pinned)) {
+                            allProfileSessions = allProfileSessions.map { row ->
+                                if (row.profile == profileName && row.session.sessionId == sessionId) {
+                                    row.copy(session = row.session.copy(pinned = pinned))
+                                } else {
+                                    row
+                                }
+                            }
+                        }
+                    }
+                },
+                onSetProfileSessionArchived = { profileName, sessionId, archived ->
+                    scope.launch {
+                        if (connectionViewModel.setSessionArchived(profileName, sessionId, archived)) {
+                            allProfileSessions = allProfileSessions.map { row ->
+                                if (row.profile == profileName && row.session.sessionId == sessionId) {
+                                    row.copy(session = row.session.copy(archived = archived))
+                                } else {
+                                    row
+                                }
+                            }
                         }
                     }
                 },
@@ -2305,7 +2434,6 @@ fun ChatScreen(
                         resolveChatHeaderSubtitle(
                             isStreaming = isStreaming,
                             statusText = statusText,
-                            projectName = gatewayProjectName,
                             personalityName = nonDefaultPersonality,
                             modelName = modelName,
                         )
@@ -2612,7 +2740,7 @@ fun ChatScreen(
                     selectedProfile = selectedProfile,
                     resolvedProfile = effectiveProfile,
                     presentation = profilePresentation,
-                    activeDisplayName = agentDisplayName,
+                    activeDisplayName = globalSelectedAgentDisplayName,
                     isProfileLocked = isProfileLocked,
                     lockedProfileName = lockedProfileName,
                     switchEnabled = profileSwitchEnabled,
@@ -3138,9 +3266,12 @@ fun ChatScreen(
                                         isGatewayTransport &&
                                         messageReactionsSupported &&
                                         !message.isStreaming &&
-                                        message.uiKey in newestReactableMessageKeys
+                                        (
+                                            message.rowId != null ||
+                                                message.uiKey in newestReactableMessageKeys
+                                        )
                                     ) {
-                                        { emoji -> chatViewModel.reactToNewest(message.role, emoji) }
+                                        { emoji -> chatViewModel.reactToMessage(message, emoji) }
                                     } else {
                                         null
                                     },

@@ -1,6 +1,7 @@
-v1.8.1 - Complete, reliable transcripts
+v1.9.0 - Better sessions, reactions, and voice
 
-* Keep complete history in long sessions beyond Hermes' latest-500 default.
-* Preserve stable edit, retry, sharing, and recovery anchors while paging history.
-* Show authoritative Gateway rejection messages without an unintended fallback.
-* Reconcile Gateway events and edit-and-regenerate requests with current upstream contracts.
+* Browse all profiles without switching away from the selected scope.
+* Start new chats with the default profile and hydrate history with the session owner.
+* Pin reactions to both user and assistant messages.
+* Keep Vanilla Hermes voice on the authenticated Gateway.
+* Use an ungrouped session list by default, with project grouping available in Customize Sessions.

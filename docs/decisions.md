@@ -2770,7 +2770,13 @@ personality, reasoning, approval, Fast, and YOLO state reset at the ViewModel
 context boundary before destination session truth can repopulate them.
 
 **Consequences.** The hamburger remains exclusively the Session Drawer. Agent
-Passport stays focused on inspection and configuration. The shelf adds no fake
+Passport stays focused on inspection and configuration. The drawer may widen
+its read-only browse scope to all profiles and organize that combined set by
+recency, project, status, or profile; opening a cross-profile row performs the
+same explicit profile-context switch as the shelf. Named-profile ownership uses
+a deterministic identity accent with an optional per-connection local override,
+while Server default remains a neutral home identity; color never communicates
+activity or health. The shelf adds no fake
 activity indicator, hides for one visible identity, retains 48 dp touch targets,
 and exposes meaningful TalkBack actions in compact, large-font, light, and dark
 layouts.

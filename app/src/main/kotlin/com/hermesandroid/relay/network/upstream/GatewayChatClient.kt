@@ -1661,7 +1661,7 @@ class GatewayChatClient(
      * id. This follows the upstream gateway contract, which resolves the row
      * atomically inside the active session. A null emoji removes the reaction.
      */
-    suspend fun reactToNewest(role: String, emoji: String?): Result<JsonObject> {
+    suspend fun reactToMessage(rowId: Long?, role: String, emoji: String?): Result<JsonObject> {
         require(role == "user" || role == "assistant") { "unsupported reaction role" }
         val sid = liveSessionId
             ?: return Result.failure(GatewayRpcException("no live session"))
@@ -1669,7 +1669,7 @@ class GatewayChatClient(
             "message.react",
             buildJsonObject {
                 put("session_id", sid)
-                put("newest_role", role)
+                if (rowId != null) put("row_id", rowId) else put("newest_role", role)
                 if (emoji == null) put("emoji", JsonNull) else put("emoji", emoji)
                 put("author", "user")
             },

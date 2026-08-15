@@ -17,6 +17,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatQuoteReference
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.MessageReaction
 import com.hermesandroid.relay.data.buildChatQuotedPrompt
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -115,6 +116,65 @@ class MessageBubbleInteractionTest {
 
         compose.onNodeWithText("Copy").assertIsDisplayed().assertHasClickAction()
         compose.onNodeWithText("Quote in reply").assertIsDisplayed().assertHasClickAction()
+    }
+
+    @Test
+    fun reactionsStayOutsideBubbleAndOpenAsFloatingTapbacks() {
+        val reactions = mutableListOf<String?>()
+        val message = ChatMessage(
+            id = "assistant-reactions",
+            role = MessageRole.ASSISTANT,
+            content = "React to this response.",
+            timestamp = 1_700_000_000_000L,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = message,
+                    onReact = { reactions += it },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("React with 👍").assertDoesNotExist()
+        compose.onNodeWithText("Remove reaction").assertDoesNotExist()
+
+        compose.onNodeWithContentDescription("assistant message: ${message.content}")
+            .performTouchInput { longClick() }
+
+        compose.onNodeWithContentDescription("React with 👍")
+            .assertIsDisplayed()
+            .assertHasClickAction()
+            .performClick()
+
+        compose.runOnIdle { assertEquals(listOf("👍"), reactions) }
+        compose.onNodeWithContentDescription("React with 👍").assertDoesNotExist()
+    }
+
+    @Test
+    fun landedReactionStaysPinnedToTheBubbleAndReopensPicker() {
+        val message = ChatMessage(
+            id = "assistant-landed-reaction",
+            role = MessageRole.ASSISTANT,
+            content = "A reacted response.",
+            timestamp = 1_700_000_000_000L,
+            reactions = listOf(MessageReaction("❤️", "user", 1_700_000_000.0)),
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(message = message, onReact = {})
+            }
+        }
+
+        compose.onNodeWithContentDescription("Reactions: ❤️")
+            .assertIsDisplayed()
+            .assertHasClickAction()
+            .performClick()
+
+        compose.onNodeWithContentDescription("React with ❤️").assertIsDisplayed()
+        compose.onNodeWithText("Remove reaction").assertIsDisplayed()
     }
 
     @Test

@@ -148,6 +148,12 @@ data class ChatMessage(
      */
     val rowId: Long? = null,
     /**
+     * Durable iOS-style tapbacks attached to this server message. Hermes keeps
+     * one reaction per author in the message's display metadata; the UI also
+     * updates this list optimistically while a reaction write is in flight.
+     */
+    val reactions: List<MessageReaction> = emptyList(),
+    /**
      * Mixture-of-Agents advisor responses surfaced during the live turn.
      * Unavailable advisors retain only neutral state, never their raw failure
      * body. A sanitized bounded copy may enter the local in-flight checkpoint,
@@ -155,6 +161,29 @@ data class ChatMessage(
      */
     val moaReferences: List<MoaReference> = emptyList(),
 )
+
+data class MessageReaction(
+    val emoji: String,
+    val author: String,
+    /** Epoch seconds, matching the Gateway/Desktop contract. */
+    val at: Double,
+)
+
+/** Apply Hermes' one-reaction-per-author, re-tap-to-retract semantics. */
+internal fun applyMessageReaction(
+    reactions: List<MessageReaction>,
+    emoji: String?,
+    author: String = "user",
+    at: Double = System.currentTimeMillis() / 1000.0,
+): List<MessageReaction> {
+    val previous = reactions.firstOrNull { it.author == author }
+    val withoutAuthor = reactions.filterNot { it.author == author }
+    return if (emoji.isNullOrBlank() || previous?.emoji == emoji) {
+        withoutAuthor
+    } else {
+        withoutAuthor + MessageReaction(emoji = emoji, author = author, at = at)
+    }
+}
 
 data class MoaReference(
     val index: Int,
@@ -412,6 +441,11 @@ data class ChatSession(
     val title: String?,
     val model: String?,
     val messageCount: Int = 0,
+    val inputTokens: Int = 0,
+    val outputTokens: Int = 0,
+    val actualCostUsd: Double? = null,
+    val estimatedCostUsd: Double? = null,
+    val isActive: Boolean = false,
     val updatedAt: Long = 0L,
     val startedAt: Long = 0L,
     val lastActivityAt: Long = 0L,
@@ -436,6 +470,12 @@ data class ChatSession(
     val pullRequestState: String? = null,
     val pullRequestDraft: Boolean = false,
 ) {
+    val totalTokens: Int
+        get() = inputTokens + outputTokens
+
+    val costUsd: Double
+        get() = actualCostUsd ?: estimatedCostUsd ?: 0.0
+
     val activityTimestamp: Long
         get() = firstPositive(lastActivityAt, updatedAt, startedAt)
 

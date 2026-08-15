@@ -1,6 +1,34 @@
 {
  "versions": [
   {
+   "version": "1.9.0",
+   "title": "Better sessions, reactions, and voice",
+   "date": "2026-08-14",
+   "sections": [
+    {
+     "header": "Sessions keep their identity",
+     "bullets": [
+      "Browse one profile or all profiles, customize sorting and filters, and optionally group sessions by project, recency, status, or profile.",
+      "Cross-profile sessions hydrate, resume, and send with their owning agent without changing the global profile selection; New Chat in All Profiles uses the default profile."
+     ]
+    },
+    {
+     "header": "Conversation controls stay attached",
+     "bullets": [
+      "Reactions pin to durable rows on both user and assistant messages.",
+      "Vanilla Hermes voice stays on the authenticated Gateway instead of requiring the optional API fallback."
+     ]
+    },
+    {
+     "header": "Context without clutter",
+     "bullets": [
+      "Session rows show profile, project, branch, and pull-request context when Hermes supplies it, while the default view remains ungrouped.",
+      "The session drawer restores secondary actions in All Profiles and closes when you tap outside it."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.8.1",
    "title": "Complete, reliable transcripts",
    "date": "2026-08-09",

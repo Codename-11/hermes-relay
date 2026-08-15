@@ -89,13 +89,13 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.8.1 - Complete, reliable transcripts
+v1.9.0 - Better sessions, reactions, and voice
 
-* Keep complete history beyond Hermes' latest-500 default.
-* Preserve stable edit, retry, sharing, and recovery anchors.
-* Show authoritative Gateway rejection messages without unintended fallback.
-* Follow current event and edit-and-regenerate contracts.
-* Live theme, Sphere, and pet previews.
+* Browse all profiles without losing the session's owning agent.
+* Start new chats with the default profile.
+* Pin reactions to user and assistant messages.
+* Keep Vanilla Hermes voice on the authenticated Gateway.
+* Default to an ungrouped session list; project grouping remains available.
 ```
 
 ## Category

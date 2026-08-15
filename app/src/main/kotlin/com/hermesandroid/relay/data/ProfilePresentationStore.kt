@@ -9,6 +9,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
@@ -16,6 +17,8 @@ import kotlinx.serialization.json.Json
 data class ProfilePresentation(
     val order: List<String> = emptyList(),
     val hidden: Set<String> = emptySet(),
+    /** Local-only named-profile accent overrides, stored as normalized RGB hex. */
+    val colors: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -63,14 +66,17 @@ class ProfilePresentationStore(
 
     private val json = Json { ignoreUnknownKeys = true }
     private val listSerializer = ListSerializer(String.serializer())
+    private val mapSerializer = MapSerializer(String.serializer(), String.serializer())
 
     private fun orderKey(connectionId: String) = stringPreferencesKey("order_$connectionId")
     private fun hiddenKey(connectionId: String) = stringPreferencesKey("hidden_$connectionId")
+    private fun colorsKey(connectionId: String) = stringPreferencesKey("colors_$connectionId")
 
     fun presentationFlow(connectionId: String): Flow<ProfilePresentation> = dataStore.data.map { prefs ->
         ProfilePresentation(
             order = decode(prefs[orderKey(connectionId)]),
             hidden = decode(prefs[hiddenKey(connectionId)]).toSet(),
+            colors = decodeMap(prefs[colorsKey(connectionId)]),
         )
     }
 
@@ -82,10 +88,18 @@ class ProfilePresentationStore(
         dataStore.edit { it[hiddenKey(connectionId)] = json.encodeToString(listSerializer, hidden.sorted()) }
     }
 
+    suspend fun setColors(connectionId: String, colors: Map<String, String>) {
+        dataStore.edit {
+            if (colors.isEmpty()) it.remove(colorsKey(connectionId))
+            else it[colorsKey(connectionId)] = json.encodeToString(mapSerializer, colors.toSortedMap())
+        }
+    }
+
     suspend fun clear(connectionId: String) {
         dataStore.edit {
             it.remove(orderKey(connectionId))
             it.remove(hiddenKey(connectionId))
+            it.remove(colorsKey(connectionId))
         }
     }
 
@@ -97,6 +111,12 @@ class ProfilePresentationStore(
         emptyList()
     } else {
         runCatching { json.decodeFromString(listSerializer, raw) }.getOrDefault(emptyList())
+    }
+
+    private fun decodeMap(raw: String?): Map<String, String> = if (raw == null) {
+        emptyMap()
+    } else {
+        runCatching { json.decodeFromString(mapSerializer, raw) }.getOrDefault(emptyMap())
     }
 }
 

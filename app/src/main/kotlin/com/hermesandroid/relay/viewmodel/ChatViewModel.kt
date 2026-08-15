@@ -31,6 +31,7 @@ import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.applyMessageReaction
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProactiveInboxEntry
@@ -93,6 +94,7 @@ import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.network.upstream.formatPhoneActionResult
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.parseMessageReactions
 import com.hermesandroid.relay.network.upstream.SESSION_MESSAGE_PAGE_SIZE
 import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -136,6 +138,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import okhttp3.sse.EventSource
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -833,7 +836,7 @@ class ChatViewModel : ViewModel() {
             _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
             return
         }
-        val launchProfileOwned = sessionProfileNameProvider() == null
+        val launchProfileOwned = currentSessionProfileName() == null
         _approvalModeWritable.value = launchProfileOwned
         _approvalModeReadOnlyForProfile.value = !launchProfileOwned
         if (!launchProfileOwned) {
@@ -983,7 +986,7 @@ class ChatViewModel : ViewModel() {
         if (pairs.isEmpty()) return
         val generation = relayCapabilityGeneration.incrementAndGet()
         val profileKey = reasoningCapabilityContextKey()
-        val profile = sessionProfileNameProvider()
+        val profile = currentSessionProfileName()
         viewModelScope.launch {
             val result = relay.fetchModelCapabilities(
                 models = pairs.map {
@@ -1154,7 +1157,7 @@ class ChatViewModel : ViewModel() {
                 // here skips the setModel below, leaving the gateway on its true
                 // server-configured default.
                 val defaultModel = AgentDisplay.requestModelName(
-                    (effectiveProfileProvider() ?: selectedProfileProvider())?.model
+                    (openedSessionDisplayProfile ?: effectiveProfileProvider() ?: selectedProfileProvider())?.model
                         ?: _serverModelName.value,
                 )
                 if (!defaultModel.isNullOrBlank()) {
@@ -1462,7 +1465,8 @@ class ChatViewModel : ViewModel() {
      * new profile's agent. SSE turns already carry the profile per-request as
      * `profileName`. [profile] = the new pick; null = the default profile.
      */
-    fun activateGatewayProfile(profile: Profile?) {
+    fun activateGatewayProfile(profile: Profile?, refreshModelOptions: Boolean = true) {
+        clearOpenedSessionOwner()
         val gateway = gatewayClient ?: return
         if (streamingEndpoint != "gateway") return
         // A profile switch is a UI/context detach, not a Stop action. Preserve
@@ -1531,11 +1535,13 @@ class ChatViewModel : ViewModel() {
         // config.get would read the launch/global profile's effort (wrong
         // scope). It's left unknown above and confirmed by session.info on the
         // first turn — the same honesty discipline yolo/fast use.
-        viewModelScope.launch {
-            gateway.modelOptions().onSuccess {
-                _modelProviders.value = it.providers
-                _gatewayCurrentModel.value = it.currentModel
-                _gatewayCurrentProvider.value = it.currentProvider
+        if (refreshModelOptions) {
+            viewModelScope.launch {
+                gateway.modelOptions().onSuccess {
+                    _modelProviders.value = it.providers
+                    _gatewayCurrentModel.value = it.currentModel
+                    _gatewayCurrentProvider.value = it.currentProvider
+                }
             }
         }
         refreshActiveAgentName()
@@ -1663,7 +1669,7 @@ class ChatViewModel : ViewModel() {
         }
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
-        client?.sessionProfileProvider = { sessionProfileNameProvider() }
+        client?.sessionProfileProvider = { currentSessionProfileName() }
         // Bind the in-chat picks onto each fresh session.create so a brand-new
         // chat actually runs on the picked model/provider AND the chosen
         // reasoning effort / fast tier (not the global default) — and so setting
@@ -2323,15 +2329,33 @@ class ChatViewModel : ViewModel() {
     private val _transientNotice = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val transientNotice: SharedFlow<String> = _transientNotice.asSharedFlow()
 
-    fun reactToNewest(role: MessageRole, emoji: String?) {
+    fun reactToMessage(message: ChatMessage, emoji: String?) {
         val gateway = gatewayClient ?: return
+        val role = message.role
         if (role != MessageRole.USER && role != MessageRole.ASSISTANT) return
+        val handler = chatHandler ?: return
+        val snapshot = messages.value.firstOrNull { it.uiKey == message.uiKey }?.reactions
+            ?: message.reactions
+        handler.mutateMessage(message.uiKey) { current ->
+            current.copy(reactions = applyMessageReaction(current.reactions, emoji))
+        }
         viewModelScope.launch {
-            gateway.reactToNewest(role.name.lowercase(), emoji).fold(
-                onSuccess = {
+            gateway.reactToMessage(message.rowId, role.name.lowercase(), emoji).fold(
+                onSuccess = { result ->
+                    val persisted = parseMessageReactions(result["reactions"])
+                    val rowId = (result["row_id"] as? JsonPrimitive)?.longOrNull
+                    handler.mutateMessage(message.uiKey) { current ->
+                        current.copy(
+                            rowId = rowId ?: current.rowId,
+                            reactions = persisted,
+                        )
+                    }
                     _transientNotice.tryEmit(if (emoji == null) "Reaction removed." else "Reaction added.")
                 },
                 onFailure = { error ->
+                    handler.mutateMessage(message.uiKey) { current ->
+                        current.copy(reactions = snapshot)
+                    }
                     if ((error as? GatewayRpcException)?.code == -32601) {
                         _messageReactionsSupported.value = false
                         _transientNotice.tryEmit("Message reactions aren't supported by this gateway.")
@@ -2492,6 +2516,22 @@ class ChatViewModel : ViewModel() {
     }
     private var displayAliasProvider: () -> String? = { null }
     private var activeProfileContextKey: String? = null
+    private val _openedSessionProfileName = MutableStateFlow<String?>(null)
+    val openedSessionProfileName: StateFlow<String?> = _openedSessionProfileName.asStateFlow()
+    private var openedSessionDisplayProfile: Profile? = null
+
+    /**
+     * Profile namespace owned by the conversation currently on screen. Opening a
+     * row from the global All Profiles browser must not mutate the persistent
+     * profile selector, but resume/history/send still need the row's exact owner.
+     */
+    private fun currentSessionProfileName(): String? =
+        _openedSessionProfileName.value ?: sessionProfileNameProvider()
+
+    private fun clearOpenedSessionOwner() {
+        _openedSessionProfileName.value = null
+        openedSessionDisplayProfile = null
+    }
 
     /** Process ownership is profile+session scoped; stored IDs alone are not globally unique. */
     private fun selectBackgroundProcessSession(
@@ -2595,14 +2635,14 @@ class ChatViewModel : ViewModel() {
      * read that profile's own DB. Returns `null` off the dashboard surface.
      */
     private var profileMessageLoader:
-        (suspend (String, SessionMessageLoadMode) -> Result<List<MessageItem>>?)? = null
+        (suspend (String?, String, SessionMessageLoadMode) -> Result<List<MessageItem>>?)? = null
 
     fun setProfileMessageLoader(loader: suspend (String) -> Result<List<MessageItem>>?) {
-        profileMessageLoader = { sessionId, _ -> loader(sessionId) }
+        profileMessageLoader = { _, sessionId, _ -> loader(sessionId) }
     }
 
     fun setProfileMessageLoaderWithMode(
-        loader: suspend (String, SessionMessageLoadMode) -> Result<List<MessageItem>>?,
+        loader: suspend (String?, String, SessionMessageLoadMode) -> Result<List<MessageItem>>?,
     ) {
         profileMessageLoader = loader
     }
@@ -2617,9 +2657,10 @@ class ChatViewModel : ViewModel() {
         sessionId: String,
         requireProfileScope: Boolean = false,
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        profileName: String? = currentSessionProfileName(),
     ): List<MessageItem> {
         if (streamingEndpoint == "gateway") {
-            return loadGatewaySessionHistory(sessionId, requireProfileScope, mode)
+            return loadGatewaySessionHistory(sessionId, requireProfileScope, mode, profileName)
         }
         return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
@@ -2634,8 +2675,9 @@ class ChatViewModel : ViewModel() {
         sessionId: String,
         requireProfileScope: Boolean = false,
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        profileName: String? = currentSessionProfileName(),
     ): List<MessageItem> {
-        val scoped = profileMessageLoader?.invoke(sessionId, mode)
+        val scoped = profileMessageLoader?.invoke(profileName, sessionId, mode)
         if (scoped != null) {
             // A gateway profile owns a distinct state.db. Never fall through to
             // the launch/default API database when its scoped read fails: an
@@ -2792,7 +2834,7 @@ class ChatViewModel : ViewModel() {
                     approvalModeRevision.incrementAndGet()
                     _approvalMode.value = mode
                     _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
-                    val launchProfileOwned = sessionProfileNameProvider() == null
+                    val launchProfileOwned = currentSessionProfileName() == null
                     _approvalModeWritable.value = launchProfileOwned
                     _approvalModeReadOnlyForProfile.value = !launchProfileOwned
                 }
@@ -3252,7 +3294,50 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    fun openProfileSession(
+        profileName: String,
+        profile: Profile?,
+        contextKey: String,
+        sessionId: String,
+    ) {
+        // Detach the old live gateway session without reading launch/global
+        // model options: session.info for the resumed owner is authoritative.
+        activateGatewayProfile(profile, refreshModelOptions = false)
+        _openedSessionProfileName.value = profileName
+        openedSessionDisplayProfile = profile
+        refreshActiveAgentName(profile, relabelGenericMessages = true)
+        switchProfileContextInternal(contextKey, sessionId, persistLastSession = false)
+    }
+
+    /**
+     * Start a fresh draft owned by an explicit profile without changing the
+     * persistent profile selector. The All Profiles browser uses this for its
+     * New chat action, where upstream's literal `default` profile must win over
+     * the server's sticky active profile.
+     */
+    fun createProfileChat(
+        profileName: String,
+        profile: Profile?,
+        contextKey: String,
+    ) {
+        activateGatewayProfile(profile, refreshModelOptions = false)
+        _openedSessionProfileName.value = profileName
+        openedSessionDisplayProfile = profile
+        refreshActiveAgentName(profile, relabelGenericMessages = true)
+        switchProfileContextInternal(contextKey, sessionId = null, persistLastSession = false)
+        AppAnalytics.onSessionCreated()
+    }
+
     fun switchProfileContext(contextKey: String, sessionId: String?) {
+        clearOpenedSessionOwner()
+        switchProfileContextInternal(contextKey, sessionId)
+    }
+
+    private fun switchProfileContextInternal(
+        contextKey: String,
+        sessionId: String?,
+        persistLastSession: Boolean = true,
+    ) {
         val handler = chatHandler ?: return
         val isInitialContextBinding = activeProfileContextKey == null
         handler.activeAgentName = currentAgentDisplayName()
@@ -3286,6 +3371,7 @@ class ChatViewModel : ViewModel() {
         if (!isInitialContextBinding) releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
+        val sessionProfileName = currentSessionProfileName()
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
         _isLoadingSessions.value = false
@@ -3335,7 +3421,7 @@ class ChatViewModel : ViewModel() {
         handler.setSessionId(sessionId)
         publishQueuedMessages()
         selectBackgroundProcessSession(sessionId, contextKey)
-        if (sessionId != null) {
+        if (sessionId != null && persistLastSession) {
             onSessionChanged?.invoke(sessionId)
         }
 
@@ -3368,7 +3454,7 @@ class ChatViewModel : ViewModel() {
                     false
                 }
                 if (!recovered) {
-                    val messages = loadSessionHistory(sessionId)
+                    val messages = loadSessionHistory(sessionId, profileName = sessionProfileName)
                     if (stillCurrent()) {
                         handler.loadMessageHistory(messages)
                         if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
@@ -3557,6 +3643,7 @@ class ChatViewModel : ViewModel() {
 
     fun createNewChat() {
         val handler = chatHandler ?: return
+        clearOpenedSessionOwner()
         pendingThread = null
         creatingThread = null
 
@@ -3756,6 +3843,7 @@ class ChatViewModel : ViewModel() {
 
     fun switchSession(sessionId: String) {
         val handler = chatHandler ?: return
+        clearOpenedSessionOwner()
         if (streamingEndpoint != "gateway" && apiClient == null) return
         pendingThread = null
         creatingThread = null
@@ -4815,7 +4903,7 @@ class ChatViewModel : ViewModel() {
     private fun maybeNotifyInteraction(
         sessionId: String,
         ask: GatewayAsk,
-        profile: String? = sessionProfileNameProvider(),
+        profile: String? = currentSessionProfileName(),
     ) {
         val context = appContext ?: return
         InteractionRequestNotifier.notify(
@@ -4831,7 +4919,7 @@ class ChatViewModel : ViewModel() {
     private fun cancelInteractionNotification(
         sessionId: String,
         ask: GatewayAsk,
-        profile: String? = sessionProfileNameProvider(),
+        profile: String? = currentSessionProfileName(),
     ) {
         val context = appContext ?: return
         InteractionRequestNotifier.cancel(context, sessionId, ask, profile)
@@ -7722,49 +7810,17 @@ class ChatViewModel : ViewModel() {
 
         val gateway = gatewayClient
         _steerableTurn.value = false
-        // Voice turns must deliver their interface + spoken-output-formatting
-        // context to the model, but the gateway prompt.submit RPC has NO
-        // system-message slot (it is bare text — see the else branch). Prepending
-        // to the user text would persist the instruction into the transcript.
-        // The SSE endpoints carry it in the non-persisted system_message field
-        // instead, so force any turn that has a per-turn interface context
-        // (set only by sendVoiceMessage) onto SSE. resolveSseFallback picks the
-        // best available SSE route.
+        // Gateway prompt.submit has no system-message slot, so its voice turn
+        // cannot carry the optional spoken-output formatting hint. Keep the turn
+        // on Gateway anyway: the API server is an optional fallback and may not
+        // be reachable from the phone. A working vanilla Gateway turn is more
+        // important than silently making standard voice depend on port 8642.
+        // SSE-selected connections still receive the interface context normally.
         //
-        // Synthetic voice-intent and provider-answered realtime traces have the
-        // same gateway limitation — prompt.submit can't carry them — but on a
-        // gateway-primary phone "leave them for the next SSE turn" means *never*.
-        // Drain those voice-only traces by forcing this one turn onto the sessions
-        // SSE route, but ONLY when that is strictly safe:
-        //  - an existing session id + the sessions fallback route (a stateless
-        //    completions/runs detour would drop THIS turn from the transcript
-        //    to save a trace — worse than deferring), and
-        //  - the default profile (a non-default profile's gateway session lives
-        //    in that profile's own state.db, which the shared api_server surface
-        //    can't see — the sessions POST would 404 and fail the user's turn).
-        // Cost when it fires: one turn without live gateway thinking. The synced
-        // traces persist server-side, so this happens at most once per batch.
-        //
-        // Rich-card actions are different: the action itself is the current user
-        // turn. Keep it on the selected Gateway and defer its optional synthetic
-        // audit trace until a naturally selected SSE turn. A card must never
-        // activate or depend on the optional API fallback.
-        val sseDrainEndpoint = resolveSseFallback(handler)
-        val forceSseForVoiceTraceDrain =
-            client != null &&
-            (hasVoiceIntents || hasRealtimeTurns) &&
-                streamingEndpoint == "gateway" &&
-                profileName == null &&
-                sseDrainEndpoint == "sessions"
-        val effectiveEndpoint =
-            if (client != null &&
-                (interfaceContextPrompt != null || forceSseForVoiceTraceDrain) &&
-                streamingEndpoint == "gateway"
-            ) {
-                sseDrainEndpoint
-            } else {
-                streamingEndpoint
-            }
+        // Synthetic local traces also wait for a naturally selected SSE turn.
+        // They are supplemental context and must never make a connected Gateway
+        // turn depend on the optional API server.
+        val effectiveEndpoint = streamingEndpoint
         updateTurnCheckpointTransport(effectiveEndpoint)
         // Remember whether this turn runs on the gateway client (vs an SSE
         // EventSource) so a mid-turn route handoff doesn't cancel it — only the
@@ -7952,6 +8008,7 @@ class ChatViewModel : ViewModel() {
     ): String? {
         val selectedProfile = selectedProfileProvider()
         val effectiveProfile = effectiveProfileOverride
+            ?: openedSessionDisplayProfile
             ?: displayProfileProvider()
             ?: effectiveProfileProvider()
             ?: selectedProfile
@@ -7960,7 +8017,11 @@ class ChatViewModel : ViewModel() {
             selectedPersonality = _selectedPersonality.value,
             defaultPersonality = _defaultPersonality.value,
             connectionLabel = null,
-            localDisplayAlias = displayAliasProvider(),
+            localDisplayAlias = if (_openedSessionProfileName.value == null) {
+                displayAliasProvider()
+            } else {
+                null
+            },
         ).ifBlank { null }
     }
 

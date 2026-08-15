@@ -11,7 +11,6 @@ class ChatHeaderSubtitleTest {
             resolveChatHeaderSubtitle(
                 isStreaming = true,
                 statusText = "Streaming",
-                projectName = "Hermes Relay",
                 personalityName = "Victor",
                 modelName = "GPT-5.6",
             ),
@@ -19,13 +18,12 @@ class ChatHeaderSubtitleTest {
     }
 
     @Test
-    fun `idle subtitle retains project personality and model metadata`() {
+    fun `idle subtitle retains only personality and model metadata`() {
         assertEquals(
-            "Hermes Relay \u00B7 Victor \u00B7 GPT-5.6",
+            "Victor \u00B7 GPT-5.6",
             resolveChatHeaderSubtitle(
                 isStreaming = false,
                 statusText = "Connected",
-                projectName = "Hermes Relay",
                 personalityName = "Victor",
                 modelName = "GPT-5.6",
             ),

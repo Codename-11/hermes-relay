@@ -350,6 +350,38 @@ class ProfileController(
         return dashboardClientFactory(connectionId, dashboardUrl).listAllProfileSessions(limit)
     }
 
+    suspend fun deleteSession(profileName: String, sessionId: String): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        return dashboardClientFactory(connectionId, dashboardUrl)
+            .deleteSession(sessionId, profileName)
+            .isSuccess
+    }
+
+    suspend fun renameSession(profileName: String, sessionId: String, title: String): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        return dashboardClientFactory(connectionId, dashboardUrl)
+            .renameSession(sessionId, title, profileName)
+            .isSuccess
+    }
+
+    suspend fun setSessionPinned(profileName: String, sessionId: String, pinned: Boolean): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        return dashboardClientFactory(connectionId, dashboardUrl)
+            .setSessionPinned(sessionId, pinned, profileName)
+            .isSuccess
+    }
+
+    suspend fun setSessionArchived(profileName: String, sessionId: String, archived: Boolean): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        return dashboardClientFactory(connectionId, dashboardUrl)
+            .setSessionArchived(sessionId, archived, profileName)
+            .isSuccess
+    }
+
     /**
      * A session's transcript, scoped to the active profile via the dashboard
      * `/api/sessions/{id}/messages?profile=`. Returns `null` off the dashboard
@@ -358,10 +390,19 @@ class ProfileController(
     suspend fun loadProfileScopedMessages(
         sessionId: String,
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+    ): Result<List<MessageItem>>? = loadProfileScopedMessages(
+        profileName = resolveSessionProfileName(),
+        sessionId = sessionId,
+        mode = mode,
+    )
+
+    suspend fun loadProfileScopedMessages(
+        profileName: String?,
+        sessionId: String,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
     ): Result<List<MessageItem>>? {
         val connectionId = activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrlProvider() ?: return null
-        val profileName = resolveSessionProfileName()
         return dashboardClientFactory(connectionId, dashboardUrl)
             .getSessionMessages(sessionId, profileName, mode)
     }
@@ -579,6 +620,24 @@ class ProfileController(
                     .toMutableSet()
                     .apply { if (hidden) add(key) else remove(key) }
                 profilePresentationStore.setHidden(connectionId, updated)
+            }
+        }
+    }
+
+    /** Persist or clear a local cosmetic accent for a named profile. */
+    fun setProfileColor(profileName: String, colorHex: String?) {
+        val connectionId = activeConnectionId.value ?: return
+        val key = profileName.trim()
+        if (key.isBlank() || key.equals("default", ignoreCase = true)) return
+        scope.launch {
+            profilePresentationWriteMutex.withLock {
+                val updated = profilePresentationStore
+                    .presentationFlow(connectionId)
+                    .first()
+                    .colors
+                    .toMutableMap()
+                    .apply { if (colorHex == null) remove(key) else put(key, colorHex) }
+                profilePresentationStore.setColors(connectionId, updated)
             }
         }
     }

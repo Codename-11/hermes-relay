@@ -1571,10 +1571,29 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listAllProfileSessions(limit)
 
+    suspend fun deleteSession(profileName: String, sessionId: String): Boolean =
+        profileController.deleteSession(profileName, sessionId)
+
+    suspend fun renameSession(profileName: String, sessionId: String, title: String): Boolean =
+        profileController.renameSession(profileName, sessionId, title)
+
+    suspend fun setSessionPinned(profileName: String, sessionId: String, pinned: Boolean): Boolean =
+        profileController.setSessionPinned(profileName, sessionId, pinned)
+
+    suspend fun setSessionArchived(profileName: String, sessionId: String, archived: Boolean): Boolean =
+        profileController.setSessionArchived(profileName, sessionId, archived)
+
     suspend fun loadProfileScopedMessages(
         sessionId: String,
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
     ): Result<List<MessageItem>>? = profileController.loadProfileScopedMessages(sessionId, mode)
+
+    suspend fun loadProfileScopedMessages(
+        profileName: String?,
+        sessionId: String,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+    ): Result<List<MessageItem>>? =
+        profileController.loadProfileScopedMessages(profileName, sessionId, mode)
 
     /**
      * Delete a session scoped to the ACTIVE PROFILE via the dashboard
@@ -1623,6 +1642,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setProfileHidden(profileName: String?, hidden: Boolean) =
         profileController.setProfileHidden(profileName, hidden)
+
+    fun setProfileColor(profileName: String, colorHex: String?) =
+        profileController.setProfileColor(profileName, colorHex)
 
     fun resetProfilePresentation() = profileController.resetProfilePresentation()
 

@@ -976,6 +976,49 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_hydratesPersistedReactionsAndLetsServerWin() {
+        fun metadata(emoji: String) = buildJsonObject {
+            put("reactions", buildJsonArray {
+                add(buildJsonObject {
+                    put("emoji", emoji)
+                    put("author", "user")
+                    put("at", 1_700_000_000.0)
+                })
+            })
+        }
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-1",
+                    rowId = 42L,
+                    role = "assistant",
+                    content = JsonPrimitive("Reply"),
+                    displayMetadata = metadata("❤️"),
+                ),
+            ),
+        )
+
+        assertEquals("❤️", handler.messages.value.single().reactions.single().emoji)
+
+        handler.mutateMessage("assistant-1") { message ->
+            message.copy(reactions = listOf(com.hermesandroid.relay.data.MessageReaction("👍", "user", 2.0)))
+        }
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-1",
+                    rowId = 42L,
+                    role = "assistant",
+                    content = JsonPrimitive("Reply"),
+                    displayMetadata = metadata("😂"),
+                ),
+            ),
+        )
+
+        assertEquals("😂", handler.messages.value.single().reactions.single().emoji)
+    }
+
+    @Test
     fun rebindSurvivorUserRowIds_replacesPrefixAndClearsUnboundTurns() {
         handler.loadMessageHistory(
             listOf(

@@ -25,9 +25,14 @@ class ProfilePresentationStoreTest {
     fun orderAndHiddenProfilesRoundTripPerConnection() = runBlocking {
         store.setOrder("one", listOf("beta", "alpha"))
         store.setHidden("one", setOf("gamma"))
+        store.setColors("one", mapOf("alpha" to "#356CFF"))
 
         assertEquals(
-            ProfilePresentation(order = listOf("beta", "alpha"), hidden = setOf("gamma")),
+            ProfilePresentation(
+                order = listOf("beta", "alpha"),
+                hidden = setOf("gamma"),
+                colors = mapOf("alpha" to "#356CFF"),
+            ),
             store.presentationFlow("one").first(),
         )
         assertEquals(ProfilePresentation(), store.presentationFlow("two").first())
@@ -104,6 +109,7 @@ class ProfilePresentationStoreTest {
     fun clearRemovesOnlyOneConnectionsPreferences() = runBlocking {
         store.setOrder("one", listOf("beta"))
         store.setHidden("one", setOf("alpha"))
+        store.setColors("one", mapOf("beta" to "#ED4E8B"))
         store.setOrder("two", listOf("gamma"))
 
         store.clear("one")

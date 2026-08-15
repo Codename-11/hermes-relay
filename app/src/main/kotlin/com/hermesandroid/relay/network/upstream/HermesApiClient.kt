@@ -436,7 +436,8 @@ class HermesApiClient(
     private val json: Json = Json {
         ignoreUnknownKeys = true
         isLenient = true
-    }
+    },
+    okHttpClient: OkHttpClient? = null,
 ) {
     @Volatile
     private var lastCapabilities: ServerCapabilities? = null
@@ -480,7 +481,7 @@ class HermesApiClient(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val client: OkHttpClient = httpClient ?: OkHttpClient.Builder()
+    private val client: OkHttpClient = httpClient ?: okHttpClient ?: OkHttpClient.Builder()
         .readTimeout(5, TimeUnit.MINUTES)
         .connectTimeout(10, TimeUnit.SECONDS)
         .build()

@@ -4043,6 +4043,35 @@
     <string name="dashboard_whatsapp_saved">WhatsApp を有効にしました。Hermes がゲートウェイの再起動を開始しました。</string>
     <string name="drawer_all_profiles">すべてのプロファイル</string>
     <string name="drawer_no_profile_sessions">一致するプロファイルセッションはありません。</string>
+    <string name="drawer_customize_sessions">セッションをカスタマイズ</string>
+    <string name="drawer_group_by">グループ化</string>
+    <string name="drawer_order_by">並び順</string>
+    <string name="drawer_show_metadata">行に表示</string>
+    <string name="drawer_show_details">詳細を表示</string>
+    <string name="drawer_filters">フィルター</string>
+    <string name="drawer_project_home">ホーム</string>
+    <string name="drawer_expand_project">%1$sを展開</string>
+    <string name="drawer_collapse_project">%1$sを折りたたむ</string>
+    <plurals name="drawer_project_session_count">
+        <item quantity="one">%1$d件のセッション</item>
+        <item quantity="other">%1$d件のセッション</item>
+    </plurals>
+    <plurals name="drawer_profile_count">
+        <item quantity="one">%1$d件のプロファイル</item>
+        <item quantity="other">%1$d件のプロファイル</item>
+    </plurals>
+    <string name="drawer_filter_status">ステータス</string>
+    <string name="drawer_filter_profile">プロフィール</string>
+    <string name="drawer_filter_project">プロジェクト</string>
+    <string name="drawer_filter_pull_request">プルリクエスト</string>
+    <string name="drawer_option_updated">更新日時</string>
+    <string name="drawer_option_profile">プロフィール</string>
+    <string name="drawer_option_tokens">トークン</string>
+    <string name="drawer_option_cost">コスト</string>
+    <string name="drawer_reset_filters">リセット</string>
+    <string name="drawer_profile_colors">プロフィールの色</string>
+    <string name="drawer_profile_color_auto">自動</string>
+    <string name="drawer_profile_color_set">%1$s のプロフィール色を %2$s に設定</string>
     <string name="drawer_close">閉じる</string>
     <string name="profile_inspector_gateway_settings">Gateway プロファイル設定</string>
     <string name="profile_inspector_gateway_settings_hint">選択中のプロファイルに Hermes 経由で直接保存します。</string>

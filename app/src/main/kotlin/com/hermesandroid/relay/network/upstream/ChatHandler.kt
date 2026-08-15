@@ -1520,7 +1520,8 @@ class ChatHandler {
                 // this as the same visible row across the post-turn reload.
                 prior.copy(
                     id = messageId,
-                    rowId = item.rowId,
+                    rowId = item.resolvedRowId,
+                    reactions = item.reactions,
                     role = role,
                     content = cleanedContent,
                     attachments = carriedAttachments,
@@ -1551,7 +1552,8 @@ class ChatHandler {
                 // nothing local to carry).
                 ChatMessage(
                     id = messageId,
-                    rowId = item.rowId,
+                    rowId = item.resolvedRowId,
+                    reactions = item.reactions,
                     role = role,
                     content = cleanedContent,
                     attachments = carriedAttachments,
@@ -2050,6 +2052,11 @@ class ChatHandler {
                 title = resolvedTitle,
                 model = item.model,
                 messageCount = item.messageCount ?: 0,
+                inputTokens = item.inputTokens ?: 0,
+                outputTokens = item.outputTokens ?: 0,
+                actualCostUsd = item.actualCostUsd,
+                estimatedCostUsd = item.estimatedCostUsd,
+                isActive = item.isActive,
                 updatedAt = activityAtMs,
                 startedAt = startedAtMs,
                 lastActivityAt = lastActivityAtMs,

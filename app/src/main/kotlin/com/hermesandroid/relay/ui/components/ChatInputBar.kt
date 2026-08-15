@@ -94,7 +94,7 @@ import kotlinx.coroutines.delay
  */
 enum class ChatInputTrailing { SEND, VOICE, STOP, STEER, QUEUE }
 
-private val ChatComposerShape = RoundedCornerShape(18.dp)
+private val ChatComposerShape = RoundedCornerShape(26.dp)
 private val ChatInputChipShape = RoundedCornerShape(12.dp)
 internal const val CHAT_INPUT_FIELD_TEST_TAG = "chat-input-field"
 
@@ -315,7 +315,7 @@ fun ChatInputBar(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .padding(horizontal = 8.dp, vertical = 3.dp)
                 .then(surfaceModifier),
         ) {
             Column {
@@ -341,15 +341,15 @@ fun ChatInputBar(
                 }
 
                 Column(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                 ) {
                     BasicTextField(
                         value = value,
                         onValueChange = { if (it.length <= charLimit) onValueChange(it) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 34.dp)
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .heightIn(min = 30.dp)
+                            .padding(horizontal = 10.dp, vertical = 2.dp)
                             // Keep directional keys inside the editor. Compose's
                             // BasicTextField owns normal caret/selection movement;
                             // cancelling focus traversal prevents a boundary arrow
@@ -408,7 +408,7 @@ fun ChatInputBar(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 48.dp),
+                        .heightIn(min = 44.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
