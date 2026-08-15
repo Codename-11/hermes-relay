@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0-beta.4] - 2026-08-15
+
+### Fixed
+
+- **The Windows management UI remains available while the daemon is stopped.** Missing, stale, malformed, or temporarily unavailable daemon status now resolves to an explicit stopped state instead of trapping the tray on its loading screen, so configuration, diagnostics, host management, and daemon controls remain accessible.
+
 ## [1.9.0] - 2026-08-14
 
 ### Added

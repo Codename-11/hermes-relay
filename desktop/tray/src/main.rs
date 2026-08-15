@@ -273,7 +273,7 @@ mod app {
             && fs::write(path, std::process::id().to_string()).is_ok()
     }
 
-    #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+    #[derive(Debug, Clone, Deserialize, Serialize)]
     struct DaemonStatus {
         #[serde(default = "stopped")]
         state: String,
@@ -293,6 +293,25 @@ mod app {
 
     fn stopped() -> String {
         "stopped".to_string()
+    }
+
+    impl Default for DaemonStatus {
+        fn default() -> Self {
+            Self {
+                state: stopped(),
+                running: false,
+                url: None,
+                configured_url: None,
+                active_route: None,
+                privilege: None,
+                username: None,
+                updated_at: None,
+                last_event: None,
+                reconnect_attempt: None,
+                retry_at: None,
+                last_error: None,
+            }
+        }
     }
 
     #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1048,6 +1067,13 @@ mod app {
         availability
     }
 
+    fn daemon_status_from_probe(result: Result<Value, String>) -> DaemonStatus {
+        result
+            .ok()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
     fn build_snapshot() -> Result<Snapshot, String> {
         let selected = active_url();
         let mut hosts = match run_json(&["hosts", "list", "--json"]) {
@@ -1067,9 +1093,7 @@ mod app {
                 host.access_mode = "ask-every-time".to_string();
             }
         }
-        let daemon =
-            serde_json::from_value::<DaemonStatus>(run_json(&["daemon", "status", "--json"])?)
-                .map_err(|_| "the installed CLI returned an invalid daemon status".to_string())?;
+        let daemon = daemon_status_from_probe(run_json(&["daemon", "status", "--json"]));
         let pending_grants = pending_grants_from_bridge();
         let (cli_version, cli_path) = cli_details();
         let computer_control_engine = cached_computer_control_engine();
@@ -2520,6 +2544,32 @@ mod app {
                 clean_cli_version("hermes-relay 0.4.0-alpha.7\r\n"),
                 "0.4.0-alpha.7"
             );
+        }
+
+        #[test]
+        fn failed_daemon_status_probe_keeps_management_snapshot_stopped() {
+            for result in [
+                Err("daemon is not running".to_string()),
+                Ok(serde_json::json!({"running": "invalid"})),
+            ] {
+                let status = daemon_status_from_probe(result);
+                assert_eq!(status.state, "stopped");
+                assert!(!status.running);
+                assert!(status.url.is_none());
+            }
+        }
+
+        #[test]
+        fn live_daemon_status_probe_preserves_running_state() {
+            let status = daemon_status_from_probe(Ok(serde_json::json!({
+                "state": "connected",
+                "running": true,
+                "url": "wss://relay.example.test"
+            })));
+
+            assert_eq!(status.state, "connected");
+            assert!(status.running);
+            assert_eq!(status.url.as_deref(), Some("wss://relay.example.test"));
         }
 
         #[test]
