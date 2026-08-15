@@ -1588,6 +1588,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
     ): Result<List<MessageItem>>? = profileController.loadProfileScopedMessages(sessionId, mode)
 
+    suspend fun loadProfileScopedMessages(
+        profileName: String?,
+        sessionId: String,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+    ): Result<List<MessageItem>>? =
+        profileController.loadProfileScopedMessages(profileName, sessionId, mode)
+
     /**
      * Delete a session scoped to the ACTIVE PROFILE via the dashboard
      * `DELETE /api/sessions/{id}?profile=` surface — the write twin of

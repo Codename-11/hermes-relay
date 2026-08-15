@@ -19,9 +19,12 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,13 +39,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -52,11 +60,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.OutlinedTextField
@@ -76,6 +86,7 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -127,14 +138,23 @@ data class ProvisionalThreadRow(
 
 private const val PROVISIONAL_THREAD_PREFIX = "proactive:"
 
-internal fun sessionWorkLabels(session: ChatSession): List<String> = buildList {
+internal enum class SessionWorkBadgeKind { PROJECT, BRANCH, PULL_REQUEST }
+
+internal data class SessionWorkBadge(
+    val kind: SessionWorkBadgeKind,
+    val label: String,
+)
+
+internal fun sessionWorkBadges(session: ChatSession): List<SessionWorkBadge> = buildList {
     val repo = (session.gitRepoRoot ?: session.workingDirectory)
         ?.trimEnd('/', '\\')
         ?.substringAfterLast('/')
         ?.substringAfterLast('\\')
         ?.takeIf { it.isNotBlank() }
-    repo?.let(::add)
-    session.gitBranch?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
+    repo?.let { add(SessionWorkBadge(SessionWorkBadgeKind.PROJECT, it)) }
+    session.gitBranch?.trim()?.takeIf { it.isNotBlank() }?.let {
+        add(SessionWorkBadge(SessionWorkBadgeKind.BRANCH, it))
+    }
     session.pullRequestNumber?.takeIf { it > 0 }?.let { number ->
         val status = when {
             session.pullRequestDraft -> "Draft"
@@ -142,9 +162,17 @@ internal fun sessionWorkLabels(session: ChatSession): List<String> = buildList {
                 session.pullRequestState.lowercase().replaceFirstChar { it.uppercaseChar() }
             else -> null
         }
-        add(listOfNotNull("PR #$number", status).joinToString(" · "))
+        add(
+            SessionWorkBadge(
+                SessionWorkBadgeKind.PULL_REQUEST,
+                listOfNotNull("PR #$number", status).joinToString(" · "),
+            ),
+        )
     }
 }
+
+internal fun sessionWorkLabels(session: ChatSession): List<String> =
+    sessionWorkBadges(session).map(SessionWorkBadge::label)
 
 internal fun sessionPinIcon(pinned: Boolean) =
     if (pinned) Icons.Filled.Star else Icons.Outlined.StarBorder
@@ -174,6 +202,7 @@ fun SessionDrawerContent(
     archiveSupported: Boolean = true,
     onRefresh: (() -> Unit)? = null,
     onNewChat: () -> Unit,
+    onNewDefaultChat: (() -> Unit)? = null,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onRenameSession: (String, String) -> Unit,
@@ -284,6 +313,35 @@ fun SessionDrawerContent(
         .toList()
     val visibleRows = filterAndSortSessionRows(categoryRows, viewOptions, activityStates)
     val groupedRows = groupSessionRows(visibleRows, viewOptions.grouping, activityStates)
+    val drawerTitle = if (showAllProfiles) {
+        stringResource(R.string.drawer_all_profiles)
+    } else {
+        scopeTitle.ifBlank { stringResource(R.string.drawer_filter_sessions) }
+    }
+    val drawerSubtitle = if (showAllProfiles) {
+        val profileCount = sourceRows.map { it.profile }.distinct().size
+        val profileText = LocalContext.current.resources.getQuantityString(
+            R.plurals.drawer_profile_count,
+            profileCount,
+            profileCount,
+        )
+        val sessionText = LocalContext.current.resources.getQuantityString(
+            R.plurals.drawer_project_session_count,
+            sourceRows.size,
+            sourceRows.size,
+        )
+        "$profileText · $sessionText"
+    } else {
+        scopeSubtitle
+    }
+    val projectGroupKeys = groupedRows.map { it.key }
+    var expandedProjectGroups by remember(projectGroupKeys) {
+        val initialGroup = projectGroupKeys.firstOrNull { key -> !key.endsWith(":No project") }
+            ?: projectGroupKeys.firstOrNull()
+        mutableStateOf(
+            initialGroup?.let(::setOf).orEmpty(),
+        )
+    }
     val topVisibleSessionId = visibleRows.firstOrNull()?.let(::sessionRowKey)
 
     LaunchedEffect(showAllProfiles) {
@@ -318,7 +376,7 @@ fun SessionDrawerContent(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = scopeTitle.ifBlank { stringResource(R.string.drawer_filter_sessions) },
+                    text = drawerTitle,
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f),
                 )
@@ -435,7 +493,7 @@ fun SessionDrawerContent(
                     }
                 }
             }
-            scopeSubtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
+            drawerSubtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
@@ -449,7 +507,13 @@ fun SessionDrawerContent(
 
             // New Chat button
             Button(
-                onClick = onNewChat,
+                onClick = {
+                    if (showAllProfiles) {
+                        onNewDefaultChat?.invoke() ?: onNewChat()
+                    } else {
+                        onNewChat()
+                    }
+                },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null)
@@ -626,24 +690,43 @@ fun SessionDrawerContent(
                 modifier = Modifier.testTag(SESSION_DRAWER_LIST_TAG),
             ) {
                 groupedRows.forEach { group ->
+                    val isProjectGroup = viewOptions.grouping == SessionDrawerGrouping.Project
+                    val expanded = !isProjectGroup || group.key in expandedProjectGroups
                     group.label?.let { label ->
                         item(key = "header:${group.key}") {
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            )
+                            if (isProjectGroup) {
+                                ProjectGroupHeader(
+                                    label = label,
+                                    rows = group.rows,
+                                    expanded = expanded,
+                                    onToggle = {
+                                        expandedProjectGroups = if (expanded) {
+                                            expandedProjectGroups - group.key
+                                        } else {
+                                            expandedProjectGroups + group.key
+                                        }
+                                    },
+                                )
+                            } else {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                )
+                            }
                         }
                     }
-                    items(group.rows, key = ::sessionRowKey) { row ->
+                    if (expanded) items(group.rows, key = ::sessionRowKey) { row ->
                         val session = row.session
                         val provisional = session.sessionId.startsWith(PROVISIONAL_THREAD_PREFIX)
                         val activityState = activityStates[sessionRowKey(row)]
                             ?: activityStates[session.sessionId]
                             ?: if (session.isActive) SessionActivityState.Working else null
                         SessionItem(
+                            modifier = if (isProjectGroup) Modifier.padding(start = 42.dp) else Modifier,
                             session = session,
+                            hideProjectBadge = isProjectGroup,
                             profileLabel = row.profile.takeIf {
                                 showAllProfiles || viewOptions.showProfile
                             },
@@ -817,6 +900,7 @@ fun SessionDrawerContent(
 
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SessionDrawerOptionsDialog(
     options: SessionDrawerViewOptions,
@@ -832,18 +916,30 @@ private fun SessionDrawerOptionsDialog(
     val hasPullRequests = rows.any { it.session.pullRequestNumber != null }
     val hasCost = rows.any { it.session.costUsd > 0.0 }
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.drawer_customize_sessions)) },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 640.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+                Text(
+                    text = stringResource(R.string.drawer_customize_sessions),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
                 SessionOptionSection(stringResource(R.string.drawer_group_by)) {
-                    SessionDrawerGrouping.entries.forEach { grouping ->
+                    listOf(
+                        SessionDrawerGrouping.None,
+                        SessionDrawerGrouping.Project,
+                        SessionDrawerGrouping.Profile,
+                        SessionDrawerGrouping.Updated,
+                    ).forEach { grouping ->
                         FilterChip(
                             selected = options.grouping == grouping,
                             onClick = { onOptionsChange(options.copy(grouping = grouping)) },
@@ -852,7 +948,13 @@ private fun SessionDrawerOptionsDialog(
                     }
                 }
                 SessionOptionSection(stringResource(R.string.drawer_order_by)) {
-                    SessionDrawerOrdering.entries
+                    listOf(
+                        SessionDrawerOrdering.Updated,
+                        SessionDrawerOrdering.Created,
+                        SessionDrawerOrdering.Title,
+                        SessionDrawerOrdering.Tokens,
+                        SessionDrawerOrdering.Cost,
+                    )
                         .filter { it != SessionDrawerOrdering.Cost || hasCost }
                         .forEach { ordering ->
                             FilterChip(
@@ -862,7 +964,7 @@ private fun SessionDrawerOptionsDialog(
                             )
                         }
                 }
-                SessionOptionSection(stringResource(R.string.drawer_show_metadata)) {
+                SessionOptionSection(stringResource(R.string.drawer_show_details)) {
                     MetadataChip(
                         selected = options.showUpdated,
                         label = stringResource(R.string.drawer_option_updated),
@@ -882,6 +984,21 @@ private fun SessionDrawerOptionsDialog(
                         ) { onOptionsChange(options.copy(showCost = !options.showCost)) }
                     }
                 }
+                if (showAllProfiles && onProfileColorChange != null) {
+                    val namedProfiles = profiles.filterNot { it.equals("default", ignoreCase = true) }
+                    if (namedProfiles.isNotEmpty()) {
+                        ProfileColorEditor(
+                            profiles = namedProfiles,
+                            colors = profileColors,
+                            onColorChange = onProfileColorChange,
+                        )
+                    }
+                }
+                Text(
+                    text = stringResource(R.string.drawer_filters),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
                 SessionOptionSection(stringResource(R.string.drawer_filter_status)) {
                     SessionDrawerStatus.entries.forEach { status ->
                         FilterChip(
@@ -906,16 +1023,6 @@ private fun SessionDrawerOptionsDialog(
                                 label = { Text(profile) },
                             )
                         }
-                    }
-                }
-                if (showAllProfiles && onProfileColorChange != null) {
-                    val namedProfiles = profiles.filterNot { it.equals("default", ignoreCase = true) }
-                    if (namedProfiles.isNotEmpty()) {
-                        ProfileColorEditor(
-                            profiles = namedProfiles,
-                            colors = profileColors,
-                            onColorChange = onProfileColorChange,
-                        )
                     }
                 }
                 if (projects.size > 1) {
@@ -950,17 +1057,18 @@ private fun SessionDrawerOptionsDialog(
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.drawer_close)) }
-        },
-        dismissButton = {
-            TextButton(onClick = { onOptionsChange(SessionDrawerViewOptions()) }) {
+            HorizontalDivider()
+            TextButton(
+                onClick = { onOptionsChange(SessionDrawerViewOptions()) },
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                Icon(Icons.Filled.Refresh, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
                 Text(stringResource(R.string.drawer_reset_filters))
             }
-        },
-    )
+            Spacer(Modifier.height(16.dp))
+        }
+    }
 }
 
 @Composable
@@ -1061,7 +1169,8 @@ private fun ProfileColorEditor(
 }
 
 private fun SessionDrawerGrouping.label(): String = when (this) {
-    SessionDrawerGrouping.Updated -> "Updated"
+    SessionDrawerGrouping.None -> "None"
+    SessionDrawerGrouping.Updated -> "Date"
     SessionDrawerGrouping.Project -> "Project"
     SessionDrawerGrouping.Status -> "Status"
     SessionDrawerGrouping.Profile -> "Profile"
@@ -1070,6 +1179,7 @@ private fun SessionDrawerGrouping.label(): String = when (this) {
 private fun SessionDrawerOrdering.label(): String = when (this) {
     SessionDrawerOrdering.Updated -> "Updated"
     SessionDrawerOrdering.Created -> "Created"
+    SessionDrawerOrdering.Title -> "Title"
     SessionDrawerOrdering.Status -> "Status"
     SessionDrawerOrdering.Tokens -> "Tokens"
     SessionDrawerOrdering.Cost -> "Cost"
@@ -1099,8 +1209,81 @@ private fun compactMetric(value: Double): String = when {
 }
 
 @Composable
+private fun ProjectGroupHeader(
+    label: String,
+    rows: List<ProfileSessionRow>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val context = LocalContext.current
+    val locale = LocalLocale.current.platformLocale
+    val isHome = label == "No project"
+    val displayLabel = if (isHome) stringResource(R.string.drawer_project_home) else label
+    val latestActivity = rows.maxOfOrNull { it.session.activityTimestamp } ?: 0L
+    val action = stringResource(
+        if (expanded) R.string.drawer_collapse_project else R.string.drawer_expand_project,
+        displayLabel,
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.size(40.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = if (isHome) Icons.Filled.Home else Icons.Filled.Folder,
+                    contentDescription = null,
+                    tint = if (isHome) MaterialTheme.colorScheme.onSurfaceVariant else RelayRefresh.Relay,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = displayLabel,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = buildString {
+                    append(context.resources.getQuantityString(R.plurals.drawer_project_session_count, rows.size, rows.size))
+                    if (latestActivity > 0L) {
+                        append(" · ")
+                        append(formatTimestamp(latestActivity, locale, context))
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = action,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun SessionItem(
+    modifier: Modifier = Modifier,
     session: ChatSession,
+    hideProjectBadge: Boolean = false,
     profileLabel: String?,
     profileColors: Map<String, String>,
     showUpdated: Boolean,
@@ -1137,7 +1320,7 @@ private fun SessionItem(
     }
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(backgroundColor)
             .sessionActivityBorder(
@@ -1167,27 +1350,22 @@ private fun SessionItem(
                     MaterialTheme.colorScheme.onSurface
                 }
             )
-            val workLabels = sessionWorkLabels(session)
-            if (workLabels.isNotEmpty() || profileLabel != null) {
-                Row(
+            val workBadges = sessionWorkBadges(session).filterNot {
+                hideProjectBadge && it.kind == SessionWorkBadgeKind.PROJECT
+            }
+            if (workBadges.isNotEmpty() || profileLabel != null) {
+                // Two wrapped work-context lines plus the activity/details row
+                // below keep session subtext bounded to three lines. Unlike the
+                // old horizontal scroller, project and branch stay visible and
+                // remain identifiable by their own glyphs.
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    modifier = Modifier
-                        .padding(top = 4.dp)
-                        .horizontalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 4.dp),
                 ) {
                     profileLabel?.let { ProfileBadge(it, profileColors) }
-                    workLabels.forEach { label ->
-                        Text(
-                            text = label,
-                            style = relayMetadataStyle(),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .padding(horizontal = 6.dp, vertical = 1.dp),
-                        )
-                    }
+                    workBadges.forEach { badge -> SessionWorkBadgeChip(badge) }
                 }
             }
             Row(
@@ -1372,6 +1550,43 @@ private fun SessionItem(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SessionWorkBadgeChip(badge: SessionWorkBadge) {
+    val icon: ImageVector = when (badge.kind) {
+        SessionWorkBadgeKind.PROJECT -> Icons.Filled.Folder
+        SessionWorkBadgeKind.BRANCH -> Icons.Filled.AccountTree
+        SessionWorkBadgeKind.PULL_REQUEST -> Icons.Filled.Code
+    }
+    val kindLabel = when (badge.kind) {
+        SessionWorkBadgeKind.PROJECT -> "Project"
+        SessionWorkBadgeKind.BRANCH -> "Branch"
+        SessionWorkBadgeKind.PULL_REQUEST -> "Pull request"
+    }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 6.dp, vertical = 1.dp)
+            .semantics { contentDescription = "$kindLabel: ${badge.label}" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(11.dp),
+        )
+        Text(
+            text = badge.label,
+            style = relayMetadataStyle(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

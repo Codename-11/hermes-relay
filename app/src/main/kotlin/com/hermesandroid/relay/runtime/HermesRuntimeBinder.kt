@@ -176,7 +176,9 @@ internal class HermesRuntimeBinder(
         chat.setDisplayProfileProvider { connection.effectiveDisplayProfile.value }
         chat.setDisplayAliasProvider { connection.profileDisplayAlias.value }
         chat.setProfileSessionLister { connection.listProfileScopedSessions() }
-        chat.setProfileMessageLoaderWithMode(connection::loadProfileScopedMessages)
+        chat.setProfileMessageLoaderWithMode { profileName, sessionId, mode ->
+            connection.loadProfileScopedMessages(profileName, sessionId, mode)
+        }
         chat.setDashboardConfigLoader { connection.loadActiveDashboardConfig() }
         chat.profileSessionDeleter = connection::deleteProfileScopedSession
         chat.profileSessionRenamer = connection::renameProfileScopedSession

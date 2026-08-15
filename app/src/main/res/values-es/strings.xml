@@ -3733,6 +3733,19 @@
     <string name="drawer_group_by">Agrupar por</string>
     <string name="drawer_order_by">Ordenar por</string>
     <string name="drawer_show_metadata">Mostrar en las filas</string>
+    <string name="drawer_show_details">Mostrar detalles</string>
+    <string name="drawer_filters">Filtros</string>
+    <string name="drawer_project_home">Inicio</string>
+    <string name="drawer_expand_project">Expandir %1$s</string>
+    <string name="drawer_collapse_project">Contraer %1$s</string>
+    <plurals name="drawer_project_session_count">
+        <item quantity="one">%1$d sesión</item>
+        <item quantity="other">%1$d sesiones</item>
+    </plurals>
+    <plurals name="drawer_profile_count">
+        <item quantity="one">%1$d perfil</item>
+        <item quantity="other">%1$d perfiles</item>
+    </plurals>
     <string name="drawer_filter_status">Estado</string>
     <string name="drawer_filter_profile">Perfil</string>
     <string name="drawer_filter_project">Proyecto</string>

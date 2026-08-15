@@ -4048,6 +4048,19 @@
     <string name="drawer_group_by">Gruppieren nach</string>
     <string name="drawer_order_by">Sortieren nach</string>
     <string name="drawer_show_metadata">In Zeilen anzeigen</string>
+    <string name="drawer_show_details">Details anzeigen</string>
+    <string name="drawer_filters">Filter</string>
+    <string name="drawer_project_home">Startseite</string>
+    <string name="drawer_expand_project">%1$s erweitern</string>
+    <string name="drawer_collapse_project">%1$s reduzieren</string>
+    <plurals name="drawer_project_session_count">
+        <item quantity="one">%1$d Sitzung</item>
+        <item quantity="other">%1$d Sitzungen</item>
+    </plurals>
+    <plurals name="drawer_profile_count">
+        <item quantity="one">%1$d Profil</item>
+        <item quantity="other">%1$d Profile</item>
+    </plurals>
     <string name="drawer_filter_status">Status</string>
     <string name="drawer_filter_profile">Profil</string>
     <string name="drawer_filter_project">Projekt</string>

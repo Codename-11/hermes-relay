@@ -5,6 +5,7 @@ import com.hermesandroid.relay.data.SessionActivityState
 import java.util.Locale
 
 internal enum class SessionDrawerGrouping {
+    None,
     Updated,
     Project,
     Status,
@@ -14,6 +15,7 @@ internal enum class SessionDrawerGrouping {
 internal enum class SessionDrawerOrdering {
     Updated,
     Created,
+    Title,
     Status,
     Tokens,
     Cost,
@@ -34,7 +36,7 @@ internal enum class SessionDrawerPrState {
 }
 
 internal data class SessionDrawerViewOptions(
-    val grouping: SessionDrawerGrouping = SessionDrawerGrouping.Updated,
+    val grouping: SessionDrawerGrouping = SessionDrawerGrouping.None,
     val ordering: SessionDrawerOrdering = SessionDrawerOrdering.Updated,
     val statuses: Set<SessionDrawerStatus> = emptySet(),
     val profiles: Set<String> = emptySet(),
@@ -102,6 +104,7 @@ internal fun filterAndSortSessionRows(
     val comparator = when (options.ordering) {
         SessionDrawerOrdering.Updated -> compareByDescending<ProfileSessionRow> { it.session.activityTimestamp }
         SessionDrawerOrdering.Created -> compareByDescending { it.session.startTimestamp }
+        SessionDrawerOrdering.Title -> compareBy { it.session.title.orEmpty().lowercase(Locale.ROOT) }
         SessionDrawerOrdering.Status -> compareBy { statusRank.getValue(sessionDrawerStatus(it, activityStates)) }
         SessionDrawerOrdering.Tokens -> compareByDescending { it.session.totalTokens }
         SessionDrawerOrdering.Cost -> compareByDescending { it.session.costUsd }
@@ -122,14 +125,24 @@ internal fun groupSessionRows(
     if (rows.isEmpty()) return emptyList()
     val grouped = rows.groupBy { row ->
         when (grouping) {
+            SessionDrawerGrouping.None -> null
             SessionDrawerGrouping.Updated -> updatedBucket(row.session.activityTimestamp, nowMillis)
             SessionDrawerGrouping.Project -> sessionProjectLabel(row.session)
             SessionDrawerGrouping.Status -> sessionDrawerStatus(row, activityStates).displayLabel
             SessionDrawerGrouping.Profile -> row.profile
         }
     }
-    return grouped.map { (label, groupRows) ->
+    val groups = grouped.map { (label, groupRows) ->
         SessionDrawerGroup(key = "${grouping.name}:$label", label = label, rows = groupRows)
+    }
+    return if (grouping == SessionDrawerGrouping.Project) {
+        groups.sortedWith(
+            compareBy<SessionDrawerGroup> { it.label != "No project" }
+                .thenByDescending { group -> group.rows.maxOfOrNull { it.session.activityTimestamp } ?: 0L }
+                .thenBy { it.label.orEmpty().lowercase(Locale.ROOT) },
+        )
+    } else {
+        groups
     }
 }
 

@@ -11,8 +11,10 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -97,6 +99,36 @@ object FlexibleLongSerializer : KSerializer<Long?> {
 
     override fun serialize(encoder: Encoder, value: Long?) {
         if (value != null) encoder.encodeLong(value) else encoder.encodeNull()
+    }
+}
+
+/**
+ * Dashboard versions may expose SQLite JSON columns either as an object or as
+ * their raw JSON string. Normalize both shapes so persisted presentation data
+ * (notably message reactions) survives a history reload on every supported
+ * upstream version.
+ */
+object FlexibleJsonObjectSerializer : KSerializer<JsonObject?> {
+    override val descriptor = JsonObject.serializer().descriptor
+
+    override fun deserialize(decoder: Decoder): JsonObject? {
+        return try {
+            val jsonDecoder = decoder as? JsonDecoder ?: return null
+            when (val element = jsonDecoder.decodeJsonElement()) {
+                is JsonObject -> element
+                is JsonPrimitive -> element.content.takeIf { it.isNotBlank() }
+                    ?.let { Json.parseToJsonElement(it) as? JsonObject }
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: JsonObject?) {
+        val jsonEncoder = encoder as? JsonEncoder
+            ?: throw SerializationException("FlexibleJsonObjectSerializer requires JSON")
+        jsonEncoder.encodeJsonElement(value ?: JsonNull)
     }
 }
 
@@ -363,7 +395,9 @@ data class MessageItem(
     val timestamp: Double? = null,
     @SerialName("finish_reason") val finishReason: String? = null,
     @SerialName("display_kind") val displayKind: String? = null,
-    @SerialName("display_metadata") val displayMetadata: JsonObject? = null,
+    @SerialName("display_metadata")
+    @Serializable(with = FlexibleJsonObjectSerializer::class)
+    val displayMetadata: JsonObject? = null,
     // Reasoning persisted with the assistant message (upstream serializes
     // both names; reasoning is the canonical one). Restored into
     // ChatMessage.thinkingContent so the Thought-process block survives a
@@ -371,6 +405,15 @@ data class MessageItem(
     val reasoning: String? = null,
     @SerialName("reasoning_content") val reasoningContent: String? = null,
 ) {
+    /**
+     * Dashboard history uses the SQLite row id as numeric `id`; Gateway
+     * history exposes the same value explicitly as `row_id`. Match Desktop by
+     * accepting either representation so persisted rows remain directly
+     * reactable after reload.
+     */
+    val resolvedRowId: Long?
+        get() = rowId ?: id?.toLongOrNull()
+
     /** Reasoning text under whichever field name the server used. */
     val resolvedReasoning: String?
         get() = reasoning?.takeIf { it.isNotBlank() }

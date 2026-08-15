@@ -4063,12 +4063,25 @@
     <string name="support_bundle_copied">Support information copied</string>
     <string name="support_bundle_no_share">Support information copied — no app found to share to</string>
     <string name="support_bundle_share_title">Share Hermes-Relay support information</string>
-    <string name="drawer_all_profiles">All profiles</string>
+    <string name="drawer_all_profiles">All Profiles</string>
     <string name="drawer_no_profile_sessions">No matching profile sessions.</string>
     <string name="drawer_customize_sessions">Customize sessions</string>
     <string name="drawer_group_by">Group by</string>
     <string name="drawer_order_by">Order by</string>
     <string name="drawer_show_metadata">Show on rows</string>
+    <string name="drawer_show_details">Show details</string>
+    <string name="drawer_filters">Filters</string>
+    <string name="drawer_project_home">Home</string>
+    <string name="drawer_expand_project">Expand %1$s</string>
+    <string name="drawer_collapse_project">Collapse %1$s</string>
+    <plurals name="drawer_project_session_count">
+        <item quantity="one">%1$d session</item>
+        <item quantity="other">%1$d sessions</item>
+    </plurals>
+    <plurals name="drawer_profile_count">
+        <item quantity="one">%1$d profile</item>
+        <item quantity="other">%1$d profiles</item>
+    </plurals>
     <string name="drawer_filter_status">Status</string>
     <string name="drawer_filter_profile">Profile</string>
     <string name="drawer_filter_project">Project</string>

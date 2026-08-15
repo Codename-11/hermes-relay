@@ -4047,6 +4047,19 @@
     <string name="drawer_group_by">グループ化</string>
     <string name="drawer_order_by">並び順</string>
     <string name="drawer_show_metadata">行に表示</string>
+    <string name="drawer_show_details">詳細を表示</string>
+    <string name="drawer_filters">フィルター</string>
+    <string name="drawer_project_home">ホーム</string>
+    <string name="drawer_expand_project">%1$sを展開</string>
+    <string name="drawer_collapse_project">%1$sを折りたたむ</string>
+    <plurals name="drawer_project_session_count">
+        <item quantity="one">%1$d件のセッション</item>
+        <item quantity="other">%1$d件のセッション</item>
+    </plurals>
+    <plurals name="drawer_profile_count">
+        <item quantity="one">%1$d件のプロファイル</item>
+        <item quantity="other">%1$d件のプロファイル</item>
+    </plurals>
     <string name="drawer_filter_status">ステータス</string>
     <string name="drawer_filter_profile">プロフィール</string>
     <string name="drawer_filter_project">プロジェクト</string>

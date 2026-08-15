@@ -367,6 +367,25 @@ class SessionModelsTest {
                 """{"role":"user","row_id":{"unexpected":true}}""",
             ).rowId,
         )
+        assertEquals(
+            75L,
+            json.decodeFromString<MessageItem>(
+                """{"id":75,"role":"assistant"}""",
+            ).resolvedRowId,
+        )
+    }
+
+    @Test
+    fun messageItem_readsReactionsFromObjectOrRawJsonMetadata() {
+        val objectBacked = json.decodeFromString<MessageItem>(
+            """{"role":"assistant","display_metadata":{"reactions":[{"emoji":"👍","author":"user","at":1.0}]}}""",
+        )
+        val stringBacked = json.decodeFromString<MessageItem>(
+            """{"role":"assistant","display_metadata":"{\"reactions\":[{\"emoji\":\"❤️\",\"author\":\"user\",\"at\":2.0}]}"}""",
+        )
+
+        assertEquals("👍", objectBacked.reactions.single().emoji)
+        assertEquals("❤️", stringBacked.reactions.single().emoji)
     }
 
     @Test

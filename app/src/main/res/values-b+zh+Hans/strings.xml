@@ -3976,6 +3976,17 @@
     <string name="drawer_group_by">分组方式</string>
     <string name="drawer_order_by">排序方式</string>
     <string name="drawer_show_metadata">在行中显示</string>
+    <string name="drawer_show_details">显示详细信息</string>
+    <string name="drawer_filters">筛选器</string>
+    <string name="drawer_project_home">主页</string>
+    <string name="drawer_expand_project">展开%1$s</string>
+    <string name="drawer_collapse_project">折叠%1$s</string>
+    <plurals name="drawer_project_session_count">
+        <item quantity="other">%1$d 个会话</item>
+    </plurals>
+    <plurals name="drawer_profile_count">
+        <item quantity="other">%1$d 个配置文件</item>
+    </plurals>
     <string name="drawer_filter_status">状态</string>
     <string name="drawer_filter_profile">配置文件</string>
     <string name="drawer_filter_project">项目</string>

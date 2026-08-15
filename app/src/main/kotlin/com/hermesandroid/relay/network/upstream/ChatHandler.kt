@@ -1520,7 +1520,7 @@ class ChatHandler {
                 // this as the same visible row across the post-turn reload.
                 prior.copy(
                     id = messageId,
-                    rowId = item.rowId,
+                    rowId = item.resolvedRowId,
                     reactions = item.reactions,
                     role = role,
                     content = cleanedContent,
@@ -1552,7 +1552,7 @@ class ChatHandler {
                 // nothing local to carry).
                 ChatMessage(
                     id = messageId,
-                    rowId = item.rowId,
+                    rowId = item.resolvedRowId,
                     reactions = item.reactions,
                     role = role,
                     content = cleanedContent,

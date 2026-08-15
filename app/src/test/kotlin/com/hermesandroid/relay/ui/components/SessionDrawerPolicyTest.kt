@@ -8,6 +8,11 @@ import org.junit.Test
 class SessionDrawerPolicyTest {
 
     @Test
+    fun `sessions are ungrouped by default`() {
+        assertEquals(SessionDrawerGrouping.None, SessionDrawerViewOptions().grouping)
+    }
+
+    @Test
     fun `cross profile rows retain composite identity`() {
         val alpha = row("alpha", "same")
         val beta = row("beta", "same")
@@ -90,6 +95,11 @@ class SessionDrawerPolicyTest {
             listOf("Today", "Last 7 days"),
             groupSessionRows(listOf(working, idle), SessionDrawerGrouping.Updated, states, now)
                 .mapNotNull { it.label },
+        )
+        assertEquals(
+            listOf(null),
+            groupSessionRows(listOf(working, idle), SessionDrawerGrouping.None, states, now)
+                .map { it.label },
         )
     }
 

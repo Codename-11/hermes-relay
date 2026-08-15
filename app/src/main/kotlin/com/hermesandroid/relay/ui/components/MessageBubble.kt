@@ -463,6 +463,10 @@ fun MessageBubble(
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
+                shape = RoundedCornerShape(24.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 3.dp,
+                shadowElevation = 8.dp,
             ) {
                 if (onReact != null) {
                     Row(
@@ -565,6 +569,11 @@ fun MessageBubble(
                 }
             }
         }
+        Box(
+            modifier = Modifier.padding(
+                bottom = if (message.reactions.isNotEmpty()) 8.dp else 0.dp,
+            ),
+        ) {
         Surface(
             shape = bubbleShape,
             color = backgroundColor,
@@ -871,7 +880,14 @@ fun MessageBubble(
             MessageReactionBadge(
                 reactions = message.reactions.map { it.emoji },
                 onOpen = onReact?.let { { showMessageActions = true } },
+                modifier = Modifier
+                    .align(if (isUser) Alignment.BottomEnd else Alignment.BottomStart)
+                    .offset(
+                        x = if (isUser) (-10).dp else 10.dp,
+                        y = 9.dp,
+                    ),
             )
+        }
         }
         val inlineActions: @Composable () -> Unit = {
             MessageInlineActions(
@@ -930,6 +946,7 @@ fun MessageBubble(
 private fun MessageReactionBadge(
     reactions: List<String>,
     onOpen: (() -> Unit)?,
+    modifier: Modifier = Modifier,
 ) {
     val description = "Reactions: ${reactions.joinToString(" ")}"
     Surface(
@@ -937,8 +954,7 @@ private fun MessageReactionBadge(
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 2.dp,
         shadowElevation = 2.dp,
-        modifier = Modifier
-            .offset(y = (-7).dp)
+        modifier = modifier
             .then(
                 if (onOpen != null) {
                     Modifier.combinedClickable(onClick = onOpen, onLongClick = onOpen)

@@ -12,6 +12,7 @@ import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -146,6 +147,75 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.setSessionProfileNameProvider { "victor" }
 
         assertEquals("victor", gatewayClient.sessionProfileProvider())
+    }
+
+    @Test
+    fun allProfilesOpenKeepsGlobalSelectionButScopesHistoryResumeAndSendToOwner() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        var loadedProfile: String? = null
+        var persistedSession = "unchanged"
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.onSessionChanged = { persistedSession = it ?: "cleared" }
+        viewModel.setProfileMessageLoaderWithMode { profileName, _, _ ->
+            loadedProfile = profileName
+            Result.success(emptyList())
+        }
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+
+        awaitCondition { loadedProfile == owner.name }
+        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, gatewayClient.sessionProfileProvider())
+        assertEquals("X-bot", handler.activeAgentName)
+        assertEquals("unchanged", persistedSession)
+
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = null,
+        )
+        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertEquals(global.name, gatewayClient.sessionProfileProvider())
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+
+        viewModel.createNewChat()
+        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertEquals(global.name, gatewayClient.sessionProfileProvider())
+    }
+
+    @Test
+    fun allProfilesNewChatUsesLiteralDefaultWithoutChangingGlobalSelection() {
+        val global = Profile(name = "victor", model = "grok-4.5", description = "Victor")
+        val rootDefault = Profile(name = "default", model = "gpt-5.5", description = "Hermes")
+        var persistedSession = "unchanged"
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.onSessionChanged = { persistedSession = it ?: "cleared" }
+
+        viewModel.createProfileChat(
+            profileName = "default",
+            profile = rootDefault,
+            contextKey = AgentDisplay.profileContextKey("connection-a", "default"),
+        )
+
+        assertEquals("default", viewModel.openedSessionProfileName.value)
+        assertEquals("default", gatewayClient.sessionProfileProvider())
+        assertEquals(null, handler.currentSessionId.value)
+        assertEquals("Hermes", handler.activeAgentName)
+        assertEquals("unchanged", persistedSession)
     }
 
     @Test
@@ -1383,38 +1453,12 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun unsolicitedTurnDoesNotReplaceAnActiveForcedSseTurn() {
-        holdCompletionsStream = true
+    fun gatewayVoiceTurnDoesNotRequireApiFallback() {
         viewModel.sendVoiceMessage("local voice turn", "Respond for spoken playback")
-        awaitCondition { handler.isStreaming.value }
-        val localPlaceholderId = handler.messages.value.last().id
+        val params = gatewayHarness.awaitRpc("prompt.submit")
 
-        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
-        serverWs.send(
-            gatewayHarness.eventFrame(
-                "message.delta",
-                buildJsonObject { put("text", BACKGROUND_ANSWER) },
-                "live-resumed",
-            ),
-        )
-        persistedHistory = persistedAnswerHistory()
-        serverWs.send(
-            gatewayHarness.eventFrame(
-                "message.complete",
-                buildJsonObject { put("text", BACKGROUND_ANSWER) },
-                "live-resumed",
-            ),
-        )
-        Thread.sleep(150)
-        shadowOf(Looper.getMainLooper()).idle()
-
-        assertTrue("the forced SSE turn must still own streaming", handler.isStreaming.value)
-        assertTrue(handler.messages.value.any { it.id == localPlaceholderId && it.isStreaming })
-        assertFalse(handler.messages.value.any { it.content == BACKGROUND_ANSWER })
-
-        viewModel.cancelStream()
-        awaitCondition { !handler.isStreaming.value }
-        awaitCondition { handler.messages.value.any { it.content == BACKGROUND_ANSWER } }
+        assertEquals(JsonPrimitive("local voice turn"), params["text"])
+        assertEquals(0, apiCompletionsRequestCount.get())
     }
 
     @Test
