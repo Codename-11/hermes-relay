@@ -1,23 +1,17 @@
 # Hermes-Relay CLI v__VERSION__
 
-**Release Date:** 2026-08-14
+**Release Date:** 2026-08-15
 
-This patch prevents the Windows management tray from accumulating Hermes-Relay, registry, and ADB helper processes when a refresh is slow or fails, and adds bounded diagnostics for future recovery.
+This patch keeps the Windows management UI usable when the Relay daemon is stopped or its status cannot be read.
 
 **Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64; the management UI is Windows-only.
 
 ## What's changed
 
-### Changed
-
-- **Grant discovery stays lightweight.** The approval window reads local bridge state instead of rebuilding the complete management snapshot, schedules each refresh only after the previous one finishes, and pauses idle polling while hidden.
-- **Management refreshes are visibility-aware and resilient.** Concurrent snapshot requests share one bounded result, optional static checks are cached, and repeated failures back off instead of creating more work.
-
 ### Fixed
 
-- **Windows helper processes are contained.** Tray-launched commands have hard deadlines, bounded output capture, descendant cleanup, and suppressed loader-error dialogs, preventing stalled probes from growing into a process storm.
-- **Daemon startup is serialized across launchers.** Cross-process lifecycle and runtime ownership locks prevent concurrent start or restart requests from leaving duplicate daemons behind.
-- **Tray failures are diagnosable without exposing command data.** A rotated, sanitized `tray.log` records bounded probe and lifecycle outcomes separately from `daemon.log`.
+- **Stopped daemons no longer block the management UI.** Missing, stale, malformed, or temporarily unavailable daemon status falls back to an explicit stopped state while hosts, settings, activity, CLI details, diagnostics, and daemon controls continue loading normally.
+- **Starting the daemon restores live status without reopening the UI.** A valid running status continues through the same bounded, single-flight snapshot path introduced in beta.3.
 
 ## Install
 
