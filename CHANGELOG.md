@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-14
+
 ### Added
 
 - **Android session browsing matches Hermes Desktop's recent organization model.** The primary session drawer can toggle between the active profile and all profiles, group by recency, project, status, or profile, order by supported session metrics, and narrow rows by status, project, profile, or pull-request state without collapsing duplicate IDs across profile stores. Named profiles receive stable identity-color badges with locally persisted color overrides.
@@ -21,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.
 - **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
 - **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
+- **Android keeps cross-profile sessions with their owning agent.** Opening a session from All Profiles hydrates, resumes, sends, and renders with that session's profile without changing the global profile selection; New Chat from that view starts with the default profile.
+- **Android reactions and standard voice follow the active conversation.** Reactions resolve durable rows for both user and assistant messages, while Vanilla Hermes voice remains on the authenticated Gateway instead of requiring the optional API fallback.
+- **Android session navigation behaves predictably.** The drawer closes on outside taps, uses an ungrouped recent-session list by default, retains project grouping as an explicit option, and exposes secondary actions in All Profiles mode.
 
 ## [0.4.0-beta.3] - 2026-08-14
 
