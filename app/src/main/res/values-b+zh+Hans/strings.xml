@@ -1796,6 +1796,17 @@
     <!-- Section action buttons -->
     <string name="dashboard_section_action_change_main_model">更改主模型</string>
     <string name="dashboard_section_action_new_profile">新建配置文件</string>
+    <string name="dashboard_section_action_new_schedule">新建计划</string>
+    <string name="dashboard_cron_create_title">创建计划</string>
+    <string name="dashboard_cron_name">名称</string>
+    <string name="dashboard_cron_schedule">计划</string>
+    <string name="dashboard_cron_schedule_hint">示例：every 2h、0 9 * * 1-5 或 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">任务说明</string>
+    <string name="dashboard_cron_repeat">运行指定次数后停止（可选）</string>
+    <string name="dashboard_cron_repeat_help">留空以保留计划的正常行为。有限计划可设置 1–999 次运行。</string>
+    <string name="dashboard_cron_gateway_required">创建计划需要当前 Hermes Gateway 连接。</string>
+    <string name="dashboard_cron_created">已创建计划“%1$s”</string>
+    <string name="dashboard_cron_create_failed">无法创建计划</string>
     <string name="dashboard_section_action_browse_hub">浏览中心</string>
     <string name="dashboard_section_action_update_installed">更新已安装</string>
 

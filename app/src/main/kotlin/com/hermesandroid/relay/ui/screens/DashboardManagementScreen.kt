@@ -112,10 +112,12 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardCustomEndpointDraft
 import com.hermesandroid.relay.network.upstream.McpOAuthFlowCoordinator
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
+import com.hermesandroid.relay.network.upstream.CronCreationDraft
 import com.hermesandroid.relay.network.upstream.DashboardAuthProvider
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardComponentHealthRollup
 import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.parseFiniteRepeat
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayMetricCard
@@ -388,6 +390,7 @@ private fun dashboardPayloadKey(
 /** Section-level (not per-item) affordances rendered at the top of a tab. */
 private enum class DashboardSectionAction {
     ChangeMainModel,
+    CreateCron,
     CreateProfile,
     BrowseSkillsHub,
     UpdateSkillsHub,
@@ -485,6 +488,7 @@ fun DashboardManagementScreen(
     var inputAction by remember { mutableStateOf<PendingDashboardAction?>(null) }
     var modelPickerTarget by remember { mutableStateOf<ModelPickerTarget?>(null) }
     var showCreateProfile by remember { mutableStateOf(false) }
+    var showCreateCron by remember { mutableStateOf(false) }
     var expensiveModelConfirm by remember { mutableStateOf<ExpensiveModelConfirm?>(null) }
     var showSkillsHub by remember { mutableStateOf(false) }
     var soulEditor by remember { mutableStateOf<SoulEditorState?>(null) }
@@ -918,6 +922,29 @@ fun DashboardManagementScreen(
         }
     }
 
+    fun submitCreateCron(draft: CronCreationDraft) {
+        if (actionInFlight) return
+        val actionPayloadKey = payloadKey
+        actionInFlight = true
+        actionMessage = null
+        scope.launch {
+            val result = connectionViewModel.activeGatewayChatClient()
+                ?.createCronJob(draft.copy(profile = effectiveProfileName))
+                ?: Result.failure(IllegalStateException(context.getString(R.string.dashboard_cron_gateway_required)))
+            actionMessage = result.fold(
+                onSuccess = {
+                    showCreateCron = false
+                    refreshingPayloads[actionPayloadKey] = true
+                    forceReloadKey = actionPayloadKey
+                    reloadNonce += 1
+                    context.getString(R.string.dashboard_cron_created, draft.name.trim())
+                },
+                onFailure = { err -> err.message ?: context.getString(R.string.dashboard_cron_create_failed) },
+            )
+            actionInFlight = false
+        }
+    }
+
     fun runServerBackup() {
         if (dashboardUrl.isBlank() || actionInFlight) return
         actionInFlight = true
@@ -1207,6 +1234,14 @@ fun DashboardManagementScreen(
             dismissButton = {
                 TextButton(onClick = { showCreateProfile = false }) { Text(stringResource(R.string.dashboard_cancel)) }
             },
+        )
+    }
+
+    if (showCreateCron) {
+        CronCreationDialog(
+            actionInFlight = actionInFlight,
+            onDismiss = { showCreateCron = false },
+            onCreate = ::submitCreateCron,
         )
     }
 
@@ -1529,6 +1564,8 @@ fun DashboardManagementScreen(
                                         when (sectionAction) {
                                             DashboardSectionAction.ChangeMainModel ->
                                                 modelPickerTarget = ModelPickerTarget.Main
+                                            DashboardSectionAction.CreateCron ->
+                                                showCreateCron = true
                                             DashboardSectionAction.CreateProfile ->
                                                 showCreateProfile = true
                                             DashboardSectionAction.BrowseSkillsHub ->
@@ -2587,6 +2624,7 @@ private fun LoadedBody(
     // Pre-resolve action labels outside LazyColumn's non-Composable lambda
     val actionLabelChangeMainModel = stringResource(R.string.dashboard_section_action_change_main_model)
     val actionLabelNewProfile = stringResource(R.string.dashboard_section_action_new_profile)
+    val actionLabelNewSchedule = stringResource(R.string.dashboard_section_action_new_schedule)
     val actionLabelBrowseHub = stringResource(R.string.dashboard_section_action_browse_hub)
     val actionLabelUpdateInstalled = stringResource(R.string.dashboard_section_action_update_installed)
     val actionLabelAddEndpoint = stringResource(R.string.dashboard_custom_endpoint_add)
@@ -2613,6 +2651,9 @@ private fun LoadedBody(
             )
             DashboardManagementSection.Profiles -> listOf(
                 DashboardSectionAction.CreateProfile to actionLabelNewProfile,
+            )
+            DashboardManagementSection.Cron -> listOf(
+                DashboardSectionAction.CreateCron to actionLabelNewSchedule,
             )
             DashboardManagementSection.Skills -> listOf(
                 DashboardSectionAction.BrowseSkillsHub to actionLabelBrowseHub,
@@ -3174,6 +3215,82 @@ private fun ActionMessageCard(message: String) {
             modifier = Modifier.padding(14.dp),
         )
     }
+}
+
+@Composable
+private fun CronCreationDialog(
+    actionInFlight: Boolean,
+    onDismiss: () -> Unit,
+    onCreate: (CronCreationDraft) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var schedule by remember { mutableStateOf("") }
+    var prompt by remember { mutableStateOf("") }
+    var repeatText by remember { mutableStateOf("") }
+    val repeat = parseFiniteRepeat(repeatText)
+    val draft = repeat.getOrNull()?.let {
+        CronCreationDraft(name = name, schedule = schedule, prompt = prompt, repeat = it)
+    } ?: if (repeat.isSuccess) {
+        CronCreationDraft(name = name, schedule = schedule, prompt = prompt)
+    } else {
+        null
+    }
+    val canCreate = draft?.validated()?.isSuccess == true && !actionInFlight
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.dashboard_cron_create_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.dashboard_cron_name)) },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = schedule,
+                    onValueChange = { schedule = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.dashboard_cron_schedule)) },
+                    supportingText = { Text(stringResource(R.string.dashboard_cron_schedule_hint)) },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.dashboard_cron_prompt)) },
+                    minLines = 3,
+                    maxLines = 6,
+                )
+                OutlinedTextField(
+                    value = repeatText,
+                    onValueChange = { repeatText = it.take(4) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.dashboard_cron_repeat)) },
+                    supportingText = {
+                        Text(
+                            repeat.exceptionOrNull()?.message
+                                ?: stringResource(R.string.dashboard_cron_repeat_help),
+                        )
+                    },
+                    isError = repeat.isFailure,
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { draft?.let(onCreate) },
+                enabled = canCreate,
+            ) { Text(stringResource(R.string.dashboard_create)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.dashboard_cancel)) }
+        },
+    )
 }
 
 @Composable

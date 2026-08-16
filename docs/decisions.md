@@ -3223,3 +3223,55 @@ IDs, so movement remains native drag/dock and agent-driven reveal remains
 unsupported. Physical Desktop certification remains required for multi-window,
 named-profile, remote/SSH-mapped profile, close/reopen, drag/dock, hot-reload,
 and renderer-log behavior.
+
+---
+
+## ADR 58 — Android owns bounded cron creation and local reset evidence; connector prompts stay separate
+
+**Status:** Accepted (2026-08-15).
+
+**Context.** Three upstream-impact opportunities overlapped Android automation,
+continuous-session diagnostics, and interactive cards. Current upstream source
+provides `cron.manage` over the authenticated Dashboard Gateway and forwards an
+optional positive `repeat` value to the existing cron store. It also provides
+session-bound `clarify.respond`, `approval.respond`, `sudo.respond`, and
+`secret.respond` RPCs with request identity and expiry. Separately, the NeMo
+Relay connector defines gateway-to-gateway `prompt`, `prompt_response`, and
+`react` operations whose clicking-user authorization and resolver ownership
+belong to messaging connectors, not Dashboard clients. Upstream telemetry
+session segmentation is opt-in server configuration and exposes no client
+mutation contract.
+
+**Decision.** Android Manage may create jobs directly with `cron.manage`. The
+editor sends only name, schedule, task instructions, selected profile, and an
+optional finite repeat count. Blank repeat preserves upstream schedule-kind
+defaults. Explicit counts are limited to 1–999 and invalid input is rejected
+locally because upstream normalizes zero or negative values to unlimited, which
+would contradict the user's choice. Existing Dashboard HTTP routes remain the
+list, runs, pause, resume, trigger, and delete surface; Hermes-Relay does not add
+a scheduler or new Relay endpoint.
+
+Before Android replaces a visible chat context for New chat or Thread entry, it
+writes one bounded local checkpoint. The allowlist contains only the reset
+reason, transport kind, structural counts, and boolean lifecycle state. It
+contains no prompt/message text, IDs, profile names, URLs, paths, media, tool
+arguments/results, credentials, or telemetry upload. The checkpoint uses the
+existing app-private reliability ring and appears only in the user-reviewed
+Diagnostics support bundle.
+
+Android continues to resolve live Gateway asks through their native `*.respond`
+RPCs. Connector prompt operations are not implemented in the app or Relay
+plugin, and generic `CARD:{json}` actions remain display/send affordances rather
+than approval resolvers. A future generic Dashboard prompt RPC can be evaluated
+only if upstream publishes one with request ownership, authorization, expiry,
+one-answer, reconnect, and replay semantics. Until then, copying connector
+credentials, option IDs, or reaction routing into the phone would create a
+second and weaker interaction protocol.
+
+**Consequences.** Users can create recurring work that stops after a reviewed
+number of runs on a current Gateway, while older or disconnected gateways fail
+visibly without a fallback mutation. Reset diagnostics survive an app process
+loss without retaining conversation content. Existing clarify multi-select,
+free-text, expiry, reconnect, and one-answer behavior remains canonical, and the
+connector-specific interactive-card evaluation is closed with no client
+migration.

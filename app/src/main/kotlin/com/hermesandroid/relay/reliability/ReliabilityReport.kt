@@ -15,6 +15,7 @@ const val RELIABILITY_SCHEMA_VERSION = 1
 enum class ReliabilityKind {
     FatalCrash,
     AnrSignal,
+    SessionCheckpoint,
     RecoverableProductError,
     Connectivity,
     Authentication,

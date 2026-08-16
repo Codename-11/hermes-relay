@@ -1799,6 +1799,17 @@
     <!-- Section action buttons -->
     <string name="dashboard_section_action_change_main_model">Hauptmodell ändern</string>
     <string name="dashboard_section_action_new_profile">Neues Profil</string>
+    <string name="dashboard_section_action_new_schedule">Neuer Zeitplan</string>
+    <string name="dashboard_cron_create_title">Zeitplan erstellen</string>
+    <string name="dashboard_cron_name">Name</string>
+    <string name="dashboard_cron_schedule">Zeitplan</string>
+    <string name="dashboard_cron_schedule_hint">Beispiele: every 2h, 0 9 * * 1-5 oder 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">Aufgabenanweisungen</string>
+    <string name="dashboard_cron_repeat">Nach dieser Anzahl von Ausführungen stoppen (optional)</string>
+    <string name="dashboard_cron_repeat_help">Leer lassen, um das normale Verhalten des Zeitplans beizubehalten. Endliche Zeitpläne akzeptieren 1–999 Ausführungen.</string>
+    <string name="dashboard_cron_gateway_required">Zum Erstellen eines Zeitplans ist eine aktuelle Hermes-Gateway-Verbindung erforderlich.</string>
+    <string name="dashboard_cron_created">Zeitplan „%1$s“ erstellt</string>
+    <string name="dashboard_cron_create_failed">Zeitplan konnte nicht erstellt werden</string>
     <string name="dashboard_section_action_browse_hub">Sammlung durchsuchen</string>
     <string name="dashboard_section_action_update_installed">Installierte aktualisieren</string>
 

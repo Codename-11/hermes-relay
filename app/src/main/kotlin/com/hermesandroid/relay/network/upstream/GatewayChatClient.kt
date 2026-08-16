@@ -1300,6 +1300,30 @@ class GatewayChatClient(
     }
 
     /**
+     * Create a schedule through upstream's authenticated `cron.manage` RPC.
+     * No Relay scheduler or compatibility endpoint is involved.
+     */
+    suspend fun createCronJob(draft: CronCreationDraft): Result<JsonObject> {
+        val validated = draft.validated().getOrElse { return Result.failure(it) }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(
+            "cron.manage",
+            buildJsonObject {
+                put("action", "add")
+                put("name", validated.name)
+                put("schedule", validated.schedule)
+                put("prompt", validated.prompt)
+                validated.repeat?.let { put("repeat", it) }
+                validated.profile?.let { put("profile", it) }
+            },
+        )
+    }
+
+    /**
      * Capability probe and authoritative editor snapshot. A method-not-found
      * response is sticky for this client so older Hermes builds keep using the
      * existing Relay inspector without repeatedly sending unsupported RPCs.

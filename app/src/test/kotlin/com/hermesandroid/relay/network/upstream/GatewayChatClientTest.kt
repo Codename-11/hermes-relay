@@ -2053,6 +2053,43 @@ class GatewayChatClientTest {
         assertTrue(harness.ticketMints.get() >= 1)
     }
 
+    @Test
+    fun `cron creation uses upstream manage rpc with finite repeat and profile`() {
+        val result = runBlocking {
+            client.createCronJob(
+                CronCreationDraft(
+                    name = "Two reports",
+                    schedule = "every 1h",
+                    prompt = "Send a concise report",
+                    repeat = 2,
+                    profile = "work",
+                ),
+            )
+        }
+
+        assertTrue(result.isSuccess)
+        val params = harness.awaitRpc("cron.manage")
+        assertEquals("add", (params["action"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("Two reports", (params["name"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("every 1h", (params["schedule"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("Send a concise report", (params["prompt"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(2, (params["repeat"] as? JsonPrimitive)?.intOrNull)
+        assertEquals("work", (params["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `invalid finite repeat is rejected before opening gateway`() {
+        val result = runBlocking {
+            client.createCronJob(
+                CronCreationDraft("Bad", "every 1h", "Run", repeat = 0),
+            )
+        }
+
+        assertTrue(result.isFailure)
+        assertEquals(0, harness.ticketMints.get())
+        assertTrue(harness.rpcLog.none { it.first == "cron.manage" })
+    }
+
     // --- Pet thumbnails ---
 
     @Test

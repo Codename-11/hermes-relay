@@ -102,6 +102,8 @@ import com.hermesandroid.relay.network.upstream.models.SkillInfo
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.notifications.InteractionRequestNotifier
+import com.hermesandroid.relay.reliability.ReliabilityCenter
+import com.hermesandroid.relay.reliability.SessionResetEvidence
 import com.hermesandroid.relay.ui.components.ServerImageResult
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
@@ -3656,6 +3658,7 @@ class ChatViewModel : ViewModel() {
 
     fun createNewChat() {
         val handler = chatHandler ?: return
+        recordPreResetEvidence(handler, "new_chat")
         clearOpenedSessionOwner()
         pendingThread = null
         creatingThread = null
@@ -3755,6 +3758,7 @@ class ChatViewModel : ViewModel() {
      */
     fun startNewThread(name: String) {
         val handler = chatHandler ?: return
+        recordPreResetEvidence(handler, "new_thread")
         releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         historyLoadGeneration.incrementAndGet()
@@ -3790,6 +3794,8 @@ class ChatViewModel : ViewModel() {
             .sortedBy { it.receivedAt }
         if (ordered.isEmpty()) return
 
+        recordPreResetEvidence(handler, "open_proactive_thread")
+
         releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         historyLoadGeneration.incrementAndGet()
@@ -3812,6 +3818,30 @@ class ChatViewModel : ViewModel() {
         dismissPendingAskNotification()
         _pendingAsk.value = null
         onSessionChanged?.invoke(null)
+    }
+
+    private fun recordPreResetEvidence(handler: ChatHandler, reason: String) {
+        val messages = handler.messages.value
+        val evidence = SessionResetEvidence(
+            reason = reason,
+            transport = streamingEndpoint,
+            messageCount = messages.size,
+            toolCount = messages.sumOf { it.toolCalls.size },
+            queuedCount = queuedMessageItems.size,
+            pendingAttachmentCount = _pendingAttachments.value.size,
+            hadStoredSession = !handler.currentSessionId.value.isNullOrBlank(),
+            turnActive = handler.isStreaming.value,
+            askPending = _pendingAsk.value != null,
+        )
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Session,
+            severity = DiagnosticSeverity.Info,
+            title = "Chat context checkpoint saved",
+            detail = evidence.technicalDetail(),
+            operation = reason,
+            endpointRole = streamingEndpoint,
+        )
+        appContext?.let { ReliabilityCenter.recordSessionCheckpoint(it, evidence) }
     }
 
     /**

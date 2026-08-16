@@ -1831,6 +1831,17 @@
     <string name="dashboard_empty_section">Не возвращено %1$s</string>
     <string name="dashboard_section_action_change_main_model">Изменить основную модель</string>
     <string name="dashboard_section_action_new_profile">Новый профиль</string>
+    <string name="dashboard_section_action_new_schedule">Новое расписание</string>
+    <string name="dashboard_cron_create_title">Создать расписание</string>
+    <string name="dashboard_cron_name">Название</string>
+    <string name="dashboard_cron_schedule">Расписание</string>
+    <string name="dashboard_cron_schedule_hint">Примеры: every 2h, 0 9 * * 1-5 или 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">Инструкции задачи</string>
+    <string name="dashboard_cron_repeat">Остановить после указанного числа запусков (необязательно)</string>
+    <string name="dashboard_cron_repeat_help">Оставьте пустым для обычного поведения расписания. Для конечных расписаний можно указать от 1 до 999 запусков.</string>
+    <string name="dashboard_cron_gateway_required">Для создания расписания требуется текущее подключение к Hermes Gateway.</string>
+    <string name="dashboard_cron_created">Расписание «%1$s» создано</string>
+    <string name="dashboard_cron_create_failed">Не удалось создать расписание</string>
     <string name="dashboard_section_action_browse_hub">Просмотр центра</string>
     <string name="dashboard_section_action_update_installed">Обновить установленное</string>
     <string name="dashboard_action_set">Установить</string>

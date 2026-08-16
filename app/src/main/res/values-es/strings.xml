@@ -1646,6 +1646,17 @@
     <string name="dashboard_empty_section">No se devolvió ningún %1$s</string>
     <string name="dashboard_section_action_change_main_model">Cambiar modelo principal</string>
     <string name="dashboard_section_action_new_profile">Nuevo perfil</string>
+    <string name="dashboard_section_action_new_schedule">Nueva programación</string>
+    <string name="dashboard_cron_create_title">Crear programación</string>
+    <string name="dashboard_cron_name">Nombre</string>
+    <string name="dashboard_cron_schedule">Programación</string>
+    <string name="dashboard_cron_schedule_hint">Ejemplos: every 2h, 0 9 * * 1-5 o 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">Instrucciones de la tarea</string>
+    <string name="dashboard_cron_repeat">Detener después de esta cantidad de ejecuciones (opcional)</string>
+    <string name="dashboard_cron_repeat_help">Déjalo en blanco para conservar el comportamiento normal. Las programaciones finitas aceptan entre 1 y 999 ejecuciones.</string>
+    <string name="dashboard_cron_gateway_required">La creación de programaciones requiere una conexión actual con Hermes Gateway.</string>
+    <string name="dashboard_cron_created">Programación «%1$s» creada</string>
+    <string name="dashboard_cron_create_failed">No se pudo crear la programación</string>
     <string name="dashboard_section_action_browse_hub">Centro de exploración</string>
     <string name="dashboard_section_action_update_installed">Actualización instalada</string>
     <string name="dashboard_action_set">Colocar</string>

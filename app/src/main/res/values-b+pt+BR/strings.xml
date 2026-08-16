@@ -1722,6 +1722,17 @@
     <!-- Section action buttons -->
     <string name="dashboard_section_action_change_main_model">Alterar modelo principal</string>
     <string name="dashboard_section_action_new_profile">Novo perfil</string>
+    <string name="dashboard_section_action_new_schedule">Novo agendamento</string>
+    <string name="dashboard_cron_create_title">Criar agendamento</string>
+    <string name="dashboard_cron_name">Nome</string>
+    <string name="dashboard_cron_schedule">Agendamento</string>
+    <string name="dashboard_cron_schedule_hint">Exemplos: every 2h, 0 9 * * 1-5 ou 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">Instruções da tarefa</string>
+    <string name="dashboard_cron_repeat">Parar após esta quantidade de execuções (opcional)</string>
+    <string name="dashboard_cron_repeat_help">Deixe em branco para manter o comportamento normal. Agendamentos finitos aceitam de 1 a 999 execuções.</string>
+    <string name="dashboard_cron_gateway_required">A criação de agendamentos requer uma conexão atual com o Hermes Gateway.</string>
+    <string name="dashboard_cron_created">Agendamento “%1$s” criado</string>
+    <string name="dashboard_cron_create_failed">Não foi possível criar o agendamento</string>
     <string name="dashboard_section_action_browse_hub">Explorar a central</string>
     <string name="dashboard_section_action_update_installed">Atualizar instaladas</string>
     <!-- Action labels (rendered via kind → string) -->
