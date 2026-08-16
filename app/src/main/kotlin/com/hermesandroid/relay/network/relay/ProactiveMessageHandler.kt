@@ -5,7 +5,9 @@ import android.util.Log
 import com.hermesandroid.relay.network.relay.models.Envelope
 import com.hermesandroid.relay.notifications.ProactiveMessageNotifier
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -50,7 +52,7 @@ class ProactiveMessageHandler(
     /** Sink for the dedicated Hermes inbox (Phase 2a) — the always-present log. */
     private val toInbox: ((ProactiveMessage) -> Unit)? = null,
     /** Sink for injecting into the active chat session (Phase 2b). */
-    var toSession: ((ProactiveMessage) -> Unit)? = null,
+    var toSession: ((ProactiveMessage) -> Boolean)? = null,
     /**
      * Sink for the relay's per-reply ack (`proactive.reply.ack`) — lets the
      * chat layer settle a Thread reply bubble from SENDING → DELIVERED. Wired
@@ -66,6 +68,8 @@ class ProactiveMessageHandler(
      * [toSession]; wired after construction.
      */
     var injectIntoThread: ((ProactiveMessage) -> Boolean)? = null,
+    /** One callback per completed queued-message flush, never per message. */
+    var onBacklogDelivered: ((Int) -> Unit)? = null,
 ) {
 
     fun onMessage(envelope: Envelope) {
@@ -80,6 +84,10 @@ class ProactiveMessageHandler(
             }
             // Subscribe ack — informational; nothing to do client-side.
             "proactive.subscribed" -> Log.d(TAG, "proactive subscribe acked")
+            "proactive.backlog.complete" -> {
+                val count = envelope.payload["count"]?.jsonPrimitive?.intOrNull ?: 0
+                if (count > 0) onBacklogDelivered?.invoke(count)
+            }
             // Per-reply ack — settle the matching Thread reply bubble (the
             // `client_msg_id` is the id the app stamped on its own reply).
             "proactive.reply.ack" -> {
@@ -99,21 +107,23 @@ class ProactiveMessageHandler(
         // session until the phone replies, so this cache is the provisional
         // Thread transcript during that gap.
         toInbox?.invoke(msg)
-        // Unified Threads: if this message belongs to the Thread currently open
-        // in Chat, render it inline there and stop before raising a notification.
-        if (injectIntoThread?.invoke(msg) == true) return
-        // The surfacing hint selects the additional surface.
+        // The surfacing hint selects the additional surface. Thread injection
+        // is best-effort presentation of the persisted row, not itself a reason
+        // to suppress an explicitly requested notification.
         when (msg.surfacing?.lowercase()) {
-            "inbox" -> { /* inbox only — already recorded above */ }
+            "inbox" -> {
+                injectIntoThread?.invoke(msg)
+            }
             "session" -> {
-                val sink = toSession
-                // Legacy explicit "inject into active session" path; if no sink
-                // (or no active chat) fall back to a notification so it isn't
-                // silently missed (the inbox copy already exists either way).
-                if (sink != null) sink.invoke(msg) else notify(msg)
+                val delivered = injectIntoThread?.invoke(msg) == true ||
+                    toSession?.invoke(msg) == true
+                if (!delivered) notify(msg)
             }
             // null / "default" / "notification" / anything unrecognized.
-            else -> notify(msg)
+            else -> {
+                injectIntoThread?.invoke(msg)
+                notify(msg)
+            }
         }
     }
 
@@ -138,6 +148,7 @@ class ProactiveMessageHandler(
             surfacing = payload["surfacing"]?.jsonPrimitive?.contentOrNull,
             sentAt = payload["sent_at"]?.jsonPrimitive?.contentOrNull?.toLongOrNull(),
             replyTo = payload["reply_to"]?.jsonPrimitive?.contentOrNull,
+            arrivedWhileAway = payload["queued_delivery"]?.jsonPrimitive?.booleanOrNull == true,
         )
     }
 
@@ -159,4 +170,6 @@ data class ProactiveMessage(
     val sentAt: Long?,
     /** Id of the message this one answers, if any (server threading hint). */
     val replyTo: String? = null,
+    /** True only when Relay explicitly marked this as a reconnect queue flush. */
+    val arrivedWhileAway: Boolean = false,
 )

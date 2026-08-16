@@ -140,7 +140,16 @@ class NativeDashboardAuthClient(
             .addQueryParameter("code_challenge_method", "S256")
             .addQueryParameter("redirect_uri", redirectUri)
             .addQueryParameter("state", state)
-            .apply { provider?.takeIf(String::isNotBlank)?.let { addQueryParameter("provider", it) } }
+            // Match the official Desktop client for Nous-hosted gateways: the
+            // gateway selects its single native-eligible provider. The provider
+            // name advertised to UI clients is presentation/configuration data,
+            // not a stable native-broker identifier. Other providers retain the
+            // explicit selector for direct client use and tests.
+            .apply {
+                provider
+                    ?.takeIf { it.isNotBlank() && !it.equals("nous", ignoreCase = true) }
+                    ?.let { addQueryParameter("provider", it) }
+            }
             .build()
             .toString()
         val generation = NativeTokenRefreshCoordinator.beginAuthorization(

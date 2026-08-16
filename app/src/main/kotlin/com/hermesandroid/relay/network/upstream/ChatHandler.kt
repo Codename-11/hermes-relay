@@ -471,7 +471,12 @@ class ChatHandler {
      * across the history reconcile; idempotent on the proactive [messageId] so a
      * re-delivered push (e.g. an outbound-buffer flush) never double-posts.
      */
-    fun addAgentThreadMessage(text: String, messageId: String?, agentName: String?) {
+    fun addAgentThreadMessage(
+        text: String,
+        messageId: String?,
+        agentName: String?,
+        arrivedWhileAway: Boolean = false,
+    ) {
         val id = messageId?.let { "proactive-$it" } ?: "proactive-${java.util.UUID.randomUUID()}"
         _messages.update { list ->
             if (messageId != null && list.any { it.id == id }) return@update list
@@ -481,6 +486,7 @@ class ChatHandler {
                 content = text,
                 timestamp = System.currentTimeMillis(),
                 agentName = agentName,
+                badges = if (arrivedWhileAway) listOf("While away") else emptyList(),
                 clientOnly = true,
             )
             (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
@@ -522,6 +528,19 @@ class ChatHandler {
             val idx = list.indexOfFirst { it.matchesIdentity(messageId) }
             if (idx < 0) list else list.take(idx)
         }
+    }
+
+    /**
+     * Whether [messageId] can be addressed without downgrading a durable
+     * transcript to an ordinal-only rewind. A wholly legacy transcript has no
+     * row ids and remains compatible with older Gateways. Once any visible
+     * user turn has a durable row id, the selected turn must have one too;
+     * otherwise the caller must refresh instead of guessing by position.
+     */
+    fun hasSafeGatewayRewindAddress(messageId: String): Boolean {
+        val userTurns = _messages.value.filter { it.isGatewayRewindUser() }
+        val target = userTurns.firstOrNull { it.matchesIdentity(messageId) } ?: return false
+        return target.rowId != null || userTurns.none { it.rowId != null }
     }
 
     /**

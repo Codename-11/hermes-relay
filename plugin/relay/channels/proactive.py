@@ -48,7 +48,10 @@ Wire envelopes (frozen — do not rename fields):
   * ``proactive.subscribed``  — server → app: ``{ts}`` (ack)
   * ``proactive.unsubscribe`` — app → server: ``{}`` (release)
   * ``phone.message``         — server → app: ``{message_id, chat_id, text,
-      title, surfacing, reply_to, metadata, sent_at}``
+      title, surfacing, reply_to, metadata, sent_at, queued_delivery?}``
+      (``queued_delivery=true`` only when this message is a reconnect flush)
+  * ``proactive.backlog.complete`` — server → app: ``{count, ts}`` after a
+      reconnect flush completes, so clients can show one summary for the batch
   * ``proactive.reply``       — app → server: ``{text, chat_id, reply_to,
       message_id, ts}`` (the user's answer to a ``phone.message``;
       ``reply_to`` is the answered message's id, ``chat_id`` the conversation)
@@ -350,8 +353,16 @@ class ProactiveChannel:
             if ttl_ms and sent_at and (now_ms - sent_at) > ttl_ms:
                 continue  # stale — drop rather than deliver late
             try:
+                # Copy rather than mutate the queued record: if this write
+                # fails, the original remains suitable for another attempt.
+                delivered_payload = dict(out_payload)
+                delivered_payload["queued_delivery"] = True
                 await ws.send_str(
-                    _envelope("phone.message", out_payload, out_payload.get("message_id"))
+                    _envelope(
+                        "phone.message",
+                        delivered_payload,
+                        out_payload.get("message_id"),
+                    )
                 )
                 flushed += 1
             except Exception as exc:
@@ -364,6 +375,18 @@ class ProactiveChannel:
                     self._outbound.append(leftover)
                 break
         if flushed:
+            # Ordered after every delivered phone.message. Older clients ignore
+            # this optional envelope; newer clients use it to show one summary
+            # instead of one banner per queued message.
+            try:
+                await ws.send_str(
+                    _envelope(
+                        "proactive.backlog.complete",
+                        {"count": flushed, "ts": int(time.time() * 1000)},
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - best-effort summary
+                logger.debug("proactive: failed to send backlog summary: %s", exc)
             self.last_push_at = time.time()
             self.push_count += flushed
             logger.info(

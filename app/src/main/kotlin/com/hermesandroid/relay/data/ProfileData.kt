@@ -2,6 +2,35 @@ package com.hermesandroid.relay.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+
+internal fun isSafeProfileUiMeta(meta: JsonObject): Boolean {
+    if (meta.toString().toByteArray(Charsets.UTF_8).size > 65_536) return false
+    fun containsEmbeddedAsset(value: String): Boolean {
+        val compact = value.trim()
+        return compact.startsWith("data:image/", ignoreCase = true) ||
+            compact.startsWith("iVBORw0KGgo") || // PNG
+            compact.startsWith("/9j/") || // JPEG
+            compact.startsWith("UklGR") || // RIFF/WebP
+            compact.startsWith("R0lGOD") || // GIF
+            compact.startsWith("UEsDB") // ZIP/pet archive
+    }
+    fun safe(element: JsonElement): Boolean = when (element) {
+        is JsonObject -> element.size <= 128 && element.all { (key, value) ->
+            key.length <= 128 && safe(value)
+        }
+        is JsonArray -> element.size <= 128 && element.all(::safe)
+        is JsonPrimitive -> {
+            val value = element.contentOrNull
+            value == null || (value.length <= 4_096 && !containsEmbeddedAsset(value))
+        }
+    }
+    return safe(meta)
+}
 
 /**
  * An agent profile advertised by a Hermes server in its `auth.ok` payload.
@@ -56,6 +85,7 @@ import kotlinx.serialization.Serializable
 data class Profile(
     val name: String,
     val model: String,
+    val provider: String = "",
     val description: String = "",
     @SerialName("system_message")
     val systemMessage: String? = null,
@@ -75,6 +105,12 @@ data class Profile(
     val apiServerPort: Int? = null,
     @SerialName("api_server_key_present")
     val apiServerKeyPresent: Boolean = false,
+    @SerialName("is_default")
+    val isDefault: Boolean = false,
+    @SerialName("has_avatar")
+    val hasAvatar: Boolean = false,
+    @SerialName("ui_meta")
+    val uiMeta: JsonObject = JsonObject(emptyMap()),
 ) {
     val hasIsolatedApi: Boolean
         get() = !apiServerUrl.isNullOrBlank()

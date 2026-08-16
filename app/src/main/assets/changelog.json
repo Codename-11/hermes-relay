@@ -1,6 +1,34 @@
 {
  "versions": [
   {
+   "version": "1.9.1",
+   "title": "Profile identity that sticks",
+   "date": "2026-08-16",
+   "sections": [
+    {
+     "header": "Identity follows the right scope",
+     "bullets": [
+      "Change shared avatars from Android with automatic orientation, resizing, and safe conversion to the Hermes profile-asset contract.",
+      "Select upstream animated pets that follow the Hermes profile while phone-only animated icons, local avatar overrides, and Sphere skins stay local."
+     ]
+    },
+    {
+     "header": "Profile setup stays explicit",
+     "bullets": [
+      "Create profiles with clear shared, copied, or isolated authentication choices and see partial setup outcomes.",
+      "Named-profile sessions and profile drafts fail closed when Hermes cannot confirm their owner."
+     ]
+    },
+    {
+     "header": "Safer Gateway operations",
+     "bullets": [
+      "Attachments, rewinds, recovery, model-consent changes, and hosted sign-in now follow stricter upstream contracts.",
+      "Finite schedules, bounded reset evidence, and host resource warnings make consequential actions easier to review."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.9.0",
    "title": "Better sessions, reactions, and voice",
    "date": "2026-08-14",

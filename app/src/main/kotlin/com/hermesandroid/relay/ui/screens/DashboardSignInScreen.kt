@@ -264,14 +264,37 @@ fun DashboardSignInScreen(
                     operation = "dashboard_native_pkce",
                 )
                 Log.w(NATIVE_DASHBOARD_AUTH_LOG_TAG, failureDetail)
-                actionMessage = nativeDashboardSignInActionMessage(
-                    failureStage = failureStage,
-                    errorMessage = error.message,
-                    fallbackMessage = resources.getString(R.string.dashboard_signin_failed),
-                    transportRetryMessage = resources.getString(
+                actionMessage = when (nativeDashboardSignInMessageKind(failureStage)) {
+                    NativeDashboardSignInMessageKind.CallbackRejected -> resources.getString(
+                        R.string.dashboard_native_signin_callback_rejected,
+                    )
+                    NativeDashboardSignInMessageKind.CodeRejected -> resources.getString(
+                        R.string.dashboard_native_signin_code_rejected,
+                    )
+                    NativeDashboardSignInMessageKind.GatewayRejected -> resources.getString(
+                        R.string.dashboard_native_signin_gateway_rejected,
+                    )
+                    NativeDashboardSignInMessageKind.RateLimited -> resources.getString(
+                        R.string.dashboard_native_signin_rate_limited,
+                    )
+                    NativeDashboardSignInMessageKind.GatewayUnavailable -> resources.getString(
+                        R.string.dashboard_native_signin_gateway_unavailable,
+                    )
+                    NativeDashboardSignInMessageKind.ResponseUnsupported -> resources.getString(
+                        R.string.dashboard_native_signin_response_unsupported,
+                    )
+                    NativeDashboardSignInMessageKind.AttemptInactive -> resources.getString(
+                        R.string.dashboard_native_signin_attempt_inactive,
+                    )
+                    NativeDashboardSignInMessageKind.SecureStorage -> resources.getString(
+                        R.string.dashboard_native_signin_storage_failed,
+                    )
+                    NativeDashboardSignInMessageKind.Transport -> resources.getString(
                         R.string.dashboard_native_signin_transport_retry,
-                    ),
-                )
+                    )
+                    NativeDashboardSignInMessageKind.Generic -> error.message
+                        ?: resources.getString(R.string.dashboard_signin_failed)
+                }
                 actionIsError = true
             } finally {
                 actionInFlight = false
@@ -362,16 +385,33 @@ fun DashboardSignInScreen(
     }
 }
 
-internal fun nativeDashboardSignInActionMessage(
-    failureStage: String,
-    errorMessage: String?,
-    fallbackMessage: String,
-    transportRetryMessage: String,
-): String = if (failureStage.startsWith("token_transport")) {
-    transportRetryMessage
-} else {
-    errorMessage ?: fallbackMessage
+internal enum class NativeDashboardSignInMessageKind {
+    CallbackRejected,
+    CodeRejected,
+    GatewayRejected,
+    RateLimited,
+    GatewayUnavailable,
+    ResponseUnsupported,
+    AttemptInactive,
+    SecureStorage,
+    Transport,
+    Generic,
 }
+
+internal fun nativeDashboardSignInMessageKind(failureStage: String): NativeDashboardSignInMessageKind =
+    when {
+        failureStage == "callback_error" -> NativeDashboardSignInMessageKind.CallbackRejected
+        failureStage == "token_http_400" -> NativeDashboardSignInMessageKind.CodeRejected
+        failureStage == "token_http_401" || failureStage == "token_http_403" ->
+            NativeDashboardSignInMessageKind.GatewayRejected
+        failureStage == "token_http_429" -> NativeDashboardSignInMessageKind.RateLimited
+        failureStage.startsWith("token_http_5") -> NativeDashboardSignInMessageKind.GatewayUnavailable
+        failureStage == "token_shape" -> NativeDashboardSignInMessageKind.ResponseUnsupported
+        failureStage == "inactive_generation" -> NativeDashboardSignInMessageKind.AttemptInactive
+        failureStage == "token_store" -> NativeDashboardSignInMessageKind.SecureStorage
+        failureStage.startsWith("token_transport") -> NativeDashboardSignInMessageKind.Transport
+        else -> NativeDashboardSignInMessageKind.Generic
+    }
 
 @Composable
 private fun DashboardAuthenticationComplete(onContinue: () -> Unit) {

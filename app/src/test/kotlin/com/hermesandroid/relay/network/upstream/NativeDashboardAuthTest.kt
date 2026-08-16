@@ -76,11 +76,30 @@ class NativeDashboardAuthTest {
         assertEquals("/prefix/auth/native/authorize", url.path)
         assertEquals("S256", query["code_challenge_method"])
         assertEquals("http://127.0.0.1:43123/callback", query["redirect_uri"])
-        assertEquals("nous", query["provider"])
+        assertEquals(null, query["provider"])
         assertTrue(query.getValue("state").length >= 32)
         assertEquals(43, query.getValue("code_challenge").length)
         assertFalse(query.getValue("code_challenge").contains('='))
         assertNotEquals(query["state"], query["code_challenge"])
+    }
+
+    @Test
+    fun beginAuthorization_keepsExplicitSelectorForNonNousProviders() {
+        val client = NativeDashboardAuthClient(server.url("/").toString(), store)
+
+        val authorization = client.beginAuthorization(
+            redirectUri = "http://127.0.0.1:43123/callback",
+            provider = "oidc",
+        )
+
+        val query = java.net.URI(authorization.authorizationUrl).rawQuery
+            .split("&")
+            .associate {
+                val pair = it.split("=", limit = 2)
+                java.net.URLDecoder.decode(pair[0], "UTF-8") to
+                    java.net.URLDecoder.decode(pair[1], "UTF-8")
+            }
+        assertEquals("oidc", query["provider"])
     }
 
     @Test

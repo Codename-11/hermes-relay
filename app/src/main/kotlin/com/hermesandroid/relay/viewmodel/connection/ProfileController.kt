@@ -4,9 +4,13 @@ import android.content.Context
 import android.net.Uri
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.GatewayProfileManagementUnsupportedException
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileDisplayAliasStore
 import com.hermesandroid.relay.data.ProfileIconStore
+import com.hermesandroid.relay.data.prepareProfileAvatar
+import com.hermesandroid.relay.data.profileAvatarMime
+import com.hermesandroid.relay.data.preferredProfileIcon
 import com.hermesandroid.relay.data.ProfileLockStore
 import com.hermesandroid.relay.data.ProfilePresentation
 import com.hermesandroid.relay.data.ProfilePresentationPolicy
@@ -17,6 +21,10 @@ import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardProfileScope
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayPetGalleryItem
+import com.hermesandroid.relay.network.upstream.GatewayPetInfo
+import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -39,7 +47,46 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+internal fun isCurrentProfileAvatarRefresh(
+    requestConnectionId: String,
+    activeConnectionId: String?,
+    requestGeneration: Long,
+    currentGeneration: Long,
+): Boolean = requestConnectionId == activeConnectionId && requestGeneration == currentGeneration
+
+internal fun mergeGatewayProfileRoster(
+    gateway: List<Profile>,
+    fallback: List<Profile>,
+): List<Profile> = gateway.map { authoritative ->
+    val extension = fallback.firstOrNull { it.name == authoritative.name }
+        ?: return@map authoritative
+    authoritative.copy(
+        systemMessage = extension.systemMessage,
+        gatewayRunning = extension.gatewayRunning,
+        hasSoul = extension.hasSoul,
+        apiServerEnabled = extension.apiServerEnabled,
+        apiServerUrl = extension.apiServerUrl,
+        apiServerHost = extension.apiServerHost,
+        apiServerPort = extension.apiServerPort,
+        apiServerKeyPresent = extension.apiServerKeyPresent,
+    )
+}
+
+internal fun selectProfileRoster(
+    gatewayAuthoritative: Boolean,
+    gateway: List<Profile>,
+    fallback: List<Profile>,
+): List<Profile> = if (gatewayAuthoritative) {
+    mergeGatewayProfileRoster(gateway, fallback)
+} else {
+    fallback
+}
 
 /**
  * Owns the **agent-profiles cluster** of
@@ -93,6 +140,8 @@ class ProfileController(
     private val rebuildChatApiClient: suspend () -> Unit,
     /** Optional Relay client used only for importing an icon from the host. */
     private val relayHttpClient: RelayHttpClient? = null,
+    /** Current per-connection Gateway client; profile management stays upstream-owned. */
+    private val gatewayClientProvider: () -> GatewayChatClient? = { null },
 ) {
 
     // Server-advertised named agent configs, flattened to a StateFlow the
@@ -101,15 +150,24 @@ class ProfileController(
     // underlying AuthManager instance is replaced and the public flow needs to
     // repoint at the new manager's backing state.
     private val _dashboardProfiles = MutableStateFlow<List<Profile>>(emptyList())
+    private val _gatewayProfiles = MutableStateFlow<List<Profile>>(emptyList())
+    private val _gatewayRosterAuthoritative = MutableStateFlow(false)
+    private val avatarRefreshGeneration = AtomicLong(0L)
+    private val petRefreshGeneration = AtomicLong(0L)
+    private val petGalleryGeneration = AtomicLong(0L)
+    private val petThumbnailRequests = ConcurrentHashMap.newKeySet<String>()
 
     val agentProfiles: StateFlow<List<Profile>> = combine(
         authManagerFlow.flatMapLatest { it.agentProfiles },
         _dashboardProfiles,
-    ) { relay, dashboard ->
-        // Prefer the relay's list when it has entries (richer runtime metadata);
-        // fall back to the dashboard list so a dashboard-only connection still
-        // sees its server profiles in the chat picker.
-        relay.ifEmpty { dashboard }
+        _gatewayProfiles,
+        _gatewayRosterAuthoritative,
+    ) { relay, dashboard, gateway, gatewayAuthoritative ->
+        // Current Gateway rows are authoritative for shared profile metadata and
+        // avatar presence. Relay-only runtime/API routing fields are joined by
+        // exact name so adopting the roster never drops an isolated profile route.
+        val fallback = relay.ifEmpty { dashboard }
+        selectProfileRoster(gatewayAuthoritative, gateway, fallback)
     }.stateIn(scope, SharingStarted.Eagerly, authManagerFlow.value.agentProfiles.value)
 
     private val _selectedProfile = MutableStateFlow<Profile?>(null)
@@ -257,8 +315,8 @@ class ProfileController(
 
     val profileIconStore: ProfileIconStore = ProfileIconStore(context)
 
-    /** The active profile's local agent-icon path (twin of [profileDisplayAlias]). */
-    val profileIcon: StateFlow<String?> = combine(
+    /** The active profile's device-local fallback icon. */
+    val localProfileIcon: StateFlow<String?> = combine(
         activeConnectionId,
         selectedProfile,
     ) { connectionId, profile ->
@@ -271,11 +329,63 @@ class ProfileController(
         }
     }.stateIn(scope, SharingStarted.Eagerly, null)
 
+    private val activeServerAvatarIdentity: Flow<Pair<String?, String?>> = combine(
+        activeConnectionId,
+        selectedProfile,
+        serverDefaultProfileScope,
+        _gatewayProfiles,
+    ) { connectionId, selected, serverDefault, gatewayProfiles ->
+        connectionId to (
+            selected?.name ?: serverDefault?.active
+                ?: gatewayProfiles.firstOrNull(Profile::isDefault)?.name
+        )
+    }
+
+    /** Cached bytes fetched from Hermes; always preferred over the local fallback. */
+    val serverProfileAvatar: StateFlow<String?> = activeServerAvatarIdentity
+        .flatMapLatest { (connectionId, profileName) ->
+            if (connectionId == null || profileName.isNullOrBlank()) flowOf(null)
+            else profileIconStore.serverAvatarFlow(connectionId, profileName)
+        }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** Whether this phone should prefer its local image over Hermes' shared avatar. */
+    val useLocalProfileIconOverride: StateFlow<Boolean> = combine(
+        activeConnectionId,
+        selectedProfile,
+    ) { connectionId, profile ->
+        connectionId to AgentDisplay.profileRequestName(profile?.name)
+    }.flatMapLatest { (connectionId, profileName) ->
+        if (connectionId == null) flowOf(false)
+        else profileIconStore.localOverrideFlow(connectionId, profileName)
+    }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    val profileIcon: StateFlow<String?> = combine(
+        serverProfileAvatar,
+        localProfileIcon,
+        useLocalProfileIconOverride,
+    ) { server, local, localOverride -> preferredProfileIcon(server, local, localOverride) }
+        .stateIn(scope, SharingStarted.Eagerly, null)
+
     /** Local icon for any profile identity on the active connection. */
-    fun profileIconFlow(profileName: String?): Flow<String?> = activeConnectionId
-        .flatMapLatest { connectionId ->
-            if (connectionId == null) flowOf(null)
-            else profileIconStore.iconFlow(connectionId, profileName)
+    fun profileIconFlow(profileName: String?): Flow<String?> = combine(
+        activeConnectionId,
+        serverDefaultProfileScope,
+        _gatewayProfiles,
+    ) { connectionId, serverDefault, gatewayProfiles ->
+        connectionId to (
+            profileName ?: serverDefault?.active
+                ?: gatewayProfiles.firstOrNull(Profile::isDefault)?.name
+        )
+    }
+        .flatMapLatest { (connectionId, serverProfileName) ->
+            if (connectionId == null) return@flatMapLatest flowOf(null)
+            val local = profileIconStore.iconFlow(connectionId, profileName)
+            val localOverride = profileIconStore.localOverrideFlow(connectionId, profileName)
+            if (serverProfileName.isNullOrBlank()) local else combine(
+                profileIconStore.serverAvatarFlow(connectionId, serverProfileName),
+                local,
+                localOverride,
+            ) { server, fallback, override -> preferredProfileIcon(server, fallback, override) }
         }
 
     data class HostIconImportState(
@@ -286,6 +396,44 @@ class ProfileController(
     private val _hostIconImportState = MutableStateFlow(HostIconImportState())
     val hostIconImportState: StateFlow<HostIconImportState> =
         _hostIconImportState.asStateFlow()
+
+    data class SharedAvatarState(
+        val loading: Boolean = false,
+        val error: String? = null,
+    )
+
+    private val _sharedAvatarState = MutableStateFlow(SharedAvatarState())
+    val sharedAvatarState: StateFlow<SharedAvatarState> = _sharedAvatarState.asStateFlow()
+
+    data class HermesPetPresentation(
+        val connectionId: String,
+        val profileName: String?,
+        val slug: String,
+        val displayName: String,
+        val spritesheetPath: String,
+        val spritesheetRevision: String,
+        val frameWidth: Int,
+        val frameHeight: Int,
+        val framesPerState: Int,
+        val framesByState: Map<String, Int>,
+        val framesByRow: Map<String, Int>,
+        val loopMs: Int,
+        val scale: Float,
+        val stateRows: List<String>,
+    )
+
+    data class HermesPetState(
+        val supported: Boolean? = null,
+        val loading: Boolean = false,
+        val galleryLoading: Boolean = false,
+        val active: HermesPetPresentation? = null,
+        val gallery: List<GatewayPetGalleryItem> = emptyList(),
+        val thumbnails: Map<String, String> = emptyMap(),
+        val error: String? = null,
+    )
+
+    private val _hermesPetState = MutableStateFlow(HermesPetState())
+    val hermesPetState: StateFlow<HermesPetState> = _hermesPetState.asStateFlow()
 
     /**
      * Load the host's agent profiles from the dashboard `/api/profiles` into
@@ -302,6 +450,8 @@ class ProfileController(
             return
         }
         scope.launch {
+            refreshGatewayProfiles(connectionId)
+            refreshHermesPet(connectionId)
             val client = dashboardClientFactory(connectionId, dashboardUrl)
             val defaultScope = client.getActiveProfileScope().getOrNull()
             if (activeConnectionId.value != connectionId) return@launch
@@ -322,6 +472,258 @@ class ProfileController(
                 }
             }
         }
+    }
+
+    fun refreshGatewayProfiles() {
+        val connectionId = activeConnectionId.value ?: return
+        scope.launch {
+            refreshGatewayProfiles(connectionId)
+            refreshHermesPet(connectionId)
+        }
+    }
+
+    private suspend fun refreshGatewayProfiles(connectionId: String) {
+        val gateway = gatewayClientProvider() ?: return
+        val generation = avatarRefreshGeneration.incrementAndGet()
+        gateway.listProfiles().onSuccess { profiles ->
+            if (!isCurrentProfileAvatarRefresh(connectionId, activeConnectionId.value, generation, avatarRefreshGeneration.get())) return@onSuccess
+            _gatewayProfiles.value = profiles
+            _gatewayRosterAuthoritative.value = true
+            profiles.forEach { profile ->
+                if (!profile.hasAvatar) {
+                    clearServerAvatarCache(connectionId, profile.name, generation)
+                } else {
+                    gateway.getProfileAvatar(profile.name).onSuccess { asset ->
+                        if (!isCurrentProfileAvatarRefresh(connectionId, activeConnectionId.value, generation, avatarRefreshGeneration.get())) {
+                            return@onSuccess
+                        }
+                        if (asset == null) {
+                            clearServerAvatarCache(connectionId, profile.name, generation)
+                        } else {
+                            val path = copyServerAvatarBytes(connectionId, profile.name, asset.data, asset.mime)
+                            if (path != null && avatarRefreshGeneration.get() == generation) {
+                                profileIconStore.setServerAvatar(connectionId, profile.name, path)
+                            }
+                        }
+                    }
+                }
+            }
+        }.onFailure { failure ->
+            if (
+                failure is GatewayProfileManagementUnsupportedException &&
+                isCurrentProfileAvatarRefresh(
+                    connectionId,
+                    activeConnectionId.value,
+                    generation,
+                    avatarRefreshGeneration.get(),
+                )
+            ) {
+                _gatewayProfiles.value = emptyList()
+                _gatewayRosterAuthoritative.value = false
+            }
+        }
+    }
+
+    private suspend fun clearServerAvatarCache(connectionId: String, profileName: String, generation: Long) {
+        if (avatarRefreshGeneration.get() != generation) return
+        profileIconStore.serverAvatarFlow(connectionId, profileName).first()?.let { runCatching { File(it).delete() } }
+        profileIconStore.setServerAvatar(connectionId, profileName, null)
+    }
+
+    /** Refresh the active profile's upstream sprite contract without re-sending an unchanged sheet. */
+    fun refreshHermesPet() {
+        val connectionId = activeConnectionId.value ?: return
+        scope.launch { refreshHermesPet(connectionId) }
+    }
+
+    private suspend fun refreshHermesPet(connectionId: String) {
+        val gateway = gatewayClientProvider() ?: run {
+            _hermesPetState.value = HermesPetState(supported = null)
+            return
+        }
+        val profileName = resolveSessionProfileName()
+        val generation = petRefreshGeneration.incrementAndGet()
+        val previous = _hermesPetState.value.active?.takeIf {
+            it.connectionId == connectionId && it.profileName == profileName
+        }
+        _hermesPetState.value = _hermesPetState.value.copy(loading = true, error = null)
+        gateway.petInfo(profile = profileName, knownRevision = previous?.spritesheetRevision).fold(
+            onSuccess = { info ->
+                if (!isCurrentPetRefresh(connectionId, generation)) return@fold
+                if (!info.enabled) {
+                    _hermesPetState.value = HermesPetState(supported = true)
+                    return@fold
+                }
+                val presentation = cacheHermesPet(connectionId, profileName, info, previous)
+                _hermesPetState.value = if (presentation == null) {
+                    HermesPetState(
+                        supported = true,
+                        error = "Hermes returned an animated pet that this phone could not cache",
+                    )
+                } else {
+                    _hermesPetState.value.copy(
+                        supported = true,
+                        loading = false,
+                        active = presentation,
+                        error = null,
+                    )
+                }
+            },
+            onFailure = { failure ->
+                if (!isCurrentPetRefresh(connectionId, generation)) return@fold
+                _hermesPetState.value = if ((failure as? GatewayRpcException)?.code == -32601) {
+                    HermesPetState(supported = false)
+                } else {
+                    _hermesPetState.value.copy(
+                        loading = false,
+                        error = failure.message ?: "Could not load the Hermes animated pet",
+                    )
+                }
+            },
+        )
+    }
+
+    /** Load the profile-scoped upstream gallery only when the user opens the picker. */
+    fun loadHermesPetGallery() {
+        val connectionId = activeConnectionId.value ?: return
+        val gateway = gatewayClientProvider() ?: return
+        val profileName = resolveSessionProfileName()
+        val generation = petGalleryGeneration.incrementAndGet()
+        scope.launch {
+            _hermesPetState.value = _hermesPetState.value.copy(galleryLoading = true, error = null)
+            gateway.petGallery(profile = profileName).fold(
+                onSuccess = { gallery ->
+                    if (!isCurrentPetGallery(connectionId, profileName, generation)) return@fold
+                    _hermesPetState.value = _hermesPetState.value.copy(
+                        supported = true,
+                        galleryLoading = false,
+                        gallery = gallery.pets,
+                        error = null,
+                    )
+                },
+                onFailure = { failure ->
+                    if (!isCurrentPetGallery(connectionId, profileName, generation)) return@fold
+                    _hermesPetState.value = _hermesPetState.value.copy(
+                        galleryLoading = false,
+                        error = failure.message ?: "Could not load the Hermes pet gallery",
+                    )
+                },
+            )
+        }
+    }
+
+    fun selectHermesPet(slug: String) = mutateHermesPet { gateway, profile ->
+        gateway.selectPet(slug, profile)
+    }
+
+    /** Lazily fetch one upstream-cropped idle frame for a visible gallery row. */
+    fun loadHermesPetThumbnail(pet: GatewayPetGalleryItem) {
+        if (_hermesPetState.value.thumbnails.containsKey(pet.slug)) return
+        val connectionId = activeConnectionId.value ?: return
+        val gateway = gatewayClientProvider() ?: return
+        val profileName = resolveSessionProfileName()
+        val requestKey = "$connectionId\u0000${AgentDisplay.profileSessionKey(profileName)}\u0000${pet.slug}"
+        if (!petThumbnailRequests.add(requestKey)) return
+        scope.launch {
+            try {
+                gateway.petThumbnail(
+                    slug = pet.slug,
+                    spritesheetUrl = pet.spritesheetUrl,
+                    profile = profileName,
+                ).onSuccess { dataUri ->
+                    if (
+                        dataUri != null && activeConnectionId.value == connectionId &&
+                        resolveSessionProfileName() == profileName
+                    ) {
+                        _hermesPetState.value = _hermesPetState.value.copy(
+                            thumbnails = _hermesPetState.value.thumbnails + (pet.slug to dataUri),
+                        )
+                    }
+                }
+            } finally {
+                petThumbnailRequests.remove(requestKey)
+            }
+        }
+    }
+
+    fun disableHermesPet() = mutateHermesPet { gateway, profile ->
+        gateway.disablePet(profile)
+    }
+
+    private fun mutateHermesPet(
+        mutation: suspend (GatewayChatClient, String?) -> Result<Unit>,
+    ) {
+        val connectionId = activeConnectionId.value ?: return
+        val gateway = gatewayClientProvider() ?: return
+        val profileName = resolveSessionProfileName()
+        scope.launch {
+            _hermesPetState.value = _hermesPetState.value.copy(loading = true, error = null)
+            mutation(gateway, profileName).fold(
+                onSuccess = { refreshHermesPet(connectionId) },
+                onFailure = { failure ->
+                    _hermesPetState.value = _hermesPetState.value.copy(
+                        loading = false,
+                        error = failure.message ?: "Could not update the Hermes animated pet",
+                    )
+                },
+            )
+        }
+    }
+
+    private fun isCurrentPetRefresh(connectionId: String, generation: Long): Boolean =
+        activeConnectionId.value == connectionId && petRefreshGeneration.get() == generation
+
+    private fun isCurrentPetGallery(connectionId: String, profileName: String?, generation: Long): Boolean =
+        activeConnectionId.value == connectionId &&
+            resolveSessionProfileName() == profileName &&
+            petGalleryGeneration.get() == generation
+
+    private suspend fun cacheHermesPet(
+        connectionId: String,
+        profileName: String?,
+        info: GatewayPetInfo,
+        previous: HermesPetPresentation?,
+    ): HermesPetPresentation? = withContext(Dispatchers.IO) {
+        val slug = info.slug ?: return@withContext null
+        val revision = info.spritesheetRevision ?: return@withContext null
+        val path = if (info.spritesheetUnchanged && previous?.spritesheetRevision == revision) {
+            previous.spritesheetPath.takeIf { File(it).isFile }
+        } else {
+            val bytes = info.spritesheet ?: return@withContext null
+            val dir = File(context.filesDir, "hermes-profile-pets").apply { mkdirs() }
+            val key = MessageDigest.getInstance("SHA-256")
+                .digest("$connectionId\u0000${AgentDisplay.profileSessionKey(profileName)}".toByteArray())
+                .take(12)
+                .joinToString("") { "%02x".format(it) }
+            val extension = if (info.mime == "image/webp") "webp" else "png"
+            val target = File(dir, "$key.$extension")
+            val pending = File(dir, "$key.$extension.tmp")
+            runCatching {
+                pending.writeBytes(bytes)
+                if (!pending.renameTo(target)) {
+                    target.writeBytes(bytes)
+                    pending.delete()
+                }
+                target.absolutePath
+            }.getOrNull()
+        } ?: return@withContext null
+
+        HermesPetPresentation(
+            connectionId = connectionId,
+            profileName = profileName,
+            slug = slug,
+            displayName = info.displayName ?: slug,
+            spritesheetPath = path,
+            spritesheetRevision = revision,
+            frameWidth = info.frameWidth,
+            frameHeight = info.frameHeight,
+            framesPerState = info.framesPerState,
+            framesByState = info.framesByState,
+            framesByRow = info.framesByRow,
+            loopMs = info.loopMs,
+            scale = info.scale,
+            stateRows = info.stateRows,
+        )
     }
 
     /** Effective profile namespace for Gateway and profile-scoped session I/O. */
@@ -472,6 +874,7 @@ class ProfileController(
         scope.launch {
             val path = copyIcon(connectionId, profileName, uri) ?: return@launch
             profileIconStore.setIcon(connectionId, profileName, path)
+            profileIconStore.setLocalOverride(connectionId, profileName, true)
         }
     }
 
@@ -497,6 +900,7 @@ class ProfileController(
                         )
                     } else {
                         profileIconStore.setIcon(connectionId, profileName, path)
+                        profileIconStore.setLocalOverride(connectionId, profileName, true)
                         _hostIconImportState.value = HostIconImportState()
                     }
                 },
@@ -520,23 +924,120 @@ class ProfileController(
         }
     }
 
+    fun setUseLocalProfileIconOverride(enabled: Boolean) {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        scope.launch { profileIconStore.setLocalOverride(connectionId, profileName, enabled) }
+    }
+
+    /** Upload a selected static image directly to Hermes without changing this phone's override. */
+    fun setSharedProfileAvatar(uri: Uri) {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = resolveSharedAssetProfileName()
+        val gateway = gatewayClientProvider()
+        if (profileName.isNullOrBlank() || gateway == null) {
+            _sharedAvatarState.value = SharedAvatarState(error = "Shared avatars require a current Hermes Gateway")
+            return
+        }
+        scope.launch {
+            _sharedAvatarState.value = SharedAvatarState(loading = true)
+            val bytes = withContext(Dispatchers.IO) {
+                prepareProfileAvatar(context, uri, GatewayChatClient.PROFILE_AVATAR_MAX_BYTES)
+            }
+            if (bytes == null) {
+                _sharedAvatarState.value = SharedAvatarState(error = "That image could not be prepared for Hermes")
+                return@launch
+            }
+            gateway.setProfileAvatar(profileName, bytes).fold(
+                onSuccess = {
+                    cacheAcknowledgedSharedAvatar(connectionId, profileName, bytes)
+                    _sharedAvatarState.value = SharedAvatarState()
+                },
+                onFailure = { failure ->
+                    _sharedAvatarState.value = SharedAvatarState(
+                        error = failure.message ?: "Shared avatar upload failed",
+                    )
+                },
+            )
+        }
+    }
+
+    /** Explicit migration: upload the current device-local fallback to Hermes. */
+    fun uploadLocalProfileIconToHermes() {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = resolveSharedAssetProfileName()
+        if (profileName.isNullOrBlank()) {
+            _sharedAvatarState.value = SharedAvatarState(error = "Hermes profile identity is not available")
+            return
+        }
+        val gateway = gatewayClientProvider()
+        if (gateway == null) {
+            _sharedAvatarState.value = SharedAvatarState(error = "Shared avatars require a current Hermes Gateway")
+            return
+        }
+        scope.launch {
+            _sharedAvatarState.value = SharedAvatarState(loading = true)
+            val path = profileIconStore.iconFlow(
+                connectionId,
+                AgentDisplay.profileRequestName(_selectedProfile.value?.name),
+            ).first()
+            val file = path?.let(::File)
+            val bytes = when {
+                file == null || !file.isFile -> null
+                file.length() > GatewayChatClient.PROFILE_AVATAR_MAX_BYTES -> null
+                else -> withContext(Dispatchers.IO) { runCatching { file.readBytes() }.getOrNull() }
+            }
+            if (bytes == null) {
+                _sharedAvatarState.value = SharedAvatarState(error = "Choose a local PNG, JPEG, or WebP under 2 MB first")
+                return@launch
+            }
+            gateway.setProfileAvatar(profileName, bytes).fold(
+                onSuccess = {
+                    cacheAcknowledgedSharedAvatar(connectionId, profileName, bytes)
+                    _sharedAvatarState.value = SharedAvatarState()
+                },
+                onFailure = { failure ->
+                    _sharedAvatarState.value = SharedAvatarState(
+                        error = failure.message ?: "Shared avatar upload failed",
+                    )
+                },
+            )
+        }
+    }
+
+    /** Clear only Hermes' shared asset; the device-local fallback remains untouched. */
+    fun clearSharedProfileAvatar() {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = resolveSharedAssetProfileName()
+        val gateway = gatewayClientProvider()
+        if (profileName.isNullOrBlank() || gateway == null) {
+            _sharedAvatarState.value = SharedAvatarState(error = "Shared avatars require a current Hermes Gateway")
+            return
+        }
+        scope.launch {
+            _sharedAvatarState.value = SharedAvatarState(loading = true)
+            gateway.clearProfileAvatar(profileName).fold(
+                onSuccess = {
+                    val generation = avatarRefreshGeneration.incrementAndGet()
+                    clearServerAvatarCache(connectionId, profileName, generation)
+                    _gatewayProfiles.value = _gatewayProfiles.value.map { profile ->
+                        if (profile.name == profileName) profile.copy(hasAvatar = false) else profile
+                    }
+                    _sharedAvatarState.value = SharedAvatarState()
+                },
+                onFailure = { failure ->
+                    _sharedAvatarState.value = SharedAvatarState(
+                        error = failure.message ?: "Shared avatar clear failed",
+                    )
+                },
+            )
+        }
+    }
+
     /** Copy [uri]'s image bytes into app-internal storage; returns the path or null. */
     private suspend fun copyIcon(connectionId: String, profileName: String?, uri: Uri): String? =
-        withContext(Dispatchers.IO) {
-            try {
-                val dir = File(context.filesDir, "profile-icons").apply { mkdirs() }
-                val key = AgentDisplay.profileSessionKey(profileName)
-                val safe = "${connectionId}_$key"
-                    .map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '_' }
-                    .joinToString("")
-                val out = File(dir, "$safe.png")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    out.outputStream().use { input.copyTo(it) }
-                } ?: return@withContext null
-                out.absolutePath
-            } catch (t: Throwable) {
-                null
-            }
+        readBoundedUri(uri, LOCAL_PROFILE_ICON_MAX_BYTES)?.let { bytes ->
+            copyIconBytes(connectionId, profileName, bytes)
         }
 
     private suspend fun copyIconBytes(
@@ -545,15 +1046,129 @@ class ProfileController(
         bytes: ByteArray,
     ): String? = withContext(Dispatchers.IO) {
         try {
+            val extension = localImageExtension(bytes) ?: return@withContext null
             val dir = File(context.filesDir, "profile-icons").apply { mkdirs() }
             val key = AgentDisplay.profileSessionKey(profileName)
             val safe = "${connectionId}_$key"
                 .map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '_' }
                 .joinToString("")
-            File(dir, "$safe.png").also { it.writeBytes(bytes) }.absolutePath
+            val target = File(dir, "$safe.$extension")
+            target.writeBytes(bytes)
+            LOCAL_PROFILE_ICON_EXTENSIONS
+                .filterNot(extension::equals)
+                .forEach { stale -> runCatching { File(dir, "$safe.$stale").delete() } }
+            target.absolutePath
         } catch (_: Throwable) {
             null
         }
+    }
+
+    private suspend fun readBoundedUri(uri: Uri, maxBytes: Int): ByteArray? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    val output = ByteArrayOutputStream(minOf(maxBytes, 64 * 1024))
+                    val buffer = ByteArray(16 * 1024)
+                    var total = 0
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > maxBytes) return@use null
+                        output.write(buffer, 0, read)
+                    }
+                    output.toByteArray()
+                }
+            }.getOrNull()
+        }
+
+    private fun localImageExtension(bytes: ByteArray): String? = when {
+        bytes.size >= 8 && bytes.copyOfRange(0, 8).contentEquals(
+            byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+        ) -> "png"
+        bytes.size >= 3 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() &&
+            bytes[2] == 0xff.toByte() -> "jpg"
+        bytes.size >= 6 && (
+            bytes.copyOfRange(0, 6).contentEquals("GIF87a".toByteArray()) ||
+                bytes.copyOfRange(0, 6).contentEquals("GIF89a".toByteArray())
+            ) -> "gif"
+        bytes.size >= 12 && bytes.copyOfRange(0, 4).contentEquals("RIFF".toByteArray()) &&
+            bytes.copyOfRange(8, 12).contentEquals("WEBP".toByteArray()) -> "webp"
+        else -> null
+    }
+
+    private suspend fun copyServerAvatarBytes(
+        connectionId: String,
+        profileName: String,
+        bytes: ByteArray,
+        mime: String,
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val extension = when (mime) {
+                "image/png" -> "png"
+                "image/jpeg" -> "jpg"
+                "image/webp" -> "webp"
+                else -> return@withContext null
+            }
+            val dir = File(context.filesDir, "profile-avatars-server").apply { mkdirs() }
+            val safe = MessageDigest.getInstance("SHA-256")
+                .digest("$connectionId\u0000${AgentDisplay.profileSessionKey(profileName)}".toByteArray())
+                .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+            val target = File(dir, "$safe.$extension")
+            val temp = File(dir, "$safe.$extension.tmp")
+            temp.writeBytes(bytes)
+            try {
+                java.nio.file.Files.move(
+                    temp.toPath(),
+                    target.toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                java.nio.file.Files.move(
+                    temp.toPath(),
+                    target.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+            listOf("png", "jpg", "webp")
+                .filterNot(extension::equals)
+                .forEach { stale -> runCatching { File(dir, "$safe.$stale").delete() } }
+            target.absolutePath
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private suspend fun cacheAcknowledgedSharedAvatar(
+        connectionId: String,
+        profileName: String,
+        bytes: ByteArray,
+    ) {
+        if (activeConnectionId.value != connectionId) return
+        val mime = profileAvatarMime(bytes) ?: return
+        val generation = avatarRefreshGeneration.incrementAndGet()
+        val path = copyServerAvatarBytes(connectionId, profileName, bytes, mime) ?: return
+        if (!isCurrentProfileAvatarRefresh(
+                connectionId,
+                activeConnectionId.value,
+                generation,
+                avatarRefreshGeneration.get(),
+            )
+        ) return
+        profileIconStore.setServerAvatar(connectionId, profileName, path)
+        _gatewayProfiles.value = _gatewayProfiles.value.map { profile ->
+            if (profile.name == profileName) profile.copy(hasAvatar = true) else profile
+        }
+    }
+
+    private fun resolveSharedAssetProfileName(): String? =
+        resolveSessionProfileName()
+            ?: _gatewayProfiles.value.firstOrNull(Profile::isDefault)?.name
+
+    private companion object {
+        const val LOCAL_PROFILE_ICON_MAX_BYTES = 8_000_000
+        val LOCAL_PROFILE_ICON_EXTENSIONS = listOf("png", "jpg", "gif", "webp")
     }
 
     /**
@@ -659,6 +1274,11 @@ class ProfileController(
      * [selectProfile] is the gated public entry point.
      */
     private fun applyProfileSelection(normalizedProfile: Profile?) {
+        _sharedAvatarState.value = SharedAvatarState()
+        _hostIconImportState.value = HostIconImportState()
+        petRefreshGeneration.incrementAndGet()
+        petGalleryGeneration.incrementAndGet()
+        _hermesPetState.value = HermesPetState()
         _selectedProfile.value = normalizedProfile
         setLastSessionId(null)
         val connectionId = activeConnectionId.value ?: return
@@ -667,6 +1287,7 @@ class ProfileController(
         scope.launch {
             profileSelectionStore.setSelectedProfile(connectionId, normalizedProfile?.name)
             rebuildChatApiClient()
+            refreshHermesPet(connectionId)
         }
         refreshLastSessionForProfile(connectionId, normalizedProfile?.name)
     }
@@ -840,6 +1461,12 @@ class ProfileController(
         // pending persisted name can't resolve against the previous connection's
         // profiles before the new connection's list arrives.
         _dashboardProfiles.value = emptyList()
+        _gatewayProfiles.value = emptyList()
+        _gatewayRosterAuthoritative.value = false
+        avatarRefreshGeneration.incrementAndGet()
+        petRefreshGeneration.incrementAndGet()
+        petGalleryGeneration.incrementAndGet()
+        _hermesPetState.value = HermesPetState()
     }
 
     /** Clear just the in-memory selection + pending state (resetAppData). */
@@ -849,6 +1476,9 @@ class ProfileController(
         _pendingSelectedProfileName.value = null
         _serverDefaultProfileScope.value = null
         _serverDefaultProfileSettled.value = false
+        petRefreshGeneration.incrementAndGet()
+        petGalleryGeneration.incrementAndGet()
+        _hermesPetState.value = HermesPetState()
     }
 
     fun clearSelectedProfile() {

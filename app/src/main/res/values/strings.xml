@@ -1494,6 +1494,10 @@
     <string name="proactive_about">About</string>
     <string name="proactive_about_desc">When on, your phone tells the relay it\'s open to agent-initiated messages. The agent delivers them over the same paired connection the relay already uses — no new permissions beyond notifications.</string>
     <string name="proactive_about_server_note">Your server must also enable the phone platform (set PHONE_ENABLED on the server). Until both sides are on and the phone is paired, nothing is pushed.</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="one">%1$d message arrived while you were away</item>
+        <item quantity="other">%1$d messages arrived while you were away</item>
+    </plurals>
 
     <!-- ProfileInspectorScreen -->
     <string name="profile_inspector_back">Back</string>
@@ -1974,6 +1978,14 @@
     <string name="dashboard_native_signin_requires_https">Secure browser sign-in requires an HTTPS dashboard address.</string>
     <string name="dashboard_native_signin_unavailable">Secure browser sign-in is unavailable for this connection. Refresh the connection and try again.</string>
     <string name="dashboard_native_signin_transport_retry">The secure connection was interrupted. Tap the sign-in button to try again.</string>
+    <string name="dashboard_native_signin_callback_rejected">The provider did not approve this sign-in. If you cancelled, no action is needed; otherwise start a fresh sign-in attempt.</string>
+    <string name="dashboard_native_signin_code_rejected">Google sign-in finished, but hosted Hermes rejected the one-time callback code before it could create a session. Start a fresh sign-in attempt.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Hosted Hermes refused the session exchange. Check that the hosted agent is current, then start sign-in again.</string>
+    <string name="dashboard_native_signin_rate_limited">Hosted Hermes received too many sign-in attempts. Wait a moment, then try again.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Google sign-in finished, but the hosted Hermes sign-in service is unavailable. Wait a moment, then try again.</string>
+    <string name="dashboard_native_signin_response_unsupported">Hosted Hermes returned a sign-in response this app could not use. Check for Hermes Relay and hosted agent updates.</string>
+    <string name="dashboard_native_signin_attempt_inactive">This sign-in attempt was cancelled or replaced. Close the old browser tab and start again.</string>
+    <string name="dashboard_native_signin_storage_failed">Google sign-in finished, but Android could not securely save the Hermes session. Try again; if it repeats, open Diagnostics for the failure stage.</string>
     <string name="dashboard_close_signin">Close sign-in</string>
 
     <!-- Error body -->
@@ -1989,6 +2001,17 @@
     <!-- Section action buttons -->
     <string name="dashboard_section_action_change_main_model">Change main model</string>
     <string name="dashboard_section_action_new_profile">New profile</string>
+    <string name="dashboard_section_action_new_schedule">New schedule</string>
+    <string name="dashboard_cron_create_title">Create schedule</string>
+    <string name="dashboard_cron_name">Name</string>
+    <string name="dashboard_cron_schedule">Schedule</string>
+    <string name="dashboard_cron_schedule_hint">Examples: every 2h, 0 9 * * 1-5, or 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">Task instructions</string>
+    <string name="dashboard_cron_repeat">Stop after this many runs (optional)</string>
+    <string name="dashboard_cron_repeat_help">Leave blank to keep the schedule’s normal behavior. Finite schedules accept 1–999 runs.</string>
+    <string name="dashboard_cron_gateway_required">Schedule creation requires a current Hermes Gateway connection.</string>
+    <string name="dashboard_cron_created">Created schedule “%1$s”</string>
+    <string name="dashboard_cron_create_failed">Couldn’t create schedule</string>
     <string name="dashboard_section_action_browse_hub">Browse hub</string>
     <string name="dashboard_section_action_update_installed">Update installed</string>
     <string name="dashboard_section_action_server_backup">Create server backup</string>
@@ -2188,6 +2211,16 @@
 
     <!-- Profile create -->
     <string name="dashboard_profile_created">Profile %1$s created</string>
+    <string name="dashboard_profile_created_partial">Profile %1$s created, but %2$s. Review it before use.</string>
+    <string name="dashboard_profile_created_legacy">Profile %1$s created through the older Dashboard route. Review its credentials before use.</string>
+    <string name="dashboard_profile_no_skills">Do not seed bundled skills</string>
+    <string name="dashboard_profile_auth_title">Authentication</string>
+    <string name="dashboard_profile_auth_shared">Share sign-in (recommended) — one refreshable token pool</string>
+    <string name="dashboard_profile_auth_copied">Copy current credentials — separate snapshot that can drift</string>
+    <string name="dashboard_profile_auth_isolated">Isolated — copy no credentials or provider defaults</string>
+    <string name="dashboard_profile_auth_help">Hermes applies this choice on the server. Passwords and tokens are never returned to Android.</string>
+    <string name="dashboard_profile_allow_legacy">If Gateway create is unavailable, allow the older Dashboard route. Credential behavior depends on that host and must be reviewed.</string>
+    <string name="dashboard_profile_mcp_partial">MCP server selection was not applied</string>
     <string name="dashboard_profile_create_failed">Profile create failed</string>
 
     <!-- Stats for nerds -->
@@ -2835,7 +2868,35 @@
     <plurals name="tool_run_used_tools"><item quantity="one">Used %d tool</item><item quantity="other">Used %d tools</item></plurals>
 
     <!-- AgentIconRow -->
-    <string name="agent_icon_title">Agent icon</string>
+    <string name="agent_icon_title">Agent visuals</string>
+    <string name="agent_icon_hermes_pet_title">Hermes animated pet</string>
+    <string name="agent_icon_hermes_pet_description">Profile-scoped and shared with upstream Hermes surfaces. It reacts to agent activity and appears as the phone companion.</string>
+    <string name="agent_icon_hermes_pet_active">Active: %1$s</string>
+    <string name="agent_icon_hermes_pet_empty">No upstream pet selected</string>
+    <string name="agent_icon_hermes_pet_unsupported">Update Hermes to manage animated pets here</string>
+    <string name="agent_icon_hermes_pet_browse">Browse Hermes pets</string>
+    <string name="agent_icon_hermes_pet_picker_title">Choose a Hermes pet</string>
+    <string name="agent_icon_hermes_pet_selected">Selected</string>
+    <string name="agent_icon_hermes_pet_installed">Installed</string>
+    <string name="agent_icon_hermes_pet_adopt">Adopt from Petdex</string>
+    <string name="agent_icon_shared_title">Shared across Hermes</string>
+    <string name="agent_icon_shared_active">Shared avatar</string>
+    <string name="agent_icon_shared_empty">No shared avatar</string>
+    <string name="agent_icon_change_shared">Change shared avatar</string>
+    <string name="agent_icon_remove_shared">Remove</string>
+    <string name="agent_icon_remove_shared_title">Remove shared avatar?</string>
+    <string name="agent_icon_remove_shared_message">This removes the avatar from Hermes and other clients. Your phone image is not affected.</string>
+    <string name="agent_icon_phone_title">This phone only</string>
+    <string name="agent_icon_phone_description">Override the shared avatar on this phone without changing Hermes.</string>
+    <string name="agent_icon_choose_phone">Choose phone image</string>
+    <string name="agent_icon_change_phone">Change phone image</string>
+    <string name="agent_icon_remove_phone">Remove phone image</string>
+    <string name="agent_icon_animation_note">Animated GIF and WebP overrides play only on this phone. Use Hermes animated pets above for an upstream-managed, profile-scoped animation.</string>
+    <string name="agent_icon_set_local">Choose device fallback</string>
+    <string name="agent_icon_change_local">Change device fallback</string>
+    <string name="agent_icon_clear_local">Clear device fallback</string>
+    <string name="agent_icon_upload_shared">Upload device icon to Hermes</string>
+    <string name="agent_icon_clear_shared">Clear shared Hermes avatar</string>
     <string name="agent_icon_set">Choose file</string>
     <string name="agent_icon_change">Choose file</string>
     <string name="agent_icon_clear">Clear</string>
@@ -4105,4 +4166,10 @@
     <string name="profile_inspector_toolsets">Toolsets</string>
     <string name="profile_inspector_toolsets_hint">Choose which upstream tool groups this profile can use.</string>
     <string name="profile_inspector_tool_count">%1$d tools</string>
+    <string name="chat_model_confirmation_title">Confirm model selection</string>
+    <string name="host_resource_recent_oom">Hermes recently restarted after likely running out of memory.</string>
+    <string name="host_resource_memory_critical">Host memory is critically low; active chats may stop.</string>
+    <string name="host_resource_memory_elevated">Host memory is running low.</string>
+    <string name="host_resource_disk_critical">Host storage is critically low; messages and settings may fail to save.</string>
+    <string name="host_resource_disk_elevated">Host storage is running low.</string>
 </resources>

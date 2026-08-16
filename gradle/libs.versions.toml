@@ -1,6 +1,6 @@
 [versions]
-appVersionName = "1.9.0"
-appVersionCode = "43"
+appVersionName = "1.9.1"
+appVersionCode = "44"
 agp = "9.3.1"
 kotlin = "2.4.10"
 compose-bom = "2026.06.01"
@@ -77,6 +77,7 @@ markdown-renderer-code = { group = "com.mikepenz", name = "multiplatform-markdow
 
 # Coil 3 — async image loading (generated-image rendering in chat)
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
+coil-gif = { group = "io.coil-kt.coil3", name = "coil-gif", version.ref = "coil" }
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 
 # Haze (glassmorphism blur)

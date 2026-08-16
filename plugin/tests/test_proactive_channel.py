@@ -191,10 +191,20 @@ class ProactiveChannelTests(unittest.TestCase):
             await ch.handle(ws, {"type": "proactive.subscribe"})
             types = [m["type"] for m in ws.sent]
             self.assertEqual(
-                types, ["proactive.subscribed", "phone.message", "phone.message"]
+                types,
+                [
+                    "proactive.subscribed",
+                    "phone.message",
+                    "phone.message",
+                    "proactive.backlog.complete",
+                ],
             )
-            texts = [m["payload"]["text"] for m in ws.sent if m["type"] == "phone.message"]
+            delivered = [m for m in ws.sent if m["type"] == "phone.message"]
+            texts = [m["payload"]["text"] for m in delivered]
             self.assertEqual(texts, ["first", "second"])
+            self.assertTrue(all(m["payload"]["queued_delivery"] for m in delivered))
+            summary = ws.sent[-1]
+            self.assertEqual(summary["payload"]["count"], 2)
             self.assertEqual(ch.buffered_outbound_count(), 0)
 
         _run(run())
@@ -229,6 +239,8 @@ class ProactiveChannelTests(unittest.TestCase):
             await ch.handle(ws, {"type": "proactive.subscribe"})
             texts = [m["payload"]["text"] for m in ws.sent if m["type"] == "phone.message"]
             self.assertEqual(texts, ["fresh"])  # stale dropped, fresh delivered
+            self.assertEqual(ws.sent[-1]["type"], "proactive.backlog.complete")
+            self.assertEqual(ws.sent[-1]["payload"]["count"], 1)
 
         _run(run())
 

@@ -319,6 +319,7 @@ dependencies {
 
     // Coil 3 — async image loading for generated images in chat
     implementation(libs.coil.compose)
+    implementation(libs.coil.gif)
     implementation(libs.coil.network.okhttp)
     implementation(libs.exifinterface)
 

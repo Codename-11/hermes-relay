@@ -66,6 +66,29 @@ data class DashboardStatus(
     @SerialName("gateway_mode") val gatewayMode: String? = null,
     val gateways: List<DashboardGatewayTopology> = emptyList(),
     val componentHealth: DashboardComponentHealthRollup = DashboardComponentHealthRollup(),
+    val memory: DashboardMemoryStatus? = null,
+    val disk: DashboardDiskStatus? = null,
+)
+
+@Serializable
+data class DashboardMemoryStatus(
+    val pressure: String,
+    @SerialName("gateway_rss_mb") val gatewayRssMb: Int? = null,
+    @SerialName("system_total_mb") val systemTotalMb: Int? = null,
+    @SerialName("system_available_mb") val systemAvailableMb: Int? = null,
+    @SerialName("swap_used_mb") val swapUsedMb: Int? = null,
+    @SerialName("sampled_at") val sampledAt: String? = null,
+    @SerialName("last_boot_unclean") val lastBootUnclean: Boolean = false,
+    @SerialName("last_boot_suspected_oom") val lastBootSuspectedOom: Boolean = false,
+    @SerialName("boot_id") val bootId: String? = null,
+)
+
+@Serializable
+data class DashboardDiskStatus(
+    val pressure: String,
+    @SerialName("total_mb") val totalMb: Int? = null,
+    @SerialName("free_mb") val freeMb: Int? = null,
+    @SerialName("used_percent") val usedPercent: Double? = null,
 )
 
 @Serializable
@@ -1711,6 +1734,35 @@ class DashboardApiClient(
                 gatewayMode = root.stringField("gateway_mode"),
                 gateways = gateways,
                 componentHealth = parseComponentHealth(root),
+                memory = parseMemoryStatus(root["memory"] as? JsonObject),
+                disk = parseDiskStatus(root["disk"] as? JsonObject),
+            )
+        }
+
+        private fun parseMemoryStatus(obj: JsonObject?): DashboardMemoryStatus? {
+            obj ?: return null
+            val pressure = obj.stringField("pressure")?.lowercase() ?: return null
+            return DashboardMemoryStatus(
+                pressure = pressure,
+                gatewayRssMb = obj.intField("gateway_rss_mb"),
+                systemTotalMb = obj.intField("system_total_mb"),
+                systemAvailableMb = obj.intField("system_available_mb"),
+                swapUsedMb = obj.intField("swap_used_mb"),
+                sampledAt = obj.stringField("sampled_at"),
+                lastBootUnclean = obj.booleanField("last_boot_unclean") ?: false,
+                lastBootSuspectedOom = obj.booleanField("last_boot_suspected_oom") ?: false,
+                bootId = obj.stringField("boot_id"),
+            )
+        }
+
+        private fun parseDiskStatus(obj: JsonObject?): DashboardDiskStatus? {
+            obj ?: return null
+            val pressure = obj.stringField("pressure")?.lowercase() ?: return null
+            return DashboardDiskStatus(
+                pressure = pressure,
+                totalMb = obj.intField("total_mb"),
+                freeMb = obj.intField("free_mb"),
+                usedPercent = (obj["used_percent"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull(),
             )
         }
 

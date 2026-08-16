@@ -1822,6 +1822,14 @@
     <string name="dashboard_native_signin_requires_https">Безопасный вход в браузере требует HTTPS-адреса панели управления.</string>
     <string name="dashboard_native_signin_unavailable">Безопасный вход в браузере недоступен для этого подключения. Обновите подключение и попробуйте снова.</string>
     <string name="dashboard_native_signin_transport_retry">Защищённое соединение было прервано. Нажмите кнопку входа, чтобы повторить попытку.</string>
+    <string name="dashboard_native_signin_callback_rejected">Провайдер не подтвердил этот вход. Если вы отменили его, ничего делать не нужно; иначе начните новую попытку входа.</string>
+    <string name="dashboard_native_signin_code_rejected">Вход через Google завершён, но размещённый Hermes отклонил одноразовый код обратного вызова до создания сеанса. Начните новую попытку входа.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Размещённый Hermes отклонил обмен сеанса. Убедитесь, что размещённый агент обновлён, и начните вход заново.</string>
+    <string name="dashboard_native_signin_rate_limited">Размещённый Hermes получил слишком много попыток входа. Подождите немного и повторите попытку.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Вход через Google завершён, но служба входа размещённого Hermes недоступна. Подождите немного и повторите попытку.</string>
+    <string name="dashboard_native_signin_response_unsupported">Размещённый Hermes вернул ответ входа, который это приложение не может использовать. Проверьте обновления Hermes Relay и размещённого агента.</string>
+    <string name="dashboard_native_signin_attempt_inactive">Эта попытка входа была отменена или заменена. Закройте старую вкладку и начните заново.</string>
+    <string name="dashboard_native_signin_storage_failed">Вход через Google завершён, но Android не смог безопасно сохранить сеанс Hermes. Повторите попытку; если ошибка повторится, откройте диагностику, чтобы увидеть этап сбоя.</string>
     <string name="dashboard_close_signin">Закрыть вход</string>
     <string name="dashboard_error_title">Панель управления недоступна</string>
     <string name="dashboard_error_target">Не удалось загрузить из %1$s</string>
@@ -1831,6 +1839,17 @@
     <string name="dashboard_empty_section">Не возвращено %1$s</string>
     <string name="dashboard_section_action_change_main_model">Изменить основную модель</string>
     <string name="dashboard_section_action_new_profile">Новый профиль</string>
+    <string name="dashboard_section_action_new_schedule">Новое расписание</string>
+    <string name="dashboard_cron_create_title">Создать расписание</string>
+    <string name="dashboard_cron_name">Название</string>
+    <string name="dashboard_cron_schedule">Расписание</string>
+    <string name="dashboard_cron_schedule_hint">Примеры: every 2h, 0 9 * * 1-5 или 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">Инструкции задачи</string>
+    <string name="dashboard_cron_repeat">Остановить после указанного числа запусков (необязательно)</string>
+    <string name="dashboard_cron_repeat_help">Оставьте пустым для обычного поведения расписания. Для конечных расписаний можно указать от 1 до 999 запусков.</string>
+    <string name="dashboard_cron_gateway_required">Для создания расписания требуется текущее подключение к Hermes Gateway.</string>
+    <string name="dashboard_cron_created">Расписание «%1$s» создано</string>
+    <string name="dashboard_cron_create_failed">Не удалось создать расписание</string>
     <string name="dashboard_section_action_browse_hub">Просмотр центра</string>
     <string name="dashboard_section_action_update_installed">Обновить установленное</string>
     <string name="dashboard_action_set">Установить</string>
@@ -1955,6 +1974,16 @@
     <string name="dashboard_skills_update_started">Обновление навыка начато на сервере — обновите Навыки через минуту</string>
     <string name="dashboard_skills_update_failed">Обновление навыка не удалось</string>
     <string name="dashboard_profile_created">Профиль %1$s создан</string>
+    <string name="dashboard_profile_created_partial">Профиль %1$s создан, но %2$s. Проверьте его перед использованием.</string>
+    <string name="dashboard_profile_created_legacy">Профиль %1$s создан через старый маршрут панели. Проверьте его учётные данные перед использованием.</string>
+    <string name="dashboard_profile_no_skills">Не добавлять встроенные навыки</string>
+    <string name="dashboard_profile_auth_title">Аутентификация</string>
+    <string name="dashboard_profile_auth_shared">Общий вход (рекомендуется) — единый пул обновляемых токенов</string>
+    <string name="dashboard_profile_auth_copied">Копировать текущие учётные данные — отдельный снимок может устареть</string>
+    <string name="dashboard_profile_auth_isolated">Изолированный — не копировать учётные данные и настройки провайдера</string>
+    <string name="dashboard_profile_auth_help">Hermes применяет этот выбор на сервере. Пароли и токены никогда не возвращаются в Android.</string>
+    <string name="dashboard_profile_allow_legacy">Если создание через Gateway недоступно, разрешить старый маршрут панели. Поведение учётных данных зависит от хоста и требует проверки.</string>
+    <string name="dashboard_profile_mcp_partial">Выбор серверов MCP не был применён</string>
     <string name="dashboard_profile_create_failed">Создание профиля не удалось</string>
     <string name="stats_overview">Обзор</string>
     <string name="stats_reset">Сброс</string>
@@ -2553,7 +2582,35 @@
     <plurals name="tool_run_used_device"><item quantity="one">Выполнено %d действие устройства</item><item quantity="few">Выполнено %d действия устройства</item><item quantity="many">Выполнено %d действий устройства</item><item quantity="other">Выполнено %d действий устройства</item></plurals>
     <plurals name="tool_run_using_tools"><item quantity="one">Используется %d инструмент</item><item quantity="few">Используется %d инструмента</item><item quantity="many">Используется %d инструментов</item><item quantity="other">Используется %d инструментов</item></plurals>
     <plurals name="tool_run_used_tools"><item quantity="one">Использован %d инструмент</item><item quantity="few">Использовано %d инструмента</item><item quantity="many">Использовано %d инструментов</item><item quantity="other">Использовано %d инструментов</item></plurals>
-    <string name="agent_icon_title">Иконка агента</string>
+    <string name="agent_icon_title">Внешний вид агента</string>
+    <string name="agent_icon_hermes_pet_title">Анимированный питомец Hermes</string>
+    <string name="agent_icon_hermes_pet_description">Привязан к профилю и доступен в upstream-интерфейсах Hermes. Реагирует на действия агента и отображается как спутник на телефоне.</string>
+    <string name="agent_icon_hermes_pet_active">Активен: %1$s</string>
+    <string name="agent_icon_hermes_pet_empty">Upstream-питомец не выбран</string>
+    <string name="agent_icon_hermes_pet_unsupported">Обновите Hermes, чтобы управлять анимированными питомцами здесь</string>
+    <string name="agent_icon_hermes_pet_browse">Выбрать питомца Hermes</string>
+    <string name="agent_icon_hermes_pet_picker_title">Выберите питомца Hermes</string>
+    <string name="agent_icon_hermes_pet_selected">Выбран</string>
+    <string name="agent_icon_hermes_pet_installed">Установлен</string>
+    <string name="agent_icon_hermes_pet_adopt">Добавить из Petdex</string>
+    <string name="agent_icon_shared_title">Общий в Hermes</string>
+    <string name="agent_icon_shared_active">Общий аватар</string>
+    <string name="agent_icon_shared_empty">Нет общего аватара</string>
+    <string name="agent_icon_change_shared">Изменить общий аватар</string>
+    <string name="agent_icon_remove_shared">Удалить</string>
+    <string name="agent_icon_remove_shared_title">Удалить общий аватар?</string>
+    <string name="agent_icon_remove_shared_message">Аватар будет удалён из Hermes и других клиентов. Изображение на телефоне не изменится.</string>
+    <string name="agent_icon_phone_title">Только на этом телефоне</string>
+    <string name="agent_icon_phone_description">Заменить общий аватар только на этом телефоне, не изменяя Hermes.</string>
+    <string name="agent_icon_choose_phone">Выбрать изображение на телефоне</string>
+    <string name="agent_icon_change_phone">Изменить изображение на телефоне</string>
+    <string name="agent_icon_remove_phone">Удалить изображение с телефона</string>
+    <string name="agent_icon_animation_note">Анимированные GIF- и WebP-переопределения работают только на этом телефоне. Для профильной upstream-анимации используйте анимированного питомца Hermes выше.</string>
+    <string name="agent_icon_set_local">Выбрать резервное изображение на устройстве</string>
+    <string name="agent_icon_change_local">Изменить резервное изображение на устройстве</string>
+    <string name="agent_icon_clear_local">Удалить резервное изображение с устройства</string>
+    <string name="agent_icon_upload_shared">Загрузить значок устройства в Hermes</string>
+    <string name="agent_icon_clear_shared">Удалить общий аватар Hermes</string>
     <string name="agent_icon_set">Выбрать файл</string>
     <string name="agent_icon_change">Выбрать файл</string>
     <string name="agent_icon_clear">Очистить</string>
@@ -3824,4 +3881,16 @@
     <string name="secure_link_fallback_ready">Если Secure Link недоступен, Hermes может попробовать одобренные резервные маршруты ниже.</string>
     <string name="secure_link_no_fallback">Резервный маршрут не указан. Защищённые сервисы останутся офлайн, если Secure Link недоступен.</string>
     <string name="secure_link_auth_note">Защита транспорта не отменяет аутентификацию. Сопряжение Relay, учётные данные API и вход в Панель по-прежнему проверяются отдельно для каждого сервиса.</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="one">Пока вас не было, пришло %1$d сообщение</item>
+        <item quantity="few">Пока вас не было, пришло %1$d сообщения</item>
+        <item quantity="many">Пока вас не было, пришло %1$d сообщений</item>
+        <item quantity="other">Пока вас не было, пришло %1$d сообщения</item>
+    </plurals>
+    <string name="chat_model_confirmation_title">Подтвердите выбор модели</string>
+    <string name="host_resource_recent_oom">Hermes недавно перезапустился, вероятно, из-за нехватки памяти.</string>
+    <string name="host_resource_memory_critical">Память хоста почти исчерпана; активные чаты могут остановиться.</string>
+    <string name="host_resource_memory_elevated">Память хоста заканчивается.</string>
+    <string name="host_resource_disk_critical">Хранилище хоста почти заполнено; сообщения и настройки могут не сохраниться.</string>
+    <string name="host_resource_disk_elevated">Хранилище хоста заканчивается.</string>
 </resources>

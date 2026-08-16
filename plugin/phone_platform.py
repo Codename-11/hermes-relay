@@ -204,8 +204,10 @@ def _build_message_payload(
     """Build the JSON body POSTed to the relay's ``/phone/message`` route.
 
     ``surfacing`` is an optional route hint (``"notification"`` /
-    ``"inbox"`` / ``"session"``); ``None`` means "let the app decide"
-    (default = notification + inbox). It can also be supplied inside
+    ``"inbox"`` / ``"session"``); ``None`` uses the app default (persist in
+    its Thread cache and notify). ``inbox`` is silent. ``session`` targets an
+    available active session/Thread and falls back to a notification. It can
+    also be supplied inside
     ``metadata["surfacing"]`` — send_message callers pass arbitrary
     metadata, so we lift it out if present.
     """

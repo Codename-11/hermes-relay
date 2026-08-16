@@ -2,13 +2,20 @@ package com.hermesandroid.relay.network.upstream
 
 import android.util.Log
 import com.hermesandroid.relay.data.GatewayProfileConfigureResult
+import com.hermesandroid.relay.data.GatewayProfileAsset
+import com.hermesandroid.relay.data.GatewayProfileAuthChoice
+import com.hermesandroid.relay.data.GatewayProfileCreateRequest
+import com.hermesandroid.relay.data.GatewayProfileCreateResult
 import com.hermesandroid.relay.data.GatewayProfileDescription
 import com.hermesandroid.relay.data.GatewayProfileEditorClient
 import com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException
+import com.hermesandroid.relay.data.GatewayProfileManagementUnsupportedException
 import com.hermesandroid.relay.data.GatewayProfilePatch
 import com.hermesandroid.relay.data.GatewayProfileSection
 import com.hermesandroid.relay.data.GatewayProfileSkill
 import com.hermesandroid.relay.data.GatewayProfileToolset
+import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.isSafeProfileUiMeta
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.util.AppForegroundTracker
@@ -41,6 +48,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import java.util.Base64
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -102,7 +110,17 @@ class GatewayChatClient(
     /** Existing upstream rich-chat vocabulary; do not invent a Relay-only source. */
     private val sessionSource = "webui"
     @Volatile
-    private var profileEditorSupported: Boolean? = null
+    private var profileDescribeSupported: Boolean? = null
+    @Volatile
+    private var profileConfigureSupported: Boolean? = null
+    @Volatile
+    private var profileListSupported: Boolean? = null
+    @Volatile
+    private var profileCreateSupported: Boolean? = null
+    @Volatile
+    private var profileGetAssetSupported: Boolean? = null
+    @Volatile
+    private var profileSetAssetSupported: Boolean? = null
     companion object {
         private const val TAG = "GatewayChatClient"
 
@@ -126,6 +144,7 @@ class GatewayChatClient(
         private const val ASK_UNBOUNDED_TIMEOUT_MS = 600_000L
 
         private const val RPC_TIMEOUT_MS = 15_000L
+        const val PROFILE_AVATAR_MAX_BYTES = 2_000_000
 
         /**
          * `prompt.submit` ack ceiling — mirrors upstream desktop's
@@ -373,14 +392,10 @@ class GatewayChatClient(
         sessionProfileProvider().takeIf { !it.isNullOrBlank() }
 
     /**
-     * Supplies the explicit in-chat overrides to bind onto each fresh
-     * `session.create` (upstream honors `model`/`provider`/`reasoning_effort`/
-     * `fast` → the new session's per-session overrides). Pulled live so it
-     * always reflects the current picker + safety/speed controls; null (or all
-     * fields null) = no explicit override, so the new session inherits the
-     * profile / server default. Wired by ChatViewModel. A live session keeps its
-     * agent config, so this only affects session creation — mid-session switches
-     * go through [setModel]/[setReasoning]/[setFast] (`config.set`).
+     * Supplies non-model overrides for each fresh `session.create`. Model and
+     * provider must never ride this raw create contract because that bypasses
+     * upstream model-selection confirmation; all model changes use [setModel]
+     * after [prepareModelSelectionSession].
      */
     @Volatile
     var sessionModelProvider: () -> GatewaySessionModel? = { null }
@@ -531,6 +546,9 @@ class GatewayChatClient(
      *   user explicitly queued behind an active turn. Newer gateways use the
      *   additive `queued:true` marker to preserve run-after semantics while
      *   the previous turn is still settling; older gateways ignore it.
+     * @param onAttachmentFailure invoked when attachment bytes could not be
+     *   safely bound to this Gateway turn. Callers must surface that failure
+     *   instead of falling back to a transport without equivalent media.
      * @param onPreflightFailure invoked INSTEAD of starting the turn when the
      *   gateway could not be reached / authenticated / the prompt could not
      *   be submitted — i.e. nothing started server-side, so the caller can
@@ -547,6 +565,7 @@ class GatewayChatClient(
         truncateBeforeRowId: Long? = null,
         queuedFollowUp: Boolean = false,
         onSurvivorUserRowIds: (List<Long?>) -> Unit = { },
+        onAttachmentFailure: ((String) -> Unit)? = null,
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
         val turn = GatewayTurn(dispatchOn(callbacks))
@@ -568,21 +587,33 @@ class GatewayChatClient(
                     turn.tracer.mark("session")
                 }
                 if (turn.cancelled) return@launch
+                val stagedImagePaths = mutableListOf<String>()
                 val attachmentRefs = attachments.mapNotNull { attachment ->
                     val upload = uploadAttachment(attachment).getOrElse { e ->
-                        throw GatewayPreflightException("attachment upload failed: ${e.message}")
+                        cleanupStagedAttachments(stagedImagePaths)
+                        throw GatewayAttachmentPreflightException("attachment upload failed: ${e.message}")
                     }
+                    stagedImagePaths += upload.attachedImagePaths()
                     if (attachment.requiresPromptReference()) {
                         upload.stringField("ref_text")
-                            ?: throw GatewayPreflightException(
-                                "attachment upload failed: Hermes returned no readable file reference",
-                            )
+                            ?: run {
+                                cleanupStagedAttachments(stagedImagePaths)
+                                throw GatewayAttachmentPreflightException(
+                                    "attachment upload failed: Hermes returned no readable file reference",
+                                )
+                            }
                     } else {
                         null
                     }
                 }
-                if (turn.cancelled) return@launch
-                if (!awaitCancelledTurnDrain(turn, storedSessionId)) return@launch
+                if (turn.cancelled) {
+                    cleanupStagedAttachments(stagedImagePaths)
+                    return@launch
+                }
+                if (!awaitCancelledTurnDrain(turn, storedSessionId)) {
+                    cleanupStagedAttachments(stagedImagePaths)
+                    return@launch
+                }
                 activeTurn = turn
                 turn.armWatchdog()
                 // Generic `file.attach` uploads are staged artifacts, not
@@ -598,9 +629,11 @@ class GatewayChatClient(
                     buildJsonObject {
                         put("session_id", liveSessionId ?: error("no live session"))
                         put("text", submittedText)
+                        if (truncateBeforeUserOrdinal != null || truncateBeforeRowId != null) {
+                            put("confirm_truncate", true)
+                        }
                         truncateBeforeUserOrdinal?.let { ordinal ->
                             put("truncate_before_user_ordinal", ordinal)
-                            put("confirm_truncate", true)
                             if (ordinal == 0) put("confirm_empty_truncate", true)
                         }
                         truncateBeforeRowId?.let { put("truncate_before_row_id", it) }
@@ -636,11 +669,18 @@ class GatewayChatClient(
                         // and duplicate the optimistic user turn on another
                         // transport. Surface the holder-aware upstream message
                         // through the normal failed-turn callback instead.
+                        cleanupStagedAttachments(stagedImagePaths)
                         turn.tracer.done("submit-rejected")
                         turn.callbacks.onError(
                             submitError?.message ?: "Hermes rejected the new session",
                         )
                         return@launch
+                    }
+                    if (attachments.isNotEmpty()) {
+                        cleanupStagedAttachments(stagedImagePaths)
+                        throw GatewayAttachmentPreflightException(
+                            submitError?.message ?: "attachment prompt submission could not be confirmed",
+                        )
                     }
                     throw GatewayPreflightException(
                         submitError?.message ?: "prompt.submit failed",
@@ -664,6 +704,18 @@ class GatewayChatClient(
                     turn.disarmWatchdog()
                     turn.tracer.done("resume-rejected")
                     turn.callbacks.onError(e.message ?: "Hermes could not resume this session")
+                }
+            } catch (e: GatewayAttachmentPreflightException) {
+                if (activeTurn === turn) activeTurn = null
+                if (!turn.cancelled) {
+                    Log.w(TAG, "Gateway attachment preflight failed: ${e.message}")
+                    turn.disarmWatchdog()
+                    turn.tracer.done("attachment-preflight-fail")
+                    callbackDispatcher {
+                        (onAttachmentFailure ?: onPreflightFailure)(
+                            e.message ?: "attachment could not be sent",
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 if (activeTurn === turn) activeTurn = null
@@ -851,6 +903,66 @@ class GatewayChatClient(
     }
 
     /**
+     * Obtain a session-scoped target before a model-selection `config.set`.
+     *
+     * Unlike [prewarmAwait], a draft is deliberately materialized here because
+     * sending a model with `session.create` bypasses upstream's cost/data-policy
+     * confirmation guard, while a sessionless `config.set` mutates global
+     * configuration. Draft creation therefore binds only the profile and
+     * non-model session options; the model always follows through [setModel].
+     */
+    suspend fun prepareModelSelectionSession(requestedStoredId: String?): Result<String> {
+        if (requestedStoredId != null) {
+            return if (prewarmAwait(requestedStoredId)) {
+                Result.success(requestedStoredId)
+            } else {
+                Result.failure(GatewayPreflightException("gateway session is unavailable"))
+            }
+        }
+        return runCatching {
+            val requestedProfile = currentSessionProfile()
+            connectMutex.withLock {
+                ensureConnected()
+                val reusableStoredId = storedSessionId
+                if (
+                    liveSessionId != null && reusableStoredId != null &&
+                    liveSessionProfile == requestedProfile
+                ) {
+                    return@withLock reusableStoredId
+                }
+                if (liveSessionId != null || storedSessionId != null) {
+                    throw GatewayPreflightException("draft session state changed before model selection")
+                }
+                val created = rpc(
+                    "session.create",
+                    buildJsonObject {
+                        put("cols", DEFAULT_COLS)
+                        put("source", sessionSource)
+                        requestedProfile?.let { put("profile", it) }
+                        currentSessionModel()?.let { options ->
+                            options.reasoningEffort
+                                ?.takeIf(String::isNotBlank)
+                                ?.let { put("reasoning_effort", it) }
+                            options.fast?.let { put("fast", it) }
+                        }
+                    },
+                ).getOrElse { error ->
+                    throw GatewayPreflightException("session.create failed: ${error.message}")
+                }
+                requireConfirmedSessionProfile(created, requestedProfile)
+                val live = created.stringField("session_id")
+                    ?: throw GatewayPreflightException("session.create returned no session_id")
+                val stored = created.stringField("stored_session_id") ?: live
+                liveSessionId = live
+                storedSessionId = stored
+                liveSessionProfile = requestedProfile
+                if (cancelledTurnDrain?.storedSessionId != stored) cancelledTurnDrain = null
+                stored
+            }
+        }
+    }
+
+    /**
      * Reattach callbacks to a turn that survived the Android UI/process.
      *
      * New Hermes gateways expose `session.activate`, which attaches the new
@@ -942,6 +1054,22 @@ class GatewayChatClient(
                     synchronized(recoveryEventLock) { recoveryEvents = null }
                     throw error
                 }
+            }
+
+            try {
+                requireConfirmedSessionProfile(response, requestedProfile)
+            } catch (error: GatewayPreflightException) {
+                synchronized(recoveryEventLock) { recoveryEvents = null }
+                if (activeTurn === boundTurn) activeTurn = null
+                boundTurn?.discardDeferredEvents()
+                boundTurn?.detach()
+                if (!preferredLiveId.isNullOrBlank()) {
+                    claimedBackground?.let { backgroundTurns.putIfAbsent(preferredLiveId, it) }
+                }
+                liveSessionId = null
+                storedSessionId = null
+                liveSessionProfile = null
+                throw error
             }
 
             val recoveredLiveId = response.stringField("session_id")
@@ -1281,6 +1409,245 @@ class GatewayChatClient(
     }
 
     /**
+     * Create a schedule through upstream's authenticated `cron.manage` RPC.
+     * No Relay scheduler or compatibility endpoint is involved.
+     */
+    suspend fun createCronJob(draft: CronCreationDraft): Result<JsonObject> {
+        val validated = draft.validated().getOrElse { return Result.failure(it) }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(
+            "cron.manage",
+            buildJsonObject {
+                put("action", "add")
+                put("name", validated.name)
+                put("schedule", validated.schedule)
+                put("prompt", validated.prompt)
+                validated.repeat?.let { put("repeat", it) }
+                validated.profile?.let { put("profile", it) }
+            },
+        )
+    }
+
+    /** Current Hermes-owned profile roster; older gateways fail soft to the Dashboard/Relay list. */
+    suspend fun listProfiles(): Result<List<Profile>> {
+        if (profileListSupported == false) {
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.list"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc(
+            "profiles.list",
+            buildJsonObject { put("include_sessions", false) },
+        )
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileListSupported = false
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.list"))
+        }
+        return response.mapCatching { payload ->
+            (payload["profiles"] as? JsonArray).orEmpty().mapNotNull { raw ->
+                val row = raw as? JsonObject ?: return@mapNotNull null
+                val name = row.stringField("name")?.trim()?.takeIf(String::isNotEmpty)
+                    ?: return@mapNotNull null
+                val uiMeta = (row["ui_meta"] as? JsonObject)
+                    ?.takeIf(::isSafeProfileUiMeta)
+                    ?: JsonObject(emptyMap())
+                Profile(
+                    name = name,
+                    model = row.stringField("model").orEmpty(),
+                    provider = row.stringField("provider").orEmpty(),
+                    description = row.stringField("description").orEmpty(),
+                    skillCount = (row["skill_count"] as? JsonPrimitive)?.intOrNull ?: 0,
+                    isDefault = (row["is_default"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                    hasAvatar = (row["has_avatar"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                    uiMeta = uiMeta,
+                )
+            }
+        }.onSuccess { profileListSupported = true }
+    }
+
+    /** Create through the Gateway so auth behavior is explicit and server-owned. */
+    suspend fun createProfile(request: GatewayProfileCreateRequest): Result<GatewayProfileCreateResult> {
+        if (profileCreateSupported == false) {
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.create"))
+        }
+        val name = request.name.trim()
+        if (name.isEmpty()) return Result.failure(IllegalArgumentException("profile name required"))
+        if ((request.model == null) != (request.provider == null)) {
+            return Result.failure(IllegalArgumentException("provider and model must be supplied together"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc(
+            "profiles.create",
+            buildJsonObject {
+                put("name", name)
+                request.description?.trim()?.takeIf(String::isNotEmpty)?.let { put("description", it) }
+                request.cloneFrom?.trim()?.takeIf(String::isNotEmpty)?.let { put("clone_from", it) }
+                put("clone_all", request.cloneAll)
+                put("no_skills", request.noSkills)
+                request.soul?.let { put("soul", it) }
+                request.model?.trim()?.takeIf(String::isNotEmpty)?.let { put("model", it) }
+                request.provider?.trim()?.takeIf(String::isNotEmpty)?.let { put("provider", it) }
+                put("mirror_credentials", request.authChoice != GatewayProfileAuthChoice.Isolated)
+                put("share_auth", request.authChoice == GatewayProfileAuthChoice.Shared)
+            },
+        )
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileCreateSupported = false
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.create"))
+        }
+        return response.mapCatching { payload ->
+            val returnedName = payload.stringField("name")
+                ?: throw GatewayRpcException("profiles.create returned no profile name")
+            if (returnedName != name) throw GatewayRpcException("profiles.create returned a different profile")
+            val mirrored = payload["mirrored"] as? JsonObject ?: JsonObject(emptyMap())
+            val auth = mirrored["auth"] as? JsonPrimitive
+            GatewayProfileCreateResult(
+                name = returnedName,
+                soulWritten = (payload["soul_written"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                modelSet = (payload["model_set"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                mirroredEnvironment = (mirrored["env"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                mirroredAuth = auth?.contentOrNull,
+                modelInherited = (mirrored["model_inherited"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                voiceMirrored = (mirrored["voice"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            )
+        }.onSuccess { profileCreateSupported = true }
+    }
+
+    suspend fun getProfileAvatar(profileName: String): Result<GatewayProfileAsset?> {
+        if (profileGetAssetSupported == false) {
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.get_asset"))
+        }
+        val name = profileName.trim()
+        if (name.isEmpty()) return Result.failure(IllegalArgumentException("profile name required"))
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc(
+            "profiles.get_asset",
+            buildJsonObject { put("name", name); put("asset", "avatar") },
+        )
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileGetAssetSupported = false
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.get_asset"))
+        }
+        return response.mapCatching { payload ->
+            if ((payload["found"] as? JsonPrimitive)?.booleanOrNull != true) return@mapCatching null
+            val declaredMime = payload.stringField("mime")
+                ?: throw GatewayRpcException("profiles.get_asset returned no mime")
+            val encoded = payload.stringField("data")
+                ?: throw GatewayRpcException("profiles.get_asset returned no data")
+            val (dataMime, base64) = splitImageData(encoded)
+            if (dataMime != null && dataMime != declaredMime) {
+                throw GatewayRpcException("profiles.get_asset mime mismatch")
+            }
+            val bytes = runCatching { Base64.getDecoder().decode(base64) }
+                .getOrElse { throw GatewayRpcException("profiles.get_asset returned malformed base64") }
+            if (bytes.size > PROFILE_AVATAR_MAX_BYTES) {
+                throw GatewayRpcException("profiles.get_asset returned an oversized avatar")
+            }
+            val actualMime = imageMime(bytes)
+                ?: throw GatewayRpcException("profiles.get_asset returned an unsupported image")
+            if (actualMime != declaredMime) throw GatewayRpcException("profiles.get_asset magic mismatch")
+            val declaredSize = (payload["size"] as? JsonPrimitive)?.intOrNull
+            if (declaredSize != null && declaredSize != bytes.size) {
+                throw GatewayRpcException("profiles.get_asset size mismatch")
+            }
+            GatewayProfileAsset(bytes, actualMime)
+        }.onSuccess { profileGetAssetSupported = true }
+    }
+
+    suspend fun setProfileAvatar(profileName: String, bytes: ByteArray): Result<Int> {
+        val mime = imageMime(bytes)
+            ?: return Result.failure(IllegalArgumentException("avatar must be PNG, JPEG, or WebP"))
+        if (bytes.size > PROFILE_AVATAR_MAX_BYTES) {
+            return Result.failure(IllegalArgumentException("avatar exceeds the 2,000,000 byte limit"))
+        }
+        return setProfileAvatarPayload(
+            profileName,
+            expectedSize = bytes.size,
+            params = buildJsonObject {
+                put("name", profileName.trim())
+                put("asset", "avatar")
+                put("data", "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}")
+            },
+        )
+    }
+
+    suspend fun clearProfileAvatar(profileName: String): Result<Int> = setProfileAvatarPayload(
+        profileName,
+        expectedSize = 0,
+        params = buildJsonObject {
+            put("name", profileName.trim())
+            put("asset", "avatar")
+            put("clear", true)
+        },
+    )
+
+    private suspend fun setProfileAvatarPayload(
+        profileName: String,
+        expectedSize: Int,
+        params: JsonObject,
+    ): Result<Int> {
+        if (profileSetAssetSupported == false) {
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.set_asset"))
+        }
+        if (profileName.trim().isEmpty()) {
+            return Result.failure(IllegalArgumentException("profile name required"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc("profiles.set_asset", params)
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileSetAssetSupported = false
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.set_asset"))
+        }
+        return response.mapCatching { payload ->
+            if ((payload["ok"] as? JsonPrimitive)?.booleanOrNull != true) {
+                throw GatewayRpcException("profiles.set_asset was not acknowledged")
+            }
+            val size = (payload["size"] as? JsonPrimitive)?.intOrNull
+                ?: throw GatewayRpcException("profiles.set_asset returned no size")
+            if (size != expectedSize) throw GatewayRpcException("profiles.set_asset size mismatch")
+            size
+        }.onSuccess { profileSetAssetSupported = true }
+    }
+
+    private fun splitImageData(value: String): Pair<String?, String> {
+        if (!value.startsWith("data:")) return null to value
+        val marker = ";base64,"
+        val split = value.indexOf(marker)
+        if (split <= 5) throw GatewayRpcException("profiles.get_asset returned a malformed data URL")
+        return value.substring(5, split) to value.substring(split + marker.length)
+    }
+
+    private fun imageMime(bytes: ByteArray): String? = when {
+        bytes.size >= 8 && bytes.copyOfRange(0, 8).contentEquals(
+            byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+        ) -> "image/png"
+        bytes.size >= 3 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() &&
+            bytes[2] == 0xff.toByte() -> "image/jpeg"
+        bytes.size >= 12 && bytes.copyOfRange(0, 4).contentEquals("RIFF".toByteArray()) &&
+            bytes.copyOfRange(8, 12).contentEquals("WEBP".toByteArray()) -> "image/webp"
+        else -> null
+    }
+
+    /**
      * Capability probe and authoritative editor snapshot. A method-not-found
      * response is sticky for this client so older Hermes builds keep using the
      * existing Relay inspector without repeatedly sending unsupported RPCs.
@@ -1288,7 +1655,7 @@ class GatewayChatClient(
     override suspend fun describeProfile(
         profileName: String,
     ): Result<GatewayProfileDescription> {
-        if (profileEditorSupported == false) {
+        if (profileDescribeSupported == false) {
             return Result.failure(GatewayProfileEditorUnsupportedException())
         }
         val name = profileName.trim()
@@ -1304,13 +1671,13 @@ class GatewayChatClient(
         )
         val error = response.exceptionOrNull()
         if (error.isMethodNotFound()) {
-            profileEditorSupported = false
+            profileDescribeSupported = false
             return Result.failure(GatewayProfileEditorUnsupportedException())
         }
         return response.mapCatching { payload ->
             parseProfileDescription(payload, expectedName = name)
         }.onSuccess {
-            profileEditorSupported = true
+            profileDescribeSupported = true
         }
     }
 
@@ -1319,13 +1686,16 @@ class GatewayChatClient(
         profileName: String,
         patch: GatewayProfilePatch,
     ): Result<GatewayProfileConfigureResult> {
-        if (profileEditorSupported != true) {
+        if (profileDescribeSupported != true || profileConfigureSupported == false) {
             return Result.failure(GatewayProfileEditorUnsupportedException())
         }
         val name = profileName.trim()
         if (name.isEmpty()) return Result.failure(IllegalArgumentException("profile name required"))
         if ((patch.provider == null) != (patch.model == null)) {
             return Result.failure(IllegalArgumentException("provider and model must be saved together"))
+        }
+        if (patch.uiMeta != null && !isSafeProfileUiMeta(patch.uiMeta)) {
+            return Result.failure(IllegalArgumentException("ui_meta must contain only small preference/reference metadata"))
         }
         val requested = patch.requestedSections
         if (requested.isEmpty()) return Result.success(GatewayProfileConfigureResult(emptySet(), emptySet()))
@@ -1341,14 +1711,25 @@ class GatewayChatClient(
             patch.enabledToolsets?.let { names ->
                 put("enabled_toolsets", JsonArray(names.map(::JsonPrimitive)))
             }
+            patch.enabledMcpServers?.let { names ->
+                put("enabled_mcp_servers", JsonArray(names.map(::JsonPrimitive)))
+            }
+            patch.uiMeta?.let { put("ui_meta", it) }
         }
-        return rpc("profiles.configure", params).mapCatching { payload ->
+        val response = rpc("profiles.configure", params)
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileConfigureSupported = false
+            return Result.failure(GatewayProfileEditorUnsupportedException())
+        }
+        return response.mapCatching { payload ->
             val appliedObject = payload["applied"] as? JsonObject
                 ?: throw GatewayRpcException("profiles.configure returned no applied map")
             val applied = requested.filterTo(linkedSetOf()) { section ->
                 (appliedObject[section.wireName] as? JsonPrimitive)?.booleanOrNull == true
             }
             GatewayProfileConfigureResult(requested = requested, applied = applied)
+        }.onSuccess {
+            profileConfigureSupported = true
         }
     }
 
@@ -1444,6 +1825,78 @@ class GatewayChatClient(
                 throw GatewayRpcException("pet.thumb returned an invalid thumbnail")
             }
             dataUri
+        }
+    }
+
+    /** Fetch the active profile-scoped Hermes pet and its renderer contract. */
+    suspend fun petInfo(
+        profile: String? = currentSessionProfile(),
+        knownRevision: String? = null,
+    ): Result<GatewayPetInfo> {
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(
+            "pet.info",
+            buildJsonObject {
+                profile?.trim()?.takeIf { it.isNotEmpty() }?.let { put("profile", it) }
+                knownRevision?.trim()?.takeIf { it.isNotEmpty() }?.let { put("knownRevision", it) }
+            },
+        ).mapCatching(::parseGatewayPetInfo)
+    }
+
+    /** List adoptable pets for the active Hermes profile. */
+    suspend fun petGallery(
+        profile: String? = currentSessionProfile(),
+        localOnly: Boolean = false,
+    ): Result<GatewayPetGallery> {
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(
+            "pet.gallery",
+            buildJsonObject {
+                put("localOnly", localOnly)
+                profile?.trim()?.takeIf { it.isNotEmpty() }?.let { put("profile", it) }
+            },
+        ).mapCatching(::parseGatewayPetGallery)
+    }
+
+    /** Install if necessary and activate one pet in the selected Hermes profile. */
+    suspend fun selectPet(
+        slug: String,
+        profile: String? = currentSessionProfile(),
+    ): Result<Unit> = mutatePet("pet.select", slug, profile)
+
+    /** Disable the active pet without deleting it from the selected Hermes profile. */
+    suspend fun disablePet(profile: String? = currentSessionProfile()): Result<Unit> =
+        mutatePet("pet.disable", slug = null, profile = profile)
+
+    private suspend fun mutatePet(method: String, slug: String?, profile: String?): Result<Unit> {
+        val normalizedSlug = slug?.trim()
+        if (normalizedSlug != null && !PETDEX_SLUG.matches(normalizedSlug)) {
+            return Result.failure(IllegalArgumentException("invalid Petdex slug"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(
+            method,
+            buildJsonObject {
+                normalizedSlug?.let { put("slug", it) }
+                profile?.trim()?.takeIf { it.isNotEmpty() }?.let { put("profile", it) }
+            },
+            timeoutMs = PET_MUTATION_TIMEOUT_MS,
+        ).mapCatching { response ->
+            if ((response["ok"] as? JsonPrimitive)?.booleanOrNull != true) {
+                throw GatewayRpcException("$method returned an invalid response")
+            }
         }
     }
 
@@ -1646,12 +2099,16 @@ class GatewayChatClient(
      * which falls through to `command.dispatch` and reports a spurious
      * "not a quick/plugin/skill command" failure even when the switch applied.
      */
-    suspend fun setModel(value: String): Result<JsonObject> =
+    suspend fun setModel(
+        value: String,
+        confirmSelection: Boolean = false,
+    ): Result<JsonObject> =
         rpc(
             "config.set",
             buildJsonObject {
                 put("key", "model")
                 put("value", value)
+                if (confirmSelection) put("confirm_expensive_model", true)
                 liveSessionId?.let { put("session_id", it) }
             },
         )
@@ -1974,7 +2431,11 @@ class GatewayChatClient(
                 requestedProfile?.let { put("profile", it) }
             },
         )
-        val result = resumed.getOrNull()
+        val result = resumed.getOrNull()?.takeIf { response ->
+            runCatching { requireConfirmedSessionProfile(response, requestedProfile) }
+                .onFailure { Log.w(TAG, "Gateway prewarm rejected profile scope: ${it.message}") }
+                .isSuccess
+        }
         val live = result?.stringField("session_id")
         if (
             live != null &&
@@ -2065,6 +2526,28 @@ class GatewayChatClient(
     private fun applySessionResultInfo(result: JsonObject) {
         _serverProject.value = null
         (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
+    }
+
+    /**
+     * A named profile is safe to bind only when Hermes echoes that exact owner
+     * in the authoritative session result. Current multiplex gateways report
+     * `info.profile_name` on create/resume. Missing metadata means an older
+     * gateway may have ignored `params.profile`; a different name means the
+     * requested profile disappeared or resolved to the launch profile.
+     */
+    private fun requireConfirmedSessionProfile(result: JsonObject, requestedProfile: String?) {
+        val expected = requestedProfile?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val actual = (result["info"] as? JsonObject)
+            ?.stringField("profile_name")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (actual != expected) {
+            val detail = actual?.let { "Hermes returned profile '$it'" }
+                ?: "Hermes did not confirm profile ownership"
+            throw GatewayPreflightException(
+                "$detail; refusing to use it as selected profile '$expected'",
+            )
+        }
     }
 
     /** Resolve a process RPC against the exact live id, resuming after reconnect when possible. */
@@ -2167,6 +2650,7 @@ class GatewayChatClient(
             }
             val live = result?.stringField("session_id")
             if (live != null) {
+                requireConfirmedSessionProfile(result, requestedProfile)
                 liveSessionId = live
                 storedSessionId = requestedStoredId
                 liveSessionProfile = requestedProfile
@@ -2188,20 +2672,10 @@ class GatewayChatClient(
                 put("source", sessionSource)
                 if (!newSessionTitle.isNullOrBlank()) put("title", newSessionTitle)
                 requestedProfile?.let { put("profile", it) }
-                // Bind the in-chat overrides to the new session as its
-                // per-session overrides. Upstream tui_gateway session.create
-                // reads `model`/`provider` (→ model_override), `reasoning_effort`
-                // (→ create_reasoning_override) and `fast` (→ priority service
-                // tier) — verified server.py:4175-4191. Without this a fresh
-                // chat ignores the picker/safety controls and builds the agent
-                // from the global default, and worse, setting effort/fast before
-                // the first message runs a SESSIONLESS config.set that upstream
-                // applies as a GLOBAL config write. A live session keeps its own
-                // config — this is create-only; mid-session switches use
-                // config.set (setModel/setReasoning/setFast).
+                // Only non-model draft settings may ride session.create. Model
+                // and provider always pass through confirmation-aware config.set
+                // before they become active.
                 currentSessionModel()?.let { sm ->
-                    sm.model?.takeIf { it.isNotBlank() }?.let { put("model", it) }
-                    sm.provider?.takeIf { it.isNotBlank() }?.let { put("provider", it) }
                     sm.reasoningEffort?.takeIf { it.isNotBlank() }?.let { put("reasoning_effort", it) }
                     sm.fast?.let { put("fast", it) }
                 }
@@ -2211,6 +2685,7 @@ class GatewayChatClient(
         }
         val live = created.stringField("session_id")
             ?: throw GatewayPreflightException("session.create returned no session_id")
+        requireConfirmedSessionProfile(created, requestedProfile)
         val stored = created.stringField("stored_session_id") ?: live
         liveSessionId = live
         storedSessionId = stored
@@ -2830,6 +3305,25 @@ class GatewayChatClient(
         val sid = liveSessionId
             ?: return Result.failure(GatewayRpcException("no live session"))
         val mime = attachment.contentType.substringBefore(';').trim().lowercase()
+        val size = maxOf(
+            attachment.sizeBytes ?: 0L,
+            decodedBase64Size(attachment.base64),
+        )
+        val limit = when {
+            mime.startsWith("image/") -> ATTACH_IMAGE_MAX_BYTES
+            mime == "application/pdf" -> ATTACH_PDF_MAX_BYTES
+            else -> ATTACH_FILE_MAX_BYTES
+        }
+        if (size <= 0L) {
+            return Result.failure(GatewayRpcException("attachment is empty"))
+        }
+        if (size > limit) {
+            return Result.failure(
+                GatewayRpcException(
+                    "attachment is too large (${size / (1024 * 1024)} MB; max ${limit / (1024 * 1024)} MB)",
+                ),
+            )
+        }
         return when {
             mime.startsWith("image/") -> uploadImage(sid, attachment)
             mime == "application/pdf" -> rpc(
@@ -2852,6 +3346,23 @@ class GatewayChatClient(
                 },
                 timeoutMs = ATTACH_RPC_TIMEOUT_MS,
             )
+        }
+    }
+
+    private suspend fun cleanupStagedAttachments(paths: List<String>) {
+        val sid = liveSessionId ?: return
+        paths.asReversed().distinct().forEach { path ->
+            val removed = rpc(
+                "image.detach",
+                buildJsonObject {
+                    put("session_id", sid)
+                    put("path", path)
+                },
+                timeoutMs = ATTACH_RPC_TIMEOUT_MS,
+            )
+            if (removed.isFailure) {
+                Log.w(TAG, "Could not clean up staged attachment: ${removed.exceptionOrNull()?.message}")
+            }
         }
     }
 
@@ -3330,10 +3841,14 @@ data class GatewayAttachment(
     val base64: String,
     val ext: String?,
     val contentType: String,
+    val sizeBytes: Long? = null,
 )
 
 /** Connect/auth/submit failed before the turn started — safe to fall back to SSE. */
 internal class GatewayPreflightException(message: String) : Exception(message)
+
+/** Attachment bytes were not safely bound to a Gateway turn; never silently fall through to SSE. */
+internal class GatewayAttachmentPreflightException(message: String) : Exception(message)
 
 /** One connect attempt failed; [GatewayChatClient] may retry with a fresh ticket. */
 internal class GatewayConnectAttemptException(message: String) : Exception(message)
@@ -3345,6 +3860,9 @@ internal class GatewayAuthoritativeResumeException(message: String) : Exception(
 internal class GatewayRpcException(message: String, val code: Int? = null) : Exception(message)
 
 private const val JSONRPC_METHOD_NOT_FOUND = -32601
+private const val ATTACH_IMAGE_MAX_BYTES = 25L * 1024L * 1024L
+private const val ATTACH_PDF_MAX_BYTES = 50L * 1024L * 1024L
+private const val ATTACH_FILE_MAX_BYTES = 50L * 1024L * 1024L
 private val AUTHORITATIVE_PROMPT_SUBMIT_REJECTIONS = setOf(
     4004, // malformed truncation target
     4018, // durable/ordinal target is no longer present
@@ -3359,6 +3877,21 @@ private val AUTHORITATIVE_PROMPT_SUBMIT_REJECTIONS = setOf(
 private const val MAX_RECOVERED_CORRECTIONS = 32
 private const val MAX_RECOVERED_CORRECTION_CHARS = 32_768
 private const val PET_THUMB_DATA_PREFIX = "data:image/png;base64,"
+
+internal fun decodedBase64Size(value: String): Long {
+    val compactLength = value.count { !it.isWhitespace() }
+    if (compactLength == 0) return 0L
+    val padding = value.trimEnd().takeLast(2).count { it == '=' }
+    return (compactLength.toLong() * 3L / 4L - padding).coerceAtLeast(0L)
+}
+
+private fun JsonObject.attachedImagePaths(): List<String> {
+    val direct = stringField("path")?.let(::listOf).orEmpty()
+    val pages = (this["pages"] as? JsonArray).orEmpty().mapNotNull { page ->
+        (page as? JsonObject)?.stringField("path")
+    }
+    return direct + pages
+}
 private const val MAX_PET_THUMB_BASE64_CHARS = 512 * 1024
 private val PETDEX_SLUG = Regex("[a-z0-9][a-z0-9-]{0,127}")
 private val STANDARD_BASE64 = Regex("[A-Za-z0-9+/]*={0,2}")
@@ -3379,6 +3912,135 @@ private fun isValidPetThumbnailDataUri(raw: String): Boolean {
         payload.length <= MAX_PET_THUMB_BASE64_CHARS &&
         payload.length % 4 == 0 &&
         STANDARD_BASE64.matches(payload)
+}
+
+private const val MAX_PET_SPRITESHEET_BYTES = 32L * 1024L * 1024L
+private const val PET_MUTATION_TIMEOUT_MS = 120_000L
+private const val MAX_PET_GALLERY_ITEMS = 10_000
+private const val MAX_PET_STATE_ROWS = 64
+
+data class GatewayPetInfo(
+    val enabled: Boolean,
+    val slug: String? = null,
+    val displayName: String? = null,
+    val mime: String? = null,
+    val spritesheet: ByteArray? = null,
+    val spritesheetRevision: String? = null,
+    val spritesheetUnchanged: Boolean = false,
+    val frameWidth: Int = 0,
+    val frameHeight: Int = 0,
+    val framesPerState: Int = 0,
+    val framesByState: Map<String, Int> = emptyMap(),
+    val framesByRow: Map<String, Int> = emptyMap(),
+    val loopMs: Int = 0,
+    val scale: Float = 1f,
+    val stateRows: List<String> = emptyList(),
+)
+
+data class GatewayPetGalleryItem(
+    val slug: String,
+    val displayName: String,
+    val installed: Boolean,
+    val spritesheetUrl: String?,
+    val curated: Boolean,
+    val generated: Boolean,
+)
+
+data class GatewayPetGallery(
+    val enabled: Boolean,
+    val active: String?,
+    val pets: List<GatewayPetGalleryItem>,
+)
+
+private fun parseGatewayPetInfo(response: JsonObject): GatewayPetInfo {
+    val enabled = (response["enabled"] as? JsonPrimitive)?.booleanOrNull
+        ?: throw GatewayRpcException("pet.info returned an invalid response")
+    if (!enabled) return GatewayPetInfo(enabled = false)
+
+    val slug = response.stringField("slug")?.takeIf(PETDEX_SLUG::matches)
+        ?: throw GatewayRpcException("pet.info returned an invalid slug")
+    val revision = response.stringField("spritesheetRevision")?.takeIf { it.length <= 256 }
+        ?: throw GatewayRpcException("pet.info returned no spritesheet revision")
+    val unchanged = (response["spritesheetUnchanged"] as? JsonPrimitive)?.booleanOrNull == true
+    val mime = response.stringField("mime")?.takeIf { it == "image/png" || it == "image/webp" }
+    val encoded = response.stringField("spritesheetBase64")
+    val spritesheet = when {
+        encoded != null -> {
+            if (decodedBase64Size(encoded) > MAX_PET_SPRITESHEET_BYTES ||
+                encoded.length % 4 != 0 || !STANDARD_BASE64.matches(encoded)
+            ) throw GatewayRpcException("pet.info returned an invalid spritesheet")
+            runCatching { Base64.getDecoder().decode(encoded) }
+                .getOrElse { throw GatewayRpcException("pet.info returned an invalid spritesheet") }
+        }
+        unchanged -> null
+        else -> throw GatewayRpcException("pet.info returned no spritesheet")
+    }
+    if (spritesheet != null && mime == null) {
+        throw GatewayRpcException("pet.info returned an invalid spritesheet mime")
+    }
+
+    fun requiredDimension(name: String, max: Int): Int =
+        (response[name] as? JsonPrimitive)?.intOrNull
+            ?.takeIf { it in 1..max }
+            ?: throw GatewayRpcException("pet.info returned an invalid $name")
+
+    val rows = (response["stateRows"] as? JsonArray).orEmpty().mapNotNull {
+        (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { name ->
+            name.isNotEmpty() && name.length <= 64
+        }
+    }
+    if (rows.isEmpty() || rows.size > MAX_PET_STATE_ROWS) {
+        throw GatewayRpcException("pet.info returned invalid state rows")
+    }
+    fun frameCounts(name: String): Map<String, Int> {
+        val values = response[name] as? JsonObject ?: return emptyMap()
+        if (values.size > MAX_PET_STATE_ROWS) throw GatewayRpcException("pet.info returned too many frame counts")
+        return values.mapNotNull { (key, value) ->
+            val count = (value as? JsonPrimitive)?.intOrNull
+            if (key.length <= 64 && count != null && count in 1..120) key to count else null
+        }.toMap()
+    }
+    return GatewayPetInfo(
+        enabled = true,
+        slug = slug,
+        displayName = response.stringField("displayName")?.take(256) ?: slug,
+        mime = mime,
+        spritesheet = spritesheet,
+        spritesheetRevision = revision,
+        spritesheetUnchanged = unchanged,
+        frameWidth = requiredDimension("frameW", 4096),
+        frameHeight = requiredDimension("frameH", 4096),
+        framesPerState = requiredDimension("framesPerState", 120),
+        framesByState = frameCounts("framesByState"),
+        framesByRow = frameCounts("framesByRow"),
+        loopMs = requiredDimension("loopMs", 60_000),
+        scale = response.stringField("scale")?.toFloatOrNull()?.coerceIn(0.1f, 3f) ?: 1f,
+        stateRows = rows,
+    )
+}
+
+private fun parseGatewayPetGallery(response: JsonObject): GatewayPetGallery {
+    val enabled = (response["enabled"] as? JsonPrimitive)?.booleanOrNull
+        ?: throw GatewayRpcException("pet.gallery returned an invalid response")
+    val active = response.stringField("active")?.takeIf(PETDEX_SLUG::matches)
+    val rawPets = (response["pets"] as? JsonArray).orEmpty()
+    if (rawPets.size > MAX_PET_GALLERY_ITEMS) {
+        throw GatewayRpcException("pet.gallery returned too many pets")
+    }
+    val pets = rawPets.mapNotNull { element ->
+        val item = element as? JsonObject ?: return@mapNotNull null
+        val slug = item.stringField("slug")?.takeIf(PETDEX_SLUG::matches) ?: return@mapNotNull null
+        val rawUrl = item.stringField("spritesheetUrl")?.trim().orEmpty()
+        GatewayPetGalleryItem(
+            slug = slug,
+            displayName = item.stringField("displayName")?.take(256)?.ifBlank { slug } ?: slug,
+            installed = (item["installed"] as? JsonPrimitive)?.booleanOrNull == true,
+            spritesheetUrl = rawUrl.takeIf { it.isNotEmpty() && isTrustedPetdexAssetUrl(it) },
+            curated = (item["curated"] as? JsonPrimitive)?.booleanOrNull == true,
+            generated = (item["generated"] as? JsonPrimitive)?.booleanOrNull == true,
+        )
+    }
+    return GatewayPetGallery(enabled = enabled, active = active, pets = pets)
 }
 
 data class GatewayCompressResult(

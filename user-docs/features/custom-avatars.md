@@ -1,17 +1,19 @@
 # Custom avatars and pets
 
-Hermes Relay has three separate visual concepts. Changing one does not replace
+Hermes Relay has four separate visual concepts. Changing one does not replace
 the others:
 
 1. **Profile identity** — the profile image or letter beside the agent name and
    the first assistant message in a group.
-2. **Background visualization** — Off, the animated **Sphere** with an optional
+2. **Hermes animated pet** — the profile-scoped upstream mascot shared with
+   Hermes Desktop and terminal surfaces.
+3. **Background visualization** — Off, the animated **Sphere** with an optional
    skin, or an imported Relay pet-format image/animation.
-3. **Floating pet** — None or an installed bitmap companion that stays with you
+4. **Phone-local floating pet** — None or an installed bitmap companion that stays with you
    across the app.
 
-Profile identity is managed from the agent sheet. Sphere and pet controls live
-under **Settings → Appearance**.
+Profile identity and the upstream Hermes pet are managed from the agent sheet.
+Sphere and phone-local pet controls live under **Settings → Appearance**.
 
 The background and floating-pet selections are saved independently. You can use
 the same installed pack in either role, choose different packs, or turn either
@@ -22,9 +24,16 @@ temperament.
 ## Profile badge image
 
 The small face shown beside the active agent name is configured separately from
-the full animated avatar. Open the agent sheet from Chat and use **Agent icon**:
+the full animated avatar. On a current Hermes Gateway, the shared avatar belongs
+to the profile on the server and follows it to Android, Hermes Desktop, and
+other clients. Open the agent sheet from Chat and use **Agent icon**:
 
-- **Set image** chooses an image from your phone.
+- **Choose device fallback** copies an image from your phone. It stays local
+  until you explicitly choose **Upload device icon to Hermes**.
+- **Upload device icon to Hermes** makes that PNG, JPEG, or WebP the shared
+  profile avatar. The decoded file must be no larger than 2,000,000 bytes.
+- **Clear shared Hermes avatar** removes only the server copy. Your device
+  fallback remains available.
 - **Import from agent host** copies a conventional image from the active Hermes
   profile on a paired Relay host. Put `avatar.png`, `avatar.jpg`, `profile.png`,
   or `profile.jpg` directly in `~/.hermes/` for the root Server default, or in
@@ -32,9 +41,28 @@ the full animated avatar. Open the agent sheet from Chat and use **Agent icon**:
   marker selects a named profile as Server default, use that named profile's
   directory. JPEG, PNG, WebP, and GIF are supported, including `.jpeg`.
 
-The imported copy stays on the phone and is scoped to that Connection and
-profile. Changing or removing the host file later does not silently change the
-phone icon; tap import again to refresh it.
+The Relay-host imported copy stays on the phone and is scoped to that Connection
+and profile. Changing or removing the host file later does not silently change
+the phone icon; tap import again to refresh it or explicitly upload it to Hermes.
+Older Hermes versions keep this local/import behavior when shared asset methods
+are unavailable. Pet ZIPs and Sphere skins remain local presentation choices
+and are never stored in profile metadata.
+
+## Hermes animated pet
+
+Current Hermes profiles can own an animated pet independently of their static
+profile badge. In the agent sheet, **Hermes animated pet** shows the active pet,
+plays its real upstream sprite animation, and lets you browse, adopt, switch, or
+disable pets. Those actions use Hermes' profile-scoped `pet.*` contract, so the
+selection follows the profile to Hermes Desktop and terminal surfaces. Android
+also maps the returned `idle`, `review`, `run`, `waiting`, `failed`, `wave`, and
+`jump` rows to the same live agent activity used by its local companion system.
+
+The upstream pet becomes the phone companion when you have not explicitly
+selected a phone-local floating pet. A local pet selection wins only on this
+phone; it does not change or disable the profile's Hermes pet. On older gateways
+the upstream card explains that Hermes must be updated and local pets continue
+to work normally.
 
 ## Choosing a floating pet
 

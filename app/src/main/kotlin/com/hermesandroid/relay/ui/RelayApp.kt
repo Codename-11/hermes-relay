@@ -96,6 +96,7 @@ import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
+import com.hermesandroid.relay.ui.components.avatar.toAvatar
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.ui.components.avatar.resolveBackgroundAvatar
 import com.hermesandroid.relay.ui.components.FloatingPetCompanion
@@ -116,6 +117,7 @@ import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateAvailableBanner
+import com.hermesandroid.relay.ui.components.HostResourcePressureBanner
 import com.hermesandroid.relay.ui.components.rememberUpdateAvailability
 import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
@@ -741,8 +743,12 @@ fun RelayApp() {
     ) {
         value = withContext(Dispatchers.IO) { PetLoader.loadPets(sphereContext) }
     }
-    val activeFloatingPet = remember(floatingPetId, availablePets) {
-        availablePets.firstOrNull { it.id == floatingPetId }
+    val hermesPetState by connectionViewModel.hermesPetState.collectAsState()
+    val upstreamProfilePet = remember(hermesPetState.active) {
+        hermesPetState.active?.toAvatar()
+    }
+    val activeFloatingPet = remember(floatingPetId, availablePets, upstreamProfilePet) {
+        availablePets.firstOrNull { it.id == floatingPetId } ?: upstreamProfilePet
     }
     var floatingPetMenuExpanded by remember(activeFloatingPet?.id) { mutableStateOf(false) }
     val activeBackgroundAvatar = remember(backgroundAvatarId, availablePets) {
@@ -887,6 +893,7 @@ fun RelayApp() {
         // ChatViewModel isn't available where ConnectionViewModel builds the
         // handler, so the session sink is set here at the app root where both
         // ViewModels are in scope.
+        val proactiveSummaryResources = LocalContext.current.resources
         LaunchedEffect(connectionViewModel, chatViewModel) {
             connectionViewModel.proactiveMessageHandler.toSession = { msg ->
                 val text = buildString {
@@ -894,6 +901,15 @@ fun RelayApp() {
                     append(msg.text)
                 }
                 chatViewModel.injectProactiveMessage(text)
+            }
+            connectionViewModel.proactiveMessageHandler.onBacklogDelivered = { count ->
+                UiMessageBus.info(
+                    proactiveSummaryResources.getQuantityString(
+                        R.plurals.proactive_messages_arrived_while_away,
+                        count,
+                        count,
+                    ),
+                )
             }
             // Agent Thread reply path: a send from the chat composer while a
             // source=phone Thread is open routes over the relay proactive
@@ -906,7 +922,8 @@ fun RelayApp() {
                 chatViewModel.onProactiveReplyAck(clientMsgId, status)
             }
             // Unified Threads: render an inbound agent message inline in the open
-            // Thread (suppressing the notification/inbox) when it belongs there.
+            // Thread when it belongs there. Surfacing semantics still decide
+            // independently whether a system notification is also required.
             connectionViewModel.proactiveMessageHandler.injectIntoThread = { msg ->
                 chatViewModel.injectThreadMessage(msg)
             }
@@ -1383,6 +1400,22 @@ fun RelayApp() {
         // user always knows the chat is sample data with no live server, and
         // can exit into the real Connect flow with one tap.
         val showDemoBanner = isDemoMode && !voiceUiState.voiceMode
+        val hostResourcePressure by connectionViewModel.hostResourcePressure.collectAsState()
+        val showHostResourcePressure = hostResourcePressure.needsAttention &&
+            !isDemoMode && !voiceUiState.voiceMode && !showStartupSphere
+        val hostResourcePressureText = buildList {
+            if (hostResourcePressure.lastBootSuspectedOom) {
+                add(stringResource(R.string.host_resource_recent_oom))
+            }
+            when (hostResourcePressure.memoryPressure) {
+                "critical" -> add(stringResource(R.string.host_resource_memory_critical))
+                "elevated" -> add(stringResource(R.string.host_resource_memory_elevated))
+            }
+            when (hostResourcePressure.diskPressure) {
+                "critical" -> add(stringResource(R.string.host_resource_disk_critical))
+                "elevated" -> add(stringResource(R.string.host_resource_disk_elevated))
+            }
+        }.distinct().joinToString(" ")
         // Transient info/status banner (UiMessageBus) — thin, takes its own
         // space, auto-dismisses. Folded into the inset accounting below so a
         // child TopAppBar doesn't double-pad when this banner owns the top edge.
@@ -1489,6 +1522,18 @@ fun RelayApp() {
             DemoModeBanner(onConnect = exitDemoToConnect)
         }
 
+        AnimatedVisibility(
+            visible = showHostResourcePressure,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+        ) {
+            HostResourcePressureBanner(
+                text = hostResourcePressureText,
+                critical = hostResourcePressure.critical,
+                includeStatusBarPadding = !showUnattendedBanner && !showDemoBanner,
+            )
+        }
+
         // Connection status intentionally has NO top-of-screen surface (no
         // banner, no strip, no float). Chat/agent status rides the chat header
         // subtitle; the relay socket rides the bottom RelayStatusStrip cue. See
@@ -1499,7 +1544,7 @@ fun RelayApp() {
         // that banner already padded the top — avoid double padding).
         MessageBannerHost(
             includeStatusBarPadding =
-                !showUnattendedBanner && !showDemoBanner,
+                !showUnattendedBanner && !showDemoBanner && !showHostResourcePressure,
         )
 
         // The update banner AND the connection-status indicator now render as
@@ -1539,7 +1584,7 @@ fun RelayApp() {
                     // The connection-status toast is now a floating overlay and
                     // doesn't occupy space above the Scaffold, so it no longer
                     // participates in the top-inset accounting.
-                    if (showUnattendedBanner || showDemoBanner || connectionChipVisible ||
+                    if (showUnattendedBanner || showDemoBanner || showHostResourcePressure || connectionChipVisible ||
                         showMessageBanner
                     ) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)

@@ -1812,6 +1812,17 @@
     <!-- Section action buttons -->
     <string name="dashboard_section_action_change_main_model">メイン機種変更</string>
     <string name="dashboard_section_action_new_profile">新しいプロフィール</string>
+    <string name="dashboard_section_action_new_schedule">新しいスケジュール</string>
+    <string name="dashboard_cron_create_title">スケジュールを作成</string>
+    <string name="dashboard_cron_name">名前</string>
+    <string name="dashboard_cron_schedule">スケジュール</string>
+    <string name="dashboard_cron_schedule_hint">例: every 2h、0 9 * * 1-5、2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">タスクの指示</string>
+    <string name="dashboard_cron_repeat">この実行回数の後に停止（任意）</string>
+    <string name="dashboard_cron_repeat_help">通常の動作を維持する場合は空欄にします。有限スケジュールには1～999回を指定できます。</string>
+    <string name="dashboard_cron_gateway_required">スケジュールの作成には、現在のHermes Gateway接続が必要です。</string>
+    <string name="dashboard_cron_created">スケジュール「%1$s」を作成しました</string>
+    <string name="dashboard_cron_create_failed">スケジュールを作成できませんでした</string>
     <string name="dashboard_section_action_browse_hub">ハブを参照する</string>
     <string name="dashboard_section_action_update_installed">アップデートがインストールされました</string>
 
@@ -1966,6 +1977,16 @@
 
     <!-- Profile create -->
     <string name="dashboard_profile_created">プロファイル %1$s が作成されました</string>
+    <string name="dashboard_profile_created_partial">プロファイル %1$s は作成されましたが、%2$s。使用前に確認してください。</string>
+    <string name="dashboard_profile_created_legacy">プロファイル %1$s は旧 Dashboard ルートで作成されました。使用前に認証情報を確認してください。</string>
+    <string name="dashboard_profile_no_skills">同梱スキルを追加しない</string>
+    <string name="dashboard_profile_auth_title">認証</string>
+    <string name="dashboard_profile_auth_shared">サインインを共有（推奨）— 更新可能なトークンプールを共有</string>
+    <string name="dashboard_profile_auth_copied">現在の認証情報をコピー — 別スナップショットのため古くなる場合があります</string>
+    <string name="dashboard_profile_auth_isolated">分離 — 認証情報やプロバイダー既定値をコピーしない</string>
+    <string name="dashboard_profile_auth_help">Hermes がサーバー上でこの選択を適用します。パスワードやトークンが Android に返されることはありません。</string>
+    <string name="dashboard_profile_allow_legacy">Gateway で作成できない場合、旧 Dashboard ルートを許可します。認証情報の動作はホストによって異なるため確認が必要です。</string>
+    <string name="dashboard_profile_mcp_partial">MCP サーバーの選択は適用されませんでした</string>
     <string name="dashboard_profile_create_failed">プロファイルの作成に失敗しました</string>
 
     <!-- Stats for nerds -->
@@ -2590,7 +2611,35 @@
     <plurals name="tool_run_used_tools"><item quantity="other">%d 個のツールを使用</item></plurals>
 
     <!-- AgentIconRow -->
-    <string name="agent_icon_title">エージェントアイコン</string>
+    <string name="agent_icon_title">エージェントの外観</string>
+    <string name="agent_icon_hermes_pet_title">Hermes アニメーションペット</string>
+    <string name="agent_icon_hermes_pet_description">プロファイル単位で upstream Hermes の各画面と共有されます。エージェントの活動に反応し、スマートフォンのコンパニオンとして表示されます。</string>
+    <string name="agent_icon_hermes_pet_active">有効: %1$s</string>
+    <string name="agent_icon_hermes_pet_empty">upstream ペットが選択されていません</string>
+    <string name="agent_icon_hermes_pet_unsupported">ここでアニメーションペットを管理するには Hermes を更新してください</string>
+    <string name="agent_icon_hermes_pet_browse">Hermes ペットを探す</string>
+    <string name="agent_icon_hermes_pet_picker_title">Hermes ペットを選択</string>
+    <string name="agent_icon_hermes_pet_selected">選択中</string>
+    <string name="agent_icon_hermes_pet_installed">インストール済み</string>
+    <string name="agent_icon_hermes_pet_adopt">Petdex から迎える</string>
+    <string name="agent_icon_shared_title">Hermes 全体で共有</string>
+    <string name="agent_icon_shared_active">共有アバター</string>
+    <string name="agent_icon_shared_empty">共有アバターなし</string>
+    <string name="agent_icon_change_shared">共有アバターを変更</string>
+    <string name="agent_icon_remove_shared">削除</string>
+    <string name="agent_icon_remove_shared_title">共有アバターを削除しますか？</string>
+    <string name="agent_icon_remove_shared_message">Hermes と他のクライアントからアバターを削除します。この端末の画像には影響しません。</string>
+    <string name="agent_icon_phone_title">この端末のみ</string>
+    <string name="agent_icon_phone_description">Hermes を変更せず、この端末だけ共有アバターを上書きします。</string>
+    <string name="agent_icon_choose_phone">端末の画像を選択</string>
+    <string name="agent_icon_change_phone">端末の画像を変更</string>
+    <string name="agent_icon_remove_phone">端末の画像を削除</string>
+    <string name="agent_icon_animation_note">アニメーション GIF と WebP の上書きはこの端末でのみ再生されます。プロファイル単位の upstream アニメーションには、上の Hermes アニメーションペットを使用してください。</string>
+    <string name="agent_icon_set_local">端末の予備画像を選択</string>
+    <string name="agent_icon_change_local">端末の予備画像を変更</string>
+    <string name="agent_icon_clear_local">端末の予備画像を消去</string>
+    <string name="agent_icon_upload_shared">端末アイコンを Hermes にアップロード</string>
+    <string name="agent_icon_clear_shared">共有 Hermes アバターを消去</string>
     <string name="agent_icon_set">ファイルを選択</string>
     <string name="agent_icon_change">ファイルを選択</string>
     <string name="agent_icon_clear">クリア</string>
@@ -3463,6 +3512,14 @@
     <string name="dashboard_native_signin_requires_https">安全なブラウザサインインには、HTTPSのダッシュボードアドレスが必要です。</string>
     <string name="dashboard_native_signin_unavailable">この接続では安全なブラウザサインインを利用できません。接続を更新して、もう一度お試しください。</string>
     <string name="dashboard_native_signin_transport_retry">安全な接続が中断されました。サインインボタンをタップして、もう一度お試しください。</string>
+    <string name="dashboard_native_signin_callback_rejected">プロバイダーがこのサインインを承認しませんでした。キャンセルした場合は操作不要です。それ以外の場合は、新しいサインインを開始してください。</string>
+    <string name="dashboard_native_signin_code_rejected">Google サインインは完了しましたが、ホストされた Hermes がセッション作成前に一回限りのコールバックコードを拒否しました。新しいサインインを開始してください。</string>
+    <string name="dashboard_native_signin_gateway_rejected">ホストされた Hermes がセッション交換を拒否しました。ホスト側エージェントが最新であることを確認し、サインインをやり直してください。</string>
+    <string name="dashboard_native_signin_rate_limited">ホストされた Hermes が短時間に多すぎるサインイン試行を受け取りました。しばらく待ってから再試行してください。</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Google サインインは完了しましたが、ホストされた Hermes のサインインサービスを利用できません。しばらく待ってから再試行してください。</string>
+    <string name="dashboard_native_signin_response_unsupported">ホストされた Hermes から、このアプリでは使用できないサインイン応答が返されました。Hermes Relay とホスト側エージェントの更新を確認してください。</string>
+    <string name="dashboard_native_signin_attempt_inactive">このサインイン試行はキャンセルされたか置き換えられました。古いブラウザタブを閉じて、やり直してください。</string>
+    <string name="dashboard_native_signin_storage_failed">Google サインインは完了しましたが、Android が Hermes セッションを安全に保存できませんでした。再試行し、繰り返す場合は診断で失敗段階を確認してください。</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">このチャットでのみ承認確認を省略します。セッションが変わるとリセットされます。</string>
     <string name="conn_info_yolo_mode_profile_off">プロフィールの承認がオフのため、このチャットではすでに確認を省略しています。チャット単位の例外を使う前に、手動またはスマートを選択してください。</string>
     <string name="conn_info_approval_mode_title">プロフィール承認モード</string>
@@ -4098,4 +4155,13 @@
     <string name="secure_link_fallback_ready">Secure Link を利用できない場合、Hermes は以下の承認済み代替ルートを試行できます。</string>
     <string name="secure_link_no_fallback">代替ルートは含まれていません。Secure Link を利用できない場合、保護対象サービスはオフラインのままです。</string>
     <string name="secure_link_auth_note">トランスポート保護によって認証が省略されることはありません。Relay のペアリング、API 資格情報、ダッシュボードへのログインはサービスごとに引き続き適用されます。</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="other">離れている間に%1$d件のメッセージが届きました</item>
+    </plurals>
+    <string name="chat_model_confirmation_title">モデル選択を確認</string>
+    <string name="host_resource_recent_oom">Hermes は最近、メモリ不足が原因と思われる再起動を行いました。</string>
+    <string name="host_resource_memory_critical">ホストのメモリが極端に不足しています。進行中のチャットが停止する可能性があります。</string>
+    <string name="host_resource_memory_elevated">ホストのメモリが不足しています。</string>
+    <string name="host_resource_disk_critical">ホストのストレージが極端に不足しています。メッセージや設定を保存できない可能性があります。</string>
+    <string name="host_resource_disk_elevated">ホストのストレージが不足しています。</string>
 </resources>

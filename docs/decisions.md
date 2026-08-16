@@ -272,6 +272,8 @@ not require an API endpoint or API bearer when dashboard chat is ready.
 >
 > **Outbound-first refinement (2026-08-14):** an outbound platform send does not itself create a gateway session; the `source=phone` session is created only when the phone first replies. Android groups the bounded proactive cache by connection + `chat_id` and renders a provisional Thread during that gap. A notification tap opens that exact provisional Thread, and the first reply uses the existing phone-platform path before promoting the view to the real gateway session. Once `/phone/threads` reports the mapping, the provisional row disappears. This cache is a bootstrap transcript, not a second long-term history store.
 >
+> **Reconnect refinement (2026-08-15):** Relay explicitly marks messages flushed from its bounded offline queue and follows a completed flush with one count envelope. Android persists that provenance, labels the affected Thread bubbles, and announces one accessible batch summary. This does not attempt background delivery after an Android force-stop; delivery still occurs only when the paired app subscribes again.
+>
 > **Why unified, not separate:** a separate "agent chat" tab is redundant — a Thread is just a chat session the agent can also start. One Chat surface (sessions tagged by source) matches the Discord/messaging-app model the product targets. **Two distinct senses of "gateway" to keep straight:** the *messaging gateway / platform layer* (`gateway/platforms/*` — phone/Discord/Slack as platforms; this is the Thread's `source`) vs. the *dashboard gateway transport* (`/api/ws` tui_gateway — how live chat bytes flow). A Thread is defined by its **platform/source**, not its transport; the two are orthogonal.
 
 **Original research (2026-04-07, retained as lineage — the `mobile:<device_id>` syntax and the ~16-file upstream-fork registration below are SUPERSEDED by the no-fork plugin path):**
@@ -835,6 +837,8 @@ Client side (`app/src/main/kotlin/.../data/ProfileData.kt`, `auth/AuthManager.kt
 - **Multiplex routing (2026-07-19, amended 2026-07-28).** When dashboard `/api/status` positively reports `gateway_mode=multiplex` and the selected non-default profile appears in its `profiles` list, the chat-routed API client uses the shared listener at `/p/<encoded-profile>`. Dedicated `api_server_url` metadata still wins. Missing/older topology and the server-default selection stay on the root API URL, so no prefix is guessed. A known multiplex profile route uses a separately encrypted per-Connection/per-profile API key configured in the profile sheet; if none exists, Android sends no bearer rather than reusing the root Connection key. The optional compatibility bootstrap recognizes the prefix for slash-command route matching only; upstream middleware remains responsible for authorization and profile runtime scope.
 - `ChatViewModel` send path omits `profile`, `model`, and profile `SOUL.md` overrides when the selected profile has an isolated API route. The profile API server owns its own default model, SOUL, sessions, memory, tools, and `.env`; Android still appends phone context when enabled. If no isolated API route exists, it keeps the compatibility overlay behavior.
 - Chat session browsing is scoped to the selected profile route. On profile switch Android clears the old session list, refetches through the routed API client, and labels the drawer with the active profile/API fallback.
+- Gateway session creation, resume, and recovery for a named profile require the authoritative result's `info.profile_name` to match the requested profile. A missing or different owner fails closed before a prompt is submitted; this prevents an older gateway that ignored `params.profile`, or a profile removed after discovery, from being treated as the selected agent. The launch/default path remains compatible with older results because it does not claim a named profile.
+- The Gateway-native inspector tracks `profiles.describe` and `profiles.configure` as separate capabilities. A host may remain a valid read source after a configure method-not-found response; Android retains pending drafts, stops offering Gateway-owned writes for that inspector, and keeps Relay-owned memory plus the older all-Relay fallback unchanged.
 - Voice requests carry the selected profile to both upstream dashboard audio routes and relay-owned `/voice/*` routes. Standard `/api/audio/transcribe`, `/api/audio/speak`, `/api/audio/speak-stream`, and provider-catalog requests use the selected profile query; Relay `/voice/config` resolves profile-local `tts`/`stt` where present, while `/voice/output/*` and `/voice/realtime/*` resolve experimental `voice_output` / `realtime_voice` sections from the selected profile config and fall back to relay defaults with explicit `config_scope` metadata.
 
 **Trade-offs / v1 scope:**
@@ -2298,7 +2302,12 @@ Android does not select `/auth/native/authorize` merely because it appears in
 `auth_flows`. Self-hosted OIDC remains on the cookie contract above. Nous Portal
 is the narrow exception: its Cloudflare Turnstile challenge rejects embedded
 Android WebViews, so Android uses the gateway-brokered native PKCE route for
-that provider when advertised and opens it in a system Custom Tab. The
+that provider when advertised and opens it in a system Custom Tab. As in the
+official Desktop client, Android does not hardcode the UI provider identifier
+into the hosted native authorization request; the gateway selects its single
+native-eligible provider. The callback retains upstream's five-minute window,
+and failures are classified without recording codes, state, tokens, provider
+responses, or other authentication material. The
 ephemeral loopback listener, S256 verifier, state validation, encrypted bearer
 store, and exact-origin attachment remain app-owned. Public cleartext
 dashboards are rejected; explicitly configured RFC 1918 and Tailscale-IP
@@ -2832,13 +2841,17 @@ user-visible reads page oldest-first and accept legacy envelopes with no
 pagination metadata. Reads stop at 50,000 messages or 32 MB of decoded response
 payload. Recovery explicitly requests one latest page only while the already
 known transcript fits that window; otherwise it uses complete paging to retain
-the positional user anchor. Cancellation propagates rather than becoming an
-empty transcript.
+the positional user anchor. Gateway row ids are retained as durable rewind
+addresses and rebound from the server after a rewrite. A transcript with no row
+ids keeps the older ordinal contract, while a mixed transcript refuses to edit
+a row whose durable address is missing. Cancellation propagates rather than
+becoming an empty transcript.
 
 **Consequences.** Long session history, sharing, retry, and edit/regenerate no
 longer operate on a silent latest-500 subset. Recovery stays cheap for ordinary
 sessions without allowing a bounded window to replace the complete visible
-history. Older Hermes releases remain compatible.
+history. Durable histories cannot silently downgrade to destructive ordinal
+guessing, while older Hermes releases remain compatible.
 
 ---
 
@@ -3215,3 +3228,199 @@ IDs, so movement remains native drag/dock and agent-driven reveal remains
 unsupported. Physical Desktop certification remains required for multi-window,
 named-profile, remote/SSH-mapped profile, close/reopen, drag/dock, hot-reload,
 and renderer-log behavior.
+
+---
+
+## ADR 58 — Android owns bounded cron creation and local reset evidence; connector prompts stay separate
+
+**Status:** Accepted (2026-08-15).
+
+**Context.** Three upstream-impact opportunities overlapped Android automation,
+continuous-session diagnostics, and interactive cards. Current upstream source
+provides `cron.manage` over the authenticated Dashboard Gateway and forwards an
+optional positive `repeat` value to the existing cron store. It also provides
+session-bound `clarify.respond`, `approval.respond`, `sudo.respond`, and
+`secret.respond` RPCs with request identity and expiry. Separately, the NeMo
+Relay connector defines gateway-to-gateway `prompt`, `prompt_response`, and
+`react` operations whose clicking-user authorization and resolver ownership
+belong to messaging connectors, not Dashboard clients. Upstream telemetry
+session segmentation is opt-in server configuration and exposes no client
+mutation contract.
+
+**Decision.** Android Manage may create jobs directly with `cron.manage`. The
+editor sends only name, schedule, task instructions, selected profile, and an
+optional finite repeat count. Blank repeat preserves upstream schedule-kind
+defaults. Explicit counts are limited to 1–999 and invalid input is rejected
+locally because upstream normalizes zero or negative values to unlimited, which
+would contradict the user's choice. Existing Dashboard HTTP routes remain the
+list, runs, pause, resume, trigger, and delete surface; Hermes-Relay does not add
+a scheduler or new Relay endpoint.
+
+Before Android replaces a visible chat context for New chat or Thread entry, it
+writes one bounded local checkpoint. The allowlist contains only the reset
+reason, transport kind, structural counts, and boolean lifecycle state. It
+contains no prompt/message text, IDs, profile names, URLs, paths, media, tool
+arguments/results, credentials, or telemetry upload. The checkpoint uses the
+existing app-private reliability ring and appears only in the user-reviewed
+Diagnostics support bundle.
+
+Android continues to resolve live Gateway asks through their native `*.respond`
+RPCs. Connector prompt operations are not implemented in the app or Relay
+plugin, and generic `CARD:{json}` actions remain display/send affordances rather
+than approval resolvers. A future generic Dashboard prompt RPC can be evaluated
+only if upstream publishes one with request ownership, authorization, expiry,
+one-answer, reconnect, and replay semantics. Until then, copying connector
+credentials, option IDs, or reaction routing into the phone would create a
+second and weaker interaction protocol.
+
+**Consequences.** Users can create recurring work that stops after a reviewed
+number of runs on a current Gateway, while older or disconnected gateways fail
+visibly without a fallback mutation. Reset diagnostics survive an app process
+loss without retaining conversation content. Existing clarify multi-select,
+free-text, expiry, reconnect, and one-answer behavior remains canonical, and the
+connector-specific interactive-card evaluation is closed with no client
+migration.
+
+---
+
+## ADR 59 — Android attachments use the upstream Gateway upload contract and fail closed
+
+**Status:** Accepted (2026-08-15).
+
+**Context.** Hermes exposes two unrelated media planes. Dashboard clients upload
+user-authored images, PDFs, and files into one live Gateway session through
+`image.attach_bytes`, `pdf.attach`, and `file.attach` before `prompt.submit`.
+Separately, upstream gateway connectors exchange platform media by reference
+through an authenticated `/relay/media` service and a capability-gated
+`send_media` operation. Connector credentials and expiring references belong
+to that gateway-to-connector boundary; they are not a mobile-client API.
+
+Android previously treated any Gateway preflight failure alike. A document
+upload rejected by an older host could therefore fall through to an API-server
+SSE request that has no document channel. The local bubble still showed its
+file card even though the agent never received the file. The picker also read
+an entire provider stream before checking its configured size limit.
+
+**Decision.** Android keeps outbound attachments on the authenticated upstream
+Gateway contract. It establishes or resumes the exact stored session, uploads
+each attachment in order, uses the server-returned `@file:` reference for
+generic files, and submits only after every upload succeeds. The legacy dotted
+image RPC remains the bounded compatibility fallback for older hosts. PDF or
+generic-file method absence, upload interruption, missing file reference, or
+an unconfirmed attachment-bearing submit fails the optimistic turn visibly;
+it never changes transport and silently drops the file. Image/PDF paths staged
+before a later attachment failure are detached best-effort. Queued messages use
+the same immutable destination and upload sequence.
+
+Picked content is base64-encoded through a bounded stream. The configured
+client limit is enforced while reading, and the Gateway client independently
+checks the decoded size against the upstream 25 MB image and 50 MB PDF limits
+before creating a WebSocket frame.
+
+The optional Hermes-Relay plugin continues to own only its existing
+bearer-authenticated agent-to-phone `/media/*` surface. It does not proxy
+outbound composer uploads, call upstream connector `/relay/media`, reuse
+connector credentials, or duplicate connector-side processing.
+
+**Consequences.** The transcript cannot claim a file was delivered when the
+selected route omitted it, oversized providers cannot bypass the app's memory
+bound, cold sessions upload only after their authoritative live identity is
+known, and current hosts retain native image/PDF/file behavior. Older hosts
+still accept images through the established compatibility RPC; unsupported
+document capabilities produce an actionable retry/update failure instead of a
+text-only turn.
+
+---
+
+## ADR 60 — Android resource and model-risk warnings follow upstream truth
+
+**Status:** Accepted (2026-08-15).
+
+**Context.** Current Hermes Dashboard status reports coarse memory and disk
+pressure, including a suspected out-of-memory restart, while Gateway model
+selection can require confirmation for unusually expensive or data-training
+tiers. Android previously discarded the resource blocks and treated a
+`confirm_required` model response as if the switch had succeeded. Recreating
+either policy in the client would drift from Hermes and would misrepresent
+older hosts.
+
+**Decision.** Android parses only the optional public-safe `/api/status.memory`
+and `/api/status.disk` fields supplied by Hermes. It renders a persistent
+warning for the server classifications `elevated` or `critical`, and for the
+server's `last_boot_suspected_oom` signal. It does not calculate thresholds,
+sample the host, retain resource history, or emit telemetry. Missing, malformed,
+unknown, or unreachable status fails soft to no resource warning.
+
+Gateway model picks continue through the upstream profile/session-scoped
+`config.set {key:"model"}` round trip. When its response carries
+`confirm_required:true`, Android restores the prior picker state and displays
+the exact `confirm_message`. Continue resends the same model/provider request
+with `confirm_expensive_model:true`; Cancel performs no mutation. The pending
+confirmation is bound to the exact profile and session and is discarded after
+a context change. Older gateways that omit these fields keep the established
+single-request behavior. API-fallback aliases remain unchanged because their
+current upstream contract exposes no equivalent confirmation preflight.
+
+This path includes Server default and a pick made on a sessionless draft. A
+draft pick first materializes a profile-bound session using no raw `model` or
+`provider` create fields, then performs the guarded `config.set`; failure to
+obtain that session restores the prior selection. Ordinary `session.create`
+also omits model/provider, and a new Gateway chat clears the prior session's
+model pick, so no later send can reintroduce the unguarded create path.
+For a named profile, the draft is retained only after the create result confirms
+the exact `info.profile_name`; absent or different ownership fails before any
+model mutation. The same confirmed draft can be reused by a superseding picker
+revision, avoiding a second empty session or a wedged selection.
+
+**Consequences.** Android warns before host pressure turns into lost chat or
+failed persistence and before a confirmed Gateway selection changes cost or
+data-use posture. Hermes remains the policy authority, Relay remains optional,
+and no private host details, provider credentials, or client-maintained risk
+table are introduced.
+
+---
+
+## ADR 61 — Android uses Hermes-owned profiles, static avatars, and animated pets
+
+**Status:** Accepted (2026-08-15).
+
+**Context.** Hermes Gateway now owns a bounded profile roster, explicit profile
+creation semantics, compact `ui_meta`, and validated static avatar assets.
+Android previously merged Relay/Dashboard rosters, created through Dashboard
+HTTP, and displayed only phone-local icons or images copied from a Relay host.
+Gateway has no profile-delete method.
+
+**Decision.** On a current host Android capability-gates `profiles.list`,
+`profiles.create`, `profiles.get_asset`, and `profiles.set_asset` independently.
+The list call excludes session previews and becomes authoritative only after a
+successful response; method-not-found stays sticky for that socket and leaves
+the established Relay/Dashboard roster intact. Avatar fetches validate decoded
+base64, declared MIME and size, PNG/JPEG/WebP magic, and the 2,000,000-byte cap.
+They publish only while both connection identity and refresh generation still
+match, so a late positive fetch cannot beat a newer `has_avatar:false` list.
+
+Hermes-owned static avatars win at render time by default, but their cache and
+the device-local `ProfileIconStore` use separate keys. A persisted, explicit
+per-connection/profile phone override can make the local image win without
+mutating Hermes. Phone selection and Relay host import populate that local
+side; the shared picker and shared clear act directly on Hermes and never erase
+the phone image. Animated GIF/WebP profile-icon decoding remains a local
+override. Upstream animated mascots are instead consumed through profile-scoped
+`pet.info`, `pet.gallery`, `pet.select`, and `pet.disable`; Android honors the
+returned sprite geometry and revision cache contract. Pet archives, image
+base64, and Sphere skins are forbidden from `ui_meta`; outbound
+metadata is bounded to small preferences/references.
+
+Profile creation serializes one reviewed auth choice: shared sign-in sends
+`mirror_credentials:true, share_auth:true`; a copied snapshot sends true/false;
+isolated sends false/false. Best-effort SOUL, model, environment, auth, and voice
+results remain partial results in the UI. Dashboard create is an explicitly
+enabled older-host fallback only for the legacy shared/default shape, never for
+an explicit isolated request. Profile deletion remains authenticated Dashboard
+`DELETE /api/profiles/{name}` until upstream publishes a Gateway contract.
+
+**Consequences.** Static identity follows profiles across clients without
+silently destroying existing phone or Relay-host choices. Older Gateways keep
+their prior behavior, credentials never return to or enter Android logs, and
+phone-local pet packs remain local. Physical two-client/avatar/pet and
+shared-versus-isolated first-turn/voice certification remains required.

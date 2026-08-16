@@ -1646,6 +1646,17 @@
     <string name="dashboard_empty_section">No se devolvió ningún %1$s</string>
     <string name="dashboard_section_action_change_main_model">Cambiar modelo principal</string>
     <string name="dashboard_section_action_new_profile">Nuevo perfil</string>
+    <string name="dashboard_section_action_new_schedule">Nueva programación</string>
+    <string name="dashboard_cron_create_title">Crear programación</string>
+    <string name="dashboard_cron_name">Nombre</string>
+    <string name="dashboard_cron_schedule">Programación</string>
+    <string name="dashboard_cron_schedule_hint">Ejemplos: every 2h, 0 9 * * 1-5 o 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">Instrucciones de la tarea</string>
+    <string name="dashboard_cron_repeat">Detener después de esta cantidad de ejecuciones (opcional)</string>
+    <string name="dashboard_cron_repeat_help">Déjalo en blanco para conservar el comportamiento normal. Las programaciones finitas aceptan entre 1 y 999 ejecuciones.</string>
+    <string name="dashboard_cron_gateway_required">La creación de programaciones requiere una conexión actual con Hermes Gateway.</string>
+    <string name="dashboard_cron_created">Programación «%1$s» creada</string>
+    <string name="dashboard_cron_create_failed">No se pudo crear la programación</string>
     <string name="dashboard_section_action_browse_hub">Centro de exploración</string>
     <string name="dashboard_section_action_update_installed">Actualización instalada</string>
     <string name="dashboard_action_set">Colocar</string>
@@ -1774,6 +1785,16 @@
     <string name="dashboard_skills_update_started">La actualización de habilidades comenzó en el servidor: actualice las habilidades en un minuto</string>
     <string name="dashboard_skills_update_failed">La actualización de habilidades no pudo iniciarse</string>
     <string name="dashboard_profile_created">Perfil %1$s creado</string>
+    <string name="dashboard_profile_created_partial">Se creó el perfil %1$s, pero %2$s. Revísalo antes de usarlo.</string>
+    <string name="dashboard_profile_created_legacy">El perfil %1$s se creó mediante la ruta antigua del panel. Revisa sus credenciales antes de usarlo.</string>
+    <string name="dashboard_profile_no_skills">No añadir las habilidades incluidas</string>
+    <string name="dashboard_profile_auth_title">Autenticación</string>
+    <string name="dashboard_profile_auth_shared">Compartir inicio de sesión (recomendado) — un grupo de tokens renovables</string>
+    <string name="dashboard_profile_auth_copied">Copiar credenciales actuales — instantánea separada que puede quedar desactualizada</string>
+    <string name="dashboard_profile_auth_isolated">Aislado — no copiar credenciales ni valores predeterminados del proveedor</string>
+    <string name="dashboard_profile_auth_help">Hermes aplica esta opción en el servidor. Las contraseñas y los tokens nunca se devuelven a Android.</string>
+    <string name="dashboard_profile_allow_legacy">Si la creación mediante Gateway no está disponible, permitir la ruta antigua del panel. El comportamiento de las credenciales depende del host y debe revisarse.</string>
+    <string name="dashboard_profile_mcp_partial">No se aplicó la selección de servidores MCP</string>
     <string name="dashboard_profile_create_failed">Error al crear el perfil</string>
     <string name="stats_overview">Descripción general</string>
     <string name="stats_reset">Reiniciar</string>
@@ -2350,7 +2371,35 @@
     <plurals name="tool_run_used_device"><item quantity="one">Se ejecutó %d acción del dispositivo</item><item quantity="other">Se ejecutaron %d acciones del dispositivo</item></plurals>
     <plurals name="tool_run_using_tools"><item quantity="one">Usando %d herramienta</item><item quantity="other">Usando %d herramientas</item></plurals>
     <plurals name="tool_run_used_tools"><item quantity="one">Se usó %d herramienta</item><item quantity="other">Se usaron %d herramientas</item></plurals>
-    <string name="agent_icon_title">Icono de agente</string>
+    <string name="agent_icon_title">Aspecto del agente</string>
+    <string name="agent_icon_hermes_pet_title">Mascota animada de Hermes</string>
+    <string name="agent_icon_hermes_pet_description">Se guarda por perfil y se comparte con las superficies upstream de Hermes. Reacciona a la actividad del agente y aparece como acompañante en el teléfono.</string>
+    <string name="agent_icon_hermes_pet_active">Activa: %1$s</string>
+    <string name="agent_icon_hermes_pet_empty">No hay mascota upstream seleccionada</string>
+    <string name="agent_icon_hermes_pet_unsupported">Actualiza Hermes para gestionar aquí mascotas animadas</string>
+    <string name="agent_icon_hermes_pet_browse">Explorar mascotas de Hermes</string>
+    <string name="agent_icon_hermes_pet_picker_title">Elige una mascota de Hermes</string>
+    <string name="agent_icon_hermes_pet_selected">Seleccionada</string>
+    <string name="agent_icon_hermes_pet_installed">Instalada</string>
+    <string name="agent_icon_hermes_pet_adopt">Adoptar desde Petdex</string>
+    <string name="agent_icon_shared_title">Compartido en Hermes</string>
+    <string name="agent_icon_shared_active">Avatar compartido</string>
+    <string name="agent_icon_shared_empty">Sin avatar compartido</string>
+    <string name="agent_icon_change_shared">Cambiar avatar compartido</string>
+    <string name="agent_icon_remove_shared">Quitar</string>
+    <string name="agent_icon_remove_shared_title">¿Quitar el avatar compartido?</string>
+    <string name="agent_icon_remove_shared_message">Esto quita el avatar de Hermes y de otros clientes. La imagen del teléfono no se modifica.</string>
+    <string name="agent_icon_phone_title">Solo este teléfono</string>
+    <string name="agent_icon_phone_description">Reemplaza el avatar compartido solo en este teléfono sin cambiar Hermes.</string>
+    <string name="agent_icon_choose_phone">Elegir imagen del teléfono</string>
+    <string name="agent_icon_change_phone">Cambiar imagen del teléfono</string>
+    <string name="agent_icon_remove_phone">Quitar imagen del teléfono</string>
+    <string name="agent_icon_animation_note">Las sustituciones GIF y WebP animadas se reproducen solo en este teléfono. Usa arriba una mascota animada de Hermes para una animación upstream por perfil.</string>
+    <string name="agent_icon_set_local">Elegir imagen alternativa del dispositivo</string>
+    <string name="agent_icon_change_local">Cambiar imagen alternativa del dispositivo</string>
+    <string name="agent_icon_clear_local">Borrar imagen alternativa del dispositivo</string>
+    <string name="agent_icon_upload_shared">Subir icono del dispositivo a Hermes</string>
+    <string name="agent_icon_clear_shared">Borrar avatar compartido de Hermes</string>
     <string name="agent_icon_set">Elegir archivo</string>
     <string name="agent_icon_change">Elegir archivo</string>
     <string name="agent_icon_clear">Claro</string>
@@ -3149,6 +3198,14 @@
     <string name="dashboard_native_signin_requires_https">El inicio de sesión seguro en el navegador requiere una dirección HTTPS del panel.</string>
     <string name="dashboard_native_signin_unavailable">El inicio de sesión seguro en el navegador no está disponible para esta conexión. Actualiza la conexión e inténtalo de nuevo.</string>
     <string name="dashboard_native_signin_transport_retry">Se interrumpió la conexión segura. Toca el botón de inicio de sesión para volver a intentarlo.</string>
+    <string name="dashboard_native_signin_callback_rejected">El proveedor no aprobó este inicio de sesión. Si lo cancelaste, no tienes que hacer nada; de lo contrario, inicia un intento nuevo.</string>
+    <string name="dashboard_native_signin_code_rejected">El inicio de sesión con Google terminó, pero Hermes alojado rechazó el código de devolución de un solo uso antes de crear una sesión. Inicia un intento nuevo.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Hermes alojado rechazó el intercambio de sesión. Comprueba que el agente alojado esté actualizado y vuelve a iniciar sesión.</string>
+    <string name="dashboard_native_signin_rate_limited">Hermes alojado recibió demasiados intentos de inicio de sesión. Espera un momento y vuelve a intentarlo.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">El inicio de sesión con Google terminó, pero el servicio de acceso de Hermes alojado no está disponible. Espera un momento y vuelve a intentarlo.</string>
+    <string name="dashboard_native_signin_response_unsupported">Hermes alojado devolvió una respuesta de inicio de sesión que esta aplicación no puede usar. Busca actualizaciones de Hermes Relay y del agente alojado.</string>
+    <string name="dashboard_native_signin_attempt_inactive">Este intento de inicio de sesión se canceló o fue reemplazado. Cierra la pestaña anterior y empieza de nuevo.</string>
+    <string name="dashboard_native_signin_storage_failed">El inicio de sesión con Google terminó, pero Android no pudo guardar de forma segura la sesión de Hermes. Vuelve a intentarlo; si se repite, abre Diagnósticos para ver la fase del error.</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">Omite las solicitudes de aprobación solo para este chat. Se restablece al cambiar de sesión.</string>
     <string name="conn_info_yolo_mode_profile_off">Las aprobaciones del perfil están desactivadas, por lo que este chat ya omite las solicitudes. Elige Manual o Inteligente antes de usar la excepción por chat.</string>
     <string name="conn_info_approval_mode_title">Modo de aprobación del perfil</string>
@@ -3784,4 +3841,14 @@
     <string name="secure_link_fallback_ready">Si Secure Link no está disponible, Hermes puede probar las rutas alternativas aprobadas que aparecen abajo.</string>
     <string name="secure_link_no_fallback">No se incluye ninguna ruta alternativa. Los servicios protegidos permanecerán sin conexión si Secure Link no está disponible.</string>
     <string name="secure_link_auth_note">La protección del transporte no omite la autenticación. El emparejamiento de Relay, las credenciales de API y el inicio de sesión del Panel se siguen aplicando por servicio.</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="one">Ha llegado %1$d mensaje mientras no estabas</item>
+        <item quantity="other">Han llegado %1$d mensajes mientras no estabas</item>
+    </plurals>
+    <string name="chat_model_confirmation_title">Confirmar selección de modelo</string>
+    <string name="host_resource_recent_oom">Hermes se reinició recientemente, probablemente por falta de memoria.</string>
+    <string name="host_resource_memory_critical">La memoria del servidor está casi agotada; los chats activos podrían detenerse.</string>
+    <string name="host_resource_memory_elevated">La memoria del servidor se está agotando.</string>
+    <string name="host_resource_disk_critical">El almacenamiento del servidor está casi agotado; puede que los mensajes y ajustes no se guarden.</string>
+    <string name="host_resource_disk_elevated">El almacenamiento del servidor se está agotando.</string>
 </resources>

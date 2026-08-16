@@ -4,13 +4,15 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 /**
- * Local-only per-profile agent icons — the visual twin of [ProfileDisplayAliasStore].
+ * Per-profile icon cache. Local fallback paths and Hermes-owned avatar cache
+ * paths use separate keys so syncing either side never silently overwrites the other.
  *
  * Stores a **file path** to an image that was copied into app storage (not a SAF
  * content URI, so it survives without a persistable-permission grant). Like the
@@ -25,6 +27,8 @@ class ProfileIconStore(
 
     companion object {
         private const val PREFIX = "profile_icon__"
+        private const val SERVER_PREFIX = "profile_avatar_server__"
+        private const val LOCAL_OVERRIDE_PREFIX = "profile_icon_override__"
 
         private fun keyName(connectionId: String, profileName: String?): String =
             "$PREFIX${connectionId}__${AgentDisplay.profileSessionKey(profileName)}"
@@ -34,6 +38,20 @@ class ProfileIconStore(
 
         private fun connectionPrefix(connectionId: String): String =
             "$PREFIX${connectionId}__"
+
+        private fun serverKeyFor(connectionId: String, profileName: String) =
+            stringPreferencesKey("$SERVER_PREFIX${connectionId}__${AgentDisplay.profileSessionKey(profileName)}")
+
+        private fun serverConnectionPrefix(connectionId: String): String =
+            "$SERVER_PREFIX${connectionId}__"
+
+        private fun localOverrideKeyFor(connectionId: String, profileName: String?) =
+            booleanPreferencesKey(
+                "$LOCAL_OVERRIDE_PREFIX${connectionId}__${AgentDisplay.profileSessionKey(profileName)}",
+            )
+
+        private fun localOverrideConnectionPrefix(connectionId: String): String =
+            "$LOCAL_OVERRIDE_PREFIX${connectionId}__"
     }
 
     suspend fun setIcon(connectionId: String, profileName: String?, path: String?) {
@@ -52,11 +70,39 @@ class ProfileIconStore(
         return dataStore.data.map { prefs -> prefs[key] }
     }
 
+    suspend fun setServerAvatar(connectionId: String, profileName: String, path: String?) {
+        dataStore.edit { prefs ->
+            val key = serverKeyFor(connectionId, profileName)
+            if (path.isNullOrBlank()) prefs.remove(key) else prefs[key] = path
+        }
+    }
+
+    fun serverAvatarFlow(connectionId: String, profileName: String): Flow<String?> {
+        val key = serverKeyFor(connectionId, profileName)
+        return dataStore.data.map { prefs -> prefs[key] }
+    }
+
+    suspend fun setLocalOverride(connectionId: String, profileName: String?, enabled: Boolean) {
+        dataStore.edit { prefs ->
+            val key = localOverrideKeyFor(connectionId, profileName)
+            if (enabled) prefs[key] = true else prefs.remove(key)
+        }
+    }
+
+    fun localOverrideFlow(connectionId: String, profileName: String?): Flow<Boolean> {
+        val key = localOverrideKeyFor(connectionId, profileName)
+        return dataStore.data.map { prefs -> prefs[key] ?: false }
+    }
+
     suspend fun clearConnection(connectionId: String) {
-        val prefix = connectionPrefix(connectionId)
+        val prefixes = listOf(
+            connectionPrefix(connectionId),
+            serverConnectionPrefix(connectionId),
+            localOverrideConnectionPrefix(connectionId),
+        )
         dataStore.edit { prefs ->
             prefs.asMap().keys
-                .filter { it.name.startsWith(prefix) }
+                .filter { key -> prefixes.any(key.name::startsWith) }
                 .forEach { prefs.remove(it) }
         }
     }
@@ -65,6 +111,12 @@ class ProfileIconStore(
         dataStore.edit { prefs -> prefs.clear() }
     }
 }
+
+internal fun preferredProfileIcon(
+    server: String?,
+    local: String?,
+    useLocalOverride: Boolean,
+): String? = if (useLocalOverride && !local.isNullOrBlank()) local else server ?: local
 
 internal val Context.profileIconsDataStore: DataStore<Preferences>
         by preferencesDataStore(name = "profile_icons")

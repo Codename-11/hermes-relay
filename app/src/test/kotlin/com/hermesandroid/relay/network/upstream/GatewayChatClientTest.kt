@@ -28,6 +28,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -59,6 +60,13 @@ class GatewayClientHarness(
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
     var failTicketMint = false
     var resumeFails = false
+
+    /** Authoritative profile owner echoed by session results; null follows request. */
+    @Volatile
+    var sessionProfileOverride: String? = null
+
+    @Volatile
+    var omitSessionProfileMetadata = false
 
     @Volatile
     var recoveryRunning = false
@@ -108,6 +116,13 @@ class GatewayClientHarness(
     @Volatile
     var approvalMode = "smart"
 
+    @Volatile
+    var modelConfirmationMessage: String? = null
+    val modelsRequiringConfirmation: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    @Volatile
+    var createdSessionProfileName: String? = null
+
     /** Config keys rejected with the older-gateway unknown-key response. */
     val unsupportedConfigKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -125,10 +140,72 @@ class GatewayClientHarness(
     }
 
     @Volatile
+    var petInfoPayload: JsonObject = buildJsonObject {
+        put("enabled", true)
+        put("slug", "boba")
+        put("displayName", "Boba")
+        put("mime", "image/png")
+        put("spritesheetBase64", "iVBORw0KGgo=")
+        put("spritesheetRevision", "123:8")
+        put("frameW", 192)
+        put("frameH", 208)
+        put("framesPerState", 8)
+        put("framesByState", buildJsonObject { put("idle", 6); put("run", 8) })
+        put("framesByRow", buildJsonObject { put("idle", 6); put("running", 8) })
+        put("loopMs", 1100)
+        put("scale", 0.75)
+        put("stateRows", JsonArray(listOf(JsonPrimitive("idle"), JsonPrimitive("running"))))
+    }
+
+    @Volatile
+    var petGalleryPayload: JsonObject = buildJsonObject {
+        put("enabled", true)
+        put("active", "boba")
+        put("pets", JsonArray(listOf(buildJsonObject {
+            put("slug", "boba")
+            put("displayName", "Boba")
+            put("installed", true)
+            put("spritesheetUrl", "https://assets.petdex.dev/pets/boba/sprites.png")
+            put("curated", true)
+            put("generated", false)
+        })))
+    }
+
+    @Volatile
     var fileAttachPayload: JsonObject = buildJsonObject {
         put("attached", true)
         put("ref_text", "@file:notes.txt")
     }
+
+    @Volatile
+    var profilesListPayload: JsonObject = buildJsonObject {
+        put("profiles", JsonArray(listOf(buildJsonObject {
+            put("name", "operator")
+            put("model", "gpt-5.6")
+            put("provider", "openai")
+            put("description", "Android operator")
+            put("skill_count", 3)
+            put("has_avatar", true)
+            put("ui_meta", buildJsonObject { put("accent", "#ff5500") })
+        })))
+    }
+
+    @Volatile
+    var profileCreatePayload: JsonObject = buildJsonObject {
+        put("ok", true)
+        put("name", "operator")
+        put("soul_written", true)
+        put("model_set", true)
+        put("mirrored", buildJsonObject {
+            put("env", true)
+            put("auth", "shared")
+            put("model_inherited", false)
+            put("voice", true)
+        })
+    }
+
+    @Volatile
+    var profileGetAssetPayload: JsonObject = buildJsonObject { put("found", false) }
 
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
     val methodNotFound: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -209,12 +286,26 @@ class GatewayClientHarness(
                 "session.create" -> buildJsonObject {
                     put("session_id", "live-1")
                     put("stored_session_id", "20260612_120000_abc123")
+                    if (!omitSessionProfileMetadata) {
+                        put("info", buildJsonObject {
+                            put(
+                                "profile_name",
+                                createdSessionProfileName
+                                    ?: sessionProfileOverride
+                                    ?: (params["profile"] as? JsonPrimitive)?.contentOrNull
+                                    ?: "default",
+                            )
+                        })
+                    }
                 }
                 "session.resume" ->
                     if (resumeFails) null
                     else {
                         val storedId = (params["session_id"] as? JsonPrimitive)?.contentOrNull
-                        recoveryPayload(resumeLiveSessionIds[storedId] ?: "live-resumed")
+                        recoveryPayload(
+                            resumeLiveSessionIds[storedId] ?: "live-resumed",
+                            (params["profile"] as? JsonPrimitive)?.contentOrNull,
+                        )
                     }
                 "session.activate" -> recoveryPayload(
                     (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
@@ -273,10 +364,14 @@ class GatewayClientHarness(
                 "image.attach_bytes", "image.attach.bytes" -> buildJsonObject {
                     put("attached", true)
                     put("count", 1)
+                    put("path", "/session/images/upload.png")
                 }
                 "pdf.attach" -> buildJsonObject {
                     put("attached", true)
-                    put("pages", 1)
+                    put("pages", JsonArray(listOf(buildJsonObject {
+                        put("path", "/session/images/page-1.png")
+                        put("page", 1)
+                    })))
                 }
                 "file.attach" -> fileAttachPayload
                 "clarify.respond", "sudo.respond", "secret.respond" ->
@@ -308,6 +403,22 @@ class GatewayClientHarness(
                     })))
                     put("toolsets_pinned", true)
                 }
+                "profiles.list" -> profilesListPayload
+                "profiles.create" -> profileCreatePayload
+                "profiles.get_asset" -> profileGetAssetPayload
+                "profiles.set_asset" -> buildJsonObject {
+                    put("ok", true)
+                    put("asset", "avatar")
+                    val data = (params["data"] as? JsonPrimitive)?.contentOrNull
+                    put(
+                        "size",
+                        if ((params["clear"] as? JsonPrimitive)?.booleanOrNull == true) {
+                            0
+                        } else {
+                            java.util.Base64.getDecoder().decode(data.orEmpty().substringAfter(";base64,")).size
+                        },
+                    )
+                }
                 "profiles.configure" -> buildJsonObject {
                     put("ok", false)
                     put("applied", buildJsonObject {
@@ -315,9 +426,14 @@ class GatewayClientHarness(
                         if (params.containsKey("provider")) put("model", false)
                         if (params.containsKey("disabled_skills")) put("skills", true)
                         if (params.containsKey("enabled_toolsets")) put("toolsets", true)
+                        if (params.containsKey("enabled_mcp_servers")) put("mcp_servers", true)
+                        if (params.containsKey("ui_meta")) put("ui_meta", false)
                     })
                 }
                 "pet.thumb" -> petThumbPayload
+                "pet.info" -> petInfoPayload
+                "pet.gallery" -> petGalleryPayload
+                "pet.select", "pet.disable" -> buildJsonObject { put("ok", true) }
                 "model.options" -> buildJsonObject {
                     put("model", "gpt-5.5")
                     put("provider", "openai")
@@ -353,9 +469,22 @@ class GatewayClientHarness(
                     else -> JsonObject(emptyMap())
                 }
                 "config.set" -> when ((params["key"] as? JsonPrimitive)?.contentOrNull) {
-                    "model" -> buildJsonObject {
-                        put("key", "model")
-                        put("value", (params["value"] as? JsonPrimitive)?.contentOrNull ?: "")
+                    "model" -> {
+                        val confirmation = modelConfirmationMessage
+                        val requestedValue = (params["value"] as? JsonPrimitive)?.contentOrNull ?: ""
+                        val confirmed = (params["confirm_expensive_model"] as? JsonPrimitive)
+                            ?.booleanOrNull == true
+                        if (confirmation != null && requestedValue in modelsRequiringConfirmation && !confirmed) {
+                            buildJsonObject {
+                                put("confirm_required", true)
+                                put("confirm_message", confirmation)
+                            }
+                        } else {
+                            buildJsonObject {
+                                put("key", "model")
+                                put("value", requestedValue)
+                            }
+                        }
                     }
                     "reasoning" -> {
                         reasoningEffort = (params["value"] as? JsonPrimitive)?.contentOrNull ?: reasoningEffort
@@ -403,12 +532,17 @@ class GatewayClientHarness(
 
     private val autoRespondEnabled = autoRespond
 
-    private fun recoveryPayload(sessionId: String): JsonObject = buildJsonObject {
+    private fun recoveryPayload(sessionId: String, requestedProfile: String? = null): JsonObject = buildJsonObject {
         put("session_id", sessionId)
         put("running", recoveryRunning)
         put("status", if (recoveryRunning) "streaming" else "idle")
-        recoveryProject?.let { project ->
-            put("info", buildJsonObject { put("project", project) })
+        if (!omitSessionProfileMetadata || recoveryProject != null) {
+            put("info", buildJsonObject {
+                if (!omitSessionProfileMetadata) {
+                    put("profile_name", sessionProfileOverride ?: requestedProfile ?: "default")
+                }
+                recoveryProject?.let { put("project", it) }
+            })
         }
         val inflightStreaming = recoveryInflightStreaming ?: recoveryRunning
         if (recoveryRunning || recoveryInflightStreaming != null || recoveryInflightError != null) {
@@ -628,6 +762,17 @@ class GatewayChatClientTest {
         turnIdleTimeoutMs = turnIdleTimeoutMs,
     )
 
+    private fun awaitCondition(
+        timeoutMs: Long = 5_000L,
+        condition: () -> Boolean,
+    ) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        while (!condition() && System.nanoTime() < deadline) {
+            Thread.sleep(10)
+        }
+        assertTrue("condition did not settle within ${timeoutMs}ms", condition())
+    }
+
     /**
      * Swap in a client with shortened timeout seams. Mints a FRESH scope:
      * shutdown() cancels the scope's Job, and the replacement client must
@@ -708,6 +853,198 @@ class GatewayChatClientTest {
         harness.rpcLog.clear()
         assertTrue(client.describeProfile("operator").exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException)
         assertTrue(harness.rpcLog.none { it.first == "profiles.describe" })
+    }
+
+    @Test
+    fun `profile configure method not found becomes sticky read only capability`() = runBlocking {
+        client.describeProfile("operator").getOrThrow()
+        harness.methodNotFound += "profiles.configure"
+
+        assertTrue(
+            client.configureProfile(
+                "operator",
+                com.hermesandroid.relay.data.GatewayProfilePatch(description = "Updated"),
+            ).exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException,
+        )
+        harness.rpcLog.clear()
+        assertTrue(
+            client.configureProfile(
+                "operator",
+                com.hermesandroid.relay.data.GatewayProfilePatch(description = "Again"),
+            ).exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException,
+        )
+        assertTrue(harness.rpcLog.none { it.first == "profiles.configure" })
+        assertEquals("operator", client.describeProfile("operator").getOrThrow().name)
+    }
+
+    @Test
+    fun `profile list requests bounded roster metadata without sessions`() = runBlocking {
+        val profiles = client.listProfiles().getOrThrow()
+
+        assertEquals(1, profiles.size)
+        assertEquals("operator", profiles.single().name)
+        assertEquals("openai", profiles.single().provider)
+        assertTrue(profiles.single().hasAvatar)
+        assertEquals("#ff5500", (profiles.single().uiMeta["accent"] as JsonPrimitive).content)
+        assertEquals(false, (harness.awaitRpc("profiles.list")["include_sessions"] as JsonPrimitive).booleanOrNull)
+    }
+
+    @Test
+    fun `profile list drops oversized ui meta without dropping profile`() = runBlocking {
+        harness.profilesListPayload = buildJsonObject {
+            put("profiles", JsonArray(listOf(buildJsonObject {
+                put("name", "operator")
+                put("model", "gpt")
+                put("ui_meta", buildJsonObject { put("blob", "x".repeat(65_537)) })
+            })))
+        }
+
+        val profile = client.listProfiles().getOrThrow().single()
+        assertTrue(profile.uiMeta.isEmpty())
+    }
+
+    @Test
+    fun `profile create serializes every auth choice explicitly`() = runBlocking {
+        val cases = listOf(
+            com.hermesandroid.relay.data.GatewayProfileAuthChoice.Shared to (true to true),
+            com.hermesandroid.relay.data.GatewayProfileAuthChoice.Copied to (true to false),
+            com.hermesandroid.relay.data.GatewayProfileAuthChoice.Isolated to (false to false),
+        )
+        cases.forEach { (choice, _) ->
+            client.createProfile(
+                com.hermesandroid.relay.data.GatewayProfileCreateRequest(
+                    name = "operator",
+                    description = "Mobile operator",
+                    cloneFrom = "default",
+                    noSkills = false,
+                    soul = "# Operator",
+                    provider = "openai",
+                    model = "gpt-5.6",
+                    authChoice = choice,
+                ),
+            ).getOrThrow()
+        }
+        harness.awaitRpcCount("profiles.create", cases.size).zip(cases).forEach { (params, case) ->
+            val expected = case.second
+            assertEquals(expected.first, (params["mirror_credentials"] as JsonPrimitive).booleanOrNull)
+            assertEquals(expected.second, (params["share_auth"] as JsonPrimitive).booleanOrNull)
+        }
+    }
+
+    @Test
+    fun `profile create exposes partial server results`() = runBlocking {
+        harness.profileCreatePayload = buildJsonObject {
+            put("ok", true)
+            put("name", "operator")
+            put("soul_written", false)
+            put("model_set", false)
+            put("mirrored", buildJsonObject {
+                put("env", false)
+                put("auth", false)
+                put("voice", false)
+            })
+        }
+        val request = com.hermesandroid.relay.data.GatewayProfileCreateRequest(
+            name = "operator",
+            soul = "# Operator",
+            provider = "openai",
+            model = "gpt-5.6",
+            authChoice = com.hermesandroid.relay.data.GatewayProfileAuthChoice.Copied,
+        )
+
+        val partial = client.createProfile(request).getOrThrow().partialMessages(request)
+        assertTrue(partial.any { it.contains("SOUL") })
+        assertTrue(partial.any { it.contains("model") })
+        assertTrue(partial.any { it.contains("credential source") })
+    }
+
+    @Test
+    fun `profile asset get distinguishes absent and validates bytes`() = runBlocking {
+        assertNull(client.getProfileAvatar("operator").getOrThrow())
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+        harness.profileGetAssetPayload = buildJsonObject {
+            put("found", true)
+            put("mime", "image/png")
+            put("size", png.size)
+            put("data", "data:image/png;base64,${java.util.Base64.getEncoder().encodeToString(png)}")
+        }
+
+        val asset = client.getProfileAvatar("operator").getOrThrow()
+        assertEquals("image/png", asset?.mime)
+        assertTrue(png.contentEquals(asset?.data))
+    }
+
+    @Test
+    fun `profile asset get rejects malformed and magic mismatch responses`() = runBlocking {
+        harness.profileGetAssetPayload = buildJsonObject {
+            put("found", true)
+            put("mime", "image/png")
+            put("data", "data:image/png;base64,not-base64!")
+        }
+        assertTrue(client.getProfileAvatar("operator").isFailure)
+
+        harness.profileGetAssetPayload = buildJsonObject {
+            put("found", true)
+            put("mime", "image/png")
+            put("data", "data:image/png;base64,${java.util.Base64.getEncoder().encodeToString("not an image".toByteArray())}")
+        }
+        assertTrue(client.getProfileAvatar("operator").isFailure)
+    }
+
+    @Test
+    fun `profile asset set accepts exact boundary rejects overflow and clears`() = runBlocking {
+        val boundary = ByteArray(GatewayChatClient.PROFILE_AVATAR_MAX_BYTES)
+        byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+            .copyInto(boundary)
+        assertTrue(client.setProfileAvatar("operator", boundary).isSuccess)
+        assertTrue(client.setProfileAvatar("operator", boundary.copyOf(boundary.size + 1)).isFailure)
+        assertEquals(0, client.clearProfileAvatar("operator").getOrThrow())
+        assertEquals(
+            true,
+            (harness.awaitRpcCount("profiles.set_asset", 2).last()["clear"] as JsonPrimitive).booleanOrNull,
+        )
+    }
+
+    @Test
+    fun `profile management method not found becomes sticky per operation`() = runBlocking {
+        harness.methodNotFound += "profiles.list"
+        assertTrue(client.listProfiles().exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileManagementUnsupportedException)
+        harness.rpcLog.clear()
+        assertTrue(client.listProfiles().isFailure)
+        assertTrue(harness.rpcLog.none { it.first == "profiles.list" })
+
+        harness.methodNotFound += "profiles.get_asset"
+        assertTrue(client.getProfileAvatar("operator").isFailure)
+        harness.rpcLog.clear()
+        assertTrue(client.getProfileAvatar("operator").isFailure)
+        assertTrue(harness.rpcLog.none { it.first == "profiles.get_asset" })
+    }
+
+    @Test
+    fun `profile configure reports ui meta partial apply`() = runBlocking {
+        client.describeProfile("operator").getOrThrow()
+        val result = client.configureProfile(
+            "operator",
+            com.hermesandroid.relay.data.GatewayProfilePatch(
+                uiMeta = buildJsonObject { put("accent", "#ff5500") },
+            ),
+        ).getOrThrow()
+        assertEquals(setOf(com.hermesandroid.relay.data.GatewayProfileSection.UiMeta), result.failed)
+    }
+
+    @Test
+    fun `profile ui meta rejects embedded image data`() = runBlocking {
+        client.describeProfile("operator").getOrThrow()
+        listOf("data:image/png;base64,AAAA", "iVBORw0KGgoAAAA", "UEsDBAAAA").forEach { embedded ->
+            val result = client.configureProfile(
+                "operator",
+                com.hermesandroid.relay.data.GatewayProfilePatch(
+                    uiMeta = buildJsonObject { put("asset", embedded) },
+                ),
+            )
+            assertTrue(result.isFailure)
+        }
+        assertTrue(harness.rpcLog.none { it.first == "profiles.configure" })
     }
 
     @Test
@@ -1538,6 +1875,34 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `session create rejects a different authoritative profile owner`() {
+        val r = Recorder()
+        client.sessionProfileProvider = { "mizu" }
+        harness.sessionProfileOverride = "default"
+
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        awaitCondition { r.preflightFailures.isNotEmpty() }
+
+        assertTrue(r.preflightFailures.single().contains("refusing to use it as selected profile 'mizu'"))
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `session create rejects older gateway without profile ownership metadata`() {
+        val r = Recorder()
+        client.sessionProfileProvider = { "mizu" }
+        harness.omitSessionProfileMetadata = true
+
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        awaitCondition { r.preflightFailures.isNotEmpty() }
+
+        assertTrue(r.preflightFailures.single().contains("did not confirm profile ownership"))
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+    }
+
+    @Test
     fun `session create omits profile when none is selected`() {
         val r = Recorder()
         // Default provider returns null → no profile bound (launch profile).
@@ -1549,12 +1914,10 @@ class GatewayChatClientTest {
         assertEquals(null, create["profile"])
     }
 
-    // --- Model-bound sessions (upstream tui_gateway: session.create honors
-    // `model`/`provider` → the new session's model_override). Without this a
-    // fresh chat ignores the in-chat picker and runs on the global default. ---
+    // --- Confirmation-safe model sessions ---
 
     @Test
-    fun `session create binds the picked model and provider`() {
+    fun `session create never binds an unconfirmed model or provider`() {
         val r = Recorder()
         client.sessionModelProvider = { GatewaySessionModel("grok-4.3", "xai") }
         client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
@@ -1562,12 +1925,12 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         val create = harness.awaitRpc("session.create")
-        assertEquals("grok-4.3", (create["model"] as? JsonPrimitive)?.contentOrNull)
-        assertEquals("xai", (create["provider"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(null, create["model"])
+        assertEquals(null, create["provider"])
     }
 
     @Test
-    fun `session create binds model without provider when provider is null`() {
+    fun `session create never binds an unconfirmed providerless model`() {
         val r = Recorder()
         client.sessionModelProvider = { GatewaySessionModel("gpt-5.5", null) }
         client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
@@ -1575,7 +1938,7 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         val create = harness.awaitRpc("session.create")
-        assertEquals("gpt-5.5", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(null, create["model"])
         assertEquals(null, create["provider"])
     }
 
@@ -1609,7 +1972,8 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         val create = harness.awaitRpc("session.create")
-        assertEquals("grok-4.3", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse(create.containsKey("model"))
+        assertFalse(create.containsKey("provider"))
         assertEquals("high", (create["reasoning_effort"] as? JsonPrimitive)?.contentOrNull)
         assertEquals(true, (create["fast"] as? JsonPrimitive)?.booleanOrNull)
     }
@@ -1657,7 +2021,8 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         val create = harness.awaitRpc("session.create")
-        assertEquals("gpt-5.5", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse(create.containsKey("model"))
+        assertFalse(create.containsKey("provider"))
         assertFalse(create.containsKey("reasoning_effort"))
         assertFalse(create.containsKey("fast"))
     }
@@ -1880,6 +2245,65 @@ class GatewayChatClientTest {
         assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
     }
 
+    @Test
+    fun `attachment failure never falls through to a transport that drops the file`() {
+        harness.methodNotFound.add("file.attach")
+        val r = Recorder()
+        val attachmentFailures = mutableListOf<String>()
+        client.sendTurn(
+            sessionId = null,
+            text = "use both files",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment("shot.png", "QQ==", "png", "image/png", sizeBytes = 1),
+                GatewayAttachment("notes.txt", "Qg==", "txt", "text/plain", sizeBytes = 1),
+            ),
+            onAttachmentFailure = {
+                attachmentFailures += it
+                r.completeLatch.countDown()
+            },
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(attachmentFailures.single().contains("file.attach"))
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+        val detach = harness.awaitRpc("image.detach")
+        assertEquals("/session/images/upload.png", (detach["path"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `attachment sizes are derived from base64 and bounded before upload`() {
+        assertEquals(1L, decodedBase64Size("QQ=="))
+        assertEquals(2L, decodedBase64Size("QUI="))
+        assertEquals(3L, decodedBase64Size("QUJD"))
+
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "oversized",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment(
+                    name = "huge.png",
+                    base64 = "QQ==",
+                    ext = "png",
+                    contentType = "image/png",
+                    sizeBytes = 25L * 1024L * 1024L + 1L,
+                ),
+            ),
+            onAttachmentFailure = { r.completeLatch.countDown() },
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(harness.rpcLog.none { it.first.startsWith("image.attach") })
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+    }
+
     // --- Ask responders ---
 
     @Test
@@ -1976,6 +2400,43 @@ class GatewayChatClientTest {
         val result = runBlocking { client.commandsCatalog(connectIfNeeded = true) }
         assertTrue(result.isSuccess)
         assertTrue(harness.ticketMints.get() >= 1)
+    }
+
+    @Test
+    fun `cron creation uses upstream manage rpc with finite repeat and profile`() {
+        val result = runBlocking {
+            client.createCronJob(
+                CronCreationDraft(
+                    name = "Two reports",
+                    schedule = "every 1h",
+                    prompt = "Send a concise report",
+                    repeat = 2,
+                    profile = "work",
+                ),
+            )
+        }
+
+        assertTrue(result.isSuccess)
+        val params = harness.awaitRpc("cron.manage")
+        assertEquals("add", (params["action"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("Two reports", (params["name"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("every 1h", (params["schedule"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("Send a concise report", (params["prompt"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(2, (params["repeat"] as? JsonPrimitive)?.intOrNull)
+        assertEquals("work", (params["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `invalid finite repeat is rejected before opening gateway`() {
+        val result = runBlocking {
+            client.createCronJob(
+                CronCreationDraft("Bad", "every 1h", "Run", repeat = 0),
+            )
+        }
+
+        assertTrue(result.isFailure)
+        assertEquals(0, harness.ticketMints.get())
+        assertTrue(harness.rpcLog.none { it.first == "cron.manage" })
     }
 
     // --- Pet thumbnails ---
@@ -2087,6 +2548,81 @@ class GatewayChatClientTest {
 
         assertTrue(mismatchedSlug.exceptionOrNull() is GatewayRpcException)
         assertTrue(wrongMediaType.exceptionOrNull() is GatewayRpcException)
+    }
+
+    @Test
+    fun `pet info parses the upstream renderer payload with profile and revision`() = runBlocking {
+        val info = client.petInfo(profile = "work", knownRevision = "old:1").getOrThrow()
+
+        val params = harness.awaitRpc("pet.info")
+        assertEquals("work", (params["profile"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("old:1", (params["knownRevision"] as? JsonPrimitive)?.contentOrNull)
+        assertTrue(info.enabled)
+        assertEquals("boba", info.slug)
+        assertEquals("123:8", info.spritesheetRevision)
+        assertEquals(192, info.frameWidth)
+        assertEquals(8, info.framesByRow["running"])
+        assertArrayEquals(java.util.Base64.getDecoder().decode("iVBORw0KGgo="), info.spritesheet)
+    }
+
+    @Test
+    fun `pet info accepts upstream unchanged response without duplicate sheet`() = runBlocking {
+        harness.petInfoPayload = buildJsonObject {
+            put("enabled", true)
+            put("slug", "boba")
+            put("displayName", "Boba")
+            put("spritesheetRevision", "123:8")
+            put("spritesheetUnchanged", true)
+            put("frameW", 192)
+            put("frameH", 208)
+            put("framesPerState", 8)
+            put("loopMs", 1100)
+            put("stateRows", JsonArray(listOf(JsonPrimitive("idle"))))
+        }
+
+        val info = client.petInfo(knownRevision = "123:8").getOrThrow()
+
+        assertTrue(info.spritesheetUnchanged)
+        assertNull(info.spritesheet)
+    }
+
+    @Test
+    fun `pet gallery and mutations preserve profile scope`() = runBlocking {
+        val gallery = client.petGallery(profile = "work", localOnly = true).getOrThrow()
+        assertEquals("boba", gallery.active)
+        assertEquals("Boba", gallery.pets.single().displayName)
+        val galleryParams = harness.awaitRpc("pet.gallery")
+        assertEquals("work", (galleryParams["profile"] as? JsonPrimitive)?.contentOrNull)
+        assertTrue((galleryParams["localOnly"] as? JsonPrimitive)?.booleanOrNull == true)
+
+        client.selectPet("boba", profile = "work").getOrThrow()
+        val selectParams = harness.awaitRpc("pet.select")
+        assertEquals("boba", (selectParams["slug"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("work", (selectParams["profile"] as? JsonPrimitive)?.contentOrNull)
+
+        client.disablePet(profile = "work").getOrThrow()
+        val disableParams = harness.awaitRpc("pet.disable")
+        assertEquals("work", (disableParams["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `pet contract rejects malformed renderer and unsafe mutation`() = runBlocking {
+        harness.petInfoPayload = buildJsonObject {
+            put("enabled", true)
+            put("slug", "boba")
+            put("spritesheetRevision", "1:1")
+            put("spritesheetBase64", "not base64")
+            put("mime", "image/png")
+            put("frameW", 192)
+            put("frameH", 208)
+            put("framesPerState", 8)
+            put("loopMs", 1100)
+            put("stateRows", JsonArray(listOf(JsonPrimitive("idle"))))
+        }
+
+        assertTrue(client.petInfo().isFailure)
+        assertTrue(client.selectPet("../boba").exceptionOrNull() is IllegalArgumentException)
+        assertEquals(0, harness.rpcLog.count { it.first == "pet.select" })
     }
 
     // --- Reasoning config ---
@@ -2317,6 +2853,44 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `confirmed model update echoes upstream confirmation field`() {
+        val r = Recorder()
+        client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        val result = runBlocking {
+            client.setModel("grok-4.3 --provider xai", confirmSelection = true)
+        }
+
+        assertTrue(result.isSuccess)
+        val rpc = harness.awaitRpc("config.set")
+        assertEquals("model", (rpc["key"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(true, (rpc["confirm_expensive_model"] as? JsonPrimitive)?.booleanOrNull)
+        assertEquals("live-resumed", (rpc["session_id"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `same confirmed draft session is reusable across rapid model picks`() {
+        client.sessionProfileProvider = { "mizu" }
+        harness.createdSessionProfileName = "mizu"
+        val results = runBlocking {
+            val first = async(Dispatchers.IO) { client.prepareModelSelectionSession(null) }
+            val second = async(Dispatchers.IO) { client.prepareModelSelectionSession(null) }
+            listOf(first.await(), second.await())
+        }
+
+        assertTrue(results.all { it.isSuccess })
+        assertEquals(
+            listOf("20260612_120000_abc123", "20260612_120000_abc123"),
+            results.map { it.getOrThrow() },
+        )
+        assertEquals(1, harness.rpcLog.count { it.first == "session.create" })
+        assertEquals(0, harness.rpcLog.count { it.first == "config.set" })
+    }
+
+    @Test
     fun `fast update targets live session without global scope`() {
         val r = Recorder()
         client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }
@@ -2406,6 +2980,25 @@ class GatewayChatClientTest {
         assertEquals(73L, (submit["truncate_before_row_id"] as? JsonPrimitive)?.longOrNull)
         assertTrue(reboundLatch.await(5, TimeUnit.SECONDS))
         assertEquals(listOf(101L, null, null), rebound.get())
+    }
+
+    @Test
+    fun `row id only rewind still carries explicit truncation consent`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = "stored-1",
+            text = "edited message",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            truncateBeforeRowId = 73L,
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        val submit = harness.awaitRpc("prompt.submit")
+        assertFalse(submit.containsKey("truncate_before_user_ordinal"))
+        assertEquals(73L, (submit["truncate_before_row_id"] as? JsonPrimitive)?.longOrNull)
+        assertEquals(true, (submit["confirm_truncate"] as? JsonPrimitive)?.booleanOrNull)
+        assertFalse(submit.containsKey("confirm_empty_truncate"))
     }
 
     @Test
@@ -2677,6 +3270,41 @@ class GatewayChatClientTest {
         )
         assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
         assertEquals(listOf("recovered"), recorder.textDeltas.toList())
+    }
+
+    @Test
+    fun `profile mismatch clears buffered recovery events before retry`() = runBlocking {
+        client.sessionProfileProvider = { "mizu" }
+        harness.sessionProfileOverride = "default"
+        harness.recoveryRunning = true
+        harness.suppressAckMethods += "session.resume"
+        val rejectedRecorder = Recorder()
+
+        val rejected = async(Dispatchers.IO) {
+            client.recoverTurn("stored-42", null, rejectedRecorder.callbacks)
+        }
+        val ack = harness.awaitPendingAck()
+        ack.ws.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "stale mismatch delta") },
+                "live-resumed",
+            ),
+        )
+        harness.releaseAck(ack, harness.recoveryResult("live-resumed"))
+
+        assertTrue(rejected.await().exceptionOrNull() is GatewayPreflightException)
+        assertTrue(rejectedRecorder.textDeltas.isEmpty())
+
+        harness.suppressAckMethods -= "session.resume"
+        harness.sessionProfileOverride = "mizu"
+        val retryRecorder = Recorder()
+        val retry = client.recoverTurn("stored-42", null, retryRecorder.callbacks).getOrThrow()
+
+        assertTrue(retry.running)
+        assertTrue(retryRecorder.textDeltas.isEmpty())
+        retry.handle?.detach()
+        Unit
     }
 
     @Test
@@ -3144,6 +3772,7 @@ class GatewayChatClientTest {
         val backgroundEvents = ConcurrentLinkedQueue<GatewayBackgroundInteractionEvent>()
         client.setBackgroundInteractionListener(backgroundEvents::add)
         client.sessionProfileProvider = { "work" }
+        harness.sessionProfileOverride = "work"
         client.sendTurn(null, "long task", null, original.callbacks) {
             original.preflightFailures += it
         }

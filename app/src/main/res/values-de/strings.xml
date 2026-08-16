@@ -1799,6 +1799,17 @@
     <!-- Section action buttons -->
     <string name="dashboard_section_action_change_main_model">Hauptmodell ändern</string>
     <string name="dashboard_section_action_new_profile">Neues Profil</string>
+    <string name="dashboard_section_action_new_schedule">Neuer Zeitplan</string>
+    <string name="dashboard_cron_create_title">Zeitplan erstellen</string>
+    <string name="dashboard_cron_name">Name</string>
+    <string name="dashboard_cron_schedule">Zeitplan</string>
+    <string name="dashboard_cron_schedule_hint">Beispiele: every 2h, 0 9 * * 1-5 oder 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">Aufgabenanweisungen</string>
+    <string name="dashboard_cron_repeat">Nach dieser Anzahl von Ausführungen stoppen (optional)</string>
+    <string name="dashboard_cron_repeat_help">Leer lassen, um das normale Verhalten des Zeitplans beizubehalten. Endliche Zeitpläne akzeptieren 1–999 Ausführungen.</string>
+    <string name="dashboard_cron_gateway_required">Zum Erstellen eines Zeitplans ist eine aktuelle Hermes-Gateway-Verbindung erforderlich.</string>
+    <string name="dashboard_cron_created">Zeitplan „%1$s“ erstellt</string>
+    <string name="dashboard_cron_create_failed">Zeitplan konnte nicht erstellt werden</string>
     <string name="dashboard_section_action_browse_hub">Sammlung durchsuchen</string>
     <string name="dashboard_section_action_update_installed">Installierte aktualisieren</string>
 
@@ -1953,6 +1964,16 @@
 
     <!-- Profile create -->
     <string name="dashboard_profile_created">Profil %1$s erstellt</string>
+    <string name="dashboard_profile_created_partial">Profil %1$s wurde erstellt, aber %2$s. Vor der Verwendung prüfen.</string>
+    <string name="dashboard_profile_created_legacy">Profil %1$s wurde über die ältere Dashboard-Route erstellt. Zugangsdaten vor der Verwendung prüfen.</string>
+    <string name="dashboard_profile_no_skills">Gebündelte Skills nicht hinzufügen</string>
+    <string name="dashboard_profile_auth_title">Authentifizierung</string>
+    <string name="dashboard_profile_auth_shared">Anmeldung teilen (empfohlen) — ein aktualisierbarer Token-Pool</string>
+    <string name="dashboard_profile_auth_copied">Aktuelle Zugangsdaten kopieren — separater Snapshot, der veralten kann</string>
+    <string name="dashboard_profile_auth_isolated">Isoliert — keine Zugangsdaten oder Anbieterstandards kopieren</string>
+    <string name="dashboard_profile_auth_help">Hermes wendet diese Auswahl auf dem Server an. Passwörter und Token werden nie an Android zurückgegeben.</string>
+    <string name="dashboard_profile_allow_legacy">Wenn die Gateway-Erstellung nicht verfügbar ist, die ältere Dashboard-Route zulassen. Das Verhalten der Zugangsdaten hängt vom Host ab und muss geprüft werden.</string>
+    <string name="dashboard_profile_mcp_partial">Die MCP-Serverauswahl wurde nicht angewendet</string>
     <string name="dashboard_profile_create_failed">Profil konnte nicht erstellt werden</string>
 
     <!-- Stats for nerds -->
@@ -2579,7 +2600,35 @@
     <plurals name="tool_run_used_tools"><item quantity="one">%d Werkzeug verwendet</item><item quantity="other">%d Werkzeuge verwendet</item></plurals>
 
     <!-- AgentIconRow -->
-    <string name="agent_icon_title">Agentensymbol</string>
+    <string name="agent_icon_title">Agentendarstellung</string>
+    <string name="agent_icon_hermes_pet_title">Animiertes Hermes-Haustier</string>
+    <string name="agent_icon_hermes_pet_description">Profilbezogen und mit Upstream-Hermes-Oberflächen geteilt. Es reagiert auf Agentenaktivität und erscheint als Begleiter auf dem Smartphone.</string>
+    <string name="agent_icon_hermes_pet_active">Aktiv: %1$s</string>
+    <string name="agent_icon_hermes_pet_empty">Kein Upstream-Haustier ausgewählt</string>
+    <string name="agent_icon_hermes_pet_unsupported">Hermes aktualisieren, um animierte Haustiere hier zu verwalten</string>
+    <string name="agent_icon_hermes_pet_browse">Hermes-Haustiere durchsuchen</string>
+    <string name="agent_icon_hermes_pet_picker_title">Hermes-Haustier auswählen</string>
+    <string name="agent_icon_hermes_pet_selected">Ausgewählt</string>
+    <string name="agent_icon_hermes_pet_installed">Installiert</string>
+    <string name="agent_icon_hermes_pet_adopt">Aus Petdex übernehmen</string>
+    <string name="agent_icon_shared_title">In Hermes geteilt</string>
+    <string name="agent_icon_shared_active">Geteilter Avatar</string>
+    <string name="agent_icon_shared_empty">Kein geteilter Avatar</string>
+    <string name="agent_icon_change_shared">Geteilten Avatar ändern</string>
+    <string name="agent_icon_remove_shared">Entfernen</string>
+    <string name="agent_icon_remove_shared_title">Geteilten Avatar entfernen?</string>
+    <string name="agent_icon_remove_shared_message">Dadurch wird der Avatar aus Hermes und anderen Clients entfernt. Das Bild auf diesem Smartphone bleibt erhalten.</string>
+    <string name="agent_icon_phone_title">Nur dieses Smartphone</string>
+    <string name="agent_icon_phone_description">Den geteilten Avatar nur auf diesem Smartphone überschreiben, ohne Hermes zu ändern.</string>
+    <string name="agent_icon_choose_phone">Smartphone-Bild auswählen</string>
+    <string name="agent_icon_change_phone">Smartphone-Bild ändern</string>
+    <string name="agent_icon_remove_phone">Smartphone-Bild entfernen</string>
+    <string name="agent_icon_animation_note">Animierte GIF- und WebP-Überschreibungen werden nur auf diesem Smartphone abgespielt. Für eine profilbezogene Upstream-Animation oben ein animiertes Hermes-Haustier verwenden.</string>
+    <string name="agent_icon_set_local">Geräte-Ersatzbild auswählen</string>
+    <string name="agent_icon_change_local">Geräte-Ersatzbild ändern</string>
+    <string name="agent_icon_clear_local">Geräte-Ersatzbild löschen</string>
+    <string name="agent_icon_upload_shared">Gerätesymbol zu Hermes hochladen</string>
+    <string name="agent_icon_clear_shared">Geteilten Hermes-Avatar löschen</string>
     <string name="agent_icon_set">Datei auswählen</string>
     <string name="agent_icon_change">Datei auswählen</string>
     <string name="agent_icon_clear">Löschen</string>
@@ -3464,6 +3513,14 @@
     <string name="dashboard_native_signin_requires_https">Die sichere Browser-Anmeldung erfordert eine HTTPS-Dashboard-Adresse.</string>
     <string name="dashboard_native_signin_unavailable">Die sichere Browser-Anmeldung ist für diese Verbindung nicht verfügbar. Aktualisiere die Verbindung und versuche es erneut.</string>
     <string name="dashboard_native_signin_transport_retry">Die sichere Verbindung wurde unterbrochen. Tippe auf die Anmeldeschaltfläche, um es erneut zu versuchen.</string>
+    <string name="dashboard_native_signin_callback_rejected">Der Anbieter hat diese Anmeldung nicht genehmigt. Wenn du abgebrochen hast, ist keine Aktion nötig; andernfalls starte einen neuen Anmeldeversuch.</string>
+    <string name="dashboard_native_signin_code_rejected">Die Google-Anmeldung wurde abgeschlossen, aber das gehostete Hermes hat den einmaligen Rückrufcode abgelehnt, bevor eine Sitzung erstellt werden konnte. Starte einen neuen Anmeldeversuch.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Das gehostete Hermes hat den Sitzungsaustausch abgelehnt. Prüfe, ob der gehostete Agent aktuell ist, und starte die Anmeldung erneut.</string>
+    <string name="dashboard_native_signin_rate_limited">Das gehostete Hermes hat zu viele Anmeldeversuche erhalten. Warte einen Moment und versuche es erneut.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Die Google-Anmeldung wurde abgeschlossen, aber der Anmeldedienst des gehosteten Hermes ist nicht verfügbar. Warte einen Moment und versuche es erneut.</string>
+    <string name="dashboard_native_signin_response_unsupported">Das gehostete Hermes hat eine Anmeldeantwort zurückgegeben, die diese App nicht verwenden kann. Suche nach Updates für Hermes Relay und den gehosteten Agent.</string>
+    <string name="dashboard_native_signin_attempt_inactive">Dieser Anmeldeversuch wurde abgebrochen oder ersetzt. Schließe den alten Browser-Tab und starte erneut.</string>
+    <string name="dashboard_native_signin_storage_failed">Die Google-Anmeldung wurde abgeschlossen, aber Android konnte die Hermes-Sitzung nicht sicher speichern. Versuche es erneut. Falls der Fehler wiederholt auftritt, öffne die Diagnose für die Fehlerstufe.</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">Umgehe Bestätigungsabfragen nur für diesen Chat. Wird beim Sitzungswechsel zurückgesetzt.</string>
     <string name="conn_info_yolo_mode_profile_off">Profilbestätigungen sind deaktiviert, daher umgeht dieser Chat bereits Abfragen. Wähle Manuell oder Smart, bevor du die chatbezogene Ausnahme verwendest.</string>
     <string name="conn_info_approval_mode_title">Profil-Bestätigungsmodus</string>
@@ -4099,4 +4156,14 @@
     <string name="secure_link_fallback_ready">Wenn Secure Link nicht verfügbar ist, kann Hermes die genehmigten Ausweichrouten unten versuchen.</string>
     <string name="secure_link_no_fallback">Keine Ausweichroute enthalten. Geschützte Dienste bleiben offline, wenn Secure Link nicht verfügbar ist.</string>
     <string name="secure_link_auth_note">Transportschutz umgeht keine Authentifizierung. Relay-Kopplung, API-Zugangsdaten und Dashboard-Anmeldung werden weiterhin pro Dienst erzwungen.</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="one">%1$d Nachricht ist eingegangen, während du weg warst</item>
+        <item quantity="other">%1$d Nachrichten sind eingegangen, während du weg warst</item>
+    </plurals>
+    <string name="chat_model_confirmation_title">Modellauswahl bestätigen</string>
+    <string name="host_resource_recent_oom">Hermes wurde kürzlich wahrscheinlich wegen Speichermangels neu gestartet.</string>
+    <string name="host_resource_memory_critical">Der Arbeitsspeicher des Hosts ist äußerst knapp; aktive Chats können beendet werden.</string>
+    <string name="host_resource_memory_elevated">Der Arbeitsspeicher des Hosts wird knapp.</string>
+    <string name="host_resource_disk_critical">Der Speicherplatz des Hosts ist äußerst knapp; Nachrichten und Einstellungen können möglicherweise nicht gespeichert werden.</string>
+    <string name="host_resource_disk_elevated">Der Speicherplatz des Hosts wird knapp.</string>
 </resources>

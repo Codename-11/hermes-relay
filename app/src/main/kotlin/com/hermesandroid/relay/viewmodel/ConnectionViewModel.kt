@@ -95,6 +95,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayPetGalleryItem
 import com.hermesandroid.relay.network.upstream.GatewayKeepAliveService
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
@@ -155,6 +156,31 @@ internal data class RelayUiInputs(
     val url: String,
     val configured: Boolean,
 )
+
+data class HostResourcePressureStatus(
+    val memoryPressure: String? = null,
+    val memoryAvailableMb: Int? = null,
+    val diskPressure: String? = null,
+    val diskFreeMb: Int? = null,
+    val lastBootSuspectedOom: Boolean = false,
+) {
+    val needsAttention: Boolean
+        get() = memoryPressure in setOf("elevated", "critical") ||
+            diskPressure in setOf("elevated", "critical") ||
+            lastBootSuspectedOom
+
+    val critical: Boolean
+        get() = memoryPressure == "critical" || diskPressure == "critical" || lastBootSuspectedOom
+}
+
+internal fun DashboardStatus.hostResourcePressure(): HostResourcePressureStatus =
+    HostResourcePressureStatus(
+        memoryPressure = memory?.pressure,
+        memoryAvailableMb = memory?.systemAvailableMb,
+        diskPressure = disk?.pressure,
+        diskFreeMb = disk?.freeMb,
+        lastBootSuspectedOom = memory?.lastBootSuspectedOom == true,
+    )
 
 internal fun RelayUiInputs.requiresReconnectGrace(): Boolean =
     configured &&
@@ -765,6 +791,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         },
         rebuildChatApiClient = { rebuildChatApiClient() },
         relayHttpClient = relayHttpClient,
+        gatewayClientProvider = { upstreamTransport.activeGatewayChatClient() },
     )
 
     // --- Relay connection state ---
@@ -1070,6 +1097,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         MutableStateFlow(StandardVoiceAvailability.Unknown)
     val standardVoiceAvailability: StateFlow<StandardVoiceAvailability> =
         _standardVoiceAvailability.asStateFlow()
+
+    private val _hostResourcePressure = MutableStateFlow(HostResourcePressureStatus())
+    val hostResourcePressure: StateFlow<HostResourcePressureStatus> =
+        _hostResourcePressure.asStateFlow()
 
     private val _standardAudioApiReachable = MutableStateFlow(false)
     val standardAudioApiReachable: StateFlow<Boolean> = _standardAudioApiReachable.asStateFlow()
@@ -1662,6 +1693,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** The active profile's local agent-icon path (client-side, never sent to Hermes). */
     val profileIcon: StateFlow<String?> get() = profileController.profileIcon
+    val localProfileIcon: StateFlow<String?> get() = profileController.localProfileIcon
+    val serverProfileAvatar: StateFlow<String?> get() = profileController.serverProfileAvatar
+    val useLocalProfileIconOverride: StateFlow<Boolean>
+        get() = profileController.useLocalProfileIconOverride
+    val sharedProfileAvatarState: StateFlow<ProfileController.SharedAvatarState>
+        get() = profileController.sharedAvatarState
+    val hermesPetState: StateFlow<ProfileController.HermesPetState>
+        get() = profileController.hermesPetState
 
     /** A local icon path for a specific profile identity on the active connection. */
     fun profileIconFlow(profileName: String?) = profileController.profileIconFlow(profileName)
@@ -1671,9 +1710,31 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setProfileIcon(uri: Uri) = profileController.setProfileIcon(uri)
 
+    fun setSharedProfileAvatar(uri: Uri) = profileController.setSharedProfileAvatar(uri)
+
+    fun setUseLocalProfileIconOverride(enabled: Boolean) =
+        profileController.setUseLocalProfileIconOverride(enabled)
+
     fun importProfileIconFromHost() = profileController.importProfileIconFromHost()
 
     fun clearProfileIcon() = profileController.clearProfileIcon()
+
+    fun uploadLocalProfileIconToHermes() = profileController.uploadLocalProfileIconToHermes()
+
+    fun clearSharedProfileAvatar() = profileController.clearSharedProfileAvatar()
+
+    fun refreshHermesPet() = profileController.refreshHermesPet()
+
+    fun loadHermesPetGallery() = profileController.loadHermesPetGallery()
+
+    fun selectHermesPet(slug: String) = profileController.selectHermesPet(slug)
+
+    fun loadHermesPetThumbnail(pet: GatewayPetGalleryItem) =
+        profileController.loadHermesPetThumbnail(pet)
+
+    fun disableHermesPet() = profileController.disableHermesPet()
+
+    fun refreshGatewayProfiles() = profileController.refreshGatewayProfiles()
 
     fun selectProfile(profile: Profile?) = profileController.selectProfile(profile)
 
@@ -2385,6 +2446,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         receivedAt = msg.sentAt ?: System.currentTimeMillis(),
                         chatId = msg.chatId,
                         connectionId = connectionStore.activeConnectionId.value,
+                        arrivedWhileAway = msg.arrivedWhileAway,
                     ),
                 )
             }
@@ -4258,6 +4320,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 .collectLatest {
                     _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
                     _standardAudioApiReachable.value = false
+                    _hostResourcePressure.value = HostResourcePressureStatus()
                     _serverChatDisplaySettings.value = null
                     updateGatewayAvailability(GatewayAvailability.Unknown)
                     probeStandardVoice()
@@ -4557,6 +4620,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (connectionId == null || dashboardUrl.isNullOrBlank()) {
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
             _standardAudioApiReachable.value = false
+            _hostResourcePressure.value = HostResourcePressureStatus()
             _serverChatDisplaySettings.value = null
             updateGatewayAvailability(GatewayAvailability.Unknown)
             return
@@ -4575,11 +4639,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 updateDashboardTopology(connectionId, null)
                 _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
                 _standardAudioApiReachable.value = false
+                _hostResourcePressure.value = HostResourcePressureStatus()
                 _serverChatDisplaySettings.value = null
                 updateGatewayAvailability(GatewayAvailability.Unreachable)
                 recordDashboardStatusIfChanged(connectionId, status = null, session = null)
                 return
             }
+            _hostResourcePressure.value = status.hostResourcePressure()
             updateDashboardTopology(connectionId, status)
             val session = if (status.authRequired) client.currentSession().getOrNull() else null
             val authed = !status.authRequired || session?.authenticated == true
@@ -4617,6 +4683,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             android.util.Log.w("ConnectionVM", "probeStandardVoice failed: ${e.message}")
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
             _standardAudioApiReachable.value = false
+            _hostResourcePressure.value = HostResourcePressureStatus()
             _serverChatDisplaySettings.value = null
             updateGatewayAvailability(GatewayAvailability.Unreachable)
         } finally {

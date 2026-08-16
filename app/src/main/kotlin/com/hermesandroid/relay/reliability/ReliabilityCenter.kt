@@ -90,6 +90,29 @@ object ReliabilityCenter {
         writer.execute { runCatching { target.append(report) } }
     }
 
+    /** Persist a bounded, content-free checkpoint before a user-requested chat reset. */
+    fun recordSessionCheckpoint(context: Context, evidence: SessionResetEvidence) {
+        initialize(context)
+        val report = ReliabilityReport(
+            reportId = ReliabilityReport.newId("checkpoint"),
+            appSessionId = appSessionId,
+            timeIso = Instant.now().toString(),
+            kind = ReliabilityKind.SessionCheckpoint,
+            owner = ReliabilityOwner.Android,
+            severity = ReliabilitySeverity.Info,
+            summary = "Chat context reset",
+            recovery = "The prior context remains on Hermes when it had a stored session.",
+            reportRecommended = false,
+            technicalDetail = evidence.technicalDetail(),
+            routeRole = evidence.transport,
+            environment = environment(),
+        )
+        // A pre-reset checkpoint is useful only if it lands before state is
+        // replaced. The store is tiny and atomically rewritten, so persist it
+        // synchronously instead of queueing behind later failures.
+        runCatching { store?.append(report) }
+    }
+
     fun reports(context: Context): List<ReliabilityReport> {
         initialize(context)
         return store?.readAll().orEmpty()
