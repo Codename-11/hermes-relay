@@ -36,6 +36,8 @@ data class ProactiveInboxEntry(
     val chatId: String? = null,
     /** Owning saved connection. Null only for entries written by older builds. */
     val connectionId: String? = null,
+    /** Relay proved this row came from its bounded offline queue. */
+    val arrivedWhileAway: Boolean = false,
 )
 
 private val Context.proactiveInboxStore: DataStore<Preferences> by

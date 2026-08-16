@@ -101,6 +101,20 @@ enables the temporary insecure-LAN escape hatch.
 | `/phone/outbound`, `/phone/threads` | Paired | Outbound queue and conversation state |
 | `/context/injected` | Paired | Inspect bounded Relay-injected context |
 
+`POST /phone/message` always persists the message in Android's bounded Thread
+cache. Its optional `surfacing` hint controls the additional presentation:
+
+| `surfacing` | Android behavior |
+|---|---|
+| omitted, `null`, `default`, or `notification` | Persist and raise a system notification |
+| `inbox` | Persist silently |
+| `session` | Deliver to the available active session/Thread without a duplicate notification; notify only when no session destination is available |
+
+When no phone is subscribed, Relay retains the message in its bounded 24-hour
+queue. On the next subscription, flushed `phone.message` payloads include the
+optional `queued_delivery: true` marker and the batch ends with
+`proactive.backlog.complete {count, ts}`. Older clients safely ignore both.
+
 ## Profiles and Relay-owned files
 
 Routes on port `8767` under `/api/profiles/{name}/*` are Relay power surfaces,

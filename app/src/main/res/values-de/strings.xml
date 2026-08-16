@@ -4099,4 +4099,8 @@
     <string name="secure_link_fallback_ready">Wenn Secure Link nicht verfügbar ist, kann Hermes die genehmigten Ausweichrouten unten versuchen.</string>
     <string name="secure_link_no_fallback">Keine Ausweichroute enthalten. Geschützte Dienste bleiben offline, wenn Secure Link nicht verfügbar ist.</string>
     <string name="secure_link_auth_note">Transportschutz umgeht keine Authentifizierung. Relay-Kopplung, API-Zugangsdaten und Dashboard-Anmeldung werden weiterhin pro Dienst erzwungen.</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="one">%1$d Nachricht ist eingegangen, während du weg warst</item>
+        <item quantity="other">%1$d Nachrichten sind eingegangen, während du weg warst</item>
+    </plurals>
 </resources>

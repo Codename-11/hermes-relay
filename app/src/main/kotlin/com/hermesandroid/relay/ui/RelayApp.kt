@@ -887,6 +887,7 @@ fun RelayApp() {
         // ChatViewModel isn't available where ConnectionViewModel builds the
         // handler, so the session sink is set here at the app root where both
         // ViewModels are in scope.
+        val proactiveSummaryResources = LocalContext.current.resources
         LaunchedEffect(connectionViewModel, chatViewModel) {
             connectionViewModel.proactiveMessageHandler.toSession = { msg ->
                 val text = buildString {
@@ -894,6 +895,15 @@ fun RelayApp() {
                     append(msg.text)
                 }
                 chatViewModel.injectProactiveMessage(text)
+            }
+            connectionViewModel.proactiveMessageHandler.onBacklogDelivered = { count ->
+                UiMessageBus.info(
+                    proactiveSummaryResources.getQuantityString(
+                        R.plurals.proactive_messages_arrived_while_away,
+                        count,
+                        count,
+                    ),
+                )
             }
             // Agent Thread reply path: a send from the chat composer while a
             // source=phone Thread is open routes over the relay proactive
@@ -906,7 +916,8 @@ fun RelayApp() {
                 chatViewModel.onProactiveReplyAck(clientMsgId, status)
             }
             // Unified Threads: render an inbound agent message inline in the open
-            // Thread (suppressing the notification/inbox) when it belongs there.
+            // Thread when it belongs there. Surfacing semantics still decide
+            // independently whether a system notification is also required.
             connectionViewModel.proactiveMessageHandler.injectIntoThread = { msg ->
                 chatViewModel.injectThreadMessage(msg)
             }

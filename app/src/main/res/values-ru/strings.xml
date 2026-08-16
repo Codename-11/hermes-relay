@@ -3824,4 +3824,10 @@
     <string name="secure_link_fallback_ready">Если Secure Link недоступен, Hermes может попробовать одобренные резервные маршруты ниже.</string>
     <string name="secure_link_no_fallback">Резервный маршрут не указан. Защищённые сервисы останутся офлайн, если Secure Link недоступен.</string>
     <string name="secure_link_auth_note">Защита транспорта не отменяет аутентификацию. Сопряжение Relay, учётные данные API и вход в Панель по-прежнему проверяются отдельно для каждого сервиса.</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="one">Пока вас не было, пришло %1$d сообщение</item>
+        <item quantity="few">Пока вас не было, пришло %1$d сообщения</item>
+        <item quantity="many">Пока вас не было, пришло %1$d сообщений</item>
+        <item quantity="other">Пока вас не было, пришло %1$d сообщения</item>
+    </plurals>
 </resources>

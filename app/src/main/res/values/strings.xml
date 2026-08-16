@@ -1494,6 +1494,10 @@
     <string name="proactive_about">About</string>
     <string name="proactive_about_desc">When on, your phone tells the relay it\'s open to agent-initiated messages. The agent delivers them over the same paired connection the relay already uses — no new permissions beyond notifications.</string>
     <string name="proactive_about_server_note">Your server must also enable the phone platform (set PHONE_ENABLED on the server). Until both sides are on and the phone is paired, nothing is pushed.</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="one">%1$d message arrived while you were away</item>
+        <item quantity="other">%1$d messages arrived while you were away</item>
+    </plurals>
 
     <!-- ProfileInspectorScreen -->
     <string name="profile_inspector_back">Back</string>

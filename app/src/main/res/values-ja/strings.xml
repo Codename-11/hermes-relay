@@ -4098,4 +4098,7 @@
     <string name="secure_link_fallback_ready">Secure Link を利用できない場合、Hermes は以下の承認済み代替ルートを試行できます。</string>
     <string name="secure_link_no_fallback">代替ルートは含まれていません。Secure Link を利用できない場合、保護対象サービスはオフラインのままです。</string>
     <string name="secure_link_auth_note">トランスポート保護によって認証が省略されることはありません。Relay のペアリング、API 資格情報、ダッシュボードへのログインはサービスごとに引き続き適用されます。</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="other">離れている間に%1$d件のメッセージが届きました</item>
+    </plurals>
 </resources>

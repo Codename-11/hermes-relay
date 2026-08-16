@@ -471,7 +471,12 @@ class ChatHandler {
      * across the history reconcile; idempotent on the proactive [messageId] so a
      * re-delivered push (e.g. an outbound-buffer flush) never double-posts.
      */
-    fun addAgentThreadMessage(text: String, messageId: String?, agentName: String?) {
+    fun addAgentThreadMessage(
+        text: String,
+        messageId: String?,
+        agentName: String?,
+        arrivedWhileAway: Boolean = false,
+    ) {
         val id = messageId?.let { "proactive-$it" } ?: "proactive-${java.util.UUID.randomUUID()}"
         _messages.update { list ->
             if (messageId != null && list.any { it.id == id }) return@update list
@@ -481,6 +486,7 @@ class ChatHandler {
                 content = text,
                 timestamp = System.currentTimeMillis(),
                 agentName = agentName,
+                badges = if (arrivedWhileAway) listOf("While away") else emptyList(),
                 clientOnly = true,
             )
             (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
