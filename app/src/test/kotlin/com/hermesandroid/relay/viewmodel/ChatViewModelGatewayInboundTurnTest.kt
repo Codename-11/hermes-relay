@@ -41,6 +41,7 @@ import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -348,6 +349,57 @@ class ChatViewModelGatewayInboundTurnTest {
         assertEquals(null, viewModel.yoloEnabled.value)
         assertEquals(null, viewModel.fastEnabled.value)
         assertEquals(null, viewModel.approvalMode.value)
+    }
+
+    @Test
+    fun freshChatRiskyModelCreatesDefaultSessionBeforeConfirmationPreflight() {
+        handler.setSessionId(null)
+        gatewayClient.clearSession()
+        gatewayHarness.modelConfirmationMessage = "This tier may train on your data."
+        gatewayHarness.modelsRequiringConfirmation += "risky-model --provider risky-provider"
+
+        viewModel.selectModel("risky-model", "risky-provider")
+
+        val create = gatewayHarness.awaitRpc("session.create")
+        val configSet = gatewayHarness.awaitRpcCount("config.set", 1).single()
+        awaitCondition { viewModel.modelSelectionConfirmation.value != null }
+
+        assertFalse(create.containsKey("model"))
+        assertFalse(create.containsKey("provider"))
+        assertEquals("model", (configSet["key"] as JsonPrimitive).content)
+        assertEquals("live-1", (configSet["session_id"] as JsonPrimitive).content)
+        assertEquals("20260612_120000_abc123", handler.currentSessionId.value)
+        assertNull(viewModel.selectedModelOverride.value)
+        assertEquals(
+            "This tier may train on your data.",
+            viewModel.modelSelectionConfirmation.value?.message,
+        )
+    }
+
+    @Test
+    fun serverDefaultModelUsesSameConfirmationAwareTransition() {
+        viewModel.selectModel("safe-model", "safe-provider")
+        gatewayHarness.awaitRpcCount("config.set", 1)
+        awaitCondition { viewModel.selectedModelOverride.value == "safe-model" }
+        viewModel.setSelectedProfileProvider {
+            Profile(name = "default", model = "risky-default", description = "Hermes")
+        }
+        gatewayHarness.modelConfirmationMessage = "This default has high usage cost."
+        gatewayHarness.modelsRequiringConfirmation += "risky-default"
+
+        viewModel.selectModel(null)
+
+        val configSet = gatewayHarness.awaitRpcCount("config.set", 2).last()
+        awaitCondition { viewModel.modelSelectionConfirmation.value != null }
+
+        assertEquals("risky-default", (configSet["value"] as JsonPrimitive).content)
+        assertEquals("live-resumed", (configSet["session_id"] as JsonPrimitive).content)
+        assertEquals("safe-model", viewModel.selectedModelOverride.value)
+        assertNull(viewModel.modelSelectionConfirmation.value?.modelOverride)
+        assertEquals(
+            "This default has high usage cost.",
+            viewModel.modelSelectionConfirmation.value?.message,
+        )
     }
 
     @Test

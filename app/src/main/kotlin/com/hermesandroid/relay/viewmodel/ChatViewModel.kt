@@ -161,7 +161,7 @@ internal fun modelInventoryFailureNotice(
 }
 
 data class ModelSelectionConfirmation(
-    val model: String,
+    val modelOverride: String?,
     val provider: String?,
     val requestValue: String,
     val message: String,
@@ -953,12 +953,9 @@ class ChatViewModel : ViewModel() {
     val selectedModelOverride: StateFlow<String?> = _selectedModelOverride.asStateFlow()
 
     /**
-     * Authenticated provider slug (e.g. `xai`) that pairs with
-     * [_selectedModelOverride] on the gateway. Needed so a fresh chat's
-     * `session.create` can carry `provider` alongside `model` (see
-     * [GatewayChatClient.sessionModelProvider]); SSE turns resolve the provider
-     * server-side from the model, so they don't read this. Cleared whenever the
-     * model override is cleared.
+     * Authenticated provider slug (e.g. `xai`) paired with
+     * [_selectedModelOverride]. Gateway uses both only through the guarded
+     * `config.set` transition; SSE resolves the provider server-side.
      */
     private val _selectedProviderOverride = MutableStateFlow<String?>(null)
     val selectedProviderOverride: StateFlow<String?> = _selectedProviderOverride.asStateFlow()
@@ -1143,12 +1140,10 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * Switch the active model from the in-chat picker. On the gateway this
-     * dispatches `/model <model> --provider <slug>` (matching the desktop
-     * picker — `--provider` selects the authenticated provider) and surfaces
-     * the model-info confirmation card; on SSE the override rides the next
-     * turn's request body. Pass null to clear back to the profile / server
-     * default.
+     * Switch the active model from the in-chat picker. Gateway materializes a
+     * session-scoped target, then sends confirmation-aware `config.set` with
+     * the desktop-compatible `<model> --provider <slug>` value. SSE carries the
+     * override in the next turn request. Pass null for profile/server default.
      */
     fun selectModel(model: String?, provider: String? = null) {
         val selectionRevision = modelSelectionRevision.incrementAndGet()
@@ -1169,15 +1164,19 @@ class ChatViewModel : ViewModel() {
             }
         }
         _selectedModelOverride.value = AgentDisplay.requestModelName(model)
-        // Keep the provider paired with the model pick so a fresh chat's
-        // session.create can bind both (gateway needs the provider to resolve
-        // the authenticated account; e.g. grok-4.3 via `xai`). Cleared when the
-        // model is cleared so the next new session falls back to the default.
+        // Keep the provider paired with the guarded model transition (gateway
+        // needs it to resolve the authenticated account; e.g. grok-4.3 via
+        // `xai`). It never rides raw session.create.
         _selectedProviderOverride.value =
             provider?.takeIf { it.isNotBlank() && !model.isNullOrBlank() }
         transitionReasoningEffortIdentity()
         val gateway = gatewayClient
         val handler = chatHandler
+        if (streamingEndpoint == "gateway" && (gateway == null || handler == null)) {
+            restoreModelSelection(previousModel, previousProvider)
+            _transientNotice.tryEmit("Couldn't switch model: Gateway is unavailable.")
+            return
+        }
         if (model.isNullOrBlank()) {
             if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
                 // Never send a generic agent alias ("hermes-agent") as a model —
@@ -1189,37 +1188,20 @@ class ChatViewModel : ViewModel() {
                         ?: _serverModelName.value,
                 )
                 if (!defaultModel.isNullOrBlank()) {
-                    viewModelScope.launch {
-                        // Await a live session so the reset is session-scoped; if
-                        // there is none, the cleared override already resolves to
-                        // the server default on the next session.create — skip the
-                        // global config.set.
-                        if (!gateway.prewarmAwait(handler.currentSessionId.value)) {
-                            refreshActiveAgentName()
-                            return@launch
-                        }
-                        gateway.setModel(defaultModel).fold(
-                            onSuccess = { result ->
-                                val resolved = result.stringValue("value") ?: defaultModel
-                                val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
-                                _gatewayCurrentModel.value = resolved
-                                _gatewayCurrentProvider.value = ""
-                                // Pill update is the confirmation — no bubble.
-                                // Surface only a server warning, ephemerally.
-                                warning?.let { _transientNotice.tryEmit(it) }
-                                gateway.modelOptions().onSuccess {
-                                    _modelProviders.value = it.providers
-                                    _gatewayCurrentModel.value = it.currentModel
-                                    _gatewayCurrentProvider.value = it.currentProvider
-                                }
-                            },
-                            onFailure = { e ->
-                                _transientNotice.tryEmit(
-                                    "Couldn't switch to server default model: ${e.message ?: "unknown error"}",
-                                )
-                            },
-                        )
-                    }
+                    applyGatewayModelSelection(
+                        gateway = gateway,
+                        handler = handler,
+                        selectionRevision = selectionRevision,
+                        modelOverride = null,
+                        providerOverride = null,
+                        requestValue = defaultModel,
+                        previousModel = previousModel,
+                        previousProvider = previousProvider,
+                        failurePrefix = "Couldn't switch to server default model",
+                    )
+                } else {
+                    restoreModelSelection(previousModel, previousProvider)
+                    _transientNotice.tryEmit("Couldn't resolve the server default model.")
                 }
             }
             refreshActiveAgentName()
@@ -1235,84 +1217,110 @@ class ChatViewModel : ViewModel() {
             }
             // Upstream model-switch flag string: `<model> [--provider <slug>]`.
             val value = if (!provider.isNullOrBlank()) "$sendModel --provider $provider" else sendModel
-            viewModelScope.launch {
-                // Resolve the live session FIRST (suspending), so the switch is
-                // applied SESSION-SCOPED. A fresh chat pre-creates a session, so
-                // racing the fire-and-forget prewarm made config.set run with no
-                // session_id — a GLOBAL write that never reached the turn's
-                // session, leaving it on the server default.
-                val hasSession = gateway.prewarmAwait(handler.currentSessionId.value)
-                if (!hasSession) {
-                    // Genuinely sessionless (brand-new chat, no stored session):
-                    // skip the global config.set. The pick is held in
-                    // _selectedModelOverride and rides the next session.create as
-                    // a per-session override (sessionModelProvider / ensureSession).
-                    refreshActiveAgentName()
+            applyGatewayModelSelection(
+                gateway = gateway,
+                handler = handler,
+                selectionRevision = selectionRevision,
+                modelOverride = sendModel,
+                providerOverride = provider?.takeIf(String::isNotBlank),
+                requestValue = value,
+                previousModel = previousModel,
+                previousProvider = previousProvider,
+                failurePrefix = "Couldn't switch model",
+            )
+        }
+        refreshActiveAgentName()
+    }
+
+    private fun applyGatewayModelSelection(
+        gateway: GatewayChatClient,
+        handler: ChatHandler,
+        selectionRevision: Long,
+        modelOverride: String?,
+        providerOverride: String?,
+        requestValue: String,
+        previousModel: String?,
+        previousProvider: String?,
+        failurePrefix: String,
+    ) {
+        val requestProfileContextKey = activeProfileContextKey
+        val startingSessionId = handler.currentSessionId.value
+        viewModelScope.launch {
+            val preparedSessionId = gateway.prepareModelSelectionSession(startingSessionId)
+                .getOrElse { error ->
+                    if (selectionRevision == modelSelectionRevision.get()) {
+                        restoreModelSelection(previousModel, previousProvider)
+                        _transientNotice.tryEmit("$failurePrefix: ${error.message ?: "gateway unavailable"}")
+                    }
                     return@launch
                 }
-                val requestProfileContextKey = activeProfileContextKey
-                val requestSessionId = handler.currentSessionId.value
-                // Dispatch via config.set (the `_apply_model_switch` path) — NOT
-                // the `/model` slash path, whose command.dispatch fallback
-                // reports a spurious "not a quick/plugin/skill command" failure.
-                gateway.setModel(value).fold(
-                    onSuccess = { result ->
-                        if (
-                            selectionRevision != modelSelectionRevision.get() ||
-                            requestProfileContextKey != activeProfileContextKey ||
-                            requestSessionId != handler.currentSessionId.value
-                        ) {
-                            return@fold
-                        }
-                        if (result.booleanValue("confirm_required") == true) {
-                            _selectedModelOverride.value = previousModel
-                            _selectedProviderOverride.value = previousProvider
-                            transitionReasoningEffortIdentity()
-                            _modelSelectionConfirmation.value = ModelSelectionConfirmation(
-                                model = sendModel,
-                                provider = provider?.takeIf(String::isNotBlank),
-                                requestValue = value,
-                                message = result.stringValue("confirm_message")
-                                    ?: result.stringValue("warning")
-                                    ?: "This model requires confirmation.",
-                                profileContextKey = requestProfileContextKey,
-                                sessionId = requestSessionId,
-                                previousModel = previousModel,
-                                previousProvider = previousProvider,
-                            )
-                            refreshActiveAgentName()
-                            return@fold
-                        }
-                        val resolved = result.stringValue("value") ?: model
-                        val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
-                        _gatewayCurrentModel.value = resolved
-                        _gatewayCurrentProvider.value = provider.orEmpty()
-                        // Pill update is the confirmation — no system bubble.
-                        // Surface only a server warning, ephemerally.
-                        warning?.let { _transientNotice.tryEmit(it) }
-                        // Current upstream may defer the switch until the turn
-                        // boundary. Keep the optimistic requested identity; an
-                        // immediate model.options read still reports the old
-                        // model and would visibly snap the picker backward.
-                        if (!isDeferredConfigResult(result)) {
-                            gateway.modelOptions().onSuccess {
-                                _modelProviders.value = it.providers
-                                _gatewayCurrentModel.value = it.currentModel
-                                _gatewayCurrentProvider.value = it.currentProvider
-                            }
-                        }
-                    },
-                    onFailure = { e ->
-                        if (selectionRevision != modelSelectionRevision.get()) return@fold
-                        _selectedModelOverride.value = previousModel
-                        _selectedProviderOverride.value = previousProvider
-                        transitionReasoningEffortIdentity()
-                        refreshActiveAgentName()
-                        _transientNotice.tryEmit("Couldn't switch model: ${e.message ?: "unknown error"}")
-                    },
-                )
+            if (
+                selectionRevision != modelSelectionRevision.get() ||
+                gatewayClient !== gateway || chatHandler !== handler ||
+                requestProfileContextKey != activeProfileContextKey ||
+                handler.currentSessionId.value != startingSessionId
+            ) {
+                return@launch
             }
+            if (startingSessionId == null) {
+                handler.setSessionId(preparedSessionId)
+                selectBackgroundProcessSession(preparedSessionId)
+                gatewayProcessController.sessionReady(preparedSessionId)
+                onSessionChanged?.invoke(preparedSessionId)
+            }
+            val requestSessionId = handler.currentSessionId.value
+            gateway.setModel(requestValue).fold(
+                onSuccess = { result ->
+                    if (
+                        selectionRevision != modelSelectionRevision.get() ||
+                        requestProfileContextKey != activeProfileContextKey ||
+                        requestSessionId != handler.currentSessionId.value
+                    ) {
+                        return@fold
+                    }
+                    if (result.booleanValue("confirm_required") == true) {
+                        restoreModelSelection(previousModel, previousProvider)
+                        _modelSelectionConfirmation.value = ModelSelectionConfirmation(
+                            modelOverride = modelOverride,
+                            provider = providerOverride,
+                            requestValue = requestValue,
+                            message = result.stringValue("confirm_message")
+                                ?: result.stringValue("warning")
+                                ?: "This model requires confirmation.",
+                            profileContextKey = requestProfileContextKey,
+                            sessionId = requestSessionId,
+                            previousModel = previousModel,
+                            previousProvider = previousProvider,
+                        )
+                        refreshActiveAgentName()
+                        return@fold
+                    }
+                    _gatewayCurrentModel.value = result.stringValue("value") ?: requestValue
+                    _gatewayCurrentProvider.value = providerOverride.orEmpty()
+                    result.stringValue("warning")
+                        ?.takeIf(String::isNotBlank)
+                        ?.let(_transientNotice::tryEmit)
+                    if (!isDeferredConfigResult(result)) {
+                        gateway.modelOptions().onSuccess {
+                            _modelProviders.value = it.providers
+                            _gatewayCurrentModel.value = it.currentModel
+                            _gatewayCurrentProvider.value = it.currentProvider
+                        }
+                    }
+                },
+                onFailure = { error ->
+                    if (selectionRevision != modelSelectionRevision.get()) return@fold
+                    restoreModelSelection(previousModel, previousProvider)
+                    _transientNotice.tryEmit("$failurePrefix: ${error.message ?: "unknown error"}")
+                },
+            )
         }
+    }
+
+    private fun restoreModelSelection(model: String?, provider: String?) {
+        _selectedModelOverride.value = model
+        _selectedProviderOverride.value = provider
+        transitionReasoningEffortIdentity()
         refreshActiveAgentName()
     }
 
@@ -1336,7 +1344,7 @@ class ChatViewModel : ViewModel() {
         }
         val selectionRevision = modelSelectionRevision.incrementAndGet()
         _modelSelectionConfirmation.value = null
-        _selectedModelOverride.value = pending.model
+        _selectedModelOverride.value = pending.modelOverride
         _selectedProviderOverride.value = pending.provider
         transitionReasoningEffortIdentity()
         refreshActiveAgentName()
@@ -1355,7 +1363,9 @@ class ChatViewModel : ViewModel() {
                         refreshActiveAgentName()
                         return@fold
                     }
-                    _gatewayCurrentModel.value = result.stringValue("value") ?: pending.model
+                    _gatewayCurrentModel.value = result.stringValue("value")
+                        ?: pending.modelOverride
+                        ?: pending.requestValue
                     _gatewayCurrentProvider.value = pending.provider.orEmpty()
                     result.stringValue("warning")
                         ?.takeIf(String::isNotBlank)
@@ -1799,18 +1809,11 @@ class ChatViewModel : ViewModel() {
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
         client?.sessionProfileProvider = { currentSessionProfileName() }
-        // Bind the in-chat picks onto each fresh session.create so a brand-new
-        // chat actually runs on the picked model/provider AND the chosen
-        // reasoning effort / fast tier (not the global default) — and so setting
-        // effort/fast before the first message rides session.create instead of a
-        // sessionless config.set (a GLOBAL write upstream). Pulled live; each
-        // field null when not explicitly set, so the profile/server default
-        // wins. Mid-session switches still go through setModel/setReasoning/
-        // setFast (config.set). yolo is intentionally absent — upstream
-        // session.create doesn't accept it (applied post-create instead).
+        // Only reasoning/fast may ride a fresh session.create. Model/provider
+        // transitions always materialize a default session and then use the
+        // confirmation-aware config.set path in selectModel. yolo is
+        // intentionally absent — upstream session.create doesn't accept it.
         client?.sessionModelProvider = {
-            val model = _selectedModelOverride.value?.takeIf { it.isNotBlank() }
-            val provider = _selectedProviderOverride.value?.takeIf { it.isNotBlank() }
             val effort = _selectedReasoningEffort.value?.takeIf { it.isNotBlank() }
                 ?.takeIf { reasoningEffortAvailability().accepts(it) }
             // Contract v4 distinguishes all three states: null omits the field
@@ -1818,10 +1821,10 @@ class ChatViewModel : ViewModel() {
             // normal. Do not filter false here or a user's explicit Fast-off
             // pick would silently inherit a priority-by-default profile.
             val fast = _fastEnabled.value
-            if (model != null || effort != null || fast != null) {
+            if (effort != null || fast != null) {
                 GatewaySessionModel(
-                    model = model,
-                    provider = provider,
+                    model = null,
+                    provider = null,
                     reasoningEffort = effort,
                     fast = fast,
                 )
@@ -3792,21 +3795,19 @@ class ChatViewModel : ViewModel() {
         val loadGeneration = historyLoadGeneration.incrementAndGet()
         selectBackgroundProcessSession(null)
 
-        // Gateway transport: a new chat is a fresh DRAFT with NO session id.
-        // Pre-creating an api_server session would hand the next turn a concrete
-        // id, forcing ensureSession down the session.resume branch (the api_ id
-        // resumes against the shared launch state.db on the default profile) —
-        // which BYPASSES the model/provider/effort/fast binding that only runs on
-        // session.create, so the new chat silently runs the DEFAULT model while
-        // the picker still shows the last pick. Instead drop the gateway session
-        // and null the id; the next send hits ensureSession(null) ->
-        // session.create, binding the carried-over model from currentSessionModel().
-        // SSE still needs a concrete id, so it keeps pre-creating below. Mirrors
-        // the desktop's lazy-create-on-first-send. _selectedModelOverride and the
-        // provider/effort picks are intentionally PRESERVED so they carry + bind.
+        // Gateway transport: a new chat is a fresh draft with no session id.
+        // Model/provider do not carry across this boundary because applying them
+        // through raw session.create would bypass upstream confirmation. The
+        // user may select them again through the guarded config.set path; the
+        // non-model effort/fast draft settings remain create-safe.
         if (streamingEndpoint == "gateway" && gatewayClient != null) {
             gatewayClient?.clearSession()
             handler.setSessionId(null)
+            modelSelectionRevision.incrementAndGet()
+            _modelSelectionConfirmation.value = null
+            _selectedModelOverride.value = null
+            _selectedProviderOverride.value = null
+            transitionReasoningEffortIdentity()
             handler.clearMessages()
             _contextUsage.value = null
             _contextWindow.value = null

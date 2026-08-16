@@ -115,6 +115,10 @@ class GatewayClientHarness(
     @Volatile
     var approvalMode = "smart"
 
+    @Volatile
+    var modelConfirmationMessage: String? = null
+    val modelsRequiringConfirmation: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     /** Config keys rejected with the older-gateway unknown-key response. */
     val unsupportedConfigKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -377,9 +381,22 @@ class GatewayClientHarness(
                     else -> JsonObject(emptyMap())
                 }
                 "config.set" -> when ((params["key"] as? JsonPrimitive)?.contentOrNull) {
-                    "model" -> buildJsonObject {
-                        put("key", "model")
-                        put("value", (params["value"] as? JsonPrimitive)?.contentOrNull ?: "")
+                    "model" -> {
+                        val confirmation = modelConfirmationMessage
+                        val requestedValue = (params["value"] as? JsonPrimitive)?.contentOrNull ?: ""
+                        val confirmed = (params["confirm_expensive_model"] as? JsonPrimitive)
+                            ?.booleanOrNull == true
+                        if (confirmation != null && requestedValue in modelsRequiringConfirmation && !confirmed) {
+                            buildJsonObject {
+                                put("confirm_required", true)
+                                put("confirm_message", confirmation)
+                            }
+                        } else {
+                            buildJsonObject {
+                                put("key", "model")
+                                put("value", requestedValue)
+                            }
+                        }
                     }
                     "reasoning" -> {
                         reasoningEffort = (params["value"] as? JsonPrimitive)?.contentOrNull ?: reasoningEffort
@@ -1639,12 +1656,10 @@ class GatewayChatClientTest {
         assertEquals(null, create["profile"])
     }
 
-    // --- Model-bound sessions (upstream tui_gateway: session.create honors
-    // `model`/`provider` → the new session's model_override). Without this a
-    // fresh chat ignores the in-chat picker and runs on the global default. ---
+    // --- Confirmation-safe model sessions ---
 
     @Test
-    fun `session create binds the picked model and provider`() {
+    fun `session create never binds an unconfirmed model or provider`() {
         val r = Recorder()
         client.sessionModelProvider = { GatewaySessionModel("grok-4.3", "xai") }
         client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
@@ -1652,12 +1667,12 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         val create = harness.awaitRpc("session.create")
-        assertEquals("grok-4.3", (create["model"] as? JsonPrimitive)?.contentOrNull)
-        assertEquals("xai", (create["provider"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(null, create["model"])
+        assertEquals(null, create["provider"])
     }
 
     @Test
-    fun `session create binds model without provider when provider is null`() {
+    fun `session create never binds an unconfirmed providerless model`() {
         val r = Recorder()
         client.sessionModelProvider = { GatewaySessionModel("gpt-5.5", null) }
         client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
@@ -1665,7 +1680,7 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         val create = harness.awaitRpc("session.create")
-        assertEquals("gpt-5.5", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(null, create["model"])
         assertEquals(null, create["provider"])
     }
 

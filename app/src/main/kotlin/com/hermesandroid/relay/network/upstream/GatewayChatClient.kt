@@ -375,14 +375,10 @@ class GatewayChatClient(
         sessionProfileProvider().takeIf { !it.isNullOrBlank() }
 
     /**
-     * Supplies the explicit in-chat overrides to bind onto each fresh
-     * `session.create` (upstream honors `model`/`provider`/`reasoning_effort`/
-     * `fast` → the new session's per-session overrides). Pulled live so it
-     * always reflects the current picker + safety/speed controls; null (or all
-     * fields null) = no explicit override, so the new session inherits the
-     * profile / server default. Wired by ChatViewModel. A live session keeps its
-     * agent config, so this only affects session creation — mid-session switches
-     * go through [setModel]/[setReasoning]/[setFast] (`config.set`).
+     * Supplies non-model overrides for each fresh `session.create`. Model and
+     * provider must never ride this raw create contract because that bypasses
+     * upstream model-selection confirmation; all model changes use [setModel]
+     * after [prepareModelSelectionSession].
      */
     @Volatile
     var sessionModelProvider: () -> GatewaySessionModel? = { null }
@@ -887,6 +883,58 @@ class GatewayChatClient(
             }
         }
         return sessionReady
+    }
+
+    /**
+     * Obtain a session-scoped target before a model-selection `config.set`.
+     *
+     * Unlike [prewarmAwait], a draft is deliberately materialized here because
+     * sending a model with `session.create` bypasses upstream's cost/data-policy
+     * confirmation guard, while a sessionless `config.set` mutates global
+     * configuration. Draft creation therefore binds only the profile and
+     * non-model session options; the model always follows through [setModel].
+     */
+    suspend fun prepareModelSelectionSession(requestedStoredId: String?): Result<String> {
+        if (requestedStoredId != null) {
+            return if (prewarmAwait(requestedStoredId)) {
+                Result.success(requestedStoredId)
+            } else {
+                Result.failure(GatewayPreflightException("gateway session is unavailable"))
+            }
+        }
+        return runCatching {
+            val requestedProfile = currentSessionProfile()
+            connectMutex.withLock {
+                ensureConnected()
+                if (liveSessionId != null || storedSessionId != null) {
+                    throw GatewayPreflightException("draft session state changed before model selection")
+                }
+                val created = rpc(
+                    "session.create",
+                    buildJsonObject {
+                        put("cols", DEFAULT_COLS)
+                        put("source", sessionSource)
+                        requestedProfile?.let { put("profile", it) }
+                        currentSessionModel()?.let { options ->
+                            options.reasoningEffort
+                                ?.takeIf(String::isNotBlank)
+                                ?.let { put("reasoning_effort", it) }
+                            options.fast?.let { put("fast", it) }
+                        }
+                    },
+                ).getOrElse { error ->
+                    throw GatewayPreflightException("session.create failed: ${error.message}")
+                }
+                val live = created.stringField("session_id")
+                    ?: throw GatewayPreflightException("session.create returned no session_id")
+                val stored = created.stringField("stored_session_id") ?: live
+                liveSessionId = live
+                storedSessionId = stored
+                liveSessionProfile = requestedProfile
+                if (cancelledTurnDrain?.storedSessionId != stored) cancelledTurnDrain = null
+                stored
+            }
+        }
     }
 
     /**
@@ -2305,20 +2353,10 @@ class GatewayChatClient(
                 put("source", sessionSource)
                 if (!newSessionTitle.isNullOrBlank()) put("title", newSessionTitle)
                 requestedProfile?.let { put("profile", it) }
-                // Bind the in-chat overrides to the new session as its
-                // per-session overrides. Upstream tui_gateway session.create
-                // reads `model`/`provider` (→ model_override), `reasoning_effort`
-                // (→ create_reasoning_override) and `fast` (→ priority service
-                // tier) — verified server.py:4175-4191. Without this a fresh
-                // chat ignores the picker/safety controls and builds the agent
-                // from the global default, and worse, setting effort/fast before
-                // the first message runs a SESSIONLESS config.set that upstream
-                // applies as a GLOBAL config write. A live session keeps its own
-                // config — this is create-only; mid-session switches use
-                // config.set (setModel/setReasoning/setFast).
+                // Only non-model draft settings may ride session.create. Model
+                // and provider always pass through confirmation-aware config.set
+                // before they become active.
                 currentSessionModel()?.let { sm ->
-                    sm.model?.takeIf { it.isNotBlank() }?.let { put("model", it) }
-                    sm.provider?.takeIf { it.isNotBlank() }?.let { put("provider", it) }
                     sm.reasoningEffort?.takeIf { it.isNotBlank() }?.let { put("reasoning_effort", it) }
                     sm.fast?.let { put("fast", it) }
                 }

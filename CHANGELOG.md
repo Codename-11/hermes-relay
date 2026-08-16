@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android can create finite recurring schedules from Manage.** The native editor uses the authenticated Hermes Gateway `cron.manage` contract, optionally stops after 1–999 runs, and rejects invalid counts rather than silently creating unlimited work.
 - **Chat resets retain content-free local evidence.** New-chat and Thread transitions save a bounded app-private checkpoint for user-reviewed Diagnostics without prompts, message text, IDs, profile names, paths, URLs, media, tool payloads, secrets, or telemetry.
 - **Android surfaces host resource risk before chat state is lost.** Current Hermes Dashboard memory and disk pressure signals render as a persistent, capability-gated warning; older hosts remain unchanged and no telemetry is added.
-- **Android honors Hermes model-selection safeguards.** Gateway model picks that require cost or data-training consent now show Hermes' exact warning and apply only after a confirmed second request.
+- **Android honors Hermes model-selection safeguards.** Every Gateway model transition, including fresh-chat and Server-default choices, now avoids raw session overrides; picks requiring cost or data-training consent show Hermes' exact warning and apply only after a confirmed second request.
 
 ### Changed
 

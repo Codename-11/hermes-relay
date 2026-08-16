@@ -3356,6 +3356,13 @@ a context change. Older gateways that omit these fields keep the established
 single-request behavior. API-fallback aliases remain unchanged because their
 current upstream contract exposes no equivalent confirmation preflight.
 
+This path includes Server default and a pick made on a sessionless draft. A
+draft pick first materializes a profile-bound session using no raw `model` or
+`provider` create fields, then performs the guarded `config.set`; failure to
+obtain that session restores the prior selection. Ordinary `session.create`
+also omits model/provider, and a new Gateway chat clears the prior session's
+model pick, so no later send can reintroduce the unguarded create path.
+
 **Consequences.** Android warns before host pressure turns into lost chat or
 failed persistence and before a confirmed Gateway selection changes cost or
 data-use posture. Hermes remains the policy authority, Relay remains optional,
