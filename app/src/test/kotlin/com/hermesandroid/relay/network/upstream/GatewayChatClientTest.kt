@@ -60,6 +60,13 @@ class GatewayClientHarness(
     var failTicketMint = false
     var resumeFails = false
 
+    /** Authoritative profile owner echoed by session results; null follows request. */
+    @Volatile
+    var sessionProfileOverride: String? = null
+
+    @Volatile
+    var omitSessionProfileMetadata = false
+
     @Volatile
     var recoveryRunning = false
 
@@ -209,12 +216,25 @@ class GatewayClientHarness(
                 "session.create" -> buildJsonObject {
                     put("session_id", "live-1")
                     put("stored_session_id", "20260612_120000_abc123")
+                    if (!omitSessionProfileMetadata) {
+                        put("info", buildJsonObject {
+                            put(
+                                "profile_name",
+                                sessionProfileOverride
+                                    ?: (params["profile"] as? JsonPrimitive)?.contentOrNull
+                                    ?: "default",
+                            )
+                        })
+                    }
                 }
                 "session.resume" ->
                     if (resumeFails) null
                     else {
                         val storedId = (params["session_id"] as? JsonPrimitive)?.contentOrNull
-                        recoveryPayload(resumeLiveSessionIds[storedId] ?: "live-resumed")
+                        recoveryPayload(
+                            resumeLiveSessionIds[storedId] ?: "live-resumed",
+                            (params["profile"] as? JsonPrimitive)?.contentOrNull,
+                        )
                     }
                 "session.activate" -> recoveryPayload(
                     (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
@@ -403,12 +423,17 @@ class GatewayClientHarness(
 
     private val autoRespondEnabled = autoRespond
 
-    private fun recoveryPayload(sessionId: String): JsonObject = buildJsonObject {
+    private fun recoveryPayload(sessionId: String, requestedProfile: String? = null): JsonObject = buildJsonObject {
         put("session_id", sessionId)
         put("running", recoveryRunning)
         put("status", if (recoveryRunning) "streaming" else "idle")
-        recoveryProject?.let { project ->
-            put("info", buildJsonObject { put("project", project) })
+        if (!omitSessionProfileMetadata || recoveryProject != null) {
+            put("info", buildJsonObject {
+                if (!omitSessionProfileMetadata) {
+                    put("profile_name", sessionProfileOverride ?: requestedProfile ?: "default")
+                }
+                recoveryProject?.let { put("project", it) }
+            })
         }
         val inflightStreaming = recoveryInflightStreaming ?: recoveryRunning
         if (recoveryRunning || recoveryInflightStreaming != null || recoveryInflightError != null) {
@@ -708,6 +733,28 @@ class GatewayChatClientTest {
         harness.rpcLog.clear()
         assertTrue(client.describeProfile("operator").exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException)
         assertTrue(harness.rpcLog.none { it.first == "profiles.describe" })
+    }
+
+    @Test
+    fun `profile configure method not found becomes sticky read only capability`() = runBlocking {
+        client.describeProfile("operator").getOrThrow()
+        harness.methodNotFound += "profiles.configure"
+
+        assertTrue(
+            client.configureProfile(
+                "operator",
+                com.hermesandroid.relay.data.GatewayProfilePatch(description = "Updated"),
+            ).exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException,
+        )
+        harness.rpcLog.clear()
+        assertTrue(
+            client.configureProfile(
+                "operator",
+                com.hermesandroid.relay.data.GatewayProfilePatch(description = "Again"),
+            ).exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException,
+        )
+        assertTrue(harness.rpcLog.none { it.first == "profiles.configure" })
+        assertEquals("operator", client.describeProfile("operator").getOrThrow().name)
     }
 
     @Test
@@ -1535,6 +1582,34 @@ class GatewayChatClientTest {
 
         val create = harness.awaitRpc("session.create")
         assertEquals("mizu", (create["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `session create rejects a different authoritative profile owner`() {
+        val r = Recorder()
+        client.sessionProfileProvider = { "mizu" }
+        harness.sessionProfileOverride = "default"
+
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        awaitCondition { r.preflightFailures.isNotEmpty() }
+
+        assertTrue(r.preflightFailures.single().contains("refusing to use it as selected profile 'mizu'"))
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `session create rejects older gateway without profile ownership metadata`() {
+        val r = Recorder()
+        client.sessionProfileProvider = { "mizu" }
+        harness.omitSessionProfileMetadata = true
+
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        awaitCondition { r.preflightFailures.isNotEmpty() }
+
+        assertTrue(r.preflightFailures.single().contains("did not confirm profile ownership"))
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
     }
 
     @Test

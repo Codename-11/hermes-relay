@@ -102,7 +102,9 @@ class GatewayChatClient(
     /** Existing upstream rich-chat vocabulary; do not invent a Relay-only source. */
     private val sessionSource = "webui"
     @Volatile
-    private var profileEditorSupported: Boolean? = null
+    private var profileDescribeSupported: Boolean? = null
+    @Volatile
+    private var profileConfigureSupported: Boolean? = null
     companion object {
         private const val TAG = "GatewayChatClient"
 
@@ -946,6 +948,21 @@ class GatewayChatClient(
                 }
             }
 
+            try {
+                requireConfirmedSessionProfile(response, requestedProfile)
+            } catch (error: GatewayPreflightException) {
+                if (activeTurn === boundTurn) activeTurn = null
+                boundTurn?.discardDeferredEvents()
+                boundTurn?.detach()
+                if (!preferredLiveId.isNullOrBlank()) {
+                    claimedBackground?.let { backgroundTurns.putIfAbsent(preferredLiveId, it) }
+                }
+                liveSessionId = null
+                storedSessionId = null
+                liveSessionProfile = null
+                throw error
+            }
+
             val recoveredLiveId = response.stringField("session_id")
                 ?: run {
                     synchronized(recoveryEventLock) { recoveryEvents = null }
@@ -1290,7 +1307,7 @@ class GatewayChatClient(
     override suspend fun describeProfile(
         profileName: String,
     ): Result<GatewayProfileDescription> {
-        if (profileEditorSupported == false) {
+        if (profileDescribeSupported == false) {
             return Result.failure(GatewayProfileEditorUnsupportedException())
         }
         val name = profileName.trim()
@@ -1306,13 +1323,13 @@ class GatewayChatClient(
         )
         val error = response.exceptionOrNull()
         if (error.isMethodNotFound()) {
-            profileEditorSupported = false
+            profileDescribeSupported = false
             return Result.failure(GatewayProfileEditorUnsupportedException())
         }
         return response.mapCatching { payload ->
             parseProfileDescription(payload, expectedName = name)
         }.onSuccess {
-            profileEditorSupported = true
+            profileDescribeSupported = true
         }
     }
 
@@ -1321,7 +1338,7 @@ class GatewayChatClient(
         profileName: String,
         patch: GatewayProfilePatch,
     ): Result<GatewayProfileConfigureResult> {
-        if (profileEditorSupported != true) {
+        if (profileDescribeSupported != true || profileConfigureSupported == false) {
             return Result.failure(GatewayProfileEditorUnsupportedException())
         }
         val name = profileName.trim()
@@ -1344,13 +1361,20 @@ class GatewayChatClient(
                 put("enabled_toolsets", JsonArray(names.map(::JsonPrimitive)))
             }
         }
-        return rpc("profiles.configure", params).mapCatching { payload ->
+        val response = rpc("profiles.configure", params)
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileConfigureSupported = false
+            return Result.failure(GatewayProfileEditorUnsupportedException())
+        }
+        return response.mapCatching { payload ->
             val appliedObject = payload["applied"] as? JsonObject
                 ?: throw GatewayRpcException("profiles.configure returned no applied map")
             val applied = requested.filterTo(linkedSetOf()) { section ->
                 (appliedObject[section.wireName] as? JsonPrimitive)?.booleanOrNull == true
             }
             GatewayProfileConfigureResult(requested = requested, applied = applied)
+        }.onSuccess {
+            profileConfigureSupported = true
         }
     }
 
@@ -1976,7 +2000,11 @@ class GatewayChatClient(
                 requestedProfile?.let { put("profile", it) }
             },
         )
-        val result = resumed.getOrNull()
+        val result = resumed.getOrNull()?.takeIf { response ->
+            runCatching { requireConfirmedSessionProfile(response, requestedProfile) }
+                .onFailure { Log.w(TAG, "Gateway prewarm rejected profile scope: ${it.message}") }
+                .isSuccess
+        }
         val live = result?.stringField("session_id")
         if (
             live != null &&
@@ -2067,6 +2095,28 @@ class GatewayChatClient(
     private fun applySessionResultInfo(result: JsonObject) {
         _serverProject.value = null
         (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
+    }
+
+    /**
+     * A named profile is safe to bind only when Hermes echoes that exact owner
+     * in the authoritative session result. Current multiplex gateways report
+     * `info.profile_name` on create/resume. Missing metadata means an older
+     * gateway may have ignored `params.profile`; a different name means the
+     * requested profile disappeared or resolved to the launch profile.
+     */
+    private fun requireConfirmedSessionProfile(result: JsonObject, requestedProfile: String?) {
+        val expected = requestedProfile?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val actual = (result["info"] as? JsonObject)
+            ?.stringField("profile_name")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (actual != expected) {
+            val detail = actual?.let { "Hermes returned profile '$it'" }
+                ?: "Hermes did not confirm profile ownership"
+            throw GatewayPreflightException(
+                "$detail; refusing to use it as selected profile '$expected'",
+            )
+        }
     }
 
     /** Resolve a process RPC against the exact live id, resuming after reconnect when possible. */
@@ -2169,6 +2219,7 @@ class GatewayChatClient(
             }
             val live = result?.stringField("session_id")
             if (live != null) {
+                requireConfirmedSessionProfile(result, requestedProfile)
                 liveSessionId = live
                 storedSessionId = requestedStoredId
                 liveSessionProfile = requestedProfile
@@ -2213,6 +2264,7 @@ class GatewayChatClient(
         }
         val live = created.stringField("session_id")
             ?: throw GatewayPreflightException("session.create returned no session_id")
+        requireConfirmedSessionProfile(created, requestedProfile)
         val stored = created.stringField("stored_session_id") ?: live
         liveSessionId = live
         storedSessionId = stored

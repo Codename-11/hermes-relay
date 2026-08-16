@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Android edit-and-regenerate fails closed on incomplete durable history.** Mixed Gateway transcripts now require the selected message's durable row identity instead of attempting an ordinal-only rewind, while older Hermes histories with no row identities remain editable.
+- **Android fails closed when a Gateway does not confirm the selected profile.** Named-profile session creation and recovery now require Hermes to echo the exact owning profile, preventing stale or older gateways from silently running the launch profile under another agent's identity. Profile inspection also keeps read-only Gateway data available when `profiles.configure` is unsupported while disabling further write attempts without discarding drafts.
 
 ## [0.4.0-beta.4] - 2026-08-15
 

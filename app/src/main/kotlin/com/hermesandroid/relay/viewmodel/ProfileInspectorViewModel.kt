@@ -58,6 +58,9 @@ class ProfileInspectorViewModel(
 
     private val _gatewayDescription = MutableStateFlow<GatewayProfileDescription?>(null)
     val gatewayDescription: StateFlow<GatewayProfileDescription?> = _gatewayDescription.asStateFlow()
+    private val _gatewayWritable = MutableStateFlow(false)
+    val gatewayWritable: StateFlow<Boolean> = _gatewayWritable.asStateFlow()
+    private var gatewayConfigureUnsupported = false
 
     private val _configState = MutableStateFlow<LoadState<ProfileConfigResponse>>(LoadState.Idle)
     val configState: StateFlow<LoadState<ProfileConfigResponse>> = _configState.asStateFlow()
@@ -351,6 +354,7 @@ class ProfileInspectorViewModel(
         if (configResult.isSuccess || soulResult.isSuccess || skillsResult.isSuccess) {
             _source.value = ProfileInspectorSource.Relay
             _gatewayDescription.value = null
+            _gatewayWritable.value = false
         }
         val fallbackMessage = gatewayError
             ?.takeUnless { it is GatewayProfileEditorUnsupportedException }
@@ -375,7 +379,8 @@ class ProfileInspectorViewModel(
     private fun applyGatewayDescription(description: GatewayProfileDescription) {
         if (description.name != profileName) return
         _gatewayDescription.value = description
-        _skillToggleSupported.value = true
+        _gatewayWritable.value = !gatewayConfigureUnsupported
+        _skillToggleSupported.value = !gatewayConfigureUnsupported
         _configState.value = LoadState.Loaded(description.toConfigResponse())
         _soulState.value = LoadState.Loaded(description.toSoulResponse())
         _skillsState.value = LoadState.Loaded(description.toSkillsResponse())
@@ -393,6 +398,11 @@ class ProfileInspectorViewModel(
         viewModelScope.launch {
             val configured = client.configureProfile(profileName, patch)
             if (configured.isFailure) {
+                if (configured.exceptionOrNull() is GatewayProfileEditorUnsupportedException) {
+                    gatewayConfigureUnsupported = true
+                    _gatewayWritable.value = false
+                    _skillToggleSupported.value = false
+                }
                 clearSavingFlags()
                 _editEvents.tryEmit(EditEvent.Error(configured.exceptionOrNull()?.message ?: "Save failed"))
                 return@launch

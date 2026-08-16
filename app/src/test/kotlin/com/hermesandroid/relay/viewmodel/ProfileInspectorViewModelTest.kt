@@ -51,6 +51,7 @@ class ProfileInspectorViewModelTest {
 
         viewModel.loadAll()
         advanceUntilIdle()
+        assertTrue(viewModel.gatewayWritable.value)
         viewModel.beginConfigEdit()
         viewModel.updateConfigDescriptionDraft("Updated")
         viewModel.updateConfigModelDraft("new")
@@ -62,6 +63,32 @@ class ProfileInspectorViewModelTest {
         assertEquals("new", viewModel.configModelDraft.value)
         assertTrue(viewModel.configEditing.value)
         assertEquals("old", viewModel.gatewayDescription.value?.model)
+    }
+
+    @Test
+    fun `configure capability failure keeps gateway reads and disables writes`() = runTest(dispatcher) {
+        val gateway = object : GatewayProfileEditorClient {
+            override suspend fun describeProfile(profileName: String) =
+                Result.success(description(description = "Read only", model = "stable"))
+
+            override suspend fun configureProfile(profileName: String, patch: GatewayProfilePatch) =
+                Result.failure<GatewayProfileConfigureResult>(GatewayProfileEditorUnsupportedException())
+        }
+        val viewModel = viewModel(gateway, FakeLegacy())
+
+        viewModel.loadAll()
+        advanceUntilIdle()
+        viewModel.beginConfigEdit()
+        viewModel.updateConfigDescriptionDraft("Retained draft")
+        viewModel.saveConfigEdit()
+        advanceUntilIdle()
+
+        assertEquals(ProfileInspectorSource.Gateway, viewModel.source.value)
+        assertEquals("Read only", viewModel.gatewayDescription.value?.description)
+        assertEquals("Retained draft", viewModel.configDescriptionDraft.value)
+        assertTrue(viewModel.configEditing.value)
+        assertEquals(false, viewModel.gatewayWritable.value)
+        assertEquals(false, viewModel.skillToggleSupported.value)
     }
 
     @Test
