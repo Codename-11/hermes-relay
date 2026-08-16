@@ -3489,6 +3489,14 @@
     <string name="dashboard_native_signin_requires_https">安全なブラウザサインインには、HTTPSのダッシュボードアドレスが必要です。</string>
     <string name="dashboard_native_signin_unavailable">この接続では安全なブラウザサインインを利用できません。接続を更新して、もう一度お試しください。</string>
     <string name="dashboard_native_signin_transport_retry">安全な接続が中断されました。サインインボタンをタップして、もう一度お試しください。</string>
+    <string name="dashboard_native_signin_callback_rejected">プロバイダーがこのサインインを承認しませんでした。キャンセルした場合は操作不要です。それ以外の場合は、新しいサインインを開始してください。</string>
+    <string name="dashboard_native_signin_code_rejected">Google サインインは完了しましたが、ホストされた Hermes がセッション作成前に一回限りのコールバックコードを拒否しました。新しいサインインを開始してください。</string>
+    <string name="dashboard_native_signin_gateway_rejected">ホストされた Hermes がセッション交換を拒否しました。ホスト側エージェントが最新であることを確認し、サインインをやり直してください。</string>
+    <string name="dashboard_native_signin_rate_limited">ホストされた Hermes が短時間に多すぎるサインイン試行を受け取りました。しばらく待ってから再試行してください。</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Google サインインは完了しましたが、ホストされた Hermes のサインインサービスを利用できません。しばらく待ってから再試行してください。</string>
+    <string name="dashboard_native_signin_response_unsupported">ホストされた Hermes から、このアプリでは使用できないサインイン応答が返されました。Hermes Relay とホスト側エージェントの更新を確認してください。</string>
+    <string name="dashboard_native_signin_attempt_inactive">このサインイン試行はキャンセルされたか置き換えられました。古いブラウザタブを閉じて、やり直してください。</string>
+    <string name="dashboard_native_signin_storage_failed">Google サインインは完了しましたが、Android が Hermes セッションを安全に保存できませんでした。再試行し、繰り返す場合は診断で失敗段階を確認してください。</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">このチャットでのみ承認確認を省略します。セッションが変わるとリセットされます。</string>
     <string name="conn_info_yolo_mode_profile_off">プロフィールの承認がオフのため、このチャットではすでに確認を省略しています。チャット単位の例外を使う前に、手動またはスマートを選択してください。</string>
     <string name="conn_info_approval_mode_title">プロフィール承認モード</string>

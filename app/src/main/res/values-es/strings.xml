@@ -3175,6 +3175,14 @@
     <string name="dashboard_native_signin_requires_https">El inicio de sesión seguro en el navegador requiere una dirección HTTPS del panel.</string>
     <string name="dashboard_native_signin_unavailable">El inicio de sesión seguro en el navegador no está disponible para esta conexión. Actualiza la conexión e inténtalo de nuevo.</string>
     <string name="dashboard_native_signin_transport_retry">Se interrumpió la conexión segura. Toca el botón de inicio de sesión para volver a intentarlo.</string>
+    <string name="dashboard_native_signin_callback_rejected">El proveedor no aprobó este inicio de sesión. Si lo cancelaste, no tienes que hacer nada; de lo contrario, inicia un intento nuevo.</string>
+    <string name="dashboard_native_signin_code_rejected">El inicio de sesión con Google terminó, pero Hermes alojado rechazó el código de devolución de un solo uso antes de crear una sesión. Inicia un intento nuevo.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Hermes alojado rechazó el intercambio de sesión. Comprueba que el agente alojado esté actualizado y vuelve a iniciar sesión.</string>
+    <string name="dashboard_native_signin_rate_limited">Hermes alojado recibió demasiados intentos de inicio de sesión. Espera un momento y vuelve a intentarlo.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">El inicio de sesión con Google terminó, pero el servicio de acceso de Hermes alojado no está disponible. Espera un momento y vuelve a intentarlo.</string>
+    <string name="dashboard_native_signin_response_unsupported">Hermes alojado devolvió una respuesta de inicio de sesión que esta aplicación no puede usar. Busca actualizaciones de Hermes Relay y del agente alojado.</string>
+    <string name="dashboard_native_signin_attempt_inactive">Este intento de inicio de sesión se canceló o fue reemplazado. Cierra la pestaña anterior y empieza de nuevo.</string>
+    <string name="dashboard_native_signin_storage_failed">El inicio de sesión con Google terminó, pero Android no pudo guardar de forma segura la sesión de Hermes. Vuelve a intentarlo; si se repite, abre Diagnósticos para ver la fase del error.</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">Omite las solicitudes de aprobación solo para este chat. Se restablece al cambiar de sesión.</string>
     <string name="conn_info_yolo_mode_profile_off">Las aprobaciones del perfil están desactivadas, por lo que este chat ya omite las solicitudes. Elige Manual o Inteligente antes de usar la excepción por chat.</string>
     <string name="conn_info_approval_mode_title">Modo de aprobación del perfil</string>

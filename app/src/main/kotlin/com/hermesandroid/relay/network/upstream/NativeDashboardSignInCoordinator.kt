@@ -22,7 +22,7 @@ private const val CALLBACK_PATH = "/callback"
 private const val MAX_REQUEST_LINE_BYTES = 8 * 1024
 private const val MAX_HEADER_BYTES = 16 * 1024
 private const val ACCEPT_POLL_MILLIS = 500
-internal const val DEFAULT_NATIVE_SIGN_IN_TIMEOUT_MILLIS = 2 * 60 * 1000L
+internal const val DEFAULT_NATIVE_SIGN_IN_TIMEOUT_MILLIS = 5 * 60 * 1000L
 internal val NATIVE_SIGN_IN_RETURN_URI = "${BuildConfig.APPLICATION_ID}://return"
 
 private enum class CallbackPage(
@@ -45,6 +45,48 @@ private enum class CallbackPage(
         title = "Sign-in needs another try",
         message = "No session details were saved from this attempt.",
         guidance = "Return to Hermes Relay and start sign-in again.",
+    ),
+    AuthorizationRejected(
+        modifier = "failure",
+        eyebrow = "Provider sign-in",
+        title = "Sign-in was not completed",
+        message = "The provider returned without an approved authorization for Hermes.",
+        guidance = "Return to Hermes Relay and start again if you still want to sign in.",
+    ),
+    CodeRejected(
+        modifier = "failure",
+        eyebrow = "Hosted Hermes callback",
+        title = "Hermes rejected the sign-in code",
+        message = "Google sign-in finished, but hosted Hermes could not exchange its one-time callback code for a session.",
+        guidance = "Return to Hermes Relay and start a fresh sign-in attempt.",
+    ),
+    GatewayUnavailable(
+        modifier = "failure",
+        eyebrow = "Hosted Hermes callback",
+        title = "Hosted Hermes could not finish sign-in",
+        message = "The callback reached Hermes Relay, but the hosted Hermes sign-in service was unavailable.",
+        guidance = "Return to Hermes Relay, wait a moment, and try again.",
+    ),
+    TransportFailure(
+        modifier = "failure",
+        eyebrow = "Secure sign-in connection",
+        title = "Could not reach hosted Hermes",
+        message = "Google sign-in finished, but the secure connection back to hosted Hermes was interrupted.",
+        guidance = "Return to Hermes Relay and retry on a stable connection.",
+    ),
+    ResponseUnsupported(
+        modifier = "failure",
+        eyebrow = "Hosted Hermes callback",
+        title = "Hermes returned an unsupported session",
+        message = "The hosted gateway answered, but its sign-in response was not compatible with this app.",
+        guidance = "Return to Hermes Relay and check for app and hosted Hermes updates.",
+    ),
+    SessionStorageFailure(
+        modifier = "failure",
+        eyebrow = "Secure session storage",
+        title = "The session could not be saved",
+        message = "Google sign-in finished, but Android could not securely save the Hermes session on this device.",
+        guidance = "Return to Hermes Relay and try again. If it repeats, check the app's diagnostics.",
     ),
     Rejected(
         modifier = "rejected",
@@ -194,14 +236,14 @@ class NativeDashboardSignInCoordinator(
                     writeResponse(
                         socket,
                         status = "400 Bad Request",
-                        page = CallbackPage.Failure,
+                        page = CallbackPage.AuthorizationRejected,
                     )
                     throw error
                 } catch (error: Exception) {
                     writeResponse(
                         socket,
                         status = "400 Bad Request",
-                        page = CallbackPage.Failure,
+                        page = callbackFailurePage(error),
                     )
                     throw error
                 }
@@ -293,6 +335,20 @@ class NativeDashboardSignInCoordinator(
                 write(html)
                 flush()
             }
+        }
+    }
+
+    private fun callbackFailurePage(error: Throwable): CallbackPage {
+        val stage = nativeDashboardSignInFailureStage(error)
+        return when {
+            stage == "token_http_400" -> CallbackPage.CodeRejected
+            stage == "callback_error" -> CallbackPage.AuthorizationRejected
+            stage == "token_http_429" || stage.startsWith("token_http_5") ->
+                CallbackPage.GatewayUnavailable
+            stage == "token_shape" -> CallbackPage.ResponseUnsupported
+            stage == "token_store" -> CallbackPage.SessionStorageFailure
+            stage.startsWith("token_transport") -> CallbackPage.TransportFailure
+            else -> CallbackPage.Failure
         }
     }
 

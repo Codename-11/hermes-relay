@@ -3423,6 +3423,14 @@
     <string name="dashboard_native_signin_requires_https">安全浏览器登录需要 HTTPS 控制面板地址。</string>
     <string name="dashboard_native_signin_unavailable">此连接无法使用安全浏览器登录。请刷新连接后重试。</string>
     <string name="dashboard_native_signin_transport_retry">安全连接已中断。请点按登录按钮重试。</string>
+    <string name="dashboard_native_signin_callback_rejected">提供商未批准本次登录。如果是你取消的，则无需操作；否则请重新开始登录。</string>
+    <string name="dashboard_native_signin_code_rejected">Google 登录已完成，但托管的 Hermes 在创建会话前拒绝了一次性回调代码。请重新开始登录。</string>
+    <string name="dashboard_native_signin_gateway_rejected">托管的 Hermes 拒绝了会话交换。请确认托管代理已更新，然后重新开始登录。</string>
+    <string name="dashboard_native_signin_rate_limited">托管的 Hermes 收到了过多登录尝试。请稍等片刻后重试。</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Google 登录已完成，但托管的 Hermes 登录服务不可用。请稍等片刻后重试。</string>
+    <string name="dashboard_native_signin_response_unsupported">托管的 Hermes 返回了此应用无法使用的登录响应。请检查 Hermes Relay 和托管代理的更新。</string>
+    <string name="dashboard_native_signin_attempt_inactive">本次登录尝试已取消或被替换。请关闭旧浏览器标签页并重新开始。</string>
+    <string name="dashboard_native_signin_storage_failed">Google 登录已完成，但 Android 无法安全保存 Hermes 会话。请重试；如果问题重复出现，请打开“诊断”查看失败阶段。</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">仅在此聊天中跳过批准提示。会在会话更改时重置。</string>
     <string name="conn_info_yolo_mode_profile_off">配置文件批准已关闭，因此此聊天已经会跳过提示。使用单聊天例外前，请选择手动或智能。</string>
     <string name="conn_info_approval_mode_title">配置文件批准模式</string>

@@ -5,35 +5,34 @@ import org.junit.Test
 
 class DashboardSignInPolicyTest {
     @Test
-    fun transportFailure_usesActionableRetryCopy_withoutChangingOtherFailures() {
-        val retry = "Tap sign in to retry"
-
+    fun nativeFailuresMapToActionableSecretFreeMessageKinds() {
         assertEquals(
-            retry,
-            nativeDashboardSignInActionMessage(
-                failureStage = "token_transport_socket",
-                errorMessage = "secret transport detail",
-                fallbackMessage = "fallback",
-                transportRetryMessage = retry,
-            ),
+            NativeDashboardSignInMessageKind.CallbackRejected,
+            nativeDashboardSignInMessageKind("callback_error"),
         )
         assertEquals(
-            "HTTP 400",
-            nativeDashboardSignInActionMessage(
-                failureStage = "token_http_400",
-                errorMessage = "HTTP 400",
-                fallbackMessage = "fallback",
-                transportRetryMessage = retry,
-            ),
+            NativeDashboardSignInMessageKind.CodeRejected,
+            nativeDashboardSignInMessageKind("token_http_400"),
         )
         assertEquals(
-            "fallback",
-            nativeDashboardSignInActionMessage(
-                failureStage = "token_shape",
-                errorMessage = null,
-                fallbackMessage = "fallback",
-                transportRetryMessage = retry,
-            ),
+            NativeDashboardSignInMessageKind.RateLimited,
+            nativeDashboardSignInMessageKind("token_http_429"),
+        )
+        assertEquals(
+            NativeDashboardSignInMessageKind.GatewayUnavailable,
+            nativeDashboardSignInMessageKind("token_http_503"),
+        )
+        assertEquals(
+            NativeDashboardSignInMessageKind.ResponseUnsupported,
+            nativeDashboardSignInMessageKind("token_shape"),
+        )
+        assertEquals(
+            NativeDashboardSignInMessageKind.Transport,
+            nativeDashboardSignInMessageKind("token_transport_socket"),
+        )
+        assertEquals(
+            NativeDashboardSignInMessageKind.SecureStorage,
+            nativeDashboardSignInMessageKind("token_store"),
         )
     }
 }
