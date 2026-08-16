@@ -76,6 +76,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -107,6 +108,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.GatewayProfileAuthChoice
+import com.hermesandroid.relay.data.GatewayProfileCreateRequest
+import com.hermesandroid.relay.data.GatewayProfileManagementUnsupportedException
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardCustomEndpointDraft
@@ -445,6 +449,17 @@ private data class PendingDashboardAction(
     val item: DashboardSummaryItem,
     val action: DashboardItemAction,
 )
+
+internal fun shouldUseLegacyDashboardProfileCreate(
+    request: GatewayProfileCreateRequest,
+    failure: Throwable,
+    explicitlyAllowed: Boolean,
+): Boolean =
+    explicitlyAllowed && failure is GatewayProfileManagementUnsupportedException &&
+        request.authChoice == GatewayProfileAuthChoice.Shared &&
+        (request.cloneFrom == null || request.cloneFrom == "default") &&
+        !request.cloneAll && !request.noSkills && request.soul == null &&
+        request.model == null && request.provider == null
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -886,35 +901,83 @@ fun DashboardManagementScreen(
     }
 
     fun submitCreateProfile(
-        name: String,
-        description: String,
-        cloneFromDefault: Boolean,
+        request: GatewayProfileCreateRequest,
         mcpServers: List<String>,
+        allowLegacyDashboard: Boolean,
     ) {
-        if (dashboardUrl.isBlank() || actionInFlight) return
+        if (actionInFlight) return
         val actionPayloadKey = payloadKey
         actionInFlight = true
         actionMessage = null
         scope.launch {
-            val result = try {
-                withDashboardClient(clientFactory) { client ->
-                    client.createProfile(
-                        name = name,
-                        cloneFromDefault = cloneFromDefault,
-                        description = description.takeIf { it.isNotBlank() },
-                        mcpServers = mcpServers,
+            val gatewayClient = connectionViewModel.activeGatewayChatClient()
+            val gatewayResult = gatewayClient
+                ?.createProfile(request)
+                ?: Result.failure(GatewayProfileManagementUnsupportedException("profiles.create"))
+            val result: Result<String> = gatewayResult.fold(
+                onSuccess = { created ->
+                    val partial = created.partialMessages(request).toMutableList()
+                    if (mcpServers.isNotEmpty()) {
+                        val configured = gatewayClient
+                            ?.describeProfile(created.name)
+                            ?.mapCatching {
+                                gatewayClient.configureProfile(
+                                    created.name,
+                                    com.hermesandroid.relay.data.GatewayProfilePatch(
+                                        enabledMcpServers = mcpServers,
+                                    ),
+                                ).getOrThrow()
+                            }
+                        if (
+                            configured == null || configured.isFailure ||
+                            com.hermesandroid.relay.data.GatewayProfileSection.McpServers in
+                            configured.getOrThrow().failed
+                        ) {
+                            partial += context.getString(R.string.dashboard_profile_mcp_partial)
+                        }
+                    }
+                    Result.success(
+                        if (partial.isEmpty()) {
+                            context.getString(R.string.dashboard_profile_created, created.name)
+                        } else {
+                            context.getString(
+                                R.string.dashboard_profile_created_partial,
+                                created.name,
+                                partial.joinToString("; "),
+                            )
+                        },
                     )
+                },
+                onFailure = { gatewayFailure ->
+                    // The authenticated Dashboard route remains the compatibility
+                    // create surface for old hosts, but only for the legacy shared
+                    // default. Never erase an explicit isolation choice.
+                    if (shouldUseLegacyDashboardProfileCreate(request, gatewayFailure, allowLegacyDashboard)) {
+                        try {
+                            withDashboardClient(clientFactory) { client ->
+                                client.createProfile(
+                                    name = request.name,
+                                    cloneFromDefault = request.cloneFrom != null,
+                                    description = request.description,
+                                    mcpServers = mcpServers,
+                                )
+                            }.map { context.getString(R.string.dashboard_profile_created_legacy, request.name) }
+                        } catch (e: Exception) {
+                            Result.failure(e)
+                        }
+                    } else {
+                        Result.failure(gatewayFailure)
+                    }
                 }
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
+            )
             actionMessage = result.fold(
-                onSuccess = {
+                onSuccess = { message ->
                     showCreateProfile = false
                     refreshingPayloads[actionPayloadKey] = true
                     forceReloadKey = actionPayloadKey
                     reloadNonce += 1
-                    context.getString(R.string.dashboard_profile_created, name)
+                    connectionViewModel.refreshGatewayProfiles()
+                    message
                 },
                 onFailure = { err -> err.message ?: context.getString(R.string.dashboard_profile_create_failed) },
             )
@@ -1173,11 +1236,17 @@ fun DashboardManagementScreen(
         var newProfileDescription by remember { mutableStateOf("") }
         var newProfileMcpServers by remember { mutableStateOf("") }
         var cloneFromDefault by remember { mutableStateOf(true) }
+        var noSkills by remember { mutableStateOf(false) }
+        var authChoice by remember { mutableStateOf(GatewayProfileAuthChoice.Shared) }
+        var allowLegacyDashboard by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { showCreateProfile = false },
             title = { Text(stringResource(R.string.dashboard_new_profile_title)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     OutlinedTextField(
                         value = newProfileName,
                         onValueChange = { newProfileName = it },
@@ -1204,10 +1273,74 @@ fun DashboardManagementScreen(
                     ) {
                         Checkbox(
                             checked = cloneFromDefault,
-                            onCheckedChange = { cloneFromDefault = it },
+                            onCheckedChange = {
+                                cloneFromDefault = it
+                                if (it) noSkills = false
+                            },
                         )
                         Text(
                             text = stringResource(R.string.dashboard_clone_from_default),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = noSkills,
+                            enabled = !cloneFromDefault,
+                            onCheckedChange = { noSkills = it },
+                        )
+                        Text(
+                            text = stringResource(R.string.dashboard_profile_no_skills),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text(
+                        text = stringResource(R.string.dashboard_profile_auth_title),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    listOf(
+                        GatewayProfileAuthChoice.Shared to R.string.dashboard_profile_auth_shared,
+                        GatewayProfileAuthChoice.Copied to R.string.dashboard_profile_auth_copied,
+                        GatewayProfileAuthChoice.Isolated to R.string.dashboard_profile_auth_isolated,
+                    ).forEach { (choice, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    authChoice = choice
+                                    if (choice != GatewayProfileAuthChoice.Shared) allowLegacyDashboard = false
+                                },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = authChoice == choice,
+                                onClick = {
+                                    authChoice = choice
+                                    if (choice != GatewayProfileAuthChoice.Shared) allowLegacyDashboard = false
+                                },
+                            )
+                            Text(text = stringResource(label), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    Text(
+                        text = stringResource(R.string.dashboard_profile_auth_help),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = allowLegacyDashboard,
+                            enabled = authChoice == GatewayProfileAuthChoice.Shared,
+                            onCheckedChange = { allowLegacyDashboard = it },
+                        )
+                        Text(
+                            text = stringResource(R.string.dashboard_profile_allow_legacy),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -1217,15 +1350,20 @@ fun DashboardManagementScreen(
                 TextButton(
                     onClick = {
                         submitCreateProfile(
-                            name = newProfileName.trim(),
-                            description = newProfileDescription.trim(),
-                            cloneFromDefault = cloneFromDefault,
+                            request = GatewayProfileCreateRequest(
+                                name = newProfileName.trim(),
+                                description = newProfileDescription.trim().takeIf(String::isNotEmpty),
+                                cloneFrom = "default".takeIf { cloneFromDefault },
+                                noSkills = noSkills,
+                                authChoice = authChoice,
+                            ),
                             mcpServers = newProfileMcpServers
                                 .split(',', '\n')
                                 .map(String::trim)
                                 .filter(String::isNotBlank)
                                 .distinct()
                                 .take(64),
+                            allowLegacyDashboard = allowLegacyDashboard,
                         )
                     },
                     enabled = newProfileName.isNotBlank() && !actionInFlight,

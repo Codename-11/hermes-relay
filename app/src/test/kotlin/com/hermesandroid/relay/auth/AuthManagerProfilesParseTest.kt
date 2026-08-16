@@ -336,4 +336,23 @@ class AuthManagerProfilesParseTest {
         assertFalse(parsed[0].apiServerKeyPresent)
         assertFalse(parsed[0].hasIsolatedApi)
     }
+
+    @Test
+    fun parsesBoundedSharedProfileMetadata() {
+        val parsed = AuthManager.parseAgentProfiles(buildJsonArray {
+            add(buildJsonObject {
+                put("name", "operator")
+                put("model", "gpt")
+                put("provider", "openai")
+                put("is_default", true)
+                put("has_avatar", true)
+                put("ui_meta", buildJsonObject { put("accent", "#ff5500") })
+            })
+        }).single()
+
+        assertEquals("openai", parsed.provider)
+        assertTrue(parsed.isDefault)
+        assertTrue(parsed.hasAvatar)
+        assertEquals("#ff5500", (parsed.uiMeta["accent"] as JsonPrimitive).content)
+    }
 }

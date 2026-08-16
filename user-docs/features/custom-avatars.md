@@ -22,9 +22,16 @@ temperament.
 ## Profile badge image
 
 The small face shown beside the active agent name is configured separately from
-the full animated avatar. Open the agent sheet from Chat and use **Agent icon**:
+the full animated avatar. On a current Hermes Gateway, the shared avatar belongs
+to the profile on the server and follows it to Android, Hermes Desktop, and
+other clients. Open the agent sheet from Chat and use **Agent icon**:
 
-- **Set image** chooses an image from your phone.
+- **Choose device fallback** copies an image from your phone. It stays local
+  until you explicitly choose **Upload device icon to Hermes**.
+- **Upload device icon to Hermes** makes that PNG, JPEG, or WebP the shared
+  profile avatar. The decoded file must be no larger than 2,000,000 bytes.
+- **Clear shared Hermes avatar** removes only the server copy. Your device
+  fallback remains available.
 - **Import from agent host** copies a conventional image from the active Hermes
   profile on a paired Relay host. Put `avatar.png`, `avatar.jpg`, `profile.png`,
   or `profile.jpg` directly in `~/.hermes/` for the root Server default, or in
@@ -32,9 +39,12 @@ the full animated avatar. Open the agent sheet from Chat and use **Agent icon**:
   marker selects a named profile as Server default, use that named profile's
   directory. JPEG, PNG, WebP, and GIF are supported, including `.jpeg`.
 
-The imported copy stays on the phone and is scoped to that Connection and
-profile. Changing or removing the host file later does not silently change the
-phone icon; tap import again to refresh it.
+The Relay-host imported copy stays on the phone and is scoped to that Connection
+and profile. Changing or removing the host file later does not silently change
+the phone icon; tap import again to refresh it or explicitly upload it to Hermes.
+Older Hermes versions keep this local/import behavior when shared asset methods
+are unavailable. Animated pets, pet ZIPs, and Sphere skins always remain local
+presentation choices and are never stored in profile metadata.
 
 ## Choosing a floating pet
 

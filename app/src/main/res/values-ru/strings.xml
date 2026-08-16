@@ -1966,6 +1966,16 @@
     <string name="dashboard_skills_update_started">Обновление навыка начато на сервере — обновите Навыки через минуту</string>
     <string name="dashboard_skills_update_failed">Обновление навыка не удалось</string>
     <string name="dashboard_profile_created">Профиль %1$s создан</string>
+    <string name="dashboard_profile_created_partial">Профиль %1$s создан, но %2$s. Проверьте его перед использованием.</string>
+    <string name="dashboard_profile_created_legacy">Профиль %1$s создан через старый маршрут панели. Проверьте его учётные данные перед использованием.</string>
+    <string name="dashboard_profile_no_skills">Не добавлять встроенные навыки</string>
+    <string name="dashboard_profile_auth_title">Аутентификация</string>
+    <string name="dashboard_profile_auth_shared">Общий вход (рекомендуется) — единый пул обновляемых токенов</string>
+    <string name="dashboard_profile_auth_copied">Копировать текущие учётные данные — отдельный снимок может устареть</string>
+    <string name="dashboard_profile_auth_isolated">Изолированный — не копировать учётные данные и настройки провайдера</string>
+    <string name="dashboard_profile_auth_help">Hermes применяет этот выбор на сервере. Пароли и токены никогда не возвращаются в Android.</string>
+    <string name="dashboard_profile_allow_legacy">Если создание через Gateway недоступно, разрешить старый маршрут панели. Поведение учётных данных зависит от хоста и требует проверки.</string>
+    <string name="dashboard_profile_mcp_partial">Выбор серверов MCP не был применён</string>
     <string name="dashboard_profile_create_failed">Создание профиля не удалось</string>
     <string name="stats_overview">Обзор</string>
     <string name="stats_reset">Сброс</string>
@@ -2565,6 +2575,11 @@
     <plurals name="tool_run_using_tools"><item quantity="one">Используется %d инструмент</item><item quantity="few">Используется %d инструмента</item><item quantity="many">Используется %d инструментов</item><item quantity="other">Используется %d инструментов</item></plurals>
     <plurals name="tool_run_used_tools"><item quantity="one">Использован %d инструмент</item><item quantity="few">Использовано %d инструмента</item><item quantity="many">Использовано %d инструментов</item><item quantity="other">Использовано %d инструментов</item></plurals>
     <string name="agent_icon_title">Иконка агента</string>
+    <string name="agent_icon_set_local">Выбрать резервное изображение на устройстве</string>
+    <string name="agent_icon_change_local">Изменить резервное изображение на устройстве</string>
+    <string name="agent_icon_clear_local">Удалить резервное изображение с устройства</string>
+    <string name="agent_icon_upload_shared">Загрузить значок устройства в Hermes</string>
+    <string name="agent_icon_clear_shared">Удалить общий аватар Hermes</string>
     <string name="agent_icon_set">Выбрать файл</string>
     <string name="agent_icon_change">Выбрать файл</string>
     <string name="agent_icon_clear">Очистить</string>

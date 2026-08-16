@@ -3372,3 +3372,45 @@ failed persistence and before a confirmed Gateway selection changes cost or
 data-use posture. Hermes remains the policy authority, Relay remains optional,
 and no private host details, provider credentials, or client-maintained risk
 table are introduced.
+
+---
+
+## ADR 61 — Android uses Hermes-owned profile rosters, creation, and static avatars
+
+**Status:** Accepted (2026-08-15).
+
+**Context.** Hermes Gateway now owns a bounded profile roster, explicit profile
+creation semantics, compact `ui_meta`, and validated static avatar assets.
+Android previously merged Relay/Dashboard rosters, created through Dashboard
+HTTP, and displayed only phone-local icons or images copied from a Relay host.
+Gateway has no profile-delete method.
+
+**Decision.** On a current host Android capability-gates `profiles.list`,
+`profiles.create`, `profiles.get_asset`, and `profiles.set_asset` independently.
+The list call excludes session previews and becomes authoritative only after a
+successful response; method-not-found stays sticky for that socket and leaves
+the established Relay/Dashboard roster intact. Avatar fetches validate decoded
+base64, declared MIME and size, PNG/JPEG/WebP magic, and the 2,000,000-byte cap.
+They publish only while both connection identity and refresh generation still
+match, so a late positive fetch cannot beat a newer `has_avatar:false` list.
+
+Hermes-owned static avatars win at render time, but their cache and the
+device-local `ProfileIconStore` use separate keys. Phone selection and Relay
+host import remain fallbacks. Upload and shared clear are explicit labeled
+actions and never erase the other side. Pet archives, image base64, and Sphere
+skins are forbidden from `ui_meta`; outbound metadata is bounded to small
+preferences/references.
+
+Profile creation serializes one reviewed auth choice: shared sign-in sends
+`mirror_credentials:true, share_auth:true`; a copied snapshot sends true/false;
+isolated sends false/false. Best-effort SOUL, model, environment, auth, and voice
+results remain partial results in the UI. Dashboard create is an explicitly
+enabled older-host fallback only for the legacy shared/default shape, never for
+an explicit isolated request. Profile deletion remains authenticated Dashboard
+`DELETE /api/profiles/{name}` until upstream publishes a Gateway contract.
+
+**Consequences.** Static identity follows profiles across clients without
+silently destroying existing phone or Relay-host choices. Older Gateways keep
+their prior behavior, credentials never return to or enter Android logs, and
+animated presentation remains local. Physical two-client/avatar and
+shared-versus-isolated first-turn/voice certification remains required.

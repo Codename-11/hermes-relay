@@ -790,6 +790,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         },
         rebuildChatApiClient = { rebuildChatApiClient() },
         relayHttpClient = relayHttpClient,
+        gatewayClientProvider = { upstreamTransport.activeGatewayChatClient() },
     )
 
     // --- Relay connection state ---
@@ -1691,6 +1692,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** The active profile's local agent-icon path (client-side, never sent to Hermes). */
     val profileIcon: StateFlow<String?> get() = profileController.profileIcon
+    val localProfileIcon: StateFlow<String?> get() = profileController.localProfileIcon
+    val serverProfileAvatar: StateFlow<String?> get() = profileController.serverProfileAvatar
+    val sharedProfileAvatarState: StateFlow<ProfileController.SharedAvatarState>
+        get() = profileController.sharedAvatarState
 
     /** A local icon path for a specific profile identity on the active connection. */
     fun profileIconFlow(profileName: String?) = profileController.profileIconFlow(profileName)
@@ -1703,6 +1708,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun importProfileIconFromHost() = profileController.importProfileIconFromHost()
 
     fun clearProfileIcon() = profileController.clearProfileIcon()
+
+    fun uploadLocalProfileIconToHermes() = profileController.uploadLocalProfileIconToHermes()
+
+    fun clearSharedProfileAvatar() = profileController.clearSharedProfileAvatar()
+
+    fun refreshGatewayProfiles() = profileController.refreshGatewayProfiles()
 
     fun selectProfile(profile: Profile?) = profileController.selectProfile(profile)
 

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Android adopts Hermes-owned profile creation and shared avatars.** Current Gateways provide the profile roster, explicit shared/copied/isolated authentication choices, partial create outcomes, and validated PNG/JPEG/WebP avatar upload/fetch/clear with the upstream 2,000,000-byte limit. Older hosts retain authenticated Dashboard creation plus Relay/local icon fallbacks, and profile deletion remains Dashboard-only.
 - **Android identifies proactive messages delivered after reconnect.** Relay marks messages flushed from its bounded offline queue, Thread bubbles label them as received “While away,” and Android shows one accessible localized summary for the completed batch.
 - **Android can create finite recurring schedules from Manage.** The native editor uses the authenticated Hermes Gateway `cron.manage` contract, optionally stops after 1–999 runs, and rejects invalid counts rather than silently creating unlimited work.
 - **Chat resets retain content-free local evidence.** New-chat and Thread transitions save a bounded app-private checkpoint for user-reviewed Diagnostics without prompts, message text, IDs, profile names, paths, URLs, media, tool payloads, secrets, or telemetry.
@@ -16,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Static profile identity now follows the Hermes profile across clients.** Server-owned avatars win for display, while phone picks and Relay-host imports remain separate device fallbacks until the user explicitly uploads or clears the shared asset. Animated pets and Sphere skins remain local presentation and are never written into profile metadata.
 - **Interactive Gateway asks remain resolver-bound.** Android continues to use upstream clarify, approval, sudo, and secret response RPCs; connector-only prompt/reaction operations are not copied into Relay cards as a second approval protocol.
 
 ### Fixed

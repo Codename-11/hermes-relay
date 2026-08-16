@@ -164,6 +164,8 @@ enum class GatewayProfileSection(val wireName: String) {
     Model("model"),
     Skills("skills"),
     Toolsets("toolsets"),
+    McpServers("mcp_servers"),
+    UiMeta("ui_meta"),
 }
 
 /** Null leaves a section unchanged; empty lists retain upstream replace semantics. */
@@ -174,6 +176,9 @@ data class GatewayProfilePatch(
     val model: String? = null,
     val disabledSkills: List<String>? = null,
     val enabledToolsets: List<String>? = null,
+    val enabledMcpServers: List<String>? = null,
+    /** Small interoperable preferences only; binary assets belong in profiles.set_asset. */
+    val uiMeta: JsonObject? = null,
 ) {
     val requestedSections: Set<GatewayProfileSection>
         get() = buildSet {
@@ -182,8 +187,66 @@ data class GatewayProfilePatch(
             if (provider != null && model != null) add(GatewayProfileSection.Model)
             if (disabledSkills != null) add(GatewayProfileSection.Skills)
             if (enabledToolsets != null) add(GatewayProfileSection.Toolsets)
+            if (enabledMcpServers != null) add(GatewayProfileSection.McpServers)
+            if (uiMeta != null) add(GatewayProfileSection.UiMeta)
         }
 }
+
+enum class GatewayProfileAuthChoice {
+    /** Share the launch profile's refreshable OAuth/token store; copy static environment keys. */
+    Shared,
+
+    /** Copy the current credential snapshot into a separate profile-owned store. */
+    Copied,
+
+    /** Copy no credentials or provider defaults. */
+    Isolated,
+}
+
+data class GatewayProfileCreateRequest(
+    val name: String,
+    val description: String? = null,
+    val cloneFrom: String? = null,
+    val cloneAll: Boolean = false,
+    val noSkills: Boolean = false,
+    val soul: String? = null,
+    val model: String? = null,
+    val provider: String? = null,
+    val authChoice: GatewayProfileAuthChoice = GatewayProfileAuthChoice.Shared,
+)
+
+data class GatewayProfileCreateResult(
+    val name: String,
+    val soulWritten: Boolean,
+    val modelSet: Boolean,
+    val mirroredEnvironment: Boolean,
+    val mirroredAuth: String?,
+    val modelInherited: Boolean,
+    val voiceMirrored: Boolean,
+) {
+    fun partialMessages(request: GatewayProfileCreateRequest): List<String> = buildList {
+        if (!request.soul.isNullOrBlank() && !soulWritten) add("SOUL was not saved")
+        if (!request.model.isNullOrBlank() && !modelSet) add("model was not saved")
+        if (request.authChoice == GatewayProfileAuthChoice.Shared && mirroredAuth != "shared") {
+            add("shared sign-in was not confirmed")
+        }
+        if (
+            request.authChoice == GatewayProfileAuthChoice.Copied &&
+            !mirroredEnvironment && mirroredAuth != "true"
+        ) {
+            add("no credential source was copied")
+        }
+    }
+}
+
+data class GatewayProfileAsset(
+    val data: ByteArray,
+    val mime: String,
+)
+
+class GatewayProfileManagementUnsupportedException(
+    operation: String,
+) : Exception("$operation is not supported by this gateway")
 
 data class GatewayProfileConfigureResult(
     val requested: Set<GatewayProfileSection>,

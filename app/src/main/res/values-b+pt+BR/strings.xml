@@ -1874,6 +1874,16 @@
     <string name="dashboard_skills_update_failed">Falha ao iniciar a atualização de habilidades</string>
     <!-- Profile create -->
     <string name="dashboard_profile_created">Perfil %1$s criado</string>
+    <string name="dashboard_profile_created_partial">O perfil %1$s foi criado, mas %2$s. Revise antes de usar.</string>
+    <string name="dashboard_profile_created_legacy">O perfil %1$s foi criado pela rota antiga do Painel. Revise as credenciais antes de usar.</string>
+    <string name="dashboard_profile_no_skills">Não adicionar as habilidades incluídas</string>
+    <string name="dashboard_profile_auth_title">Autenticação</string>
+    <string name="dashboard_profile_auth_shared">Compartilhar login (recomendado) — um conjunto de tokens renováveis</string>
+    <string name="dashboard_profile_auth_copied">Copiar credenciais atuais — instantâneo separado que pode ficar desatualizado</string>
+    <string name="dashboard_profile_auth_isolated">Isolado — não copiar credenciais nem padrões do provedor</string>
+    <string name="dashboard_profile_auth_help">O Hermes aplica esta escolha no servidor. Senhas e tokens nunca são retornados ao Android.</string>
+    <string name="dashboard_profile_allow_legacy">Se a criação pelo Gateway não estiver disponível, permitir a rota antiga do Painel. O comportamento das credenciais depende do host e deve ser revisado.</string>
+    <string name="dashboard_profile_mcp_partial">A seleção de servidores MCP não foi aplicada</string>
     <string name="dashboard_profile_create_failed">Falha ao criar o perfil</string>
     <!-- Stats for nerds -->
     <string name="stats_overview">Visão geral</string>
@@ -2478,6 +2488,11 @@
     <plurals name="tool_run_used_tools"><item quantity="one">Usou %d ferramenta</item><item quantity="many">Usou %d ferramentas</item><item quantity="other">Usou %d ferramentas</item></plurals>
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Ícone do agente</string>
+    <string name="agent_icon_set_local">Escolher imagem reserva do dispositivo</string>
+    <string name="agent_icon_change_local">Alterar imagem reserva do dispositivo</string>
+    <string name="agent_icon_clear_local">Limpar imagem reserva do dispositivo</string>
+    <string name="agent_icon_upload_shared">Enviar ícone do dispositivo ao Hermes</string>
+    <string name="agent_icon_clear_shared">Limpar avatar compartilhado do Hermes</string>
     <string name="agent_icon_set">Escolher arquivo</string>
     <string name="agent_icon_change">Escolher arquivo</string>
     <string name="agent_icon_clear">Limpar</string>

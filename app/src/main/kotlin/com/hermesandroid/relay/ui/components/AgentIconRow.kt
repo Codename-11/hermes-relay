@@ -30,15 +30,16 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import java.io.File
 
 /**
- * Per-profile agent-icon picker — the visual twin of the local-name (alias) row.
- * The chosen image is copied into app storage and shown beside the agent's name
- * in chat. Client-side only: never sent to Hermes. Keyed per `(connection,
- * profile)` by [ConnectionViewModel.setProfileIcon] / `ProfileIconStore`.
+ * Hermes-owned shared avatar plus the existing device-local/Relay import fallback.
+ * Neither side is overwritten until the user chooses an explicitly labeled action.
  */
 @Composable
 fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
     val iconPath by connectionViewModel.profileIcon.collectAsState()
+    val localIconPath by connectionViewModel.localProfileIcon.collectAsState()
+    val serverAvatarPath by connectionViewModel.serverProfileAvatar.collectAsState()
     val hostImportState by connectionViewModel.hostProfileIconImportState.collectAsState()
+    val sharedState by connectionViewModel.sharedProfileAvatarState.collectAsState()
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? -> uri?.let { connectionViewModel.setProfileIcon(it) } }
@@ -71,12 +72,28 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
                 }
             }
             OutlinedButton(onClick = { launcher.launch(arrayOf("image/*")) }) {
-                Text(if (iconPath.isNullOrBlank()) stringResource(R.string.agent_icon_set) else stringResource(R.string.agent_icon_change))
+                Text(if (localIconPath.isNullOrBlank()) stringResource(R.string.agent_icon_set_local) else stringResource(R.string.agent_icon_change_local))
             }
-            if (!iconPath.isNullOrBlank()) {
+            if (!localIconPath.isNullOrBlank()) {
                 TextButton(onClick = { connectionViewModel.clearProfileIcon() }) {
-                    Text(stringResource(R.string.agent_icon_clear))
+                    Text(stringResource(R.string.agent_icon_clear_local))
                 }
+            }
+        }
+        if (!localIconPath.isNullOrBlank()) {
+            OutlinedButton(
+                onClick = { connectionViewModel.uploadLocalProfileIconToHermes() },
+                enabled = !sharedState.loading,
+            ) {
+                Text(stringResource(R.string.agent_icon_upload_shared))
+            }
+        }
+        if (!serverAvatarPath.isNullOrBlank()) {
+            TextButton(
+                onClick = { connectionViewModel.clearSharedProfileAvatar() },
+                enabled = !sharedState.loading,
+            ) {
+                Text(stringResource(R.string.agent_icon_clear_shared))
             }
         }
         OutlinedButton(
@@ -92,6 +109,13 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
             )
         }
         hostImportState.error?.let { error ->
+            Text(
+                text = error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        sharedState.error?.let { error ->
             Text(
                 text = error,
                 style = MaterialTheme.typography.bodySmall,

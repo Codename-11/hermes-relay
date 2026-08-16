@@ -1977,6 +1977,16 @@
 
     <!-- Profile create -->
     <string name="dashboard_profile_created">プロファイル %1$s が作成されました</string>
+    <string name="dashboard_profile_created_partial">プロファイル %1$s は作成されましたが、%2$s。使用前に確認してください。</string>
+    <string name="dashboard_profile_created_legacy">プロファイル %1$s は旧 Dashboard ルートで作成されました。使用前に認証情報を確認してください。</string>
+    <string name="dashboard_profile_no_skills">同梱スキルを追加しない</string>
+    <string name="dashboard_profile_auth_title">認証</string>
+    <string name="dashboard_profile_auth_shared">サインインを共有（推奨）— 更新可能なトークンプールを共有</string>
+    <string name="dashboard_profile_auth_copied">現在の認証情報をコピー — 別スナップショットのため古くなる場合があります</string>
+    <string name="dashboard_profile_auth_isolated">分離 — 認証情報やプロバイダー既定値をコピーしない</string>
+    <string name="dashboard_profile_auth_help">Hermes がサーバー上でこの選択を適用します。パスワードやトークンが Android に返されることはありません。</string>
+    <string name="dashboard_profile_allow_legacy">Gateway で作成できない場合、旧 Dashboard ルートを許可します。認証情報の動作はホストによって異なるため確認が必要です。</string>
+    <string name="dashboard_profile_mcp_partial">MCP サーバーの選択は適用されませんでした</string>
     <string name="dashboard_profile_create_failed">プロファイルの作成に失敗しました</string>
 
     <!-- Stats for nerds -->
@@ -2602,6 +2612,11 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">エージェントアイコン</string>
+    <string name="agent_icon_set_local">端末の予備画像を選択</string>
+    <string name="agent_icon_change_local">端末の予備画像を変更</string>
+    <string name="agent_icon_clear_local">端末の予備画像を消去</string>
+    <string name="agent_icon_upload_shared">端末アイコンを Hermes にアップロード</string>
+    <string name="agent_icon_clear_shared">共有 Hermes アバターを消去</string>
     <string name="agent_icon_set">ファイルを選択</string>
     <string name="agent_icon_change">ファイルを選択</string>
     <string name="agent_icon_clear">クリア</string>

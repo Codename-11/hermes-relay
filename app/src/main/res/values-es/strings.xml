@@ -1785,6 +1785,16 @@
     <string name="dashboard_skills_update_started">La actualización de habilidades comenzó en el servidor: actualice las habilidades en un minuto</string>
     <string name="dashboard_skills_update_failed">La actualización de habilidades no pudo iniciarse</string>
     <string name="dashboard_profile_created">Perfil %1$s creado</string>
+    <string name="dashboard_profile_created_partial">Se creó el perfil %1$s, pero %2$s. Revísalo antes de usarlo.</string>
+    <string name="dashboard_profile_created_legacy">El perfil %1$s se creó mediante la ruta antigua del panel. Revisa sus credenciales antes de usarlo.</string>
+    <string name="dashboard_profile_no_skills">No añadir las habilidades incluidas</string>
+    <string name="dashboard_profile_auth_title">Autenticación</string>
+    <string name="dashboard_profile_auth_shared">Compartir inicio de sesión (recomendado) — un grupo de tokens renovables</string>
+    <string name="dashboard_profile_auth_copied">Copiar credenciales actuales — instantánea separada que puede quedar desactualizada</string>
+    <string name="dashboard_profile_auth_isolated">Aislado — no copiar credenciales ni valores predeterminados del proveedor</string>
+    <string name="dashboard_profile_auth_help">Hermes aplica esta opción en el servidor. Las contraseñas y los tokens nunca se devuelven a Android.</string>
+    <string name="dashboard_profile_allow_legacy">Si la creación mediante Gateway no está disponible, permitir la ruta antigua del panel. El comportamiento de las credenciales depende del host y debe revisarse.</string>
+    <string name="dashboard_profile_mcp_partial">No se aplicó la selección de servidores MCP</string>
     <string name="dashboard_profile_create_failed">Error al crear el perfil</string>
     <string name="stats_overview">Descripción general</string>
     <string name="stats_reset">Reiniciar</string>
@@ -2362,6 +2372,11 @@
     <plurals name="tool_run_using_tools"><item quantity="one">Usando %d herramienta</item><item quantity="other">Usando %d herramientas</item></plurals>
     <plurals name="tool_run_used_tools"><item quantity="one">Se usó %d herramienta</item><item quantity="other">Se usaron %d herramientas</item></plurals>
     <string name="agent_icon_title">Icono de agente</string>
+    <string name="agent_icon_set_local">Elegir imagen alternativa del dispositivo</string>
+    <string name="agent_icon_change_local">Cambiar imagen alternativa del dispositivo</string>
+    <string name="agent_icon_clear_local">Borrar imagen alternativa del dispositivo</string>
+    <string name="agent_icon_upload_shared">Subir icono del dispositivo a Hermes</string>
+    <string name="agent_icon_clear_shared">Borrar avatar compartido de Hermes</string>
     <string name="agent_icon_set">Elegir archivo</string>
     <string name="agent_icon_change">Elegir archivo</string>
     <string name="agent_icon_clear">Claro</string>

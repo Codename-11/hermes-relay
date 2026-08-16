@@ -144,6 +144,36 @@ class GatewayClientHarness(
         put("ref_text", "@file:notes.txt")
     }
 
+    @Volatile
+    var profilesListPayload: JsonObject = buildJsonObject {
+        put("profiles", JsonArray(listOf(buildJsonObject {
+            put("name", "operator")
+            put("model", "gpt-5.6")
+            put("provider", "openai")
+            put("description", "Android operator")
+            put("skill_count", 3)
+            put("has_avatar", true)
+            put("ui_meta", buildJsonObject { put("accent", "#ff5500") })
+        })))
+    }
+
+    @Volatile
+    var profileCreatePayload: JsonObject = buildJsonObject {
+        put("ok", true)
+        put("name", "operator")
+        put("soul_written", true)
+        put("model_set", true)
+        put("mirrored", buildJsonObject {
+            put("env", true)
+            put("auth", "shared")
+            put("model_inherited", false)
+            put("voice", true)
+        })
+    }
+
+    @Volatile
+    var profileGetAssetPayload: JsonObject = buildJsonObject { put("found", false) }
+
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
     val methodNotFound: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -340,6 +370,22 @@ class GatewayClientHarness(
                     })))
                     put("toolsets_pinned", true)
                 }
+                "profiles.list" -> profilesListPayload
+                "profiles.create" -> profileCreatePayload
+                "profiles.get_asset" -> profileGetAssetPayload
+                "profiles.set_asset" -> buildJsonObject {
+                    put("ok", true)
+                    put("asset", "avatar")
+                    val data = (params["data"] as? JsonPrimitive)?.contentOrNull
+                    put(
+                        "size",
+                        if ((params["clear"] as? JsonPrimitive)?.booleanOrNull == true) {
+                            0
+                        } else {
+                            java.util.Base64.getDecoder().decode(data.orEmpty().substringAfter(";base64,")).size
+                        },
+                    )
+                }
                 "profiles.configure" -> buildJsonObject {
                     put("ok", false)
                     put("applied", buildJsonObject {
@@ -347,6 +393,8 @@ class GatewayClientHarness(
                         if (params.containsKey("provider")) put("model", false)
                         if (params.containsKey("disabled_skills")) put("skills", true)
                         if (params.containsKey("enabled_toolsets")) put("toolsets", true)
+                        if (params.containsKey("enabled_mcp_servers")) put("mcp_servers", true)
+                        if (params.containsKey("ui_meta")) put("ui_meta", false)
                     })
                 }
                 "pet.thumb" -> petThumbPayload
@@ -791,6 +839,176 @@ class GatewayChatClientTest {
         )
         assertTrue(harness.rpcLog.none { it.first == "profiles.configure" })
         assertEquals("operator", client.describeProfile("operator").getOrThrow().name)
+    }
+
+    @Test
+    fun `profile list requests bounded roster metadata without sessions`() = runBlocking {
+        val profiles = client.listProfiles().getOrThrow()
+
+        assertEquals(1, profiles.size)
+        assertEquals("operator", profiles.single().name)
+        assertEquals("openai", profiles.single().provider)
+        assertTrue(profiles.single().hasAvatar)
+        assertEquals("#ff5500", (profiles.single().uiMeta["accent"] as JsonPrimitive).content)
+        assertEquals(false, (harness.awaitRpc("profiles.list")["include_sessions"] as JsonPrimitive).booleanOrNull)
+    }
+
+    @Test
+    fun `profile list drops oversized ui meta without dropping profile`() = runBlocking {
+        harness.profilesListPayload = buildJsonObject {
+            put("profiles", JsonArray(listOf(buildJsonObject {
+                put("name", "operator")
+                put("model", "gpt")
+                put("ui_meta", buildJsonObject { put("blob", "x".repeat(65_537)) })
+            })))
+        }
+
+        val profile = client.listProfiles().getOrThrow().single()
+        assertTrue(profile.uiMeta.isEmpty())
+    }
+
+    @Test
+    fun `profile create serializes every auth choice explicitly`() = runBlocking {
+        val cases = listOf(
+            com.hermesandroid.relay.data.GatewayProfileAuthChoice.Shared to (true to true),
+            com.hermesandroid.relay.data.GatewayProfileAuthChoice.Copied to (true to false),
+            com.hermesandroid.relay.data.GatewayProfileAuthChoice.Isolated to (false to false),
+        )
+        cases.forEach { (choice, _) ->
+            client.createProfile(
+                com.hermesandroid.relay.data.GatewayProfileCreateRequest(
+                    name = "operator",
+                    description = "Mobile operator",
+                    cloneFrom = "default",
+                    noSkills = false,
+                    soul = "# Operator",
+                    provider = "openai",
+                    model = "gpt-5.6",
+                    authChoice = choice,
+                ),
+            ).getOrThrow()
+        }
+        harness.awaitRpcCount("profiles.create", cases.size).zip(cases).forEach { (params, case) ->
+            val expected = case.second
+            assertEquals(expected.first, (params["mirror_credentials"] as JsonPrimitive).booleanOrNull)
+            assertEquals(expected.second, (params["share_auth"] as JsonPrimitive).booleanOrNull)
+        }
+    }
+
+    @Test
+    fun `profile create exposes partial server results`() = runBlocking {
+        harness.profileCreatePayload = buildJsonObject {
+            put("ok", true)
+            put("name", "operator")
+            put("soul_written", false)
+            put("model_set", false)
+            put("mirrored", buildJsonObject {
+                put("env", false)
+                put("auth", false)
+                put("voice", false)
+            })
+        }
+        val request = com.hermesandroid.relay.data.GatewayProfileCreateRequest(
+            name = "operator",
+            soul = "# Operator",
+            provider = "openai",
+            model = "gpt-5.6",
+            authChoice = com.hermesandroid.relay.data.GatewayProfileAuthChoice.Copied,
+        )
+
+        val partial = client.createProfile(request).getOrThrow().partialMessages(request)
+        assertTrue(partial.any { it.contains("SOUL") })
+        assertTrue(partial.any { it.contains("model") })
+        assertTrue(partial.any { it.contains("credential source") })
+    }
+
+    @Test
+    fun `profile asset get distinguishes absent and validates bytes`() = runBlocking {
+        assertNull(client.getProfileAvatar("operator").getOrThrow())
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+        harness.profileGetAssetPayload = buildJsonObject {
+            put("found", true)
+            put("mime", "image/png")
+            put("size", png.size)
+            put("data", "data:image/png;base64,${java.util.Base64.getEncoder().encodeToString(png)}")
+        }
+
+        val asset = client.getProfileAvatar("operator").getOrThrow()
+        assertEquals("image/png", asset?.mime)
+        assertTrue(png.contentEquals(asset?.data))
+    }
+
+    @Test
+    fun `profile asset get rejects malformed and magic mismatch responses`() = runBlocking {
+        harness.profileGetAssetPayload = buildJsonObject {
+            put("found", true)
+            put("mime", "image/png")
+            put("data", "data:image/png;base64,not-base64!")
+        }
+        assertTrue(client.getProfileAvatar("operator").isFailure)
+
+        harness.profileGetAssetPayload = buildJsonObject {
+            put("found", true)
+            put("mime", "image/png")
+            put("data", "data:image/png;base64,${java.util.Base64.getEncoder().encodeToString("not an image".toByteArray())}")
+        }
+        assertTrue(client.getProfileAvatar("operator").isFailure)
+    }
+
+    @Test
+    fun `profile asset set accepts exact boundary rejects overflow and clears`() = runBlocking {
+        val boundary = ByteArray(GatewayChatClient.PROFILE_AVATAR_MAX_BYTES)
+        byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+            .copyInto(boundary)
+        assertTrue(client.setProfileAvatar("operator", boundary).isSuccess)
+        assertTrue(client.setProfileAvatar("operator", boundary.copyOf(boundary.size + 1)).isFailure)
+        assertEquals(0, client.clearProfileAvatar("operator").getOrThrow())
+        assertEquals(
+            true,
+            (harness.awaitRpcCount("profiles.set_asset", 2).last()["clear"] as JsonPrimitive).booleanOrNull,
+        )
+    }
+
+    @Test
+    fun `profile management method not found becomes sticky per operation`() = runBlocking {
+        harness.methodNotFound += "profiles.list"
+        assertTrue(client.listProfiles().exceptionOrNull() is com.hermesandroid.relay.data.GatewayProfileManagementUnsupportedException)
+        harness.rpcLog.clear()
+        assertTrue(client.listProfiles().isFailure)
+        assertTrue(harness.rpcLog.none { it.first == "profiles.list" })
+
+        harness.methodNotFound += "profiles.get_asset"
+        assertTrue(client.getProfileAvatar("operator").isFailure)
+        harness.rpcLog.clear()
+        assertTrue(client.getProfileAvatar("operator").isFailure)
+        assertTrue(harness.rpcLog.none { it.first == "profiles.get_asset" })
+    }
+
+    @Test
+    fun `profile configure reports ui meta partial apply`() = runBlocking {
+        client.describeProfile("operator").getOrThrow()
+        val result = client.configureProfile(
+            "operator",
+            com.hermesandroid.relay.data.GatewayProfilePatch(
+                uiMeta = buildJsonObject { put("accent", "#ff5500") },
+            ),
+        ).getOrThrow()
+        assertEquals(setOf(com.hermesandroid.relay.data.GatewayProfileSection.UiMeta), result.failed)
+    }
+
+    @Test
+    fun `profile ui meta rejects embedded image data`() = runBlocking {
+        client.describeProfile("operator").getOrThrow()
+        listOf("data:image/png;base64,AAAA", "iVBORw0KGgoAAAA", "UEsDBAAAA").forEach { embedded ->
+            val result = client.configureProfile(
+                "operator",
+                com.hermesandroid.relay.data.GatewayProfilePatch(
+                    uiMeta = buildJsonObject { put("asset", embedded) },
+                ),
+            )
+            assertTrue(result.isFailure)
+        }
+        assertTrue(harness.rpcLog.none { it.first == "profiles.configure" })
     }
 
     @Test
