@@ -89,13 +89,13 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.9.0 - Better sessions, reactions, and voice
+v1.9.1 - Profile identity that sticks
 
-* Browse all profiles without losing the session's owning agent.
-* Start new chats with the default profile.
-* Pin reactions to user and assistant messages.
-* Keep Vanilla Hermes voice on the authenticated Gateway.
-* Default to an ungrouped session list; project grouping remains available.
+* Change shared avatars without oversized or native images disappearing.
+* Select upstream animated pets that follow the Hermes profile.
+* Keep phone-only animated icons and local overrides separate.
+* Create profiles with explicit authentication choices.
+* Harden attachment, recovery, ownership, and hosted sign-in behavior.
 ```
 
 ## Category
