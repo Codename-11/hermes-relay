@@ -293,10 +293,14 @@ class GatewayClientHarness(
                 "image.attach_bytes", "image.attach.bytes" -> buildJsonObject {
                     put("attached", true)
                     put("count", 1)
+                    put("path", "/session/images/upload.png")
                 }
                 "pdf.attach" -> buildJsonObject {
                     put("attached", true)
-                    put("pages", 1)
+                    put("pages", JsonArray(listOf(buildJsonObject {
+                        put("path", "/session/images/page-1.png")
+                        put("page", 1)
+                    })))
                 }
                 "file.attach" -> fileAttachPayload
                 "clarify.respond", "sudo.respond", "secret.respond" ->
@@ -1952,6 +1956,65 @@ class GatewayChatClientTest {
 
         assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
         assertTrue(r.preflightFailures.single().contains("no readable file reference"))
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `attachment failure never falls through to a transport that drops the file`() {
+        harness.methodNotFound.add("file.attach")
+        val r = Recorder()
+        val attachmentFailures = mutableListOf<String>()
+        client.sendTurn(
+            sessionId = null,
+            text = "use both files",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment("shot.png", "QQ==", "png", "image/png", sizeBytes = 1),
+                GatewayAttachment("notes.txt", "Qg==", "txt", "text/plain", sizeBytes = 1),
+            ),
+            onAttachmentFailure = {
+                attachmentFailures += it
+                r.completeLatch.countDown()
+            },
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(attachmentFailures.single().contains("file.attach"))
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+        val detach = harness.awaitRpc("image.detach")
+        assertEquals("/session/images/upload.png", (detach["path"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `attachment sizes are derived from base64 and bounded before upload`() {
+        assertEquals(1L, decodedBase64Size("QQ=="))
+        assertEquals(2L, decodedBase64Size("QUI="))
+        assertEquals(3L, decodedBase64Size("QUJD"))
+
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "oversized",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment(
+                    name = "huge.png",
+                    base64 = "QQ==",
+                    ext = "png",
+                    contentType = "image/png",
+                    sizeBytes = 25L * 1024L * 1024L + 1L,
+                ),
+            ),
+            onAttachmentFailure = { r.completeLatch.countDown() },
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(harness.rpcLog.none { it.first.startsWith("image.attach") })
         assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
     }
 

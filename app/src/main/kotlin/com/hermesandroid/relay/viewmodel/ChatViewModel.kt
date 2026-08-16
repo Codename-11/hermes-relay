@@ -7993,6 +7993,10 @@ class ChatViewModel : ViewModel() {
                     truncateBeforeRowId = pendingTruncation?.rowId,
                     queuedFollowUp = queuedFollowUp,
                     onSurvivorUserRowIds = handler::rebindSurvivorUserRowIds,
+                    onAttachmentFailure = { reason ->
+                        _steerableTurn.value = false
+                        onPreflightErrorCb(Exception(reason))
+                    },
                     onPreflightFailure = {
                         _steerableTurn.value = false
                         if (intentionallyCancelled) {
@@ -8853,6 +8857,7 @@ private fun Attachment.toGatewayAttachment(): GatewayAttachment {
         base64 = content,
         ext = extFromName ?: extFromMime,
         contentType = contentType,
+        sizeBytes = fileSize,
     )
 }
 

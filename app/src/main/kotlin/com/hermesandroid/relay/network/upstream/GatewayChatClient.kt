@@ -533,6 +533,9 @@ class GatewayChatClient(
      *   user explicitly queued behind an active turn. Newer gateways use the
      *   additive `queued:true` marker to preserve run-after semantics while
      *   the previous turn is still settling; older gateways ignore it.
+     * @param onAttachmentFailure invoked when attachment bytes could not be
+     *   safely bound to this Gateway turn. Callers must surface that failure
+     *   instead of falling back to a transport without equivalent media.
      * @param onPreflightFailure invoked INSTEAD of starting the turn when the
      *   gateway could not be reached / authenticated / the prompt could not
      *   be submitted — i.e. nothing started server-side, so the caller can
@@ -549,6 +552,7 @@ class GatewayChatClient(
         truncateBeforeRowId: Long? = null,
         queuedFollowUp: Boolean = false,
         onSurvivorUserRowIds: (List<Long?>) -> Unit = { },
+        onAttachmentFailure: ((String) -> Unit)? = null,
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
         val turn = GatewayTurn(dispatchOn(callbacks))
@@ -570,21 +574,33 @@ class GatewayChatClient(
                     turn.tracer.mark("session")
                 }
                 if (turn.cancelled) return@launch
+                val stagedImagePaths = mutableListOf<String>()
                 val attachmentRefs = attachments.mapNotNull { attachment ->
                     val upload = uploadAttachment(attachment).getOrElse { e ->
-                        throw GatewayPreflightException("attachment upload failed: ${e.message}")
+                        cleanupStagedAttachments(stagedImagePaths)
+                        throw GatewayAttachmentPreflightException("attachment upload failed: ${e.message}")
                     }
+                    stagedImagePaths += upload.attachedImagePaths()
                     if (attachment.requiresPromptReference()) {
                         upload.stringField("ref_text")
-                            ?: throw GatewayPreflightException(
-                                "attachment upload failed: Hermes returned no readable file reference",
-                            )
+                            ?: run {
+                                cleanupStagedAttachments(stagedImagePaths)
+                                throw GatewayAttachmentPreflightException(
+                                    "attachment upload failed: Hermes returned no readable file reference",
+                                )
+                            }
                     } else {
                         null
                     }
                 }
-                if (turn.cancelled) return@launch
-                if (!awaitCancelledTurnDrain(turn, storedSessionId)) return@launch
+                if (turn.cancelled) {
+                    cleanupStagedAttachments(stagedImagePaths)
+                    return@launch
+                }
+                if (!awaitCancelledTurnDrain(turn, storedSessionId)) {
+                    cleanupStagedAttachments(stagedImagePaths)
+                    return@launch
+                }
                 activeTurn = turn
                 turn.armWatchdog()
                 // Generic `file.attach` uploads are staged artifacts, not
@@ -640,11 +656,18 @@ class GatewayChatClient(
                         // and duplicate the optimistic user turn on another
                         // transport. Surface the holder-aware upstream message
                         // through the normal failed-turn callback instead.
+                        cleanupStagedAttachments(stagedImagePaths)
                         turn.tracer.done("submit-rejected")
                         turn.callbacks.onError(
                             submitError?.message ?: "Hermes rejected the new session",
                         )
                         return@launch
+                    }
+                    if (attachments.isNotEmpty()) {
+                        cleanupStagedAttachments(stagedImagePaths)
+                        throw GatewayAttachmentPreflightException(
+                            submitError?.message ?: "attachment prompt submission could not be confirmed",
+                        )
                     }
                     throw GatewayPreflightException(
                         submitError?.message ?: "prompt.submit failed",
@@ -668,6 +691,18 @@ class GatewayChatClient(
                     turn.disarmWatchdog()
                     turn.tracer.done("resume-rejected")
                     turn.callbacks.onError(e.message ?: "Hermes could not resume this session")
+                }
+            } catch (e: GatewayAttachmentPreflightException) {
+                if (activeTurn === turn) activeTurn = null
+                if (!turn.cancelled) {
+                    Log.w(TAG, "Gateway attachment preflight failed: ${e.message}")
+                    turn.disarmWatchdog()
+                    turn.tracer.done("attachment-preflight-fail")
+                    callbackDispatcher {
+                        (onAttachmentFailure ?: onPreflightFailure)(
+                            e.message ?: "attachment could not be sent",
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 if (activeTurn === turn) activeTurn = null
@@ -2908,6 +2943,25 @@ class GatewayChatClient(
         val sid = liveSessionId
             ?: return Result.failure(GatewayRpcException("no live session"))
         val mime = attachment.contentType.substringBefore(';').trim().lowercase()
+        val size = maxOf(
+            attachment.sizeBytes ?: 0L,
+            decodedBase64Size(attachment.base64),
+        )
+        val limit = when {
+            mime.startsWith("image/") -> ATTACH_IMAGE_MAX_BYTES
+            mime == "application/pdf" -> ATTACH_PDF_MAX_BYTES
+            else -> ATTACH_FILE_MAX_BYTES
+        }
+        if (size <= 0L) {
+            return Result.failure(GatewayRpcException("attachment is empty"))
+        }
+        if (size > limit) {
+            return Result.failure(
+                GatewayRpcException(
+                    "attachment is too large (${size / (1024 * 1024)} MB; max ${limit / (1024 * 1024)} MB)",
+                ),
+            )
+        }
         return when {
             mime.startsWith("image/") -> uploadImage(sid, attachment)
             mime == "application/pdf" -> rpc(
@@ -2930,6 +2984,23 @@ class GatewayChatClient(
                 },
                 timeoutMs = ATTACH_RPC_TIMEOUT_MS,
             )
+        }
+    }
+
+    private suspend fun cleanupStagedAttachments(paths: List<String>) {
+        val sid = liveSessionId ?: return
+        paths.asReversed().distinct().forEach { path ->
+            val removed = rpc(
+                "image.detach",
+                buildJsonObject {
+                    put("session_id", sid)
+                    put("path", path)
+                },
+                timeoutMs = ATTACH_RPC_TIMEOUT_MS,
+            )
+            if (removed.isFailure) {
+                Log.w(TAG, "Could not clean up staged attachment: ${removed.exceptionOrNull()?.message}")
+            }
         }
     }
 
@@ -3408,10 +3479,14 @@ data class GatewayAttachment(
     val base64: String,
     val ext: String?,
     val contentType: String,
+    val sizeBytes: Long? = null,
 )
 
 /** Connect/auth/submit failed before the turn started — safe to fall back to SSE. */
 internal class GatewayPreflightException(message: String) : Exception(message)
+
+/** Attachment bytes were not safely bound to a Gateway turn; never silently fall through to SSE. */
+internal class GatewayAttachmentPreflightException(message: String) : Exception(message)
 
 /** One connect attempt failed; [GatewayChatClient] may retry with a fresh ticket. */
 internal class GatewayConnectAttemptException(message: String) : Exception(message)
@@ -3423,6 +3498,9 @@ internal class GatewayAuthoritativeResumeException(message: String) : Exception(
 internal class GatewayRpcException(message: String, val code: Int? = null) : Exception(message)
 
 private const val JSONRPC_METHOD_NOT_FOUND = -32601
+private const val ATTACH_IMAGE_MAX_BYTES = 25L * 1024L * 1024L
+private const val ATTACH_PDF_MAX_BYTES = 50L * 1024L * 1024L
+private const val ATTACH_FILE_MAX_BYTES = 50L * 1024L * 1024L
 private val AUTHORITATIVE_PROMPT_SUBMIT_REJECTIONS = setOf(
     4004, // malformed truncation target
     4018, // durable/ordinal target is no longer present
@@ -3437,6 +3515,21 @@ private val AUTHORITATIVE_PROMPT_SUBMIT_REJECTIONS = setOf(
 private const val MAX_RECOVERED_CORRECTIONS = 32
 private const val MAX_RECOVERED_CORRECTION_CHARS = 32_768
 private const val PET_THUMB_DATA_PREFIX = "data:image/png;base64,"
+
+internal fun decodedBase64Size(value: String): Long {
+    val compactLength = value.count { !it.isWhitespace() }
+    if (compactLength == 0) return 0L
+    val padding = value.trimEnd().takeLast(2).count { it == '=' }
+    return (compactLength.toLong() * 3L / 4L - padding).coerceAtLeast(0L)
+}
+
+private fun JsonObject.attachedImagePaths(): List<String> {
+    val direct = stringField("path")?.let(::listOf).orEmpty()
+    val pages = (this["pages"] as? JsonArray).orEmpty().mapNotNull { page ->
+        (page as? JsonObject)?.stringField("path")
+    }
+    return direct + pages
+}
 private const val MAX_PET_THUMB_BASE64_CHARS = 512 * 1024
 private val PETDEX_SLUG = Regex("[a-z0-9][a-z0-9-]{0,127}")
 private val STANDARD_BASE64 = Regex("[A-Za-z0-9+/]*={0,2}")

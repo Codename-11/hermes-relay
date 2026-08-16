@@ -152,7 +152,6 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import android.util.Base64
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -164,6 +163,8 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatComposerDraft
 import com.hermesandroid.relay.data.ChatComposerDraftContext
+import com.hermesandroid.relay.util.AttachmentTooLargeException
+import com.hermesandroid.relay.util.readBase64Bounded
 import com.hermesandroid.relay.data.ChatComposerDraftKey
 import com.hermesandroid.relay.data.ChatQuoteReference
 import com.hermesandroid.relay.data.buildChatQuotedPrompt
@@ -4833,32 +4834,29 @@ private suspend fun ingestAttachmentFromUri(
 ) {
     try {
         val resolver = context.contentResolver
+        val maxSize = maxAttachmentMb.toLong() * 1024L * 1024L
         val source = withContext(Dispatchers.IO) {
             val mimeType = mimeOverride ?: resolver.getType(uri) ?: "application/octet-stream"
             val fileName = resolveDisplayName(resolver, uri)
-            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null
-            RawAttachmentSource(mimeType, fileName, bytes)
+            val payload = resolver.openInputStream(uri)?.use { input ->
+                readBase64Bounded(input, maxSize)
+            } ?: return@withContext null
+            RawAttachmentSource(mimeType, fileName, payload.base64, payload.sizeBytes)
         } ?: return
-        val maxSize = maxAttachmentMb * 1024 * 1024
-        if (source.bytes.size > maxSize) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.chat_file_too_large, maxAttachmentMb),
-                Toast.LENGTH_SHORT,
-            ).show()
-            return
-        }
-        val base64 = withContext(Dispatchers.Default) {
-            Base64.encodeToString(source.bytes, Base64.NO_WRAP)
-        }
         onAttachment(
             Attachment(
                 contentType = source.mimeType,
-                content = base64,
+                content = source.base64,
                 fileName = source.fileName,
-                fileSize = source.bytes.size.toLong(),
+                fileSize = source.sizeBytes,
             )
         )
+    } catch (_: AttachmentTooLargeException) {
+        Toast.makeText(
+            context,
+            context.getString(R.string.chat_file_too_large, maxAttachmentMb),
+            Toast.LENGTH_SHORT,
+        ).show()
     } catch (e: Exception) {
         Toast.makeText(context, context.getString(R.string.chat_failed_read_file), Toast.LENGTH_SHORT).show()
     }
@@ -4867,7 +4865,8 @@ private suspend fun ingestAttachmentFromUri(
 private data class RawAttachmentSource(
     val mimeType: String,
     val fileName: String,
-    val bytes: ByteArray,
+    val base64: String,
+    val sizeBytes: Long,
 )
 
 /**

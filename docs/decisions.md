@@ -3275,3 +3275,52 @@ loss without retaining conversation content. Existing clarify multi-select,
 free-text, expiry, reconnect, and one-answer behavior remains canonical, and the
 connector-specific interactive-card evaluation is closed with no client
 migration.
+
+---
+
+## ADR 59 — Android attachments use the upstream Gateway upload contract and fail closed
+
+**Status:** Accepted (2026-08-15).
+
+**Context.** Hermes exposes two unrelated media planes. Dashboard clients upload
+user-authored images, PDFs, and files into one live Gateway session through
+`image.attach_bytes`, `pdf.attach`, and `file.attach` before `prompt.submit`.
+Separately, upstream gateway connectors exchange platform media by reference
+through an authenticated `/relay/media` service and a capability-gated
+`send_media` operation. Connector credentials and expiring references belong
+to that gateway-to-connector boundary; they are not a mobile-client API.
+
+Android previously treated any Gateway preflight failure alike. A document
+upload rejected by an older host could therefore fall through to an API-server
+SSE request that has no document channel. The local bubble still showed its
+file card even though the agent never received the file. The picker also read
+an entire provider stream before checking its configured size limit.
+
+**Decision.** Android keeps outbound attachments on the authenticated upstream
+Gateway contract. It establishes or resumes the exact stored session, uploads
+each attachment in order, uses the server-returned `@file:` reference for
+generic files, and submits only after every upload succeeds. The legacy dotted
+image RPC remains the bounded compatibility fallback for older hosts. PDF or
+generic-file method absence, upload interruption, missing file reference, or
+an unconfirmed attachment-bearing submit fails the optimistic turn visibly;
+it never changes transport and silently drops the file. Image/PDF paths staged
+before a later attachment failure are detached best-effort. Queued messages use
+the same immutable destination and upload sequence.
+
+Picked content is base64-encoded through a bounded stream. The configured
+client limit is enforced while reading, and the Gateway client independently
+checks the decoded size against the upstream 25 MB image and 50 MB PDF limits
+before creating a WebSocket frame.
+
+The optional Hermes-Relay plugin continues to own only its existing
+bearer-authenticated agent-to-phone `/media/*` surface. It does not proxy
+outbound composer uploads, call upstream connector `/relay/media`, reuse
+connector credentials, or duplicate connector-side processing.
+
+**Consequences.** The transcript cannot claim a file was delivered when the
+selected route omitted it, oversized providers cannot bypass the app's memory
+bound, cold sessions upload only after their authoritative live identity is
+known, and current hosts retain native image/PDF/file behavior. Older hosts
+still accept images through the established compatibility RPC; unsupported
+document capabilities produce an actionable retry/update failure instead of a
+text-only turn.
