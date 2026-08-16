@@ -2598,6 +2598,19 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">代理图标</string>
+    <string name="agent_icon_shared_title">在 Hermes 中共享</string>
+    <string name="agent_icon_shared_active">共享头像</string>
+    <string name="agent_icon_shared_empty">无共享头像</string>
+    <string name="agent_icon_change_shared">更改共享头像</string>
+    <string name="agent_icon_remove_shared">移除</string>
+    <string name="agent_icon_remove_shared_title">移除共享头像？</string>
+    <string name="agent_icon_remove_shared_message">这会从 Hermes 和其他客户端移除头像，但不会影响本手机上的图像。</string>
+    <string name="agent_icon_phone_title">仅限本手机</string>
+    <string name="agent_icon_phone_description">仅在本手机上覆盖共享头像，不更改 Hermes。</string>
+    <string name="agent_icon_choose_phone">选择手机图像</string>
+    <string name="agent_icon_change_phone">更改手机图像</string>
+    <string name="agent_icon_remove_phone">移除手机图像</string>
+    <string name="agent_icon_animation_note">GIF 和 WebP 动画仅在本手机上播放。Hermes 共享头像使用上游 PNG、JPEG 或 WebP 合约。</string>
     <string name="agent_icon_set_local">选择设备备用图像</string>
     <string name="agent_icon_change_local">更改设备备用图像</string>
     <string name="agent_icon_clear_local">清除设备备用图像</string>

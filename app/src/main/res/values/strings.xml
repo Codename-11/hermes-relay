@@ -2861,6 +2861,19 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Agent icon</string>
+    <string name="agent_icon_shared_title">Shared across Hermes</string>
+    <string name="agent_icon_shared_active">Shared avatar</string>
+    <string name="agent_icon_shared_empty">No shared avatar</string>
+    <string name="agent_icon_change_shared">Change shared avatar</string>
+    <string name="agent_icon_remove_shared">Remove</string>
+    <string name="agent_icon_remove_shared_title">Remove shared avatar?</string>
+    <string name="agent_icon_remove_shared_message">This removes the avatar from Hermes and other clients. Your phone image is not affected.</string>
+    <string name="agent_icon_phone_title">This phone only</string>
+    <string name="agent_icon_phone_description">Override the shared avatar on this phone without changing Hermes.</string>
+    <string name="agent_icon_choose_phone">Choose phone image</string>
+    <string name="agent_icon_change_phone">Change phone image</string>
+    <string name="agent_icon_remove_phone">Remove phone image</string>
+    <string name="agent_icon_animation_note">Animated GIF and WebP images play only on this phone. Shared Hermes avatars use the upstream PNG, JPEG, or WebP contract.</string>
     <string name="agent_icon_set_local">Choose device fallback</string>
     <string name="agent_icon_change_local">Change device fallback</string>
     <string name="agent_icon_clear_local">Clear device fallback</string>

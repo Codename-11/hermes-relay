@@ -3394,12 +3394,14 @@ base64, declared MIME and size, PNG/JPEG/WebP magic, and the 2,000,000-byte cap.
 They publish only while both connection identity and refresh generation still
 match, so a late positive fetch cannot beat a newer `has_avatar:false` list.
 
-Hermes-owned static avatars win at render time, but their cache and the
-device-local `ProfileIconStore` use separate keys. Phone selection and Relay
-host import remain fallbacks. Upload and shared clear are explicit labeled
-actions and never erase the other side. Pet archives, image base64, and Sphere
-skins are forbidden from `ui_meta`; outbound metadata is bounded to small
-preferences/references.
+Hermes-owned static avatars win at render time by default, but their cache and
+the device-local `ProfileIconStore` use separate keys. A persisted, explicit
+per-connection/profile phone override can make the local image win without
+mutating Hermes. Phone selection and Relay host import populate that local
+side; the shared picker and shared clear act directly on Hermes and never erase
+the phone image. Animated GIF/WebP decoding is local presentation only. Pet
+archives, image base64, and Sphere skins are forbidden from `ui_meta`; outbound
+metadata is bounded to small preferences/references.
 
 Profile creation serializes one reviewed auth choice: shared sign-in sends
 `mirror_credentials:true, share_auth:true`; a copied snapshot sends true/false;

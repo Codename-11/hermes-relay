@@ -2372,6 +2372,19 @@
     <plurals name="tool_run_using_tools"><item quantity="one">Usando %d herramienta</item><item quantity="other">Usando %d herramientas</item></plurals>
     <plurals name="tool_run_used_tools"><item quantity="one">Se usó %d herramienta</item><item quantity="other">Se usaron %d herramientas</item></plurals>
     <string name="agent_icon_title">Icono de agente</string>
+    <string name="agent_icon_shared_title">Compartido en Hermes</string>
+    <string name="agent_icon_shared_active">Avatar compartido</string>
+    <string name="agent_icon_shared_empty">Sin avatar compartido</string>
+    <string name="agent_icon_change_shared">Cambiar avatar compartido</string>
+    <string name="agent_icon_remove_shared">Quitar</string>
+    <string name="agent_icon_remove_shared_title">¿Quitar el avatar compartido?</string>
+    <string name="agent_icon_remove_shared_message">Esto quita el avatar de Hermes y de otros clientes. La imagen del teléfono no se modifica.</string>
+    <string name="agent_icon_phone_title">Solo este teléfono</string>
+    <string name="agent_icon_phone_description">Reemplaza el avatar compartido solo en este teléfono sin cambiar Hermes.</string>
+    <string name="agent_icon_choose_phone">Elegir imagen del teléfono</string>
+    <string name="agent_icon_change_phone">Cambiar imagen del teléfono</string>
+    <string name="agent_icon_remove_phone">Quitar imagen del teléfono</string>
+    <string name="agent_icon_animation_note">Las imágenes GIF y WebP animadas se reproducen solo en este teléfono. Los avatares compartidos de Hermes usan el contrato upstream de PNG, JPEG o WebP.</string>
     <string name="agent_icon_set_local">Elegir imagen alternativa del dispositivo</string>
     <string name="agent_icon_change_local">Cambiar imagen alternativa del dispositivo</string>
     <string name="agent_icon_clear_local">Borrar imagen alternativa del dispositivo</string>

@@ -2601,6 +2601,19 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Agentensymbol</string>
+    <string name="agent_icon_shared_title">In Hermes geteilt</string>
+    <string name="agent_icon_shared_active">Geteilter Avatar</string>
+    <string name="agent_icon_shared_empty">Kein geteilter Avatar</string>
+    <string name="agent_icon_change_shared">Geteilten Avatar ändern</string>
+    <string name="agent_icon_remove_shared">Entfernen</string>
+    <string name="agent_icon_remove_shared_title">Geteilten Avatar entfernen?</string>
+    <string name="agent_icon_remove_shared_message">Dadurch wird der Avatar aus Hermes und anderen Clients entfernt. Das Bild auf diesem Smartphone bleibt erhalten.</string>
+    <string name="agent_icon_phone_title">Nur dieses Smartphone</string>
+    <string name="agent_icon_phone_description">Den geteilten Avatar nur auf diesem Smartphone überschreiben, ohne Hermes zu ändern.</string>
+    <string name="agent_icon_choose_phone">Smartphone-Bild auswählen</string>
+    <string name="agent_icon_change_phone">Smartphone-Bild ändern</string>
+    <string name="agent_icon_remove_phone">Smartphone-Bild entfernen</string>
+    <string name="agent_icon_animation_note">Animierte GIF- und WebP-Bilder werden nur auf diesem Smartphone abgespielt. Geteilte Hermes-Avatare verwenden den Upstream-Vertrag für PNG, JPEG oder WebP.</string>
     <string name="agent_icon_set_local">Geräte-Ersatzbild auswählen</string>
     <string name="agent_icon_change_local">Geräte-Ersatzbild ändern</string>
     <string name="agent_icon_clear_local">Geräte-Ersatzbild löschen</string>

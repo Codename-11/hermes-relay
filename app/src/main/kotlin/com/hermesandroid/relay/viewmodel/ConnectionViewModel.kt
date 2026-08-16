@@ -1694,6 +1694,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val profileIcon: StateFlow<String?> get() = profileController.profileIcon
     val localProfileIcon: StateFlow<String?> get() = profileController.localProfileIcon
     val serverProfileAvatar: StateFlow<String?> get() = profileController.serverProfileAvatar
+    val useLocalProfileIconOverride: StateFlow<Boolean>
+        get() = profileController.useLocalProfileIconOverride
     val sharedProfileAvatarState: StateFlow<ProfileController.SharedAvatarState>
         get() = profileController.sharedAvatarState
 
@@ -1704,6 +1706,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         get() = profileController.hostIconImportState
 
     fun setProfileIcon(uri: Uri) = profileController.setProfileIcon(uri)
+
+    fun setSharedProfileAvatar(uri: Uri) = profileController.setSharedProfileAvatar(uri)
+
+    fun setUseLocalProfileIconOverride(enabled: Boolean) =
+        profileController.setUseLocalProfileIconOverride(enabled)
 
     fun importProfileIconFromHost() = profileController.importProfileIconFromHost()
 

@@ -2612,6 +2612,19 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">エージェントアイコン</string>
+    <string name="agent_icon_shared_title">Hermes 全体で共有</string>
+    <string name="agent_icon_shared_active">共有アバター</string>
+    <string name="agent_icon_shared_empty">共有アバターなし</string>
+    <string name="agent_icon_change_shared">共有アバターを変更</string>
+    <string name="agent_icon_remove_shared">削除</string>
+    <string name="agent_icon_remove_shared_title">共有アバターを削除しますか？</string>
+    <string name="agent_icon_remove_shared_message">Hermes と他のクライアントからアバターを削除します。この端末の画像には影響しません。</string>
+    <string name="agent_icon_phone_title">この端末のみ</string>
+    <string name="agent_icon_phone_description">Hermes を変更せず、この端末だけ共有アバターを上書きします。</string>
+    <string name="agent_icon_choose_phone">端末の画像を選択</string>
+    <string name="agent_icon_change_phone">端末の画像を変更</string>
+    <string name="agent_icon_remove_phone">端末の画像を削除</string>
+    <string name="agent_icon_animation_note">アニメーション GIF と WebP はこの端末でのみ再生されます。共有 Hermes アバターは upstream の PNG、JPEG、WebP 契約を使用します。</string>
     <string name="agent_icon_set_local">端末の予備画像を選択</string>
     <string name="agent_icon_change_local">端末の予備画像を変更</string>
     <string name="agent_icon_clear_local">端末の予備画像を消去</string>

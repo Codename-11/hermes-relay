@@ -8,6 +8,7 @@ import com.hermesandroid.relay.data.GatewayProfileManagementUnsupportedException
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileDisplayAliasStore
 import com.hermesandroid.relay.data.ProfileIconStore
+import com.hermesandroid.relay.data.preferredProfileIcon
 import com.hermesandroid.relay.data.ProfileLockStore
 import com.hermesandroid.relay.data.ProfilePresentation
 import com.hermesandroid.relay.data.ProfilePresentationPolicy
@@ -41,6 +42,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicLong
@@ -337,10 +339,22 @@ class ProfileController(
             else profileIconStore.serverAvatarFlow(connectionId, profileName)
         }.stateIn(scope, SharingStarted.Eagerly, null)
 
+    /** Whether this phone should prefer its local image over Hermes' shared avatar. */
+    val useLocalProfileIconOverride: StateFlow<Boolean> = combine(
+        activeConnectionId,
+        selectedProfile,
+    ) { connectionId, profile ->
+        connectionId to AgentDisplay.profileRequestName(profile?.name)
+    }.flatMapLatest { (connectionId, profileName) ->
+        if (connectionId == null) flowOf(false)
+        else profileIconStore.localOverrideFlow(connectionId, profileName)
+    }.stateIn(scope, SharingStarted.Eagerly, false)
+
     val profileIcon: StateFlow<String?> = combine(
         serverProfileAvatar,
         localProfileIcon,
-    ) { server, local -> server ?: local }
+        useLocalProfileIconOverride,
+    ) { server, local, localOverride -> preferredProfileIcon(server, local, localOverride) }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
     /** Local icon for any profile identity on the active connection. */
@@ -357,10 +371,12 @@ class ProfileController(
         .flatMapLatest { (connectionId, serverProfileName) ->
             if (connectionId == null) return@flatMapLatest flowOf(null)
             val local = profileIconStore.iconFlow(connectionId, profileName)
+            val localOverride = profileIconStore.localOverrideFlow(connectionId, profileName)
             if (serverProfileName.isNullOrBlank()) local else combine(
                 profileIconStore.serverAvatarFlow(connectionId, serverProfileName),
                 local,
-            ) { server, fallback -> server ?: fallback }
+                localOverride,
+            ) { server, fallback, override -> preferredProfileIcon(server, fallback, override) }
         }
 
     data class HostIconImportState(
@@ -619,6 +635,7 @@ class ProfileController(
         scope.launch {
             val path = copyIcon(connectionId, profileName, uri) ?: return@launch
             profileIconStore.setIcon(connectionId, profileName, path)
+            profileIconStore.setLocalOverride(connectionId, profileName, true)
         }
     }
 
@@ -644,6 +661,7 @@ class ProfileController(
                         )
                     } else {
                         profileIconStore.setIcon(connectionId, profileName, path)
+                        profileIconStore.setLocalOverride(connectionId, profileName, true)
                         _hostIconImportState.value = HostIconImportState()
                     }
                 },
@@ -664,6 +682,42 @@ class ProfileController(
                 runCatching { File(it).delete() }
             }
             profileIconStore.setIcon(connectionId, profileName, null)
+        }
+    }
+
+    fun setUseLocalProfileIconOverride(enabled: Boolean) {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        scope.launch { profileIconStore.setLocalOverride(connectionId, profileName, enabled) }
+    }
+
+    /** Upload a selected static image directly to Hermes without changing this phone's override. */
+    fun setSharedProfileAvatar(uri: Uri) {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = resolveSharedAssetProfileName()
+        val gateway = gatewayClientProvider()
+        if (profileName.isNullOrBlank() || gateway == null) {
+            _sharedAvatarState.value = SharedAvatarState(error = "Shared avatars require a current Hermes Gateway")
+            return
+        }
+        scope.launch {
+            _sharedAvatarState.value = SharedAvatarState(loading = true)
+            val bytes = readBoundedUri(uri, GatewayChatClient.PROFILE_AVATAR_MAX_BYTES)
+            if (bytes == null) {
+                _sharedAvatarState.value = SharedAvatarState(error = "Choose a PNG, JPEG, or WebP under 2 MB")
+                return@launch
+            }
+            gateway.setProfileAvatar(profileName, bytes).fold(
+                onSuccess = {
+                    _sharedAvatarState.value = SharedAvatarState()
+                    refreshGatewayProfiles(connectionId)
+                },
+                onFailure = { failure ->
+                    _sharedAvatarState.value = SharedAvatarState(
+                        error = failure.message ?: "Shared avatar upload failed",
+                    )
+                },
+            )
         }
     }
 
@@ -741,21 +795,8 @@ class ProfileController(
 
     /** Copy [uri]'s image bytes into app-internal storage; returns the path or null. */
     private suspend fun copyIcon(connectionId: String, profileName: String?, uri: Uri): String? =
-        withContext(Dispatchers.IO) {
-            try {
-                val dir = File(context.filesDir, "profile-icons").apply { mkdirs() }
-                val key = AgentDisplay.profileSessionKey(profileName)
-                val safe = "${connectionId}_$key"
-                    .map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '_' }
-                    .joinToString("")
-                val out = File(dir, "$safe.png")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    out.outputStream().use { input.copyTo(it) }
-                } ?: return@withContext null
-                out.absolutePath
-            } catch (t: Throwable) {
-                null
-            }
+        readBoundedUri(uri, LOCAL_PROFILE_ICON_MAX_BYTES)?.let { bytes ->
+            copyIconBytes(connectionId, profileName, bytes)
         }
 
     private suspend fun copyIconBytes(
@@ -764,15 +805,55 @@ class ProfileController(
         bytes: ByteArray,
     ): String? = withContext(Dispatchers.IO) {
         try {
+            val extension = localImageExtension(bytes) ?: return@withContext null
             val dir = File(context.filesDir, "profile-icons").apply { mkdirs() }
             val key = AgentDisplay.profileSessionKey(profileName)
             val safe = "${connectionId}_$key"
                 .map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '_' }
                 .joinToString("")
-            File(dir, "$safe.png").also { it.writeBytes(bytes) }.absolutePath
+            val target = File(dir, "$safe.$extension")
+            target.writeBytes(bytes)
+            LOCAL_PROFILE_ICON_EXTENSIONS
+                .filterNot(extension::equals)
+                .forEach { stale -> runCatching { File(dir, "$safe.$stale").delete() } }
+            target.absolutePath
         } catch (_: Throwable) {
             null
         }
+    }
+
+    private suspend fun readBoundedUri(uri: Uri, maxBytes: Int): ByteArray? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    val output = ByteArrayOutputStream(minOf(maxBytes, 64 * 1024))
+                    val buffer = ByteArray(16 * 1024)
+                    var total = 0
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > maxBytes) return@use null
+                        output.write(buffer, 0, read)
+                    }
+                    output.toByteArray()
+                }
+            }.getOrNull()
+        }
+
+    private fun localImageExtension(bytes: ByteArray): String? = when {
+        bytes.size >= 8 && bytes.copyOfRange(0, 8).contentEquals(
+            byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+        ) -> "png"
+        bytes.size >= 3 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() &&
+            bytes[2] == 0xff.toByte() -> "jpg"
+        bytes.size >= 6 && (
+            bytes.copyOfRange(0, 6).contentEquals("GIF87a".toByteArray()) ||
+                bytes.copyOfRange(0, 6).contentEquals("GIF89a".toByteArray())
+            ) -> "gif"
+        bytes.size >= 12 && bytes.copyOfRange(0, 4).contentEquals("RIFF".toByteArray()) &&
+            bytes.copyOfRange(8, 12).contentEquals("WEBP".toByteArray()) -> "webp"
+        else -> null
     }
 
     private suspend fun copyServerAvatarBytes(
@@ -821,6 +902,11 @@ class ProfileController(
     private fun resolveSharedAssetProfileName(): String? =
         resolveSessionProfileName()
             ?: _gatewayProfiles.value.firstOrNull(Profile::isDefault)?.name
+
+    private companion object {
+        const val LOCAL_PROFILE_ICON_MAX_BYTES = 8_000_000
+        val LOCAL_PROFILE_ICON_EXTENSIONS = listOf("png", "jpg", "gif", "webp")
+    }
 
     /**
      * The stored lock-token for a (possibly null) profile. Server default —

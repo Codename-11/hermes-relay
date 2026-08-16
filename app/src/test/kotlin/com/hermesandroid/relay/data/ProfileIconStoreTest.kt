@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -70,6 +72,23 @@ class ProfileIconStoreTest {
 
         assertNull(store.serverAvatarFlow("conn-1", "operator").first())
         assertEquals("/local/icon.png", store.iconFlow("conn-1", "operator").first())
+    }
+
+    @Test
+    fun localOverrideIsScopedAndDefaultsOff() = runBlocking {
+        assertFalse(store.localOverrideFlow("conn-1", "operator").first())
+        store.setLocalOverride("conn-1", "operator", true)
+
+        assertTrue(store.localOverrideFlow("conn-1", "operator").first())
+        assertFalse(store.localOverrideFlow("conn-2", "operator").first())
+        assertFalse(store.localOverrideFlow("conn-1", "other").first())
+    }
+
+    @Test
+    fun preferredIconUsesLocalOnlyWhenOverrideHasAnImage() {
+        assertEquals("/server.png", preferredProfileIcon("/server.png", "/local.gif", false))
+        assertEquals("/local.gif", preferredProfileIcon("/server.png", "/local.gif", true))
+        assertEquals("/server.png", preferredProfileIcon("/server.png", null, true))
     }
 
     private class InMemoryPreferencesDataStore : DataStore<Preferences> {
