@@ -1964,6 +1964,16 @@
 
     <!-- Profile create -->
     <string name="dashboard_profile_created">Profil %1$s erstellt</string>
+    <string name="dashboard_profile_created_partial">Profil %1$s wurde erstellt, aber %2$s. Vor der Verwendung prüfen.</string>
+    <string name="dashboard_profile_created_legacy">Profil %1$s wurde über die ältere Dashboard-Route erstellt. Zugangsdaten vor der Verwendung prüfen.</string>
+    <string name="dashboard_profile_no_skills">Gebündelte Skills nicht hinzufügen</string>
+    <string name="dashboard_profile_auth_title">Authentifizierung</string>
+    <string name="dashboard_profile_auth_shared">Anmeldung teilen (empfohlen) — ein aktualisierbarer Token-Pool</string>
+    <string name="dashboard_profile_auth_copied">Aktuelle Zugangsdaten kopieren — separater Snapshot, der veralten kann</string>
+    <string name="dashboard_profile_auth_isolated">Isoliert — keine Zugangsdaten oder Anbieterstandards kopieren</string>
+    <string name="dashboard_profile_auth_help">Hermes wendet diese Auswahl auf dem Server an. Passwörter und Token werden nie an Android zurückgegeben.</string>
+    <string name="dashboard_profile_allow_legacy">Wenn die Gateway-Erstellung nicht verfügbar ist, die ältere Dashboard-Route zulassen. Das Verhalten der Zugangsdaten hängt vom Host ab und muss geprüft werden.</string>
+    <string name="dashboard_profile_mcp_partial">Die MCP-Serverauswahl wurde nicht angewendet</string>
     <string name="dashboard_profile_create_failed">Profil konnte nicht erstellt werden</string>
 
     <!-- Stats for nerds -->
@@ -2591,6 +2601,11 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Agentensymbol</string>
+    <string name="agent_icon_set_local">Geräte-Ersatzbild auswählen</string>
+    <string name="agent_icon_change_local">Geräte-Ersatzbild ändern</string>
+    <string name="agent_icon_clear_local">Geräte-Ersatzbild löschen</string>
+    <string name="agent_icon_upload_shared">Gerätesymbol zu Hermes hochladen</string>
+    <string name="agent_icon_clear_shared">Geteilten Hermes-Avatar löschen</string>
     <string name="agent_icon_set">Datei auswählen</string>
     <string name="agent_icon_change">Datei auswählen</string>
     <string name="agent_icon_clear">Löschen</string>

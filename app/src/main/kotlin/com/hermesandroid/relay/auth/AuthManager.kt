@@ -11,6 +11,7 @@ import com.hermesandroid.relay.data.replaceHermesReachCredential
 import com.hermesandroid.relay.data.sameBrokerAuthority
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.isSafeProfileUiMeta
 import com.hermesandroid.relay.network.relay.ChannelMultiplexer
 import com.hermesandroid.relay.network.relay.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -286,6 +287,7 @@ class AuthManager(
                     ?: return@mapNotNull null
                 val model = obj["model"]?.jsonPrimitive?.contentOrNull
                     ?: "unknown"
+                val provider = obj["provider"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 val description = obj["description"]?.jsonPrimitive?.contentOrNull
                     ?: ""
                 val systemMessage = obj["system_message"]?.jsonPrimitive?.contentOrNull
@@ -305,9 +307,15 @@ class AuthManager(
                     ?.jsonPrimitive?.intOrNull
                 val apiServerKeyPresent = obj["api_server_key_present"]
                     ?.jsonPrimitive?.booleanOrNull ?: false
+                val isDefault = obj["is_default"]?.jsonPrimitive?.booleanOrNull ?: false
+                val hasAvatar = obj["has_avatar"]?.jsonPrimitive?.booleanOrNull ?: false
+                val uiMeta = (obj["ui_meta"] as? JsonObject)
+                    ?.takeIf(::isSafeProfileUiMeta)
+                    ?: JsonObject(emptyMap())
                 Profile(
                     name = name,
                     model = model,
+                    provider = provider,
                     description = description,
                     systemMessage = systemMessage,
                     gatewayRunning = gatewayRunning,
@@ -318,6 +326,9 @@ class AuthManager(
                     apiServerHost = apiServerHost,
                     apiServerPort = apiServerPort,
                     apiServerKeyPresent = apiServerKeyPresent,
+                    isDefault = isDefault,
+                    hasAvatar = hasAvatar,
+                    uiMeta = uiMeta,
                 )
             }
         }

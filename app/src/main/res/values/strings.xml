@@ -2203,6 +2203,16 @@
 
     <!-- Profile create -->
     <string name="dashboard_profile_created">Profile %1$s created</string>
+    <string name="dashboard_profile_created_partial">Profile %1$s created, but %2$s. Review it before use.</string>
+    <string name="dashboard_profile_created_legacy">Profile %1$s created through the older Dashboard route. Review its credentials before use.</string>
+    <string name="dashboard_profile_no_skills">Do not seed bundled skills</string>
+    <string name="dashboard_profile_auth_title">Authentication</string>
+    <string name="dashboard_profile_auth_shared">Share sign-in (recommended) — one refreshable token pool</string>
+    <string name="dashboard_profile_auth_copied">Copy current credentials — separate snapshot that can drift</string>
+    <string name="dashboard_profile_auth_isolated">Isolated — copy no credentials or provider defaults</string>
+    <string name="dashboard_profile_auth_help">Hermes applies this choice on the server. Passwords and tokens are never returned to Android.</string>
+    <string name="dashboard_profile_allow_legacy">If Gateway create is unavailable, allow the older Dashboard route. Credential behavior depends on that host and must be reviewed.</string>
+    <string name="dashboard_profile_mcp_partial">MCP server selection was not applied</string>
     <string name="dashboard_profile_create_failed">Profile create failed</string>
 
     <!-- Stats for nerds -->
@@ -2851,6 +2861,11 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Agent icon</string>
+    <string name="agent_icon_set_local">Choose device fallback</string>
+    <string name="agent_icon_change_local">Change device fallback</string>
+    <string name="agent_icon_clear_local">Clear device fallback</string>
+    <string name="agent_icon_upload_shared">Upload device icon to Hermes</string>
+    <string name="agent_icon_clear_shared">Clear shared Hermes avatar</string>
     <string name="agent_icon_set">Choose file</string>
     <string name="agent_icon_change">Choose file</string>
     <string name="agent_icon_clear">Clear</string>

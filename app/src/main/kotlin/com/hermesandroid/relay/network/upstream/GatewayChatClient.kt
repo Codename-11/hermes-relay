@@ -2,13 +2,20 @@ package com.hermesandroid.relay.network.upstream
 
 import android.util.Log
 import com.hermesandroid.relay.data.GatewayProfileConfigureResult
+import com.hermesandroid.relay.data.GatewayProfileAsset
+import com.hermesandroid.relay.data.GatewayProfileAuthChoice
+import com.hermesandroid.relay.data.GatewayProfileCreateRequest
+import com.hermesandroid.relay.data.GatewayProfileCreateResult
 import com.hermesandroid.relay.data.GatewayProfileDescription
 import com.hermesandroid.relay.data.GatewayProfileEditorClient
 import com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException
+import com.hermesandroid.relay.data.GatewayProfileManagementUnsupportedException
 import com.hermesandroid.relay.data.GatewayProfilePatch
 import com.hermesandroid.relay.data.GatewayProfileSection
 import com.hermesandroid.relay.data.GatewayProfileSkill
 import com.hermesandroid.relay.data.GatewayProfileToolset
+import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.isSafeProfileUiMeta
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.util.AppForegroundTracker
@@ -41,6 +48,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import java.util.Base64
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -105,6 +113,14 @@ class GatewayChatClient(
     private var profileDescribeSupported: Boolean? = null
     @Volatile
     private var profileConfigureSupported: Boolean? = null
+    @Volatile
+    private var profileListSupported: Boolean? = null
+    @Volatile
+    private var profileCreateSupported: Boolean? = null
+    @Volatile
+    private var profileGetAssetSupported: Boolean? = null
+    @Volatile
+    private var profileSetAssetSupported: Boolean? = null
     companion object {
         private const val TAG = "GatewayChatClient"
 
@@ -128,6 +144,7 @@ class GatewayChatClient(
         private const val ASK_UNBOUNDED_TIMEOUT_MS = 600_000L
 
         private const val RPC_TIMEOUT_MS = 15_000L
+        const val PROFILE_AVATAR_MAX_BYTES = 2_000_000
 
         /**
          * `prompt.submit` ack ceiling — mirrors upstream desktop's
@@ -1415,6 +1432,221 @@ class GatewayChatClient(
         )
     }
 
+    /** Current Hermes-owned profile roster; older gateways fail soft to the Dashboard/Relay list. */
+    suspend fun listProfiles(): Result<List<Profile>> {
+        if (profileListSupported == false) {
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.list"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc(
+            "profiles.list",
+            buildJsonObject { put("include_sessions", false) },
+        )
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileListSupported = false
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.list"))
+        }
+        return response.mapCatching { payload ->
+            (payload["profiles"] as? JsonArray).orEmpty().mapNotNull { raw ->
+                val row = raw as? JsonObject ?: return@mapNotNull null
+                val name = row.stringField("name")?.trim()?.takeIf(String::isNotEmpty)
+                    ?: return@mapNotNull null
+                val uiMeta = (row["ui_meta"] as? JsonObject)
+                    ?.takeIf(::isSafeProfileUiMeta)
+                    ?: JsonObject(emptyMap())
+                Profile(
+                    name = name,
+                    model = row.stringField("model").orEmpty(),
+                    provider = row.stringField("provider").orEmpty(),
+                    description = row.stringField("description").orEmpty(),
+                    skillCount = (row["skill_count"] as? JsonPrimitive)?.intOrNull ?: 0,
+                    isDefault = (row["is_default"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                    hasAvatar = (row["has_avatar"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                    uiMeta = uiMeta,
+                )
+            }
+        }.onSuccess { profileListSupported = true }
+    }
+
+    /** Create through the Gateway so auth behavior is explicit and server-owned. */
+    suspend fun createProfile(request: GatewayProfileCreateRequest): Result<GatewayProfileCreateResult> {
+        if (profileCreateSupported == false) {
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.create"))
+        }
+        val name = request.name.trim()
+        if (name.isEmpty()) return Result.failure(IllegalArgumentException("profile name required"))
+        if ((request.model == null) != (request.provider == null)) {
+            return Result.failure(IllegalArgumentException("provider and model must be supplied together"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc(
+            "profiles.create",
+            buildJsonObject {
+                put("name", name)
+                request.description?.trim()?.takeIf(String::isNotEmpty)?.let { put("description", it) }
+                request.cloneFrom?.trim()?.takeIf(String::isNotEmpty)?.let { put("clone_from", it) }
+                put("clone_all", request.cloneAll)
+                put("no_skills", request.noSkills)
+                request.soul?.let { put("soul", it) }
+                request.model?.trim()?.takeIf(String::isNotEmpty)?.let { put("model", it) }
+                request.provider?.trim()?.takeIf(String::isNotEmpty)?.let { put("provider", it) }
+                put("mirror_credentials", request.authChoice != GatewayProfileAuthChoice.Isolated)
+                put("share_auth", request.authChoice == GatewayProfileAuthChoice.Shared)
+            },
+        )
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileCreateSupported = false
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.create"))
+        }
+        return response.mapCatching { payload ->
+            val returnedName = payload.stringField("name")
+                ?: throw GatewayRpcException("profiles.create returned no profile name")
+            if (returnedName != name) throw GatewayRpcException("profiles.create returned a different profile")
+            val mirrored = payload["mirrored"] as? JsonObject ?: JsonObject(emptyMap())
+            val auth = mirrored["auth"] as? JsonPrimitive
+            GatewayProfileCreateResult(
+                name = returnedName,
+                soulWritten = (payload["soul_written"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                modelSet = (payload["model_set"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                mirroredEnvironment = (mirrored["env"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                mirroredAuth = auth?.contentOrNull,
+                modelInherited = (mirrored["model_inherited"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                voiceMirrored = (mirrored["voice"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            )
+        }.onSuccess { profileCreateSupported = true }
+    }
+
+    suspend fun getProfileAvatar(profileName: String): Result<GatewayProfileAsset?> {
+        if (profileGetAssetSupported == false) {
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.get_asset"))
+        }
+        val name = profileName.trim()
+        if (name.isEmpty()) return Result.failure(IllegalArgumentException("profile name required"))
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc(
+            "profiles.get_asset",
+            buildJsonObject { put("name", name); put("asset", "avatar") },
+        )
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileGetAssetSupported = false
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.get_asset"))
+        }
+        return response.mapCatching { payload ->
+            if ((payload["found"] as? JsonPrimitive)?.booleanOrNull != true) return@mapCatching null
+            val declaredMime = payload.stringField("mime")
+                ?: throw GatewayRpcException("profiles.get_asset returned no mime")
+            val encoded = payload.stringField("data")
+                ?: throw GatewayRpcException("profiles.get_asset returned no data")
+            val (dataMime, base64) = splitImageData(encoded)
+            if (dataMime != null && dataMime != declaredMime) {
+                throw GatewayRpcException("profiles.get_asset mime mismatch")
+            }
+            val bytes = runCatching { Base64.getDecoder().decode(base64) }
+                .getOrElse { throw GatewayRpcException("profiles.get_asset returned malformed base64") }
+            if (bytes.size > PROFILE_AVATAR_MAX_BYTES) {
+                throw GatewayRpcException("profiles.get_asset returned an oversized avatar")
+            }
+            val actualMime = imageMime(bytes)
+                ?: throw GatewayRpcException("profiles.get_asset returned an unsupported image")
+            if (actualMime != declaredMime) throw GatewayRpcException("profiles.get_asset magic mismatch")
+            val declaredSize = (payload["size"] as? JsonPrimitive)?.intOrNull
+            if (declaredSize != null && declaredSize != bytes.size) {
+                throw GatewayRpcException("profiles.get_asset size mismatch")
+            }
+            GatewayProfileAsset(bytes, actualMime)
+        }.onSuccess { profileGetAssetSupported = true }
+    }
+
+    suspend fun setProfileAvatar(profileName: String, bytes: ByteArray): Result<Int> {
+        val mime = imageMime(bytes)
+            ?: return Result.failure(IllegalArgumentException("avatar must be PNG, JPEG, or WebP"))
+        if (bytes.size > PROFILE_AVATAR_MAX_BYTES) {
+            return Result.failure(IllegalArgumentException("avatar exceeds the 2,000,000 byte limit"))
+        }
+        return setProfileAvatarPayload(
+            profileName,
+            expectedSize = bytes.size,
+            params = buildJsonObject {
+                put("name", profileName.trim())
+                put("asset", "avatar")
+                put("data", "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}")
+            },
+        )
+    }
+
+    suspend fun clearProfileAvatar(profileName: String): Result<Int> = setProfileAvatarPayload(
+        profileName,
+        expectedSize = 0,
+        params = buildJsonObject {
+            put("name", profileName.trim())
+            put("asset", "avatar")
+            put("clear", true)
+        },
+    )
+
+    private suspend fun setProfileAvatarPayload(
+        profileName: String,
+        expectedSize: Int,
+        params: JsonObject,
+    ): Result<Int> {
+        if (profileSetAssetSupported == false) {
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.set_asset"))
+        }
+        if (profileName.trim().isEmpty()) {
+            return Result.failure(IllegalArgumentException("profile name required"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc("profiles.set_asset", params)
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileSetAssetSupported = false
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.set_asset"))
+        }
+        return response.mapCatching { payload ->
+            if ((payload["ok"] as? JsonPrimitive)?.booleanOrNull != true) {
+                throw GatewayRpcException("profiles.set_asset was not acknowledged")
+            }
+            val size = (payload["size"] as? JsonPrimitive)?.intOrNull
+                ?: throw GatewayRpcException("profiles.set_asset returned no size")
+            if (size != expectedSize) throw GatewayRpcException("profiles.set_asset size mismatch")
+            size
+        }.onSuccess { profileSetAssetSupported = true }
+    }
+
+    private fun splitImageData(value: String): Pair<String?, String> {
+        if (!value.startsWith("data:")) return null to value
+        val marker = ";base64,"
+        val split = value.indexOf(marker)
+        if (split <= 5) throw GatewayRpcException("profiles.get_asset returned a malformed data URL")
+        return value.substring(5, split) to value.substring(split + marker.length)
+    }
+
+    private fun imageMime(bytes: ByteArray): String? = when {
+        bytes.size >= 8 && bytes.copyOfRange(0, 8).contentEquals(
+            byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+        ) -> "image/png"
+        bytes.size >= 3 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() &&
+            bytes[2] == 0xff.toByte() -> "image/jpeg"
+        bytes.size >= 12 && bytes.copyOfRange(0, 4).contentEquals("RIFF".toByteArray()) &&
+            bytes.copyOfRange(8, 12).contentEquals("WEBP".toByteArray()) -> "image/webp"
+        else -> null
+    }
+
     /**
      * Capability probe and authoritative editor snapshot. A method-not-found
      * response is sticky for this client so older Hermes builds keep using the
@@ -1462,6 +1694,9 @@ class GatewayChatClient(
         if ((patch.provider == null) != (patch.model == null)) {
             return Result.failure(IllegalArgumentException("provider and model must be saved together"))
         }
+        if (patch.uiMeta != null && !isSafeProfileUiMeta(patch.uiMeta)) {
+            return Result.failure(IllegalArgumentException("ui_meta must contain only small preference/reference metadata"))
+        }
         val requested = patch.requestedSections
         if (requested.isEmpty()) return Result.success(GatewayProfileConfigureResult(emptySet(), emptySet()))
         val params = buildJsonObject {
@@ -1476,6 +1711,10 @@ class GatewayChatClient(
             patch.enabledToolsets?.let { names ->
                 put("enabled_toolsets", JsonArray(names.map(::JsonPrimitive)))
             }
+            patch.enabledMcpServers?.let { names ->
+                put("enabled_mcp_servers", JsonArray(names.map(::JsonPrimitive)))
+            }
+            patch.uiMeta?.let { put("ui_meta", it) }
         }
         val response = rpc("profiles.configure", params)
         if (response.exceptionOrNull().isMethodNotFound()) {

@@ -53,6 +53,25 @@ class ProfileIconStoreTest {
         assertEquals("/files/c.png", store.iconFlow("conn-2", null).first())
     }
 
+    @Test
+    fun serverAvatarsKeepDuplicateProfileNamesConnectionScoped() = runBlocking {
+        store.setServerAvatar("conn-1", "operator", "/server/a.png")
+        store.setServerAvatar("conn-2", "operator", "/server/b.png")
+
+        assertEquals("/server/a.png", store.serverAvatarFlow("conn-1", "operator").first())
+        assertEquals("/server/b.png", store.serverAvatarFlow("conn-2", "operator").first())
+    }
+
+    @Test
+    fun clearingServerAvatarDoesNotOverwriteLocalFallback() = runBlocking {
+        store.setIcon("conn-1", "operator", "/local/icon.png")
+        store.setServerAvatar("conn-1", "operator", "/server/avatar.png")
+        store.setServerAvatar("conn-1", "operator", null)
+
+        assertNull(store.serverAvatarFlow("conn-1", "operator").first())
+        assertEquals("/local/icon.png", store.iconFlow("conn-1", "operator").first())
+    }
+
     private class InMemoryPreferencesDataStore : DataStore<Preferences> {
         private val state = MutableStateFlow<Preferences>(emptyPreferences())
 

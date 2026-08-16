@@ -1961,6 +1961,16 @@
 
     <!-- Profile create -->
     <string name="dashboard_profile_created">已创建配置文件 %1$s</string>
+    <string name="dashboard_profile_created_partial">配置文件 %1$s 已创建，但%2$s。使用前请检查。</string>
+    <string name="dashboard_profile_created_legacy">配置文件 %1$s 已通过旧版控制面板路由创建。使用前请检查其凭据。</string>
+    <string name="dashboard_profile_no_skills">不添加内置技能</string>
+    <string name="dashboard_profile_auth_title">身份验证</string>
+    <string name="dashboard_profile_auth_shared">共享登录（推荐）— 共用一个可刷新的令牌池</string>
+    <string name="dashboard_profile_auth_copied">复制当前凭据 — 独立快照可能会过期</string>
+    <string name="dashboard_profile_auth_isolated">隔离 — 不复制凭据或提供商默认值</string>
+    <string name="dashboard_profile_auth_help">Hermes 在服务器上应用此选择。密码和令牌绝不会返回到 Android。</string>
+    <string name="dashboard_profile_allow_legacy">如果无法通过 Gateway 创建，则允许使用旧版控制面板路由。凭据行为取决于该主机，必须进行检查。</string>
+    <string name="dashboard_profile_mcp_partial">未应用 MCP 服务器选择</string>
     <string name="dashboard_profile_create_failed">创建配置文件失败</string>
 
     <!-- Stats for nerds -->
@@ -2588,6 +2598,11 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">代理图标</string>
+    <string name="agent_icon_set_local">选择设备备用图像</string>
+    <string name="agent_icon_change_local">更改设备备用图像</string>
+    <string name="agent_icon_clear_local">清除设备备用图像</string>
+    <string name="agent_icon_upload_shared">将设备图标上传到 Hermes</string>
+    <string name="agent_icon_clear_shared">清除共享的 Hermes 头像</string>
     <string name="agent_icon_set">选择文件</string>
     <string name="agent_icon_change">选择文件</string>
     <string name="agent_icon_clear">清除</string>
