@@ -1993,6 +1993,17 @@
     <!-- Section action buttons -->
     <string name="dashboard_section_action_change_main_model">Change main model</string>
     <string name="dashboard_section_action_new_profile">New profile</string>
+    <string name="dashboard_section_action_new_schedule">New schedule</string>
+    <string name="dashboard_cron_create_title">Create schedule</string>
+    <string name="dashboard_cron_name">Name</string>
+    <string name="dashboard_cron_schedule">Schedule</string>
+    <string name="dashboard_cron_schedule_hint">Examples: every 2h, 0 9 * * 1-5, or 2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">Task instructions</string>
+    <string name="dashboard_cron_repeat">Stop after this many runs (optional)</string>
+    <string name="dashboard_cron_repeat_help">Leave blank to keep the schedule’s normal behavior. Finite schedules accept 1–999 runs.</string>
+    <string name="dashboard_cron_gateway_required">Schedule creation requires a current Hermes Gateway connection.</string>
+    <string name="dashboard_cron_created">Created schedule “%1$s”</string>
+    <string name="dashboard_cron_create_failed">Couldn’t create schedule</string>
     <string name="dashboard_section_action_browse_hub">Browse hub</string>
     <string name="dashboard_section_action_update_installed">Update installed</string>
     <string name="dashboard_section_action_server_backup">Create server backup</string>
@@ -4109,4 +4120,10 @@
     <string name="profile_inspector_toolsets">Toolsets</string>
     <string name="profile_inspector_toolsets_hint">Choose which upstream tool groups this profile can use.</string>
     <string name="profile_inspector_tool_count">%1$d tools</string>
+    <string name="chat_model_confirmation_title">Confirm model selection</string>
+    <string name="host_resource_recent_oom">Hermes recently restarted after likely running out of memory.</string>
+    <string name="host_resource_memory_critical">Host memory is critically low; active chats may stop.</string>
+    <string name="host_resource_memory_elevated">Host memory is running low.</string>
+    <string name="host_resource_disk_critical">Host storage is critically low; messages and settings may fail to save.</string>
+    <string name="host_resource_disk_elevated">Host storage is running low.</string>
 </resources>

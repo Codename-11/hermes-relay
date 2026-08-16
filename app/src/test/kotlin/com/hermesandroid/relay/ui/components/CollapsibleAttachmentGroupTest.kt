@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
@@ -56,6 +57,39 @@ class CollapsibleAttachmentGroupTest {
             ),
             summary,
         )
+    }
+
+    @Test
+    fun `every attachment render mode keeps the same disclosure affordance`() {
+        val mimeToMode = mapOf(
+            "image/png" to AttachmentRenderMode.IMAGE,
+            "video/mp4" to AttachmentRenderMode.VIDEO,
+            "audio/mpeg" to AttachmentRenderMode.AUDIO,
+            "application/pdf" to AttachmentRenderMode.PDF,
+            "text/markdown" to AttachmentRenderMode.TEXT,
+            "application/octet-stream" to AttachmentRenderMode.GENERIC,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                Column {
+                    mimeToMode.forEach { (mime, mode) ->
+                        CollapsibleAttachmentGroup(
+                            messageKey = mode.name,
+                            attachments = listOf(Attachment(contentType = mime, content = "QQ==")),
+                        ) {
+                            Text("Preview ${mode.name}")
+                        }
+                    }
+                }
+            }
+        }
+
+        mimeToMode.values.forEach { mode ->
+            compose.onNodeWithText("Preview ${mode.name}").assertExists()
+            compose.onNodeWithTag("attachment-group-toggle-${mode.name}").performClick()
+            compose.onNodeWithText("Preview ${mode.name}").assertDoesNotExist()
+        }
     }
 
     @Test

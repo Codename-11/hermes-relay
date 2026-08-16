@@ -156,6 +156,31 @@ internal data class RelayUiInputs(
     val configured: Boolean,
 )
 
+data class HostResourcePressureStatus(
+    val memoryPressure: String? = null,
+    val memoryAvailableMb: Int? = null,
+    val diskPressure: String? = null,
+    val diskFreeMb: Int? = null,
+    val lastBootSuspectedOom: Boolean = false,
+) {
+    val needsAttention: Boolean
+        get() = memoryPressure in setOf("elevated", "critical") ||
+            diskPressure in setOf("elevated", "critical") ||
+            lastBootSuspectedOom
+
+    val critical: Boolean
+        get() = memoryPressure == "critical" || diskPressure == "critical" || lastBootSuspectedOom
+}
+
+internal fun DashboardStatus.hostResourcePressure(): HostResourcePressureStatus =
+    HostResourcePressureStatus(
+        memoryPressure = memory?.pressure,
+        memoryAvailableMb = memory?.systemAvailableMb,
+        diskPressure = disk?.pressure,
+        diskFreeMb = disk?.freeMb,
+        lastBootSuspectedOom = memory?.lastBootSuspectedOom == true,
+    )
+
 internal fun RelayUiInputs.requiresReconnectGrace(): Boolean =
     configured &&
         url.isNotBlank() &&
@@ -1070,6 +1095,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         MutableStateFlow(StandardVoiceAvailability.Unknown)
     val standardVoiceAvailability: StateFlow<StandardVoiceAvailability> =
         _standardVoiceAvailability.asStateFlow()
+
+    private val _hostResourcePressure = MutableStateFlow(HostResourcePressureStatus())
+    val hostResourcePressure: StateFlow<HostResourcePressureStatus> =
+        _hostResourcePressure.asStateFlow()
 
     private val _standardAudioApiReachable = MutableStateFlow(false)
     val standardAudioApiReachable: StateFlow<Boolean> = _standardAudioApiReachable.asStateFlow()
@@ -4259,6 +4288,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 .collectLatest {
                     _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
                     _standardAudioApiReachable.value = false
+                    _hostResourcePressure.value = HostResourcePressureStatus()
                     _serverChatDisplaySettings.value = null
                     updateGatewayAvailability(GatewayAvailability.Unknown)
                     probeStandardVoice()
@@ -4558,6 +4588,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (connectionId == null || dashboardUrl.isNullOrBlank()) {
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
             _standardAudioApiReachable.value = false
+            _hostResourcePressure.value = HostResourcePressureStatus()
             _serverChatDisplaySettings.value = null
             updateGatewayAvailability(GatewayAvailability.Unknown)
             return
@@ -4576,11 +4607,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 updateDashboardTopology(connectionId, null)
                 _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
                 _standardAudioApiReachable.value = false
+                _hostResourcePressure.value = HostResourcePressureStatus()
                 _serverChatDisplaySettings.value = null
                 updateGatewayAvailability(GatewayAvailability.Unreachable)
                 recordDashboardStatusIfChanged(connectionId, status = null, session = null)
                 return
             }
+            _hostResourcePressure.value = status.hostResourcePressure()
             updateDashboardTopology(connectionId, status)
             val session = if (status.authRequired) client.currentSession().getOrNull() else null
             val authed = !status.authRequired || session?.authenticated == true
@@ -4618,6 +4651,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             android.util.Log.w("ConnectionVM", "probeStandardVoice failed: ${e.message}")
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
             _standardAudioApiReachable.value = false
+            _hostResourcePressure.value = HostResourcePressureStatus()
             _serverChatDisplaySettings.value = null
             updateGatewayAvailability(GatewayAvailability.Unreachable)
         } finally {

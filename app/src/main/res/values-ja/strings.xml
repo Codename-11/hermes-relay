@@ -1812,6 +1812,17 @@
     <!-- Section action buttons -->
     <string name="dashboard_section_action_change_main_model">メイン機種変更</string>
     <string name="dashboard_section_action_new_profile">新しいプロフィール</string>
+    <string name="dashboard_section_action_new_schedule">新しいスケジュール</string>
+    <string name="dashboard_cron_create_title">スケジュールを作成</string>
+    <string name="dashboard_cron_name">名前</string>
+    <string name="dashboard_cron_schedule">スケジュール</string>
+    <string name="dashboard_cron_schedule_hint">例: every 2h、0 9 * * 1-5、2026-08-20 09:00</string>
+    <string name="dashboard_cron_prompt">タスクの指示</string>
+    <string name="dashboard_cron_repeat">この実行回数の後に停止（任意）</string>
+    <string name="dashboard_cron_repeat_help">通常の動作を維持する場合は空欄にします。有限スケジュールには1～999回を指定できます。</string>
+    <string name="dashboard_cron_gateway_required">スケジュールの作成には、現在のHermes Gateway接続が必要です。</string>
+    <string name="dashboard_cron_created">スケジュール「%1$s」を作成しました</string>
+    <string name="dashboard_cron_create_failed">スケジュールを作成できませんでした</string>
     <string name="dashboard_section_action_browse_hub">ハブを参照する</string>
     <string name="dashboard_section_action_update_installed">アップデートがインストールされました</string>
 
@@ -4101,4 +4112,10 @@
     <plurals name="proactive_messages_arrived_while_away">
         <item quantity="other">離れている間に%1$d件のメッセージが届きました</item>
     </plurals>
+    <string name="chat_model_confirmation_title">モデル選択を確認</string>
+    <string name="host_resource_recent_oom">Hermes は最近、メモリ不足が原因と思われる再起動を行いました。</string>
+    <string name="host_resource_memory_critical">ホストのメモリが極端に不足しています。進行中のチャットが停止する可能性があります。</string>
+    <string name="host_resource_memory_elevated">ホストのメモリが不足しています。</string>
+    <string name="host_resource_disk_critical">ホストのストレージが極端に不足しています。メッセージや設定を保存できない可能性があります。</string>
+    <string name="host_resource_disk_elevated">ホストのストレージが不足しています。</string>
 </resources>

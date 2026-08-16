@@ -35,6 +35,8 @@ class DashboardStatusTopologyTest {
         assertEquals(emptyList<String>(), status.profiles)
         assertEquals(false, status.componentHealth.supported)
         assertEquals(emptyList<String>(), status.componentHealth.components.map { it.name })
+        assertNull(status.memory)
+        assertNull(status.disk)
     }
 
     @Test
@@ -69,5 +71,34 @@ class DashboardStatusTopologyTest {
         val platforms = status.componentHealth.components.first { it.name == "platforms" }
         assertEquals(3, platforms.configured)
         assertEquals(1, platforms.connected)
+    }
+
+    @Test
+    fun parseStatus_readsAuthoritativeResourcePressureBlocks() {
+        val status = DashboardApiClient.parseStatus(
+            json.decodeFromString<JsonObject>(
+                """{
+                    "auth_required": false,
+                    "memory": {
+                      "pressure": "critical",
+                      "system_available_mb": 48,
+                      "last_boot_suspected_oom": true,
+                      "boot_id": "2026-08-15T10:00:00Z"
+                    },
+                    "disk": {
+                      "pressure": "elevated",
+                      "free_mb": 384,
+                      "used_percent": 92.5
+                    }
+                }""",
+            ),
+        )
+
+        assertEquals("critical", status.memory?.pressure)
+        assertEquals(48, status.memory?.systemAvailableMb)
+        assertEquals(true, status.memory?.lastBootSuspectedOom)
+        assertEquals("elevated", status.disk?.pressure)
+        assertEquals(384, status.disk?.freeMb)
+        assertEquals(92.5, status.disk?.usedPercent)
     }
 }

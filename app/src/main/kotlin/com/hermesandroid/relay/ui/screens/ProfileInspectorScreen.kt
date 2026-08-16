@@ -127,6 +127,7 @@ fun ProfileInspectorScreen(
     val skillsState by viewModel.skillsState.collectAsState()
     val source by viewModel.source.collectAsState()
     val gatewayDescription by viewModel.gatewayDescription.collectAsState()
+    val gatewayWritable by viewModel.gatewayWritable.collectAsState()
 
     // Lazy first-load on screen entry. Keyed on the profile name so a
     // re-entry for a different profile (unlikely but possible via deep
@@ -248,7 +249,7 @@ fun ProfileInspectorScreen(
                     InspectorSection.Config -> ConfigPane(
                         state = configState,
                         onRetry = { viewModel.refreshSection(InspectorSection.Config) },
-                        gatewayEditable = source == ProfileInspectorSource.Gateway,
+                        gatewayEditable = source == ProfileInspectorSource.Gateway && gatewayWritable,
                         editing = viewModel.configEditing.collectAsState().value,
                         descriptionDraft = viewModel.configDescriptionDraft.collectAsState().value,
                         providerDraft = viewModel.configProviderDraft.collectAsState().value,
@@ -273,6 +274,7 @@ fun ProfileInspectorScreen(
                         onDraftChange = { viewModel.updateSoulDraft(it) },
                         onSave = { viewModel.saveSoulEdit() },
                         onCancelEdit = { viewModel.cancelSoulEdit() },
+                        editable = source != ProfileInspectorSource.Gateway || gatewayWritable,
                     )
                     InspectorSection.Memory -> MemoryPane(
                         state = memoryState,
@@ -298,7 +300,7 @@ fun ProfileInspectorScreen(
                         onToggleSkill = { name, enabled ->
                             viewModel.toggleSkill(name, enabled)
                         },
-                        gatewayNative = source == ProfileInspectorSource.Gateway,
+                        gatewayNative = source == ProfileInspectorSource.Gateway && gatewayWritable,
                         skillDrafts = viewModel.skillDrafts.collectAsState().value,
                         toolsets = gatewayDescription?.toolsets.orEmpty(),
                         toolsetDrafts = viewModel.toolsetDrafts.collectAsState().value,
@@ -835,6 +837,7 @@ private fun SoulPane(
     onDraftChange: (String) -> Unit,
     onSave: () -> Unit,
     onCancelEdit: () -> Unit,
+    editable: Boolean,
 ) {
     PaneShell(state = state, onRetry = onRetry) { response ->
         Column(
@@ -886,11 +889,13 @@ private fun SoulPane(
                             },
                         )
                     }
-                    IconButton(onClick = onBeginEdit) {
-                        Icon(
-                            imageVector = Icons.Filled.Edit,
-                            contentDescription = stringResource(R.string.profile_inspector_edit_soul),
-                        )
+                    if (editable) {
+                        IconButton(onClick = onBeginEdit) {
+                            Icon(
+                                imageVector = Icons.Filled.Edit,
+                                contentDescription = stringResource(R.string.profile_inspector_edit_soul),
+                            )
+                        }
                     }
                 } else {
                     IconButton(
@@ -910,14 +915,14 @@ private fun SoulPane(
                 MonospaceEditor(
                     content = draft,
                     onContentChange = onDraftChange,
-                    enabled = !saving,
+                    enabled = editable && !saving,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
                 )
                 EditorBottomBar(
                     saving = saving,
-                    canSave = true,
+                    canSave = editable,
                     onSave = onSave,
                     onCancel = onCancelEdit,
                 )

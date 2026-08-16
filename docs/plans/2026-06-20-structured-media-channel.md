@@ -60,6 +60,16 @@ interoperability precedent for any future Dashboard/Gateway event. A design
 review must map ownership, authentication, expiry, size, `sensitive`, and `alt`
 before implementation.
 
+**2026-08-15 audit:** the boundary remains unchanged in current upstream
+Hermes. `gateway/relay/media.py` owns the connector-authenticated, 25 MB
+reference plane, and `gateway/relay/adapter.py` emits `send_media` only when the
+connector advertises that operation. Dashboard clients instead own the
+session-scoped `image.attach_bytes`, `pdf.attach`, and `file.attach` RPCs in
+`tui_gateway/methods_prompt.py`. Android follows those public Gateway RPCs for
+user-authored attachments and keeps the plugin's bearer-gated `/media/*`
+surface limited to agent-to-phone delivery. No connector credential, media ID,
+or authenticated connector URL is copied into the phone or Relay plugin.
+
 ## Recommendation
 
 Lead with **Option 1**, but only after a disposable upstream prototype proves a

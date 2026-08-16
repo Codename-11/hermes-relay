@@ -9,6 +9,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Android identifies proactive messages delivered after reconnect.** Relay marks messages flushed from its bounded offline queue, Thread bubbles label them as received “While away,” and Android shows one accessible localized summary for the completed batch.
+- **Android can create finite recurring schedules from Manage.** The native editor uses the authenticated Hermes Gateway `cron.manage` contract, optionally stops after 1–999 runs, and rejects invalid counts rather than silently creating unlimited work.
+- **Chat resets retain content-free local evidence.** New-chat and Thread transitions save a bounded app-private checkpoint for user-reviewed Diagnostics without prompts, message text, IDs, profile names, paths, URLs, media, tool payloads, secrets, or telemetry.
+- **Android surfaces host resource risk before chat state is lost.** Current Hermes Dashboard memory and disk pressure signals render as a persistent, capability-gated warning; older hosts remain unchanged and no telemetry is added.
+- **Android honors Hermes model-selection safeguards.** Every Gateway model transition, including fresh-chat and Server-default choices, now avoids raw session overrides; picks requiring cost or data-training consent show Hermes' exact warning and apply only after a confirmed second request.
+
+### Changed
+
+- **Interactive Gateway asks remain resolver-bound.** Android continues to use upstream clarify, approval, sudo, and secret response RPCs; connector-only prompt/reaction operations are not copied into Relay cards as a second approval protocol.
+
+### Fixed
+
+- **Android edit-and-regenerate fails closed on incomplete durable history.** Mixed Gateway transcripts now require the selected message's durable row identity instead of attempting an ordinal-only rewind, while older Hermes histories with no row identities remain editable.
+- **Android fails closed when a Gateway does not confirm the selected profile.** Named-profile session creation and recovery now require Hermes to echo the exact owning profile, preventing stale or older gateways from silently running the launch profile under another agent's identity. Profile inspection also keeps read-only Gateway data available when `profiles.configure` is unsupported while disabling further write attempts without discarding drafts.
+- **Android attachment sends are bounded and fail closed.** Picked files are size-limited while streaming into the encoder, cold and queued Gateway sends upload only after the exact session is ready, and an unsupported or interrupted document upload no longer falls through to a text-only route while its file card implies delivery. Every attachment type retains the same compact collapse/expand affordance.
 
 ## [0.4.0-beta.4] - 2026-08-15
 

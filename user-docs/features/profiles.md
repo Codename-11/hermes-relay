@@ -92,6 +92,8 @@ From the **Settings** tab, tap the **Inspect Agent** card (directly under Active
 
 **Config**, **SOUL**, and **Memory** support in-app edits. Current gateways own Config, SOUL, Skills, and Toolsets; paired Relay remains the owner of memory files. After a gateway save, the app reports which sections applied or failed and reloads authoritative profile state. Failed drafts stay editable for retry; successful drafts clear only after that reload.
 
+If a gateway can describe profiles but cannot configure them, the inspector stays available as a read-only Gateway view and disables its Gateway-owned edit controls after the capability rejection. Named-profile chats also require the Gateway to confirm the exact profile owner before Android sends a prompt; older or stale gateways that cannot prove that scope fall back safely instead of opening the launch profile under the selected agent's name.
+
 For memory entries, the **+ New entry** button at the bottom of the Memory tab opens a filename prompt (must end in `.md`, no slashes, no leading `.`) and drops you into an empty editor. A filename that collides with an existing entry is rejected; edit the existing entry via its per-card pencil instead.
 
 #### Skill toggles
