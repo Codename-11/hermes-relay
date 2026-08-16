@@ -28,6 +28,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -136,6 +137,38 @@ class GatewayClientHarness(
         put("ok", true)
         put("slug", "boba")
         put("dataUri", "data:image/png;base64,iVBORw0KGgo=")
+    }
+
+    @Volatile
+    var petInfoPayload: JsonObject = buildJsonObject {
+        put("enabled", true)
+        put("slug", "boba")
+        put("displayName", "Boba")
+        put("mime", "image/png")
+        put("spritesheetBase64", "iVBORw0KGgo=")
+        put("spritesheetRevision", "123:8")
+        put("frameW", 192)
+        put("frameH", 208)
+        put("framesPerState", 8)
+        put("framesByState", buildJsonObject { put("idle", 6); put("run", 8) })
+        put("framesByRow", buildJsonObject { put("idle", 6); put("running", 8) })
+        put("loopMs", 1100)
+        put("scale", 0.75)
+        put("stateRows", JsonArray(listOf(JsonPrimitive("idle"), JsonPrimitive("running"))))
+    }
+
+    @Volatile
+    var petGalleryPayload: JsonObject = buildJsonObject {
+        put("enabled", true)
+        put("active", "boba")
+        put("pets", JsonArray(listOf(buildJsonObject {
+            put("slug", "boba")
+            put("displayName", "Boba")
+            put("installed", true)
+            put("spritesheetUrl", "https://assets.petdex.dev/pets/boba/sprites.png")
+            put("curated", true)
+            put("generated", false)
+        })))
     }
 
     @Volatile
@@ -398,6 +431,9 @@ class GatewayClientHarness(
                     })
                 }
                 "pet.thumb" -> petThumbPayload
+                "pet.info" -> petInfoPayload
+                "pet.gallery" -> petGalleryPayload
+                "pet.select", "pet.disable" -> buildJsonObject { put("ok", true) }
                 "model.options" -> buildJsonObject {
                     put("model", "gpt-5.5")
                     put("provider", "openai")
@@ -2512,6 +2548,81 @@ class GatewayChatClientTest {
 
         assertTrue(mismatchedSlug.exceptionOrNull() is GatewayRpcException)
         assertTrue(wrongMediaType.exceptionOrNull() is GatewayRpcException)
+    }
+
+    @Test
+    fun `pet info parses the upstream renderer payload with profile and revision`() = runBlocking {
+        val info = client.petInfo(profile = "work", knownRevision = "old:1").getOrThrow()
+
+        val params = harness.awaitRpc("pet.info")
+        assertEquals("work", (params["profile"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("old:1", (params["knownRevision"] as? JsonPrimitive)?.contentOrNull)
+        assertTrue(info.enabled)
+        assertEquals("boba", info.slug)
+        assertEquals("123:8", info.spritesheetRevision)
+        assertEquals(192, info.frameWidth)
+        assertEquals(8, info.framesByRow["running"])
+        assertArrayEquals(java.util.Base64.getDecoder().decode("iVBORw0KGgo="), info.spritesheet)
+    }
+
+    @Test
+    fun `pet info accepts upstream unchanged response without duplicate sheet`() = runBlocking {
+        harness.petInfoPayload = buildJsonObject {
+            put("enabled", true)
+            put("slug", "boba")
+            put("displayName", "Boba")
+            put("spritesheetRevision", "123:8")
+            put("spritesheetUnchanged", true)
+            put("frameW", 192)
+            put("frameH", 208)
+            put("framesPerState", 8)
+            put("loopMs", 1100)
+            put("stateRows", JsonArray(listOf(JsonPrimitive("idle"))))
+        }
+
+        val info = client.petInfo(knownRevision = "123:8").getOrThrow()
+
+        assertTrue(info.spritesheetUnchanged)
+        assertNull(info.spritesheet)
+    }
+
+    @Test
+    fun `pet gallery and mutations preserve profile scope`() = runBlocking {
+        val gallery = client.petGallery(profile = "work", localOnly = true).getOrThrow()
+        assertEquals("boba", gallery.active)
+        assertEquals("Boba", gallery.pets.single().displayName)
+        val galleryParams = harness.awaitRpc("pet.gallery")
+        assertEquals("work", (galleryParams["profile"] as? JsonPrimitive)?.contentOrNull)
+        assertTrue((galleryParams["localOnly"] as? JsonPrimitive)?.booleanOrNull == true)
+
+        client.selectPet("boba", profile = "work").getOrThrow()
+        val selectParams = harness.awaitRpc("pet.select")
+        assertEquals("boba", (selectParams["slug"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("work", (selectParams["profile"] as? JsonPrimitive)?.contentOrNull)
+
+        client.disablePet(profile = "work").getOrThrow()
+        val disableParams = harness.awaitRpc("pet.disable")
+        assertEquals("work", (disableParams["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `pet contract rejects malformed renderer and unsafe mutation`() = runBlocking {
+        harness.petInfoPayload = buildJsonObject {
+            put("enabled", true)
+            put("slug", "boba")
+            put("spritesheetRevision", "1:1")
+            put("spritesheetBase64", "not base64")
+            put("mime", "image/png")
+            put("frameW", 192)
+            put("frameH", 208)
+            put("framesPerState", 8)
+            put("loopMs", 1100)
+            put("stateRows", JsonArray(listOf(JsonPrimitive("idle"))))
+        }
+
+        assertTrue(client.petInfo().isFailure)
+        assertTrue(client.selectPet("../boba").exceptionOrNull() is IllegalArgumentException)
+        assertEquals(0, harness.rpcLog.count { it.first == "pet.select" })
     }
 
     // --- Reasoning config ---

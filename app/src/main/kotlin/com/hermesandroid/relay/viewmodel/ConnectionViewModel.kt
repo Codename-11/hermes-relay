@@ -95,6 +95,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayPetGalleryItem
 import com.hermesandroid.relay.network.upstream.GatewayKeepAliveService
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
@@ -1698,6 +1699,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         get() = profileController.useLocalProfileIconOverride
     val sharedProfileAvatarState: StateFlow<ProfileController.SharedAvatarState>
         get() = profileController.sharedAvatarState
+    val hermesPetState: StateFlow<ProfileController.HermesPetState>
+        get() = profileController.hermesPetState
 
     /** A local icon path for a specific profile identity on the active connection. */
     fun profileIconFlow(profileName: String?) = profileController.profileIconFlow(profileName)
@@ -1719,6 +1722,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun uploadLocalProfileIconToHermes() = profileController.uploadLocalProfileIconToHermes()
 
     fun clearSharedProfileAvatar() = profileController.clearSharedProfileAvatar()
+
+    fun refreshHermesPet() = profileController.refreshHermesPet()
+
+    fun loadHermesPetGallery() = profileController.loadHermesPetGallery()
+
+    fun selectHermesPet(slug: String) = profileController.selectHermesPet(slug)
+
+    fun loadHermesPetThumbnail(pet: GatewayPetGalleryItem) =
+        profileController.loadHermesPetThumbnail(pet)
+
+    fun disableHermesPet() = profileController.disableHermesPet()
 
     fun refreshGatewayProfiles() = profileController.refreshGatewayProfiles()
 

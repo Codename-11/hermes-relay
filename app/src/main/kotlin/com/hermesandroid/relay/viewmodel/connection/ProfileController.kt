@@ -20,6 +20,9 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardProfileScope
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayPetGalleryItem
+import com.hermesandroid.relay.network.upstream.GatewayPetInfo
+import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -45,6 +48,7 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 internal fun isCurrentProfileAvatarRefresh(
@@ -147,6 +151,9 @@ class ProfileController(
     private val _gatewayProfiles = MutableStateFlow<List<Profile>>(emptyList())
     private val _gatewayRosterAuthoritative = MutableStateFlow(false)
     private val avatarRefreshGeneration = AtomicLong(0L)
+    private val petRefreshGeneration = AtomicLong(0L)
+    private val petGalleryGeneration = AtomicLong(0L)
+    private val petThumbnailRequests = ConcurrentHashMap.newKeySet<String>()
 
     val agentProfiles: StateFlow<List<Profile>> = combine(
         authManagerFlow.flatMapLatest { it.agentProfiles },
@@ -396,6 +403,36 @@ class ProfileController(
     private val _sharedAvatarState = MutableStateFlow(SharedAvatarState())
     val sharedAvatarState: StateFlow<SharedAvatarState> = _sharedAvatarState.asStateFlow()
 
+    data class HermesPetPresentation(
+        val connectionId: String,
+        val profileName: String?,
+        val slug: String,
+        val displayName: String,
+        val spritesheetPath: String,
+        val spritesheetRevision: String,
+        val frameWidth: Int,
+        val frameHeight: Int,
+        val framesPerState: Int,
+        val framesByState: Map<String, Int>,
+        val framesByRow: Map<String, Int>,
+        val loopMs: Int,
+        val scale: Float,
+        val stateRows: List<String>,
+    )
+
+    data class HermesPetState(
+        val supported: Boolean? = null,
+        val loading: Boolean = false,
+        val galleryLoading: Boolean = false,
+        val active: HermesPetPresentation? = null,
+        val gallery: List<GatewayPetGalleryItem> = emptyList(),
+        val thumbnails: Map<String, String> = emptyMap(),
+        val error: String? = null,
+    )
+
+    private val _hermesPetState = MutableStateFlow(HermesPetState())
+    val hermesPetState: StateFlow<HermesPetState> = _hermesPetState.asStateFlow()
+
     /**
      * Load the host's agent profiles from the dashboard `/api/profiles` into
      * [agentProfiles] (merged in the combine above). Lets the chat agent sheet
@@ -412,6 +449,7 @@ class ProfileController(
         }
         scope.launch {
             refreshGatewayProfiles(connectionId)
+            refreshHermesPet(connectionId)
             val client = dashboardClientFactory(connectionId, dashboardUrl)
             val defaultScope = client.getActiveProfileScope().getOrNull()
             if (activeConnectionId.value != connectionId) return@launch
@@ -436,7 +474,10 @@ class ProfileController(
 
     fun refreshGatewayProfiles() {
         val connectionId = activeConnectionId.value ?: return
-        scope.launch { refreshGatewayProfiles(connectionId) }
+        scope.launch {
+            refreshGatewayProfiles(connectionId)
+            refreshHermesPet(connectionId)
+        }
     }
 
     private suspend fun refreshGatewayProfiles(connectionId: String) {
@@ -485,6 +526,202 @@ class ProfileController(
         if (avatarRefreshGeneration.get() != generation) return
         profileIconStore.serverAvatarFlow(connectionId, profileName).first()?.let { runCatching { File(it).delete() } }
         profileIconStore.setServerAvatar(connectionId, profileName, null)
+    }
+
+    /** Refresh the active profile's upstream sprite contract without re-sending an unchanged sheet. */
+    fun refreshHermesPet() {
+        val connectionId = activeConnectionId.value ?: return
+        scope.launch { refreshHermesPet(connectionId) }
+    }
+
+    private suspend fun refreshHermesPet(connectionId: String) {
+        val gateway = gatewayClientProvider() ?: run {
+            _hermesPetState.value = HermesPetState(supported = null)
+            return
+        }
+        val profileName = resolveSessionProfileName()
+        val generation = petRefreshGeneration.incrementAndGet()
+        val previous = _hermesPetState.value.active?.takeIf {
+            it.connectionId == connectionId && it.profileName == profileName
+        }
+        _hermesPetState.value = _hermesPetState.value.copy(loading = true, error = null)
+        gateway.petInfo(profile = profileName, knownRevision = previous?.spritesheetRevision).fold(
+            onSuccess = { info ->
+                if (!isCurrentPetRefresh(connectionId, generation)) return@fold
+                if (!info.enabled) {
+                    _hermesPetState.value = HermesPetState(supported = true)
+                    return@fold
+                }
+                val presentation = cacheHermesPet(connectionId, profileName, info, previous)
+                _hermesPetState.value = if (presentation == null) {
+                    HermesPetState(
+                        supported = true,
+                        error = "Hermes returned an animated pet that this phone could not cache",
+                    )
+                } else {
+                    _hermesPetState.value.copy(
+                        supported = true,
+                        loading = false,
+                        active = presentation,
+                        error = null,
+                    )
+                }
+            },
+            onFailure = { failure ->
+                if (!isCurrentPetRefresh(connectionId, generation)) return@fold
+                _hermesPetState.value = if ((failure as? GatewayRpcException)?.code == -32601) {
+                    HermesPetState(supported = false)
+                } else {
+                    _hermesPetState.value.copy(
+                        loading = false,
+                        error = failure.message ?: "Could not load the Hermes animated pet",
+                    )
+                }
+            },
+        )
+    }
+
+    /** Load the profile-scoped upstream gallery only when the user opens the picker. */
+    fun loadHermesPetGallery() {
+        val connectionId = activeConnectionId.value ?: return
+        val gateway = gatewayClientProvider() ?: return
+        val profileName = resolveSessionProfileName()
+        val generation = petGalleryGeneration.incrementAndGet()
+        scope.launch {
+            _hermesPetState.value = _hermesPetState.value.copy(galleryLoading = true, error = null)
+            gateway.petGallery(profile = profileName).fold(
+                onSuccess = { gallery ->
+                    if (!isCurrentPetGallery(connectionId, profileName, generation)) return@fold
+                    _hermesPetState.value = _hermesPetState.value.copy(
+                        supported = true,
+                        galleryLoading = false,
+                        gallery = gallery.pets,
+                        error = null,
+                    )
+                },
+                onFailure = { failure ->
+                    if (!isCurrentPetGallery(connectionId, profileName, generation)) return@fold
+                    _hermesPetState.value = _hermesPetState.value.copy(
+                        galleryLoading = false,
+                        error = failure.message ?: "Could not load the Hermes pet gallery",
+                    )
+                },
+            )
+        }
+    }
+
+    fun selectHermesPet(slug: String) = mutateHermesPet { gateway, profile ->
+        gateway.selectPet(slug, profile)
+    }
+
+    /** Lazily fetch one upstream-cropped idle frame for a visible gallery row. */
+    fun loadHermesPetThumbnail(pet: GatewayPetGalleryItem) {
+        if (_hermesPetState.value.thumbnails.containsKey(pet.slug)) return
+        val connectionId = activeConnectionId.value ?: return
+        val gateway = gatewayClientProvider() ?: return
+        val profileName = resolveSessionProfileName()
+        val requestKey = "$connectionId\u0000${AgentDisplay.profileSessionKey(profileName)}\u0000${pet.slug}"
+        if (!petThumbnailRequests.add(requestKey)) return
+        scope.launch {
+            try {
+                gateway.petThumbnail(
+                    slug = pet.slug,
+                    spritesheetUrl = pet.spritesheetUrl,
+                    profile = profileName,
+                ).onSuccess { dataUri ->
+                    if (
+                        dataUri != null && activeConnectionId.value == connectionId &&
+                        resolveSessionProfileName() == profileName
+                    ) {
+                        _hermesPetState.value = _hermesPetState.value.copy(
+                            thumbnails = _hermesPetState.value.thumbnails + (pet.slug to dataUri),
+                        )
+                    }
+                }
+            } finally {
+                petThumbnailRequests.remove(requestKey)
+            }
+        }
+    }
+
+    fun disableHermesPet() = mutateHermesPet { gateway, profile ->
+        gateway.disablePet(profile)
+    }
+
+    private fun mutateHermesPet(
+        mutation: suspend (GatewayChatClient, String?) -> Result<Unit>,
+    ) {
+        val connectionId = activeConnectionId.value ?: return
+        val gateway = gatewayClientProvider() ?: return
+        val profileName = resolveSessionProfileName()
+        scope.launch {
+            _hermesPetState.value = _hermesPetState.value.copy(loading = true, error = null)
+            mutation(gateway, profileName).fold(
+                onSuccess = { refreshHermesPet(connectionId) },
+                onFailure = { failure ->
+                    _hermesPetState.value = _hermesPetState.value.copy(
+                        loading = false,
+                        error = failure.message ?: "Could not update the Hermes animated pet",
+                    )
+                },
+            )
+        }
+    }
+
+    private fun isCurrentPetRefresh(connectionId: String, generation: Long): Boolean =
+        activeConnectionId.value == connectionId && petRefreshGeneration.get() == generation
+
+    private fun isCurrentPetGallery(connectionId: String, profileName: String?, generation: Long): Boolean =
+        activeConnectionId.value == connectionId &&
+            resolveSessionProfileName() == profileName &&
+            petGalleryGeneration.get() == generation
+
+    private suspend fun cacheHermesPet(
+        connectionId: String,
+        profileName: String?,
+        info: GatewayPetInfo,
+        previous: HermesPetPresentation?,
+    ): HermesPetPresentation? = withContext(Dispatchers.IO) {
+        val slug = info.slug ?: return@withContext null
+        val revision = info.spritesheetRevision ?: return@withContext null
+        val path = if (info.spritesheetUnchanged && previous?.spritesheetRevision == revision) {
+            previous.spritesheetPath.takeIf { File(it).isFile }
+        } else {
+            val bytes = info.spritesheet ?: return@withContext null
+            val dir = File(context.filesDir, "hermes-profile-pets").apply { mkdirs() }
+            val key = MessageDigest.getInstance("SHA-256")
+                .digest("$connectionId\u0000${AgentDisplay.profileSessionKey(profileName)}".toByteArray())
+                .take(12)
+                .joinToString("") { "%02x".format(it) }
+            val extension = if (info.mime == "image/webp") "webp" else "png"
+            val target = File(dir, "$key.$extension")
+            val pending = File(dir, "$key.$extension.tmp")
+            runCatching {
+                pending.writeBytes(bytes)
+                if (!pending.renameTo(target)) {
+                    target.writeBytes(bytes)
+                    pending.delete()
+                }
+                target.absolutePath
+            }.getOrNull()
+        } ?: return@withContext null
+
+        HermesPetPresentation(
+            connectionId = connectionId,
+            profileName = profileName,
+            slug = slug,
+            displayName = info.displayName ?: slug,
+            spritesheetPath = path,
+            spritesheetRevision = revision,
+            frameWidth = info.frameWidth,
+            frameHeight = info.frameHeight,
+            framesPerState = info.framesPerState,
+            framesByState = info.framesByState,
+            framesByRow = info.framesByRow,
+            loopMs = info.loopMs,
+            scale = info.scale,
+            stateRows = info.stateRows,
+        )
     }
 
     /** Effective profile namespace for Gateway and profile-scoped session I/O. */
@@ -1013,6 +1250,9 @@ class ProfileController(
     private fun applyProfileSelection(normalizedProfile: Profile?) {
         _sharedAvatarState.value = SharedAvatarState()
         _hostIconImportState.value = HostIconImportState()
+        petRefreshGeneration.incrementAndGet()
+        petGalleryGeneration.incrementAndGet()
+        _hermesPetState.value = HermesPetState()
         _selectedProfile.value = normalizedProfile
         setLastSessionId(null)
         val connectionId = activeConnectionId.value ?: return
@@ -1021,6 +1261,7 @@ class ProfileController(
         scope.launch {
             profileSelectionStore.setSelectedProfile(connectionId, normalizedProfile?.name)
             rebuildChatApiClient()
+            refreshHermesPet(connectionId)
         }
         refreshLastSessionForProfile(connectionId, normalizedProfile?.name)
     }
@@ -1197,6 +1438,9 @@ class ProfileController(
         _gatewayProfiles.value = emptyList()
         _gatewayRosterAuthoritative.value = false
         avatarRefreshGeneration.incrementAndGet()
+        petRefreshGeneration.incrementAndGet()
+        petGalleryGeneration.incrementAndGet()
+        _hermesPetState.value = HermesPetState()
     }
 
     /** Clear just the in-memory selection + pending state (resetAppData). */
@@ -1206,6 +1450,9 @@ class ProfileController(
         _pendingSelectedProfileName.value = null
         _serverDefaultProfileScope.value = null
         _serverDefaultProfileSettled.value = false
+        petRefreshGeneration.incrementAndGet()
+        petGalleryGeneration.incrementAndGet()
+        _hermesPetState.value = HermesPetState()
     }
 
     fun clearSelectedProfile() {

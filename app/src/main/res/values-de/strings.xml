@@ -2600,7 +2600,17 @@
     <plurals name="tool_run_used_tools"><item quantity="one">%d Werkzeug verwendet</item><item quantity="other">%d Werkzeuge verwendet</item></plurals>
 
     <!-- AgentIconRow -->
-    <string name="agent_icon_title">Agentensymbol</string>
+    <string name="agent_icon_title">Agentendarstellung</string>
+    <string name="agent_icon_hermes_pet_title">Animiertes Hermes-Haustier</string>
+    <string name="agent_icon_hermes_pet_description">Profilbezogen und mit Upstream-Hermes-Oberflächen geteilt. Es reagiert auf Agentenaktivität und erscheint als Begleiter auf dem Smartphone.</string>
+    <string name="agent_icon_hermes_pet_active">Aktiv: %1$s</string>
+    <string name="agent_icon_hermes_pet_empty">Kein Upstream-Haustier ausgewählt</string>
+    <string name="agent_icon_hermes_pet_unsupported">Hermes aktualisieren, um animierte Haustiere hier zu verwalten</string>
+    <string name="agent_icon_hermes_pet_browse">Hermes-Haustiere durchsuchen</string>
+    <string name="agent_icon_hermes_pet_picker_title">Hermes-Haustier auswählen</string>
+    <string name="agent_icon_hermes_pet_selected">Ausgewählt</string>
+    <string name="agent_icon_hermes_pet_installed">Installiert</string>
+    <string name="agent_icon_hermes_pet_adopt">Aus Petdex übernehmen</string>
     <string name="agent_icon_shared_title">In Hermes geteilt</string>
     <string name="agent_icon_shared_active">Geteilter Avatar</string>
     <string name="agent_icon_shared_empty">Kein geteilter Avatar</string>
@@ -2613,7 +2623,7 @@
     <string name="agent_icon_choose_phone">Smartphone-Bild auswählen</string>
     <string name="agent_icon_change_phone">Smartphone-Bild ändern</string>
     <string name="agent_icon_remove_phone">Smartphone-Bild entfernen</string>
-    <string name="agent_icon_animation_note">Animierte GIF- und WebP-Bilder werden nur auf diesem Smartphone abgespielt. Geteilte Hermes-Avatare verwenden den Upstream-Vertrag für PNG, JPEG oder WebP.</string>
+    <string name="agent_icon_animation_note">Animierte GIF- und WebP-Überschreibungen werden nur auf diesem Smartphone abgespielt. Für eine profilbezogene Upstream-Animation oben ein animiertes Hermes-Haustier verwenden.</string>
     <string name="agent_icon_set_local">Geräte-Ersatzbild auswählen</string>
     <string name="agent_icon_change_local">Geräte-Ersatzbild ändern</string>
     <string name="agent_icon_clear_local">Geräte-Ersatzbild löschen</string>

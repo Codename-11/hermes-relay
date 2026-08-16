@@ -96,6 +96,7 @@ import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
+import com.hermesandroid.relay.ui.components.avatar.toAvatar
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.ui.components.avatar.resolveBackgroundAvatar
 import com.hermesandroid.relay.ui.components.FloatingPetCompanion
@@ -742,8 +743,12 @@ fun RelayApp() {
     ) {
         value = withContext(Dispatchers.IO) { PetLoader.loadPets(sphereContext) }
     }
-    val activeFloatingPet = remember(floatingPetId, availablePets) {
-        availablePets.firstOrNull { it.id == floatingPetId }
+    val hermesPetState by connectionViewModel.hermesPetState.collectAsState()
+    val upstreamProfilePet = remember(hermesPetState.active) {
+        hermesPetState.active?.toAvatar()
+    }
+    val activeFloatingPet = remember(floatingPetId, availablePets, upstreamProfilePet) {
+        availablePets.firstOrNull { it.id == floatingPetId } ?: upstreamProfilePet
     }
     var floatingPetMenuExpanded by remember(activeFloatingPet?.id) { mutableStateOf(false) }
     val activeBackgroundAvatar = remember(backgroundAvatarId, availablePets) {

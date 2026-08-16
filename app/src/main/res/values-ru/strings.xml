@@ -2574,7 +2574,17 @@
     <plurals name="tool_run_used_device"><item quantity="one">Выполнено %d действие устройства</item><item quantity="few">Выполнено %d действия устройства</item><item quantity="many">Выполнено %d действий устройства</item><item quantity="other">Выполнено %d действий устройства</item></plurals>
     <plurals name="tool_run_using_tools"><item quantity="one">Используется %d инструмент</item><item quantity="few">Используется %d инструмента</item><item quantity="many">Используется %d инструментов</item><item quantity="other">Используется %d инструментов</item></plurals>
     <plurals name="tool_run_used_tools"><item quantity="one">Использован %d инструмент</item><item quantity="few">Использовано %d инструмента</item><item quantity="many">Использовано %d инструментов</item><item quantity="other">Использовано %d инструментов</item></plurals>
-    <string name="agent_icon_title">Иконка агента</string>
+    <string name="agent_icon_title">Внешний вид агента</string>
+    <string name="agent_icon_hermes_pet_title">Анимированный питомец Hermes</string>
+    <string name="agent_icon_hermes_pet_description">Привязан к профилю и доступен в upstream-интерфейсах Hermes. Реагирует на действия агента и отображается как спутник на телефоне.</string>
+    <string name="agent_icon_hermes_pet_active">Активен: %1$s</string>
+    <string name="agent_icon_hermes_pet_empty">Upstream-питомец не выбран</string>
+    <string name="agent_icon_hermes_pet_unsupported">Обновите Hermes, чтобы управлять анимированными питомцами здесь</string>
+    <string name="agent_icon_hermes_pet_browse">Выбрать питомца Hermes</string>
+    <string name="agent_icon_hermes_pet_picker_title">Выберите питомца Hermes</string>
+    <string name="agent_icon_hermes_pet_selected">Выбран</string>
+    <string name="agent_icon_hermes_pet_installed">Установлен</string>
+    <string name="agent_icon_hermes_pet_adopt">Добавить из Petdex</string>
     <string name="agent_icon_shared_title">Общий в Hermes</string>
     <string name="agent_icon_shared_active">Общий аватар</string>
     <string name="agent_icon_shared_empty">Нет общего аватара</string>
@@ -2587,7 +2597,7 @@
     <string name="agent_icon_choose_phone">Выбрать изображение на телефоне</string>
     <string name="agent_icon_change_phone">Изменить изображение на телефоне</string>
     <string name="agent_icon_remove_phone">Удалить изображение с телефона</string>
-    <string name="agent_icon_animation_note">Анимированные GIF и WebP воспроизводятся только на этом телефоне. Общие аватары Hermes используют upstream-контракт PNG, JPEG или WebP.</string>
+    <string name="agent_icon_animation_note">Анимированные GIF- и WebP-переопределения работают только на этом телефоне. Для профильной upstream-анимации используйте анимированного питомца Hermes выше.</string>
     <string name="agent_icon_set_local">Выбрать резервное изображение на устройстве</string>
     <string name="agent_icon_change_local">Изменить резервное изображение на устройстве</string>
     <string name="agent_icon_clear_local">Удалить резервное изображение с устройства</string>

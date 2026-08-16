@@ -12,11 +12,15 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -24,6 +28,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +42,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.PetAvatar
+import com.hermesandroid.relay.ui.components.avatar.toAvatar
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import java.io.File
 
@@ -48,7 +57,12 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
     val useLocalOverride by connectionViewModel.useLocalProfileIconOverride.collectAsState()
     val hostImportState by connectionViewModel.hostProfileIconImportState.collectAsState()
     val sharedState by connectionViewModel.sharedProfileAvatarState.collectAsState()
+    val hermesPetState by connectionViewModel.hermesPetState.collectAsState()
+    val hermesPetAvatar = remember(hermesPetState.active) { hermesPetState.active?.toAvatar() }
     var confirmSharedRemoval by remember { mutableStateOf(false) }
+    var showHermesPetPicker by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { connectionViewModel.refreshHermesPet() }
 
     val sharedLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -63,6 +77,66 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
+
+        AvatarSourceCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                HermesPetPreview(hermesPetAvatar)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.agent_icon_hermes_pet_title),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = when {
+                            hermesPetState.supported == false -> stringResource(R.string.agent_icon_hermes_pet_unsupported)
+                            hermesPetState.active != null -> stringResource(
+                                R.string.agent_icon_hermes_pet_active,
+                                hermesPetState.active?.displayName.orEmpty(),
+                            )
+                            else -> stringResource(R.string.agent_icon_hermes_pet_empty)
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (hermesPetState.loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                } else if (hermesPetState.supported != false) {
+                    Switch(
+                        checked = hermesPetState.active != null,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showHermesPetPicker = true
+                                connectionViewModel.loadHermesPetGallery()
+                            } else {
+                                connectionViewModel.disableHermesPet()
+                            }
+                        },
+                    )
+                }
+            }
+            if (hermesPetState.supported != false) {
+                OutlinedButton(
+                    onClick = {
+                        showHermesPetPicker = true
+                        connectionViewModel.loadHermesPetGallery()
+                    },
+                    enabled = !hermesPetState.loading,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.agent_icon_hermes_pet_browse))
+                }
+            }
+            Text(
+                text = stringResource(R.string.agent_icon_hermes_pet_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         AvatarSourceCard {
             Row(
@@ -176,6 +250,7 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
 
         hostImportState.error?.let { AvatarError(it) }
         sharedState.error?.let { AvatarError(it) }
+        hermesPetState.error?.let { AvatarError(it) }
     }
 
     if (confirmSharedRemoval) {
@@ -198,6 +273,72 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { confirmSharedRemoval = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    if (showHermesPetPicker) {
+        AlertDialog(
+            onDismissRequest = { showHermesPetPicker = false },
+            title = { Text(stringResource(R.string.agent_icon_hermes_pet_picker_title)) },
+            text = {
+                if (hermesPetState.galleryLoading && hermesPetState.gallery.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { CircularProgressIndicator() }
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                        if (hermesPetState.gallery.isEmpty()) {
+                            item {
+                                Text(
+                                    text = stringResource(R.string.agent_icon_hermes_pet_empty),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(12.dp),
+                                )
+                            }
+                        }
+                        items(hermesPetState.gallery, key = { it.slug }) { pet ->
+                            LaunchedEffect(pet.slug, pet.spritesheetUrl) {
+                                connectionViewModel.loadHermesPetThumbnail(pet)
+                            }
+                            TextButton(
+                                onClick = {
+                                    showHermesPetPicker = false
+                                    connectionViewModel.selectHermesPet(pet.slug)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    PetGalleryPreview(hermesPetState.thumbnails[pet.slug])
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(pet.displayName, style = MaterialTheme.typography.titleSmall)
+                                        Text(
+                                            text = when {
+                                                pet.slug == hermesPetState.active?.slug -> stringResource(R.string.agent_icon_hermes_pet_selected)
+                                                pet.installed -> stringResource(R.string.agent_icon_hermes_pet_installed)
+                                                else -> stringResource(R.string.agent_icon_hermes_pet_adopt)
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showHermesPetPicker = false }) {
                     Text(stringResource(R.string.common_cancel))
                 }
             },
@@ -235,6 +376,39 @@ private fun AvatarPreview(path: String?) {
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun HermesPetPreview(pet: PetAvatar?) {
+    Box(
+        modifier = Modifier.size(56.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        pet?.Render(
+            state = AvatarRenderState(state = SphereState.Idle),
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@Composable
+private fun PetGalleryPreview(dataUri: String?) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (dataUri != null) {
+            AsyncImage(
+                model = dataUri,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().padding(3.dp),
             )
         }
     }

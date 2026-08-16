@@ -2611,7 +2611,17 @@
     <plurals name="tool_run_used_tools"><item quantity="other">%d 個のツールを使用</item></plurals>
 
     <!-- AgentIconRow -->
-    <string name="agent_icon_title">エージェントアイコン</string>
+    <string name="agent_icon_title">エージェントの外観</string>
+    <string name="agent_icon_hermes_pet_title">Hermes アニメーションペット</string>
+    <string name="agent_icon_hermes_pet_description">プロファイル単位で upstream Hermes の各画面と共有されます。エージェントの活動に反応し、スマートフォンのコンパニオンとして表示されます。</string>
+    <string name="agent_icon_hermes_pet_active">有効: %1$s</string>
+    <string name="agent_icon_hermes_pet_empty">upstream ペットが選択されていません</string>
+    <string name="agent_icon_hermes_pet_unsupported">ここでアニメーションペットを管理するには Hermes を更新してください</string>
+    <string name="agent_icon_hermes_pet_browse">Hermes ペットを探す</string>
+    <string name="agent_icon_hermes_pet_picker_title">Hermes ペットを選択</string>
+    <string name="agent_icon_hermes_pet_selected">選択中</string>
+    <string name="agent_icon_hermes_pet_installed">インストール済み</string>
+    <string name="agent_icon_hermes_pet_adopt">Petdex から迎える</string>
     <string name="agent_icon_shared_title">Hermes 全体で共有</string>
     <string name="agent_icon_shared_active">共有アバター</string>
     <string name="agent_icon_shared_empty">共有アバターなし</string>
@@ -2624,7 +2634,7 @@
     <string name="agent_icon_choose_phone">端末の画像を選択</string>
     <string name="agent_icon_change_phone">端末の画像を変更</string>
     <string name="agent_icon_remove_phone">端末の画像を削除</string>
-    <string name="agent_icon_animation_note">アニメーション GIF と WebP はこの端末でのみ再生されます。共有 Hermes アバターは upstream の PNG、JPEG、WebP 契約を使用します。</string>
+    <string name="agent_icon_animation_note">アニメーション GIF と WebP の上書きはこの端末でのみ再生されます。プロファイル単位の upstream アニメーションには、上の Hermes アニメーションペットを使用してください。</string>
     <string name="agent_icon_set_local">端末の予備画像を選択</string>
     <string name="agent_icon_change_local">端末の予備画像を変更</string>
     <string name="agent_icon_clear_local">端末の予備画像を消去</string>
