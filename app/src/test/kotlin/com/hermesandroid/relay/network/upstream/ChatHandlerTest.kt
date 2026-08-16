@@ -1038,6 +1038,37 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun hasSafeGatewayRewindAddress_allowsWhollyLegacyHistory() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "legacy-1", role = "user", content = JsonPrimitive("First")),
+                MessageItem(id = "legacy-2", role = "user", content = JsonPrimitive("Second")),
+            ),
+        )
+
+        assertTrue(handler.hasSafeGatewayRewindAddress("legacy-1"))
+    }
+
+    @Test
+    fun hasSafeGatewayRewindAddress_requiresSelectedIdInDurableHistory() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "legacy-1", role = "user", content = JsonPrimitive("First")),
+                MessageItem(
+                    id = "durable-2",
+                    rowId = 73L,
+                    role = "user",
+                    content = JsonPrimitive("Second"),
+                ),
+            ),
+        )
+
+        assertFalse(handler.hasSafeGatewayRewindAddress("legacy-1"))
+        assertTrue(handler.hasSafeGatewayRewindAddress("durable-2"))
+        assertFalse(handler.hasSafeGatewayRewindAddress("missing"))
+    }
+
+    @Test
     fun reconcileInterimMessage_collapsesProvisionalFinalBubble() {
         handler.addPlaceholderMessage(
             ChatMessage(

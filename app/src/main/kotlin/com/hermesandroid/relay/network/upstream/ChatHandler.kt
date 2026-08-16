@@ -531,6 +531,19 @@ class ChatHandler {
     }
 
     /**
+     * Whether [messageId] can be addressed without downgrading a durable
+     * transcript to an ordinal-only rewind. A wholly legacy transcript has no
+     * row ids and remains compatible with older Gateways. Once any visible
+     * user turn has a durable row id, the selected turn must have one too;
+     * otherwise the caller must refresh instead of guessing by position.
+     */
+    fun hasSafeGatewayRewindAddress(messageId: String): Boolean {
+        val userTurns = _messages.value.filter { it.isGatewayRewindUser() }
+        val target = userTurns.firstOrNull { it.matchesIdentity(messageId) } ?: return false
+        return target.rowId != null || userTurns.none { it.rowId != null }
+    }
+
+    /**
      * Rebind visible user turns after Gateway rewrites a truncated durable
      * prefix. The response is positional in the same user-ordinal space used
      * for edit/regenerate. Missing entries clear cached ids so a later rewind

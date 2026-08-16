@@ -2834,13 +2834,17 @@ user-visible reads page oldest-first and accept legacy envelopes with no
 pagination metadata. Reads stop at 50,000 messages or 32 MB of decoded response
 payload. Recovery explicitly requests one latest page only while the already
 known transcript fits that window; otherwise it uses complete paging to retain
-the positional user anchor. Cancellation propagates rather than becoming an
-empty transcript.
+the positional user anchor. Gateway row ids are retained as durable rewind
+addresses and rebound from the server after a rewrite. A transcript with no row
+ids keeps the older ordinal contract, while a mixed transcript refuses to edit
+a row whose durable address is missing. Cancellation propagates rather than
+becoming an empty transcript.
 
 **Consequences.** Long session history, sharing, retry, and edit/regenerate no
 longer operate on a silent latest-500 subset. Recovery stays cheap for ordinary
 sessions without allowing a bounded window to replace the complete visible
-history. Older Hermes releases remain compatible.
+history. Durable histories cannot silently downgrade to destructive ordinal
+guessing, while older Hermes releases remain compatible.
 
 ---
 

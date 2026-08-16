@@ -2409,6 +2409,25 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `row id only rewind still carries explicit truncation consent`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = "stored-1",
+            text = "edited message",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            truncateBeforeRowId = 73L,
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        val submit = harness.awaitRpc("prompt.submit")
+        assertFalse(submit.containsKey("truncate_before_user_ordinal"))
+        assertEquals(73L, (submit["truncate_before_row_id"] as? JsonPrimitive)?.longOrNull)
+        assertEquals(true, (submit["confirm_truncate"] as? JsonPrimitive)?.booleanOrNull)
+        assertFalse(submit.containsKey("confirm_empty_truncate"))
+    }
+
+    @Test
     fun `first user truncate carries empty-history confirmation`() {
         val r = Recorder()
         client.sendTurn(

@@ -4656,6 +4656,12 @@ class ChatViewModel : ViewModel() {
             .filterNot { it.id.startsWith("voice-intent-") || it.id.startsWith("steer-") }
             .indexOfFirst { it.id == userMessageId }
         if (ordinal < 0) return false
+        if (!handler.hasSafeGatewayRewindAddress(userMessageId)) {
+            handler.addSystemNotice(
+                "Refresh this conversation before editing so Hermes can verify the exact message.",
+            )
+            return false
+        }
         handler.truncateMessagesFrom(userMessageId)
         pendingGatewayTruncation = PendingGatewayTruncation(ordinal, target.rowId)
         sendMessageInternal(apiClient, handler, newText)

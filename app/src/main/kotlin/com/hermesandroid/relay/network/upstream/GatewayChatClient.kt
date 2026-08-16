@@ -598,9 +598,11 @@ class GatewayChatClient(
                     buildJsonObject {
                         put("session_id", liveSessionId ?: error("no live session"))
                         put("text", submittedText)
+                        if (truncateBeforeUserOrdinal != null || truncateBeforeRowId != null) {
+                            put("confirm_truncate", true)
+                        }
                         truncateBeforeUserOrdinal?.let { ordinal ->
                             put("truncate_before_user_ordinal", ordinal)
-                            put("confirm_truncate", true)
                             if (ordinal == 0) put("confirm_empty_truncate", true)
                         }
                         truncateBeforeRowId?.let { put("truncate_before_row_id", it) }

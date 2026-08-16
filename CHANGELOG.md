@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Android identifies proactive messages delivered after reconnect.** Relay marks messages flushed from its bounded offline queue, Thread bubbles label them as received “While away,” and Android shows one accessible localized summary for the completed batch.
 
+### Fixed
+
+- **Android edit-and-regenerate fails closed on incomplete durable history.** Mixed Gateway transcripts now require the selected message's durable row identity instead of attempting an ordinal-only rewind, while older Hermes histories with no row identities remain editable.
+
 ## [0.4.0-beta.4] - 2026-08-15
 
 ### Fixed
