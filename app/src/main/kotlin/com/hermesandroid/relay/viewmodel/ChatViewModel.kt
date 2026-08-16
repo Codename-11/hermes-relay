@@ -116,6 +116,8 @@ import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.util.isConnectivityError
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -132,6 +134,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -349,8 +352,8 @@ class ChatViewModel : ViewModel() {
     /**
      * Marker used in [Attachment.errorMessage] when a fetch is deferred to
      * manual download (cellular + auto-fetch-on-cellular off). The UI uses
-     * [Attachment.state] == [AttachmentState.LOADING] plus this exact string
-     * to render a "Tap to download" CTA instead of a spinner.
+     * [Attachment.state] == [AttachmentState.FAILED] plus this exact string
+     * to render an actionable retry card instead of an indefinite spinner.
      *
      * Encoded as a plain string rather than a new enum value to keep the data
      * class surface small — the UI already switches on (state, errorMessage)
@@ -364,6 +367,7 @@ class ChatViewModel : ViewModel() {
         // `send()` below for the construction site.
         // === END PHASE3-status ===
         const val MEDIA_TAP_TO_DOWNLOAD = "Tap to download"
+        private const val MEDIA_FETCH_TIMEOUT_MS = 120_000L
 
         /** Upper bound on the rolling tool-call history flow. */
         const val TOOL_CALL_HISTORY_LIMIT = 10
@@ -8084,9 +8088,9 @@ class ChatViewModel : ViewModel() {
      *  1. Insert a LOADING placeholder attachment on the matching assistant
      *     message so the user sees something immediately.
      *  2. Read current media settings (auto-fetch cap, cellular gate).
-     *  3. If on cellular AND auto-fetch-on-cellular is off → leave the
-     *     LOADING placeholder in place with [MEDIA_TAP_TO_DOWNLOAD] in
-     *     [Attachment.errorMessage]. The UI renders a "Tap to download" CTA.
+     *  3. If on cellular AND auto-fetch-on-cellular is off → settle the
+     *     placeholder as actionable FAILED with [MEDIA_TAP_TO_DOWNLOAD] in
+     *     [Attachment.errorMessage]. The UI renders a retry card.
      *  4. Otherwise → kick off a background fetch, enforce the max size cap,
      *     cache the bytes via [MediaCacheWriter], and update the attachment
      *     to LOADED (or FAILED on any error).
@@ -8130,7 +8134,7 @@ class ChatViewModel : ViewModel() {
             if (isOnCellular() && !settings.autoFetchOnCellular) {
                 updateAttachmentByToken(handler, messageId, token) { att ->
                     att.copy(
-                        state = AttachmentState.LOADING,
+                        state = AttachmentState.FAILED,
                         errorMessage = MEDIA_TAP_TO_DOWNLOAD
                     )
                 }
@@ -8163,16 +8167,28 @@ class ChatViewModel : ViewModel() {
         val msg = handler.messages.value.find { it.id == messageId } ?: return
         val att = msg.attachments.getOrNull(attachmentIndex) ?: return
         val fetchKey = att.relayToken ?: return
+        val expectedRole = msg.role
 
         // Flip back to a pure LOADING spinner (drop the CTA marker) so the
         // user gets immediate feedback that the download kicked off.
-        updateAttachmentByToken(handler, messageId, fetchKey) { existing ->
+        updateAttachmentByToken(
+            handler,
+            messageId,
+            fetchKey,
+            expectedRole = expectedRole,
+        ) { existing ->
             existing.copy(state = AttachmentState.LOADING, errorMessage = null)
         }
 
         viewModelScope.launch {
             val settings = repo.settings.first()
-            performFetchWith(handler, messageId, fetchKey, settings) {
+            performFetchWith(
+                handler,
+                messageId,
+                fetchKey,
+                settings,
+                expectedRole = expectedRole,
+            ) {
                 if (fetchKey.startsWith("/")) {
                     relay.fetchMediaByPath(fetchKey)
                 } else {
@@ -8295,9 +8311,14 @@ class ChatViewModel : ViewModel() {
             val settings = repo.settings.first()
 
             if (isOnCellular() && !settings.autoFetchOnCellular) {
-                updateAttachmentByToken(handler, messageId, originalPath) { att ->
+                updateAttachmentByToken(
+                    handler,
+                    messageId,
+                    originalPath,
+                    expectedRole = expectedRole,
+                ) { att ->
                     att.copy(
-                        state = AttachmentState.LOADING,
+                        state = AttachmentState.FAILED,
                         errorMessage = MEDIA_TAP_TO_DOWNLOAD
                     )
                 }
@@ -8350,7 +8371,15 @@ class ChatViewModel : ViewModel() {
         val cache = mediaCacheWriter ?: return
         val maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1) * 1024L * 1024L
 
-        val result = fetch()
+        val result = try {
+            withTimeout(MEDIA_FETCH_TIMEOUT_MS) { fetch() }
+        } catch (e: TimeoutCancellationException) {
+            Result.failure(java.io.IOException("Media download timed out"))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
         result.fold(
             onSuccess = { fetched ->
                 if (fetched.bytes.size > maxBytes) {
@@ -8627,6 +8656,7 @@ class ChatViewModel : ViewModel() {
      * Returns false on Wi-Fi, Ethernet, or when the state is unavailable.
      */
     private fun isOnCellular(): Boolean {
+        cellularNetworkOverride?.let { return it }
         val ctx = appContext ?: return false
         return try {
             val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -8640,6 +8670,9 @@ class ChatViewModel : ViewModel() {
             false
         }
     }
+
+    /** JVM-test seam for deterministic cellular-gate coverage. */
+    internal var cellularNetworkOverride: Boolean? = null
 
     override fun onCleared() {
         imageActivityJob?.cancel()
