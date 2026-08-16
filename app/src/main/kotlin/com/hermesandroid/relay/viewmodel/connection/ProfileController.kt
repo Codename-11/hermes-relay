@@ -8,6 +8,8 @@ import com.hermesandroid.relay.data.GatewayProfileManagementUnsupportedException
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileDisplayAliasStore
 import com.hermesandroid.relay.data.ProfileIconStore
+import com.hermesandroid.relay.data.prepareProfileAvatar
+import com.hermesandroid.relay.data.profileAvatarMime
 import com.hermesandroid.relay.data.preferredProfileIcon
 import com.hermesandroid.relay.data.ProfileLockStore
 import com.hermesandroid.relay.data.ProfilePresentation
@@ -939,15 +941,17 @@ class ProfileController(
         }
         scope.launch {
             _sharedAvatarState.value = SharedAvatarState(loading = true)
-            val bytes = readBoundedUri(uri, GatewayChatClient.PROFILE_AVATAR_MAX_BYTES)
+            val bytes = withContext(Dispatchers.IO) {
+                prepareProfileAvatar(context, uri, GatewayChatClient.PROFILE_AVATAR_MAX_BYTES)
+            }
             if (bytes == null) {
-                _sharedAvatarState.value = SharedAvatarState(error = "Choose a PNG, JPEG, or WebP under 2 MB")
+                _sharedAvatarState.value = SharedAvatarState(error = "That image could not be prepared for Hermes")
                 return@launch
             }
             gateway.setProfileAvatar(profileName, bytes).fold(
                 onSuccess = {
+                    cacheAcknowledgedSharedAvatar(connectionId, profileName, bytes)
                     _sharedAvatarState.value = SharedAvatarState()
-                    refreshGatewayProfiles(connectionId)
                 },
                 onFailure = { failure ->
                     _sharedAvatarState.value = SharedAvatarState(
@@ -989,8 +993,8 @@ class ProfileController(
             }
             gateway.setProfileAvatar(profileName, bytes).fold(
                 onSuccess = {
+                    cacheAcknowledgedSharedAvatar(connectionId, profileName, bytes)
                     _sharedAvatarState.value = SharedAvatarState()
-                    refreshGatewayProfiles(connectionId)
                 },
                 onFailure = { failure ->
                     _sharedAvatarState.value = SharedAvatarState(
@@ -1133,6 +1137,28 @@ class ProfileController(
             target.absolutePath
         } catch (_: Throwable) {
             null
+        }
+    }
+
+    private suspend fun cacheAcknowledgedSharedAvatar(
+        connectionId: String,
+        profileName: String,
+        bytes: ByteArray,
+    ) {
+        if (activeConnectionId.value != connectionId) return
+        val mime = profileAvatarMime(bytes) ?: return
+        val generation = avatarRefreshGeneration.incrementAndGet()
+        val path = copyServerAvatarBytes(connectionId, profileName, bytes, mime) ?: return
+        if (!isCurrentProfileAvatarRefresh(
+                connectionId,
+                activeConnectionId.value,
+                generation,
+                avatarRefreshGeneration.get(),
+            )
+        ) return
+        profileIconStore.setServerAvatar(connectionId, profileName, path)
+        _gatewayProfiles.value = _gatewayProfiles.value.map { profile ->
+            if (profile.name == profileName) profile.copy(hasAvatar = true) else profile
         }
     }
 

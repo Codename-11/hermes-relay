@@ -164,7 +164,7 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
-                        sharedLauncher.launch(arrayOf("image/png", "image/jpeg", "image/webp"))
+                        sharedLauncher.launch(arrayOf("image/*"))
                     },
                     enabled = !sharedState.loading,
                 ) {
@@ -182,6 +182,7 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
                     }
                 }
             }
+            sharedState.error?.let { AvatarError(it) }
         }
 
         AvatarSourceCard {
@@ -249,7 +250,6 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
         }
 
         hostImportState.error?.let { AvatarError(it) }
-        sharedState.error?.let { AvatarError(it) }
         hermesPetState.error?.let { AvatarError(it) }
     }
 
