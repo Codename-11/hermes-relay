@@ -657,6 +657,17 @@ class GatewayChatClientTest {
         turnIdleTimeoutMs = turnIdleTimeoutMs,
     )
 
+    private fun awaitCondition(
+        timeoutMs: Long = 5_000L,
+        condition: () -> Boolean,
+    ) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        while (!condition() && System.nanoTime() < deadline) {
+            Thread.sleep(10)
+        }
+        assertTrue("condition did not settle within ${timeoutMs}ms", condition())
+    }
+
     /**
      * Swap in a client with shortened timeout seams. Mints a FRESH scope:
      * shutdown() cancels the scope's Job, and the replacement client must
@@ -2890,6 +2901,40 @@ class GatewayChatClientTest {
         )
         assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
         assertEquals(listOf("recovered"), recorder.textDeltas.toList())
+    }
+
+    @Test
+    fun `profile mismatch clears buffered recovery events before retry`() = runBlocking {
+        client.sessionProfileProvider = { "mizu" }
+        harness.sessionProfileOverride = "default"
+        harness.recoveryRunning = true
+        harness.suppressAckMethods += "session.resume"
+        val rejectedRecorder = Recorder()
+
+        val rejected = async(Dispatchers.IO) {
+            client.recoverTurn("stored-42", null, rejectedRecorder.callbacks)
+        }
+        val ack = harness.awaitPendingAck()
+        ack.ws.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "stale mismatch delta") },
+                "live-resumed",
+            ),
+        )
+        harness.releaseAck(ack, harness.recoveryResult("live-resumed"))
+
+        assertTrue(rejected.await().exceptionOrNull() is GatewayPreflightException)
+        assertTrue(rejectedRecorder.textDeltas.isEmpty())
+
+        harness.suppressAckMethods -= "session.resume"
+        harness.sessionProfileOverride = "mizu"
+        val retryRecorder = Recorder()
+        val retry = client.recoverTurn("stored-42", null, retryRecorder.callbacks).getOrThrow()
+
+        assertTrue(retry.running)
+        assertTrue(retryRecorder.textDeltas.isEmpty())
+        retry.handle?.detach()
     }
 
     @Test

@@ -986,6 +986,7 @@ class GatewayChatClient(
             try {
                 requireConfirmedSessionProfile(response, requestedProfile)
             } catch (error: GatewayPreflightException) {
+                synchronized(recoveryEventLock) { recoveryEvents = null }
                 if (activeTurn === boundTurn) activeTurn = null
                 boundTurn?.discardDeferredEvents()
                 boundTurn?.detach()
