@@ -1731,12 +1731,16 @@ class GatewayChatClient(
      * which falls through to `command.dispatch` and reports a spurious
      * "not a quick/plugin/skill command" failure even when the switch applied.
      */
-    suspend fun setModel(value: String): Result<JsonObject> =
+    suspend fun setModel(
+        value: String,
+        confirmSelection: Boolean = false,
+    ): Result<JsonObject> =
         rpc(
             "config.set",
             buildJsonObject {
                 put("key", "model")
                 put("value", value)
+                if (confirmSelection) put("confirm_expensive_model", true)
                 liveSessionId?.let { put("session_id", it) }
             },
         )

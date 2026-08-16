@@ -3324,3 +3324,40 @@ known, and current hosts retain native image/PDF/file behavior. Older hosts
 still accept images through the established compatibility RPC; unsupported
 document capabilities produce an actionable retry/update failure instead of a
 text-only turn.
+
+---
+
+## ADR 60 — Android resource and model-risk warnings follow upstream truth
+
+**Status:** Accepted (2026-08-15).
+
+**Context.** Current Hermes Dashboard status reports coarse memory and disk
+pressure, including a suspected out-of-memory restart, while Gateway model
+selection can require confirmation for unusually expensive or data-training
+tiers. Android previously discarded the resource blocks and treated a
+`confirm_required` model response as if the switch had succeeded. Recreating
+either policy in the client would drift from Hermes and would misrepresent
+older hosts.
+
+**Decision.** Android parses only the optional public-safe `/api/status.memory`
+and `/api/status.disk` fields supplied by Hermes. It renders a persistent
+warning for the server classifications `elevated` or `critical`, and for the
+server's `last_boot_suspected_oom` signal. It does not calculate thresholds,
+sample the host, retain resource history, or emit telemetry. Missing, malformed,
+unknown, or unreachable status fails soft to no resource warning.
+
+Gateway model picks continue through the upstream profile/session-scoped
+`config.set {key:"model"}` round trip. When its response carries
+`confirm_required:true`, Android restores the prior picker state and displays
+the exact `confirm_message`. Continue resends the same model/provider request
+with `confirm_expensive_model:true`; Cancel performs no mutation. The pending
+confirmation is bound to the exact profile and session and is discarded after
+a context change. Older gateways that omit these fields keep the established
+single-request behavior. API-fallback aliases remain unchanged because their
+current upstream contract exposes no equivalent confirmation preflight.
+
+**Consequences.** Android warns before host pressure turns into lost chat or
+failed persistence and before a confirmed Gateway selection changes cost or
+data-use posture. Hermes remains the policy authority, Relay remains optional,
+and no private host details, provider credentials, or client-maintained risk
+table are introduced.

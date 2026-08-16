@@ -160,6 +160,17 @@ internal fun modelInventoryFailureNotice(
     null
 }
 
+data class ModelSelectionConfirmation(
+    val model: String,
+    val provider: String?,
+    val requestValue: String,
+    val message: String,
+    val profileContextKey: String?,
+    val sessionId: String?,
+    val previousModel: String?,
+    val previousProvider: String?,
+)
+
 /**
  * Absolute per-session context-window usage in tokens — the data behind the
  * desktop-style "used / max" context bar. [fraction] is the fill 0..1.
@@ -632,11 +643,16 @@ class ChatViewModel : ViewModel() {
      */
     private val _modelProviders = MutableStateFlow<List<GatewayModelProvider>>(emptyList())
     val modelProviders: StateFlow<List<GatewayModelProvider>> = _modelProviders.asStateFlow()
+    private val _modelSelectionConfirmation =
+        MutableStateFlow<ModelSelectionConfirmation?>(null)
+    val modelSelectionConfirmation: StateFlow<ModelSelectionConfirmation?> =
+        _modelSelectionConfirmation.asStateFlow()
     private val relayReasoningCapabilities =
         MutableStateFlow<Map<ReasoningEffortIdentity, GatewayModelCapabilities>>(emptyMap())
     private val _reasoningCapabilityRevision = MutableStateFlow(0L)
     val reasoningCapabilityRevision: StateFlow<Long> = _reasoningCapabilityRevision.asStateFlow()
     private val relayCapabilityGeneration = AtomicLong(0L)
+    private val modelSelectionRevision = AtomicLong(0L)
     private val modelOptionsGeneration = java.util.concurrent.atomic.AtomicLong(0L)
     private val modelOptionsByProfile = mutableMapOf<String, GatewayModelOptions>()
 
@@ -650,6 +666,8 @@ class ChatViewModel : ViewModel() {
         activeProfileContextKey ?: "__unbound__"
 
     private fun activateModelOptionsProfile(profileKey: String) {
+        modelSelectionRevision.incrementAndGet()
+        _modelSelectionConfirmation.value = null
         modelOptionsGeneration.incrementAndGet()
         val cached = modelOptionsByProfile[profileKey]
         _modelProviders.value = cached?.providers.orEmpty()
@@ -1133,6 +1151,10 @@ class ChatViewModel : ViewModel() {
      * default.
      */
     fun selectModel(model: String?, provider: String? = null) {
+        val selectionRevision = modelSelectionRevision.incrementAndGet()
+        _modelSelectionConfirmation.value = null
+        val previousModel = _selectedModelOverride.value
+        val previousProvider = _selectedProviderOverride.value
         if (model.isNullOrBlank() && streamingEndpoint != "gateway") {
             val sessionId = chatHandler?.currentSessionId?.value
             val locked = sessionId?.let(apiSessionModelLocks::get)
@@ -1228,11 +1250,39 @@ class ChatViewModel : ViewModel() {
                     refreshActiveAgentName()
                     return@launch
                 }
+                val requestProfileContextKey = activeProfileContextKey
+                val requestSessionId = handler.currentSessionId.value
                 // Dispatch via config.set (the `_apply_model_switch` path) — NOT
                 // the `/model` slash path, whose command.dispatch fallback
                 // reports a spurious "not a quick/plugin/skill command" failure.
                 gateway.setModel(value).fold(
                     onSuccess = { result ->
+                        if (
+                            selectionRevision != modelSelectionRevision.get() ||
+                            requestProfileContextKey != activeProfileContextKey ||
+                            requestSessionId != handler.currentSessionId.value
+                        ) {
+                            return@fold
+                        }
+                        if (result.booleanValue("confirm_required") == true) {
+                            _selectedModelOverride.value = previousModel
+                            _selectedProviderOverride.value = previousProvider
+                            transitionReasoningEffortIdentity()
+                            _modelSelectionConfirmation.value = ModelSelectionConfirmation(
+                                model = sendModel,
+                                provider = provider?.takeIf(String::isNotBlank),
+                                requestValue = value,
+                                message = result.stringValue("confirm_message")
+                                    ?: result.stringValue("warning")
+                                    ?: "This model requires confirmation.",
+                                profileContextKey = requestProfileContextKey,
+                                sessionId = requestSessionId,
+                                previousModel = previousModel,
+                                previousProvider = previousProvider,
+                            )
+                            refreshActiveAgentName()
+                            return@fold
+                        }
                         val resolved = result.stringValue("value") ?: model
                         val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
                         _gatewayCurrentModel.value = resolved
@@ -1253,6 +1303,11 @@ class ChatViewModel : ViewModel() {
                         }
                     },
                     onFailure = { e ->
+                        if (selectionRevision != modelSelectionRevision.get()) return@fold
+                        _selectedModelOverride.value = previousModel
+                        _selectedProviderOverride.value = previousProvider
+                        transitionReasoningEffortIdentity()
+                        refreshActiveAgentName()
                         _transientNotice.tryEmit("Couldn't switch model: ${e.message ?: "unknown error"}")
                     },
                 )
@@ -1261,8 +1316,76 @@ class ChatViewModel : ViewModel() {
         refreshActiveAgentName()
     }
 
+    fun dismissModelSelectionConfirmation() {
+        modelSelectionRevision.incrementAndGet()
+        _modelSelectionConfirmation.value = null
+    }
+
+    fun confirmModelSelection() {
+        val pending = _modelSelectionConfirmation.value ?: return
+        val gateway = gatewayClient
+        val handler = chatHandler
+        if (
+            gateway == null || handler == null || streamingEndpoint != "gateway" ||
+            pending.profileContextKey != activeProfileContextKey ||
+            pending.sessionId != handler.currentSessionId.value
+        ) {
+            _modelSelectionConfirmation.value = null
+            _transientNotice.tryEmit("The chat changed before the model was confirmed. Choose it again.")
+            return
+        }
+        val selectionRevision = modelSelectionRevision.incrementAndGet()
+        _modelSelectionConfirmation.value = null
+        _selectedModelOverride.value = pending.model
+        _selectedProviderOverride.value = pending.provider
+        transitionReasoningEffortIdentity()
+        refreshActiveAgentName()
+        viewModelScope.launch {
+            gateway.setModel(pending.requestValue, confirmSelection = true).fold(
+                onSuccess = { result ->
+                    if (selectionRevision != modelSelectionRevision.get()) return@fold
+                    if (result.booleanValue("confirm_required") == true) {
+                        _selectedModelOverride.value = pending.previousModel
+                        _selectedProviderOverride.value = pending.previousProvider
+                        transitionReasoningEffortIdentity()
+                        _transientNotice.tryEmit(
+                            result.stringValue("confirm_message")
+                                ?: "Hermes did not accept the model confirmation.",
+                        )
+                        refreshActiveAgentName()
+                        return@fold
+                    }
+                    _gatewayCurrentModel.value = result.stringValue("value") ?: pending.model
+                    _gatewayCurrentProvider.value = pending.provider.orEmpty()
+                    result.stringValue("warning")
+                        ?.takeIf(String::isNotBlank)
+                        ?.let(_transientNotice::tryEmit)
+                    if (!isDeferredConfigResult(result)) {
+                        gateway.modelOptions().onSuccess {
+                            _modelProviders.value = it.providers
+                            _gatewayCurrentModel.value = it.currentModel
+                            _gatewayCurrentProvider.value = it.currentProvider
+                        }
+                    }
+                },
+                onFailure = { error ->
+                    if (selectionRevision != modelSelectionRevision.get()) return@fold
+                    _selectedModelOverride.value = pending.previousModel
+                    _selectedProviderOverride.value = pending.previousProvider
+                    transitionReasoningEffortIdentity()
+                    refreshActiveAgentName()
+                    _transientNotice.tryEmit(
+                        "Couldn't switch model: ${error.message ?: "unknown error"}",
+                    )
+                },
+            )
+        }
+    }
+
     /** Select a `/v1/models` request id verbatim, including route aliases. */
     fun selectApiModel(modelId: String) {
+        modelSelectionRevision.incrementAndGet()
+        _modelSelectionConfirmation.value = null
         _selectedModelOverride.value = modelId.trim().takeIf { it.isNotEmpty() }
         _selectedProviderOverride.value = null
         transitionReasoningEffortIdentity()

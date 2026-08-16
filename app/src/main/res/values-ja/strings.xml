@@ -4112,4 +4112,10 @@
     <plurals name="proactive_messages_arrived_while_away">
         <item quantity="other">離れている間に%1$d件のメッセージが届きました</item>
     </plurals>
+    <string name="chat_model_confirmation_title">モデル選択を確認</string>
+    <string name="host_resource_recent_oom">Hermes は最近、メモリ不足が原因と思われる再起動を行いました。</string>
+    <string name="host_resource_memory_critical">ホストのメモリが極端に不足しています。進行中のチャットが停止する可能性があります。</string>
+    <string name="host_resource_memory_elevated">ホストのメモリが不足しています。</string>
+    <string name="host_resource_disk_critical">ホストのストレージが極端に不足しています。メッセージや設定を保存できない可能性があります。</string>
+    <string name="host_resource_disk_elevated">ホストのストレージが不足しています。</string>
 </resources>

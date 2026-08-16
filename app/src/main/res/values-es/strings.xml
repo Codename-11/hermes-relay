@@ -3799,4 +3799,10 @@
         <item quantity="one">Ha llegado %1$d mensaje mientras no estabas</item>
         <item quantity="other">Han llegado %1$d mensajes mientras no estabas</item>
     </plurals>
+    <string name="chat_model_confirmation_title">Confirmar selección de modelo</string>
+    <string name="host_resource_recent_oom">Hermes se reinició recientemente, probablemente por falta de memoria.</string>
+    <string name="host_resource_memory_critical">La memoria del servidor está casi agotada; los chats activos podrían detenerse.</string>
+    <string name="host_resource_memory_elevated">La memoria del servidor se está agotando.</string>
+    <string name="host_resource_disk_critical">El almacenamiento del servidor está casi agotado; puede que los mensajes y ajustes no se guarden.</string>
+    <string name="host_resource_disk_elevated">El almacenamiento del servidor se está agotando.</string>
 </resources>

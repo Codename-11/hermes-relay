@@ -3954,4 +3954,10 @@
         <item quantity="one">%1$d mensagem chegou enquanto você estava ausente</item>
         <item quantity="other">%1$d mensagens chegaram enquanto você estava ausente</item>
     </plurals>
+    <string name="chat_model_confirmation_title">Confirmar seleção do modelo</string>
+    <string name="host_resource_recent_oom">O Hermes reiniciou recentemente, provavelmente por falta de memória.</string>
+    <string name="host_resource_memory_critical">A memória do servidor está criticamente baixa; chats ativos podem parar.</string>
+    <string name="host_resource_memory_elevated">A memória do servidor está baixa.</string>
+    <string name="host_resource_disk_critical">O armazenamento do servidor está criticamente baixo; mensagens e configurações podem não ser salvas.</string>
+    <string name="host_resource_disk_elevated">O armazenamento do servidor está baixo.</string>
 </resources>

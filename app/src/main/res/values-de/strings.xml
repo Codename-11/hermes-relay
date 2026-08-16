@@ -4114,4 +4114,10 @@
         <item quantity="one">%1$d Nachricht ist eingegangen, während du weg warst</item>
         <item quantity="other">%1$d Nachrichten sind eingegangen, während du weg warst</item>
     </plurals>
+    <string name="chat_model_confirmation_title">Modellauswahl bestätigen</string>
+    <string name="host_resource_recent_oom">Hermes wurde kürzlich wahrscheinlich wegen Speichermangels neu gestartet.</string>
+    <string name="host_resource_memory_critical">Der Arbeitsspeicher des Hosts ist äußerst knapp; aktive Chats können beendet werden.</string>
+    <string name="host_resource_memory_elevated">Der Arbeitsspeicher des Hosts wird knapp.</string>
+    <string name="host_resource_disk_critical">Der Speicherplatz des Hosts ist äußerst knapp; Nachrichten und Einstellungen können möglicherweise nicht gespeichert werden.</string>
+    <string name="host_resource_disk_elevated">Der Speicherplatz des Hosts wird knapp.</string>
 </resources>

@@ -116,6 +116,7 @@ import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateAvailableBanner
+import com.hermesandroid.relay.ui.components.HostResourcePressureBanner
 import com.hermesandroid.relay.ui.components.rememberUpdateAvailability
 import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
@@ -1394,6 +1395,22 @@ fun RelayApp() {
         // user always knows the chat is sample data with no live server, and
         // can exit into the real Connect flow with one tap.
         val showDemoBanner = isDemoMode && !voiceUiState.voiceMode
+        val hostResourcePressure by connectionViewModel.hostResourcePressure.collectAsState()
+        val showHostResourcePressure = hostResourcePressure.needsAttention &&
+            !isDemoMode && !voiceUiState.voiceMode && !showStartupSphere
+        val hostResourcePressureText = buildList {
+            if (hostResourcePressure.lastBootSuspectedOom) {
+                add(stringResource(R.string.host_resource_recent_oom))
+            }
+            when (hostResourcePressure.memoryPressure) {
+                "critical" -> add(stringResource(R.string.host_resource_memory_critical))
+                "elevated" -> add(stringResource(R.string.host_resource_memory_elevated))
+            }
+            when (hostResourcePressure.diskPressure) {
+                "critical" -> add(stringResource(R.string.host_resource_disk_critical))
+                "elevated" -> add(stringResource(R.string.host_resource_disk_elevated))
+            }
+        }.distinct().joinToString(" ")
         // Transient info/status banner (UiMessageBus) — thin, takes its own
         // space, auto-dismisses. Folded into the inset accounting below so a
         // child TopAppBar doesn't double-pad when this banner owns the top edge.
@@ -1500,6 +1517,18 @@ fun RelayApp() {
             DemoModeBanner(onConnect = exitDemoToConnect)
         }
 
+        AnimatedVisibility(
+            visible = showHostResourcePressure,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+        ) {
+            HostResourcePressureBanner(
+                text = hostResourcePressureText,
+                critical = hostResourcePressure.critical,
+                includeStatusBarPadding = !showUnattendedBanner && !showDemoBanner,
+            )
+        }
+
         // Connection status intentionally has NO top-of-screen surface (no
         // banner, no strip, no float). Chat/agent status rides the chat header
         // subtitle; the relay socket rides the bottom RelayStatusStrip cue. See
@@ -1510,7 +1539,7 @@ fun RelayApp() {
         // that banner already padded the top — avoid double padding).
         MessageBannerHost(
             includeStatusBarPadding =
-                !showUnattendedBanner && !showDemoBanner,
+                !showUnattendedBanner && !showDemoBanner && !showHostResourcePressure,
         )
 
         // The update banner AND the connection-status indicator now render as
@@ -1550,7 +1579,7 @@ fun RelayApp() {
                     // The connection-status toast is now a floating overlay and
                     // doesn't occupy space above the Scaffold, so it no longer
                     // participates in the top-inset accounting.
-                    if (showUnattendedBanner || showDemoBanner || connectionChipVisible ||
+                    if (showUnattendedBanner || showDemoBanner || showHostResourcePressure || connectionChipVisible ||
                         showMessageBanner
                     ) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)

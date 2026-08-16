@@ -2492,6 +2492,25 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `confirmed model update echoes upstream confirmation field`() {
+        val r = Recorder()
+        client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        val result = runBlocking {
+            client.setModel("grok-4.3 --provider xai", confirmSelection = true)
+        }
+
+        assertTrue(result.isSuccess)
+        val rpc = harness.awaitRpc("config.set")
+        assertEquals("model", (rpc["key"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(true, (rpc["confirm_expensive_model"] as? JsonPrimitive)?.booleanOrNull)
+        assertEquals("live-resumed", (rpc["session_id"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
     fun `fast update targets live session without global scope`() {
         val r = Recorder()
         client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }

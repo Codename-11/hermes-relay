@@ -4039,4 +4039,10 @@
     <plurals name="proactive_messages_arrived_while_away">
         <item quantity="other">离开期间收到了 %1$d 条消息</item>
     </plurals>
+    <string name="chat_model_confirmation_title">确认模型选择</string>
+    <string name="host_resource_recent_oom">Hermes 最近可能因内存不足而重启。</string>
+    <string name="host_resource_memory_critical">主机内存严重不足，进行中的聊天可能会停止。</string>
+    <string name="host_resource_memory_elevated">主机内存不足。</string>
+    <string name="host_resource_disk_critical">主机存储空间严重不足，消息和设置可能无法保存。</string>
+    <string name="host_resource_disk_elevated">主机存储空间不足。</string>
 </resources>

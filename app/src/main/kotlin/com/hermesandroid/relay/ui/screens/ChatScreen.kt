@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -849,6 +850,7 @@ fun ChatScreen(
     val apiModelOptions by chatViewModel.apiModelOptions.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
+    val modelSelectionConfirmation by chatViewModel.modelSelectionConfirmation.collectAsState()
     val reasoningCapabilityRevision by chatViewModel.reasoningCapabilityRevision.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
     val selectedProviderOverride by chatViewModel.selectedProviderOverride.collectAsState()
@@ -4127,6 +4129,23 @@ fun ChatScreen(
                         }
                     },
                     onDismiss = { showModelSheet = false },
+                )
+            }
+            modelSelectionConfirmation?.let { confirmation ->
+                AlertDialog(
+                    onDismissRequest = chatViewModel::dismissModelSelectionConfirmation,
+                    title = { Text(stringResource(R.string.chat_model_confirmation_title)) },
+                    text = { Text(confirmation.message) },
+                    confirmButton = {
+                        TextButton(onClick = chatViewModel::confirmModelSelection) {
+                            Text(stringResource(R.string.cw_continue))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = chatViewModel::dismissModelSelectionConfirmation) {
+                            Text(stringResource(R.string.common_cancel))
+                        }
+                    },
                 )
             }
             if (showEffortSheet) {
