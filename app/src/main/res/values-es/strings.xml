@@ -3784,4 +3784,8 @@
     <string name="secure_link_fallback_ready">Si Secure Link no está disponible, Hermes puede probar las rutas alternativas aprobadas que aparecen abajo.</string>
     <string name="secure_link_no_fallback">No se incluye ninguna ruta alternativa. Los servicios protegidos permanecerán sin conexión si Secure Link no está disponible.</string>
     <string name="secure_link_auth_note">La protección del transporte no omite la autenticación. El emparejamiento de Relay, las credenciales de API y el inicio de sesión del Panel se siguen aplicando por servicio.</string>
+    <plurals name="proactive_messages_arrived_while_away">
+        <item quantity="one">Ha llegado %1$d mensaje mientras no estabas</item>
+        <item quantity="other">Han llegado %1$d mensajes mientras no estabas</item>
+    </plurals>
 </resources>

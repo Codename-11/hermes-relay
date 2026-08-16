@@ -2948,8 +2948,11 @@ class ChatViewModel : ViewModel() {
      * the routing decision lives in
      * [com.hermesandroid.relay.network.relay.ProactiveMessageHandler].
      */
-    fun injectProactiveMessage(text: String) {
-        chatHandler?.addProactiveMessage(text)
+    fun injectProactiveMessage(text: String): Boolean {
+        val handler = chatHandler ?: return false
+        if (handler.currentSessionId.value == null) return false
+        handler.addProactiveMessage(text)
+        return true
     }
 
     /**
@@ -2981,7 +2984,9 @@ class ChatViewModel : ViewModel() {
         val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
         pendingThread?.let { pending ->
             if (msgChatId == null || msgChatId == pending.chatId) {
-                handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
+                handler.addAgentThreadMessage(
+                    msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
+                )
                 return true
             }
         }
@@ -2991,7 +2996,9 @@ class ChatViewModel : ViewModel() {
         // set, so the very first reply doesn't fall through to a notification.
         creatingThread?.let { creating ->
             if (msgChatId == null || msgChatId == creating.chatId) {
-                handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
+                handler.addAgentThreadMessage(
+                    msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
+                )
                 return true
             }
         }
@@ -3005,7 +3012,9 @@ class ChatViewModel : ViewModel() {
         val belongs = knownChatId == null || msgChatId == null || knownChatId == msgChatId
         if (!belongs) return false
         if (msgChatId != null) threadChatIds[activeId] = msgChatId
-        handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
+        handler.addAgentThreadMessage(
+            msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
+        )
         return true
     }
 
@@ -3794,7 +3803,9 @@ class ChatViewModel : ViewModel() {
         selectBackgroundProcessSession(null)
         handler.clearMessages()
         ordered.forEach { entry ->
-            handler.addAgentThreadMessage(entry.text, entry.id, entry.title)
+            handler.addAgentThreadMessage(
+                entry.text, entry.id, entry.title, entry.arrivedWhileAway,
+            )
         }
         _contextUsage.value = null
         _contextWindow.value = null

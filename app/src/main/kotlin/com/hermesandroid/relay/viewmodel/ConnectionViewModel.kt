@@ -2385,6 +2385,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         receivedAt = msg.sentAt ?: System.currentTimeMillis(),
                         chatId = msg.chatId,
                         connectionId = connectionStore.activeConnectionId.value,
+                        arrivedWhileAway = msg.arrivedWhileAway,
                     ),
                 )
             }

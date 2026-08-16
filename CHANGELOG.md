@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android identifies proactive messages delivered after reconnect.** Relay marks messages flushed from its bounded offline queue, Thread bubbles label them as received “While away,” and Android shows one accessible localized summary for the completed batch.
+
 ## [0.4.0-beta.4] - 2026-08-15
 
 ### Fixed
