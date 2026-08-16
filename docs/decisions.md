@@ -3380,7 +3380,7 @@ table are introduced.
 
 ---
 
-## ADR 61 — Android uses Hermes-owned profile rosters, creation, and static avatars
+## ADR 61 — Android uses Hermes-owned profiles, static avatars, and animated pets
 
 **Status:** Accepted (2026-08-15).
 
@@ -3399,12 +3399,17 @@ base64, declared MIME and size, PNG/JPEG/WebP magic, and the 2,000,000-byte cap.
 They publish only while both connection identity and refresh generation still
 match, so a late positive fetch cannot beat a newer `has_avatar:false` list.
 
-Hermes-owned static avatars win at render time, but their cache and the
-device-local `ProfileIconStore` use separate keys. Phone selection and Relay
-host import remain fallbacks. Upload and shared clear are explicit labeled
-actions and never erase the other side. Pet archives, image base64, and Sphere
-skins are forbidden from `ui_meta`; outbound metadata is bounded to small
-preferences/references.
+Hermes-owned static avatars win at render time by default, but their cache and
+the device-local `ProfileIconStore` use separate keys. A persisted, explicit
+per-connection/profile phone override can make the local image win without
+mutating Hermes. Phone selection and Relay host import populate that local
+side; the shared picker and shared clear act directly on Hermes and never erase
+the phone image. Animated GIF/WebP profile-icon decoding remains a local
+override. Upstream animated mascots are instead consumed through profile-scoped
+`pet.info`, `pet.gallery`, `pet.select`, and `pet.disable`; Android honors the
+returned sprite geometry and revision cache contract. Pet archives, image
+base64, and Sphere skins are forbidden from `ui_meta`; outbound
+metadata is bounded to small preferences/references.
 
 Profile creation serializes one reviewed auth choice: shared sign-in sends
 `mirror_credentials:true, share_auth:true`; a copied snapshot sends true/false;
@@ -3417,5 +3422,5 @@ an explicit isolated request. Profile deletion remains authenticated Dashboard
 **Consequences.** Static identity follows profiles across clients without
 silently destroying existing phone or Relay-host choices. Older Gateways keep
 their prior behavior, credentials never return to or enter Android logs, and
-animated presentation remains local. Physical two-client/avatar and
+phone-local pet packs remain local. Physical two-client/avatar/pet and
 shared-versus-isolated first-turn/voice certification remains required.

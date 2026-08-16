@@ -2487,7 +2487,30 @@
     <plurals name="tool_run_using_tools"><item quantity="one">Usando %d ferramenta</item><item quantity="many">Usando %d ferramentas</item><item quantity="other">Usando %d ferramentas</item></plurals>
     <plurals name="tool_run_used_tools"><item quantity="one">Usou %d ferramenta</item><item quantity="many">Usou %d ferramentas</item><item quantity="other">Usou %d ferramentas</item></plurals>
     <!-- AgentIconRow -->
-    <string name="agent_icon_title">Ícone do agente</string>
+    <string name="agent_icon_title">Visual do agente</string>
+    <string name="agent_icon_hermes_pet_title">Mascote animado do Hermes</string>
+    <string name="agent_icon_hermes_pet_description">Vinculado ao perfil e compartilhado com as interfaces upstream do Hermes. Reage à atividade do agente e aparece como companheiro no celular.</string>
+    <string name="agent_icon_hermes_pet_active">Ativo: %1$s</string>
+    <string name="agent_icon_hermes_pet_empty">Nenhum mascote upstream selecionado</string>
+    <string name="agent_icon_hermes_pet_unsupported">Atualize o Hermes para gerenciar mascotes animados aqui</string>
+    <string name="agent_icon_hermes_pet_browse">Explorar mascotes do Hermes</string>
+    <string name="agent_icon_hermes_pet_picker_title">Escolha um mascote do Hermes</string>
+    <string name="agent_icon_hermes_pet_selected">Selecionado</string>
+    <string name="agent_icon_hermes_pet_installed">Instalado</string>
+    <string name="agent_icon_hermes_pet_adopt">Adotar do Petdex</string>
+    <string name="agent_icon_shared_title">Compartilhado no Hermes</string>
+    <string name="agent_icon_shared_active">Avatar compartilhado</string>
+    <string name="agent_icon_shared_empty">Nenhum avatar compartilhado</string>
+    <string name="agent_icon_change_shared">Alterar avatar compartilhado</string>
+    <string name="agent_icon_remove_shared">Remover</string>
+    <string name="agent_icon_remove_shared_title">Remover avatar compartilhado?</string>
+    <string name="agent_icon_remove_shared_message">Isso remove o avatar do Hermes e de outros clientes. A imagem deste celular não será afetada.</string>
+    <string name="agent_icon_phone_title">Somente neste celular</string>
+    <string name="agent_icon_phone_description">Substitua o avatar compartilhado somente neste celular sem alterar o Hermes.</string>
+    <string name="agent_icon_choose_phone">Escolher imagem do celular</string>
+    <string name="agent_icon_change_phone">Alterar imagem do celular</string>
+    <string name="agent_icon_remove_phone">Remover imagem do celular</string>
+    <string name="agent_icon_animation_note">Substituições animadas em GIF e WebP são reproduzidas somente neste celular. Use o mascote animado do Hermes acima para uma animação upstream vinculada ao perfil.</string>
     <string name="agent_icon_set_local">Escolher imagem reserva do dispositivo</string>
     <string name="agent_icon_change_local">Alterar imagem reserva do dispositivo</string>
     <string name="agent_icon_clear_local">Limpar imagem reserva do dispositivo</string>

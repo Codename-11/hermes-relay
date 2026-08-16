@@ -2597,7 +2597,30 @@
     <plurals name="tool_run_used_tools"><item quantity="other">已使用 %d 个工具</item></plurals>
 
     <!-- AgentIconRow -->
-    <string name="agent_icon_title">代理图标</string>
+    <string name="agent_icon_title">代理外观</string>
+    <string name="agent_icon_hermes_pet_title">Hermes 动画宠物</string>
+    <string name="agent_icon_hermes_pet_description">按配置文件保存，并与上游 Hermes 界面共享。它会响应代理活动，并作为手机伴侣显示。</string>
+    <string name="agent_icon_hermes_pet_active">已启用：%1$s</string>
+    <string name="agent_icon_hermes_pet_empty">未选择上游宠物</string>
+    <string name="agent_icon_hermes_pet_unsupported">请更新 Hermes 以在此管理动画宠物</string>
+    <string name="agent_icon_hermes_pet_browse">浏览 Hermes 宠物</string>
+    <string name="agent_icon_hermes_pet_picker_title">选择 Hermes 宠物</string>
+    <string name="agent_icon_hermes_pet_selected">已选择</string>
+    <string name="agent_icon_hermes_pet_installed">已安装</string>
+    <string name="agent_icon_hermes_pet_adopt">从 Petdex 领养</string>
+    <string name="agent_icon_shared_title">在 Hermes 中共享</string>
+    <string name="agent_icon_shared_active">共享头像</string>
+    <string name="agent_icon_shared_empty">无共享头像</string>
+    <string name="agent_icon_change_shared">更改共享头像</string>
+    <string name="agent_icon_remove_shared">移除</string>
+    <string name="agent_icon_remove_shared_title">移除共享头像？</string>
+    <string name="agent_icon_remove_shared_message">这会从 Hermes 和其他客户端移除头像，但不会影响本手机上的图像。</string>
+    <string name="agent_icon_phone_title">仅限本手机</string>
+    <string name="agent_icon_phone_description">仅在本手机上覆盖共享头像，不更改 Hermes。</string>
+    <string name="agent_icon_choose_phone">选择手机图像</string>
+    <string name="agent_icon_change_phone">更改手机图像</string>
+    <string name="agent_icon_remove_phone">移除手机图像</string>
+    <string name="agent_icon_animation_note">GIF 和 WebP 动画替代仅在本手机上播放。如需按配置文件管理的上游动画，请使用上方的 Hermes 动画宠物。</string>
     <string name="agent_icon_set_local">选择设备备用图像</string>
     <string name="agent_icon_change_local">更改设备备用图像</string>
     <string name="agent_icon_clear_local">清除设备备用图像</string>

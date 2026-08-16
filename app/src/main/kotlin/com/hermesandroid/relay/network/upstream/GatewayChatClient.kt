@@ -1828,6 +1828,78 @@ class GatewayChatClient(
         }
     }
 
+    /** Fetch the active profile-scoped Hermes pet and its renderer contract. */
+    suspend fun petInfo(
+        profile: String? = currentSessionProfile(),
+        knownRevision: String? = null,
+    ): Result<GatewayPetInfo> {
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(
+            "pet.info",
+            buildJsonObject {
+                profile?.trim()?.takeIf { it.isNotEmpty() }?.let { put("profile", it) }
+                knownRevision?.trim()?.takeIf { it.isNotEmpty() }?.let { put("knownRevision", it) }
+            },
+        ).mapCatching(::parseGatewayPetInfo)
+    }
+
+    /** List adoptable pets for the active Hermes profile. */
+    suspend fun petGallery(
+        profile: String? = currentSessionProfile(),
+        localOnly: Boolean = false,
+    ): Result<GatewayPetGallery> {
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(
+            "pet.gallery",
+            buildJsonObject {
+                put("localOnly", localOnly)
+                profile?.trim()?.takeIf { it.isNotEmpty() }?.let { put("profile", it) }
+            },
+        ).mapCatching(::parseGatewayPetGallery)
+    }
+
+    /** Install if necessary and activate one pet in the selected Hermes profile. */
+    suspend fun selectPet(
+        slug: String,
+        profile: String? = currentSessionProfile(),
+    ): Result<Unit> = mutatePet("pet.select", slug, profile)
+
+    /** Disable the active pet without deleting it from the selected Hermes profile. */
+    suspend fun disablePet(profile: String? = currentSessionProfile()): Result<Unit> =
+        mutatePet("pet.disable", slug = null, profile = profile)
+
+    private suspend fun mutatePet(method: String, slug: String?, profile: String?): Result<Unit> {
+        val normalizedSlug = slug?.trim()
+        if (normalizedSlug != null && !PETDEX_SLUG.matches(normalizedSlug)) {
+            return Result.failure(IllegalArgumentException("invalid Petdex slug"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(
+            method,
+            buildJsonObject {
+                normalizedSlug?.let { put("slug", it) }
+                profile?.trim()?.takeIf { it.isNotEmpty() }?.let { put("profile", it) }
+            },
+            timeoutMs = PET_MUTATION_TIMEOUT_MS,
+        ).mapCatching { response ->
+            if ((response["ok"] as? JsonPrimitive)?.booleanOrNull != true) {
+                throw GatewayRpcException("$method returned an invalid response")
+            }
+        }
+    }
+
     /**
      * Fetch the current chat session's running and recently-finished background
      * processes. Callers never provide a session id: this wrapper resolves and
@@ -3840,6 +3912,135 @@ private fun isValidPetThumbnailDataUri(raw: String): Boolean {
         payload.length <= MAX_PET_THUMB_BASE64_CHARS &&
         payload.length % 4 == 0 &&
         STANDARD_BASE64.matches(payload)
+}
+
+private const val MAX_PET_SPRITESHEET_BYTES = 32L * 1024L * 1024L
+private const val PET_MUTATION_TIMEOUT_MS = 120_000L
+private const val MAX_PET_GALLERY_ITEMS = 10_000
+private const val MAX_PET_STATE_ROWS = 64
+
+data class GatewayPetInfo(
+    val enabled: Boolean,
+    val slug: String? = null,
+    val displayName: String? = null,
+    val mime: String? = null,
+    val spritesheet: ByteArray? = null,
+    val spritesheetRevision: String? = null,
+    val spritesheetUnchanged: Boolean = false,
+    val frameWidth: Int = 0,
+    val frameHeight: Int = 0,
+    val framesPerState: Int = 0,
+    val framesByState: Map<String, Int> = emptyMap(),
+    val framesByRow: Map<String, Int> = emptyMap(),
+    val loopMs: Int = 0,
+    val scale: Float = 1f,
+    val stateRows: List<String> = emptyList(),
+)
+
+data class GatewayPetGalleryItem(
+    val slug: String,
+    val displayName: String,
+    val installed: Boolean,
+    val spritesheetUrl: String?,
+    val curated: Boolean,
+    val generated: Boolean,
+)
+
+data class GatewayPetGallery(
+    val enabled: Boolean,
+    val active: String?,
+    val pets: List<GatewayPetGalleryItem>,
+)
+
+private fun parseGatewayPetInfo(response: JsonObject): GatewayPetInfo {
+    val enabled = (response["enabled"] as? JsonPrimitive)?.booleanOrNull
+        ?: throw GatewayRpcException("pet.info returned an invalid response")
+    if (!enabled) return GatewayPetInfo(enabled = false)
+
+    val slug = response.stringField("slug")?.takeIf(PETDEX_SLUG::matches)
+        ?: throw GatewayRpcException("pet.info returned an invalid slug")
+    val revision = response.stringField("spritesheetRevision")?.takeIf { it.length <= 256 }
+        ?: throw GatewayRpcException("pet.info returned no spritesheet revision")
+    val unchanged = (response["spritesheetUnchanged"] as? JsonPrimitive)?.booleanOrNull == true
+    val mime = response.stringField("mime")?.takeIf { it == "image/png" || it == "image/webp" }
+    val encoded = response.stringField("spritesheetBase64")
+    val spritesheet = when {
+        encoded != null -> {
+            if (decodedBase64Size(encoded) > MAX_PET_SPRITESHEET_BYTES ||
+                encoded.length % 4 != 0 || !STANDARD_BASE64.matches(encoded)
+            ) throw GatewayRpcException("pet.info returned an invalid spritesheet")
+            runCatching { Base64.getDecoder().decode(encoded) }
+                .getOrElse { throw GatewayRpcException("pet.info returned an invalid spritesheet") }
+        }
+        unchanged -> null
+        else -> throw GatewayRpcException("pet.info returned no spritesheet")
+    }
+    if (spritesheet != null && mime == null) {
+        throw GatewayRpcException("pet.info returned an invalid spritesheet mime")
+    }
+
+    fun requiredDimension(name: String, max: Int): Int =
+        (response[name] as? JsonPrimitive)?.intOrNull
+            ?.takeIf { it in 1..max }
+            ?: throw GatewayRpcException("pet.info returned an invalid $name")
+
+    val rows = (response["stateRows"] as? JsonArray).orEmpty().mapNotNull {
+        (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { name ->
+            name.isNotEmpty() && name.length <= 64
+        }
+    }
+    if (rows.isEmpty() || rows.size > MAX_PET_STATE_ROWS) {
+        throw GatewayRpcException("pet.info returned invalid state rows")
+    }
+    fun frameCounts(name: String): Map<String, Int> {
+        val values = response[name] as? JsonObject ?: return emptyMap()
+        if (values.size > MAX_PET_STATE_ROWS) throw GatewayRpcException("pet.info returned too many frame counts")
+        return values.mapNotNull { (key, value) ->
+            val count = (value as? JsonPrimitive)?.intOrNull
+            if (key.length <= 64 && count != null && count in 1..120) key to count else null
+        }.toMap()
+    }
+    return GatewayPetInfo(
+        enabled = true,
+        slug = slug,
+        displayName = response.stringField("displayName")?.take(256) ?: slug,
+        mime = mime,
+        spritesheet = spritesheet,
+        spritesheetRevision = revision,
+        spritesheetUnchanged = unchanged,
+        frameWidth = requiredDimension("frameW", 4096),
+        frameHeight = requiredDimension("frameH", 4096),
+        framesPerState = requiredDimension("framesPerState", 120),
+        framesByState = frameCounts("framesByState"),
+        framesByRow = frameCounts("framesByRow"),
+        loopMs = requiredDimension("loopMs", 60_000),
+        scale = response.stringField("scale")?.toFloatOrNull()?.coerceIn(0.1f, 3f) ?: 1f,
+        stateRows = rows,
+    )
+}
+
+private fun parseGatewayPetGallery(response: JsonObject): GatewayPetGallery {
+    val enabled = (response["enabled"] as? JsonPrimitive)?.booleanOrNull
+        ?: throw GatewayRpcException("pet.gallery returned an invalid response")
+    val active = response.stringField("active")?.takeIf(PETDEX_SLUG::matches)
+    val rawPets = (response["pets"] as? JsonArray).orEmpty()
+    if (rawPets.size > MAX_PET_GALLERY_ITEMS) {
+        throw GatewayRpcException("pet.gallery returned too many pets")
+    }
+    val pets = rawPets.mapNotNull { element ->
+        val item = element as? JsonObject ?: return@mapNotNull null
+        val slug = item.stringField("slug")?.takeIf(PETDEX_SLUG::matches) ?: return@mapNotNull null
+        val rawUrl = item.stringField("spritesheetUrl")?.trim().orEmpty()
+        GatewayPetGalleryItem(
+            slug = slug,
+            displayName = item.stringField("displayName")?.take(256)?.ifBlank { slug } ?: slug,
+            installed = (item["installed"] as? JsonPrimitive)?.booleanOrNull == true,
+            spritesheetUrl = rawUrl.takeIf { it.isNotEmpty() && isTrustedPetdexAssetUrl(it) },
+            curated = (item["curated"] as? JsonPrimitive)?.booleanOrNull == true,
+            generated = (item["generated"] as? JsonPrimitive)?.booleanOrNull == true,
+        )
+    }
+    return GatewayPetGallery(enabled = enabled, active = active, pets = pets)
 }
 
 data class GatewayCompressResult(
