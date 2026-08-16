@@ -3362,6 +3362,10 @@ draft pick first materializes a profile-bound session using no raw `model` or
 obtain that session restores the prior selection. Ordinary `session.create`
 also omits model/provider, and a new Gateway chat clears the prior session's
 model pick, so no later send can reintroduce the unguarded create path.
+For a named profile, the draft is retained only after the create result confirms
+the exact `info.profile_name`; absent or different ownership fails before any
+model mutation. The same confirmed draft can be reused by a superseding picker
+revision, avoiding a second empty session or a wedged selection.
 
 **Consequences.** Android warns before host pressure turns into lost chat or
 failed persistence and before a confirmed Gateway selection changes cost or

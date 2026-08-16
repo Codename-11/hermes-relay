@@ -377,6 +377,45 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun freshNamedProfileModelPickRejectsDifferentConfirmedOwnerBeforeConfigSet() {
+        handler.setSessionId(null)
+        gatewayClient.clearSession()
+        viewModel.setSelectedProfileProvider {
+            Profile(name = "mizu", model = "safe-default", description = "Mizu")
+        }
+        viewModel.setSessionProfileNameProvider { "mizu" }
+        gatewayHarness.includeCreatedSessionProfileInfo = true
+        gatewayHarness.createdSessionProfileName = "victor"
+
+        viewModel.selectModel("risky-model", "risky-provider")
+
+        gatewayHarness.awaitRpc("session.create")
+        awaitCondition { viewModel.selectedModelOverride.value == null }
+
+        assertNull(handler.currentSessionId.value)
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "config.set" })
+    }
+
+    @Test
+    fun freshNamedProfileModelPickRejectsAbsentConfirmedOwnerBeforeConfigSet() {
+        handler.setSessionId(null)
+        gatewayClient.clearSession()
+        viewModel.setSelectedProfileProvider {
+            Profile(name = "mizu", model = "safe-default", description = "Mizu")
+        }
+        viewModel.setSessionProfileNameProvider { "mizu" }
+        gatewayHarness.includeCreatedSessionProfileInfo = false
+
+        viewModel.selectModel("risky-model", "risky-provider")
+
+        gatewayHarness.awaitRpc("session.create")
+        awaitCondition { viewModel.selectedModelOverride.value == null }
+
+        assertNull(handler.currentSessionId.value)
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "config.set" })
+    }
+
+    @Test
     fun serverDefaultModelUsesSameConfirmationAwareTransition() {
         viewModel.selectModel("safe-model", "safe-provider")
         gatewayHarness.awaitRpcCount("config.set", 1)

@@ -119,6 +119,9 @@ class GatewayClientHarness(
     var modelConfirmationMessage: String? = null
     val modelsRequiringConfirmation: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    @Volatile
+    var createdSessionProfileName: String? = null
+
     /** Config keys rejected with the older-gateway unknown-key response. */
     val unsupportedConfigKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -224,7 +227,8 @@ class GatewayClientHarness(
                         put("info", buildJsonObject {
                             put(
                                 "profile_name",
-                                sessionProfileOverride
+                                createdSessionProfileName
+                                    ?: sessionProfileOverride
                                     ?: (params["profile"] as? JsonPrimitive)?.contentOrNull
                                     ?: "default",
                             )
@@ -2537,6 +2541,25 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `same confirmed draft session is reusable across rapid model picks`() {
+        client.sessionProfileProvider = { "mizu" }
+        harness.createdSessionProfileName = "mizu"
+        val results = runBlocking {
+            val first = async(Dispatchers.IO) { client.prepareModelSelectionSession(null) }
+            val second = async(Dispatchers.IO) { client.prepareModelSelectionSession(null) }
+            listOf(first.await(), second.await())
+        }
+
+        assertTrue(results.all { it.isSuccess })
+        assertEquals(
+            listOf("20260612_120000_abc123", "20260612_120000_abc123"),
+            results.map { it.getOrThrow() },
+        )
+        assertEquals(1, harness.rpcLog.count { it.first == "session.create" })
+        assertEquals(0, harness.rpcLog.count { it.first == "config.set" })
+    }
+
+    @Test
     fun `fast update targets live session without global scope`() {
         val r = Recorder()
         client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }
@@ -2950,6 +2973,7 @@ class GatewayChatClientTest {
         assertTrue(retry.running)
         assertTrue(retryRecorder.textDeltas.isEmpty())
         retry.handle?.detach()
+        Unit
     }
 
     @Test

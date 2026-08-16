@@ -906,6 +906,13 @@ class GatewayChatClient(
             val requestedProfile = currentSessionProfile()
             connectMutex.withLock {
                 ensureConnected()
+                val reusableStoredId = storedSessionId
+                if (
+                    liveSessionId != null && reusableStoredId != null &&
+                    liveSessionProfile == requestedProfile
+                ) {
+                    return@withLock reusableStoredId
+                }
                 if (liveSessionId != null || storedSessionId != null) {
                     throw GatewayPreflightException("draft session state changed before model selection")
                 }
@@ -925,6 +932,7 @@ class GatewayChatClient(
                 ).getOrElse { error ->
                     throw GatewayPreflightException("session.create failed: ${error.message}")
                 }
+                requireConfirmedSessionProfile(created, requestedProfile)
                 val live = created.stringField("session_id")
                     ?: throw GatewayPreflightException("session.create returned no session_id")
                 val stored = created.stringField("stored_session_id") ?: live
